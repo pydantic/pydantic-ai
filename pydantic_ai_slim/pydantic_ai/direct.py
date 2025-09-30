@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from types import TracebackType
 
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage
 from pydantic_graph._utils import get_event_loop as _get_event_loop
 
 from . import agent, messages, models, settings
@@ -44,8 +44,8 @@ async def model_request(
     """Make a non-streamed request to a model.
 
     ```py title="model_request_example.py"
+    from pydantic_ai import ModelRequest
     from pydantic_ai.direct import model_request
-    from pydantic_ai.messages import ModelRequest
 
 
     async def main():
@@ -57,7 +57,7 @@ async def model_request(
         '''
         ModelResponse(
             parts=[TextPart(content='The capital of France is Paris.')],
-            usage=Usage(requests=1, request_tokens=56, response_tokens=7, total_tokens=63),
+            usage=RequestUsage(input_tokens=56, output_tokens=7),
             model_name='claude-3-5-haiku-latest',
             timestamp=datetime.datetime(...),
         )
@@ -99,8 +99,8 @@ def model_request_sync(
     `loop.run_until_complete(...)`. You therefore can't use this method inside async code or if there's an active event loop.
 
     ```py title="model_request_sync_example.py"
+    from pydantic_ai import ModelRequest
     from pydantic_ai.direct import model_request_sync
-    from pydantic_ai.messages import ModelRequest
 
     model_response = model_request_sync(
         'anthropic:claude-3-5-haiku-latest',
@@ -110,7 +110,7 @@ def model_request_sync(
     '''
     ModelResponse(
         parts=[TextPart(content='The capital of France is Paris.')],
-        usage=Usage(requests=1, request_tokens=56, response_tokens=7, total_tokens=63),
+        usage=RequestUsage(input_tokens=56, output_tokens=7),
         model_name='claude-3-5-haiku-latest',
         timestamp=datetime.datetime(...),
     )
@@ -153,8 +153,8 @@ def model_request_stream(
 
     ```py {title="model_request_stream_example.py"}
 
+    from pydantic_ai import ModelRequest
     from pydantic_ai.direct import model_request_stream
-    from pydantic_ai.messages import ModelRequest
 
 
     async def main():
@@ -212,8 +212,8 @@ def model_request_stream_sync(
 
     ```py {title="model_request_stream_sync_example.py"}
 
+    from pydantic_ai import ModelRequest
     from pydantic_ai.direct import model_request_stream_sync
-    from pydantic_ai.messages import ModelRequest
 
     messages = [ModelRequest.user_text_prompt('Who was Albert Einstein?')]
     with model_request_stream_sync('openai:gpt-4.1-mini', messages) as stream:
@@ -275,7 +275,9 @@ class StreamedResponseSync:
     """
 
     _async_stream_cm: AbstractAsyncContextManager[StreamedResponse]
-    _queue: queue.Queue[messages.AgentStreamEvent | Exception | None] = field(default_factory=queue.Queue, init=False)
+    _queue: queue.Queue[messages.ModelResponseStreamEvent | Exception | None] = field(
+        default_factory=queue.Queue, init=False
+    )
     _thread: threading.Thread | None = field(default=None, init=False)
     _stream_response: StreamedResponse | None = field(default=None, init=False)
     _exception: Exception | None = field(default=None, init=False)
@@ -295,8 +297,8 @@ class StreamedResponseSync:
     ) -> None:
         self._cleanup()
 
-    def __iter__(self) -> Iterator[messages.AgentStreamEvent]:
-        """Stream the response as an iterable of [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s."""
+    def __iter__(self) -> Iterator[messages.ModelResponseStreamEvent]:
+        """Stream the response as an iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
         self._check_context_manager_usage()
 
         while True:
@@ -366,7 +368,7 @@ class StreamedResponseSync:
         """Build a ModelResponse from the data received from the stream so far."""
         return self._ensure_stream_ready().get()
 
-    def usage(self) -> Usage:
+    def usage(self) -> RequestUsage:
         """Get the usage of the response so far."""
         return self._ensure_stream_ready().usage()
 

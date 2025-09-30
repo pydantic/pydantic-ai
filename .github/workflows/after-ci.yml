@@ -17,12 +17,12 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          python-version: '3.12'
+          python-version: "3.12"
 
       - uses: dawidd6/action-download-artifact@v6
         with:
           workflow: ci.yml
-          name: '(diff-)?coverage-html.*'
+          name: "(diff-)?coverage-html.*"
           name_is_regexp: true
           commit: ${{ github.event.workflow_run.head_sha }}
           allow_forks: true
@@ -39,19 +39,9 @@ jobs:
           SMOKESHOW_GITHUB_PR_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           SMOKESHOW_AUTH_KEY: ${{ secrets.SMOKESHOW_AUTH_KEY }}
 
-      - run: uvx smokeshow upload diff-coverage-html
-        if: hashFiles('diff-coverage-html/*.html') != ''
-        env:
-          SMOKESHOW_GITHUB_STATUS_DESCRIPTION: Diff coverage {coverage-percentage}
-          SMOKESHOW_GITHUB_COVERAGE_THRESHOLD: 95
-          SMOKESHOW_GITHUB_CONTEXT: diff-coverage
-          SMOKESHOW_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SMOKESHOW_GITHUB_PR_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          SMOKESHOW_AUTH_KEY: ${{ secrets.SMOKESHOW_AUTH_KEY }}
-
   deploy-docs-preview:
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.event == 'pull_request'
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.pull_requests[0] != null
     environment:
       name: deploy-docs-preview
 
@@ -65,7 +55,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          python-version: '3.12'
+          python-version: "3.12"
 
       - uses: dawidd6/action-download-artifact@v6
         with:

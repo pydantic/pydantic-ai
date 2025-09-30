@@ -8,7 +8,7 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from typing import Any, Generic, TypeVar
 
-from pydantic_ai.profiles import ModelProfile
+from pydantic_ai import ModelProfile
 
 InterfaceClient = TypeVar('InterfaceClient')
 
@@ -20,7 +20,7 @@ class Provider(ABC, Generic[InterfaceClient]):
 
     Each provider only supports a specific interface. A interface can be supported by multiple providers.
 
-    For example, the OpenAIModel interface can be supported by the OpenAIProvider and the DeepSeekProvider.
+    For example, the `OpenAIChatModel` interface can be supported by the `OpenAIProvider` and the `DeepSeekProvider`.
     """
 
     _client: InterfaceClient
@@ -46,6 +46,9 @@ class Provider(ABC, Generic[InterfaceClient]):
     def model_profile(self, model_name: str) -> ModelProfile | None:
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}(name={self.name}, base_url={self.base_url})'  # pragma: lax no cover
 
 
 def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
@@ -95,6 +98,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .mistral import MistralProvider
 
         return MistralProvider
+    elif provider == 'cerebras':
+        from .cerebras import CerebrasProvider
+
+        return CerebrasProvider
     elif provider == 'cohere':
         from .cohere import CohereProvider
 
@@ -131,6 +138,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .github import GitHubProvider
 
         return GitHubProvider
+    elif provider == 'litellm':
+        from .litellm import LiteLLMProvider
+
+        return LiteLLMProvider
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
 

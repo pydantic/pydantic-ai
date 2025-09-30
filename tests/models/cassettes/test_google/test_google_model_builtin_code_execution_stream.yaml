@@ -1,0 +1,80 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '287'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: what is 65465-6544 * 65464-6+1.02255
+        role: user
+      generationConfig: {}
+      systemInstruction:
+        parts:
+        - text: Be concise and always use Python to do calculations no matter how small.
+        role: user
+      tools:
+      - codeExecution: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"executableCode\": {\"language\": \"PYTHON\",\"code\":
+        \"    result = 65465 - 6544 * 65464 - 6 + 1.02255\\n    print(result)\\n    \"},\"thought\": true}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 46,\"candidatesTokenCount\": 39,\"totalTokenCount\": 380,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 46}],\"thoughtsTokenCount\": 295},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\":
+        \"1NjJaIDxJcL7qtsP5aPfqQs\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"codeExecutionResult\": {\"outcome\":
+        \"OUTCOME_OK\",\"output\": \"-428330955.97745\\n\"},\"thought\": true}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 46,\"candidatesTokenCount\": 39,\"totalTokenCount\": 380,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 46}],\"thoughtsTokenCount\": 295},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"1NjJaIDxJcL7qtsP5aPfqQs\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"executableCode\": {\"language\": \"PYTHON\",\"code\": \"# Calculate
+        the expression 65465-6544 * 65464-6+1.02255\\nresult = 65465 - 6544 * 65464 - 6 + 1.02255\\nprint(result)\"}}],\"role\":
+        \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 46,\"candidatesTokenCount\":
+        110,\"totalTokenCount\": 908,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 46}],\"toolUsePromptTokenCount\":
+        356,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 356}],\"thoughtsTokenCount\": 396},\"modelVersion\":
+        \"gemini-2.5-pro\",\"responseId\": \"1NjJaIDxJcL7qtsP5aPfqQs\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\":
+        [{\"codeExecutionResult\": {\"outcome\": \"OUTCOME_OK\",\"output\": \"-428330955.97745\\n\"}}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 46,\"candidatesTokenCount\": 110,\"totalTokenCount\": 908,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 46}],\"toolUsePromptTokenCount\": 356,\"toolUsePromptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 356}],\"thoughtsTokenCount\": 396},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"1NjJaIDxJcL7qtsP5aPfqQs\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"The result is\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 46,\"candidatesTokenCount\": 113,\"totalTokenCount\": 1456,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 46}],\"toolUsePromptTokenCount\": 901,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        901}],\"thoughtsTokenCount\": 396},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"1NjJaIDxJcL7qtsP5aPfqQs\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" -428,330,955.977\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 46,\"candidatesTokenCount\": 129,\"totalTokenCount\": 1472,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 46}],\"toolUsePromptTokenCount\": 901,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        901}],\"thoughtsTokenCount\": 396},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"1NjJaIDxJcL7qtsP5aPfqQs\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"45.\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 46,\"candidatesTokenCount\": 132,\"totalTokenCount\": 1475,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 46}],\"toolUsePromptTokenCount\": 901,\"toolUsePromptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 901}],\"thoughtsTokenCount\": 396},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"1NjJaIDxJcL7qtsP5aPfqQs\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=5893
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -18,12 +18,13 @@ from . import __version__
 from ._run_context import AgentDepsT
 from .agent import AbstractAgent, Agent
 from .exceptions import UserError
-from .messages import ModelMessage
+from .messages import ModelMessage, TextPart
 from .models import KnownModelName, infer_model
 from .output import OutputDataT
 
 try:
     import argcomplete
+    import pyperclip
     from prompt_toolkit import PromptSession
     from prompt_toolkit.auto_suggest import AutoSuggestFromHistory, Suggestion
     from prompt_toolkit.buffer import Buffer
@@ -38,7 +39,7 @@ try:
     from rich.text import Text
 except ImportError as _import_error:
     raise ImportError(
-        'Please install `rich`, `prompt-toolkit` and `argcomplete` to use the Pydantic AI CLI, '
+        'Please install `rich`, `prompt-toolkit`, `pyperclip` and `argcomplete` to use the Pydantic AI CLI, '
         'you can use the `cli` optional group — `pip install "pydantic-ai-slim[cli]"`'
     ) from _import_error
 
@@ -114,6 +115,7 @@ Special prompts:
 * `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)
 * `/markdown` - show the last markdown output of the last question
 * `/multiline` - toggle multiline mode
+* `/cp` - copy the last response to clipboard
 """,
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -226,6 +228,7 @@ async def run_chat(
     prog_name: str,
     config_dir: Path | None = None,
     deps: AgentDepsT = None,
+    message_history: list[ModelMessage] | None = None,
 ) -> int:
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -233,11 +236,11 @@ async def run_chat(
     session: PromptSession[Any] = PromptSession(history=FileHistory(str(prompt_history_path)))
 
     multiline = False
-    messages: list[ModelMessage] = []
+    messages: list[ModelMessage] = message_history[:] if message_history else []
 
     while True:
         try:
-            auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/exit'])
+            auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/exit', '/cp'])
             text = await session.prompt_async(f'{prog_name} ➤ ', auto_suggest=auto_suggest, multiline=multiline)
         except (KeyboardInterrupt, EOFError):  # pragma: no cover
             return 0
@@ -347,6 +350,19 @@ def handle_slash_command(
     elif ident_prompt == '/exit':
         console.print('[dim]Exiting…[/dim]')
         return 0, multiline
+    elif ident_prompt == '/cp':
+        try:
+            parts = messages[-1].parts
+        except IndexError:
+            console.print('[dim]No output available to copy.[/dim]')
+        else:
+            text_to_copy = ''.join(part.content for part in parts if isinstance(part, TextPart))
+            text_to_copy = text_to_copy.strip()
+            if text_to_copy:
+                pyperclip.copy(text_to_copy)
+                console.print('[dim]Copied last output to clipboard.[/dim]')
+            else:
+                console.print('[dim]No text content to copy.[/dim]')
     else:
         console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
     return None, multiline

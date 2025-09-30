@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import functools
+from asyncio import Lock
 from collections.abc import AsyncGenerator, Mapping
 from pathlib import Path
 from typing import Literal, overload
@@ -9,9 +10,9 @@ import anyio.to_thread
 import httpx
 from typing_extensions import deprecated
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider
 
@@ -118,7 +119,7 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
 class _VertexAIAuth(httpx.Auth):
     """Auth class for Vertex AI API."""
 
-    _refresh_lock: anyio.Lock = anyio.Lock()
+    _refresh_lock: Lock = Lock()
 
     credentials: BaseCredentials | ServiceAccountCredentials | None
 

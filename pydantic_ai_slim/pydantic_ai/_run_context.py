@@ -12,13 +12,13 @@ from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
     from .models import Model
-    from .result import Usage
+    from .result import RunUsage
 
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 """Type variable for agent dependencies."""
 
 
-@dataclasses.dataclass(repr=False)
+@dataclasses.dataclass(repr=False, kw_only=True)
 class RunContext(Generic[AgentDepsT]):
     """Information about the current call."""
 
@@ -26,7 +26,7 @@ class RunContext(Generic[AgentDepsT]):
     """Dependencies for the agent."""
     model: Model
     """The model used in this run."""
-    usage: Usage
+    usage: RunUsage
     """LLM usage associated with the run."""
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
@@ -43,8 +43,17 @@ class RunContext(Generic[AgentDepsT]):
     tool_name: str | None = None
     """Name of the tool being called."""
     retry: int = 0
-    """Number of retries so far."""
+    """Number of retries of this tool so far."""
+    max_retries: int = 0
+    """The maximum number of retries of this tool."""
     run_step: int = 0
     """The current step in the run."""
+    tool_call_approved: bool = False
+    """Whether a tool call that required approval has now been approved."""
+
+    @property
+    def last_attempt(self) -> bool:
+        """Whether this is the last attempt at running this tool before an error is raised."""
+        return self.retry == self.max_retries
 
     __repr__ = _utils.dataclasses_no_defaults_repr

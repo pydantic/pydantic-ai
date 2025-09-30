@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
@@ -8,28 +9,38 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Literal
 
+import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.direct import model_request_stream
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     AgentStreamEvent,
+    ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    HandleResponseEvent,
+    FunctionToolset,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
+    ModelSettings,
     PartDeltaEvent,
     PartStartEvent,
+    RetryPromptPart,
+    RunContext,
+    TextPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UserPromptPart,
 )
+from pydantic_ai.direct import model_request_stream
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import Model, cached_async_http_client
-from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import DeferredToolset, FunctionToolset
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.usage import RequestUsage
 
 try:
     from temporalio import workflow
@@ -42,18 +53,11 @@ try:
     from temporalio.worker import Worker
     from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.durable_exec.temporal import (
-        AgentPlugin,
-        LogfirePlugin,
-        PydanticAIPlugin,
-        TemporalAgent,
-    )
+    from pydantic_ai.durable_exec.temporal import AgentPlugin, LogfirePlugin, PydanticAIPlugin, TemporalAgent
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
 except ImportError:  # pragma: lax no cover
-    import pytest
-
     pytest.skip('temporal not installed', allow_module_level=True)
 
 try:
@@ -63,33 +67,29 @@ try:
     from logfire.testing import CaptureLogfire
     from opentelemetry.trace import ProxyTracer
 except ImportError:  # pragma: lax no cover
-    import pytest
-
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
     from pydantic_ai.mcp import MCPServerStdio
 except ImportError:  # pragma: lax no cover
-    import pytest
-
     pytest.skip('mcp not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 except ImportError:  # pragma: lax no cover
-    import pytest
-
     pytest.skip('openai not installed', allow_module_level=True)
 
 
 with workflow.unsafe.imports_passed_through():
     # Workaround for a race condition when running `logfire.info` inside an activity with attributes to serialize and pandas importable:
     # AttributeError: partially initialized module 'pandas' has no attribute '_pandas_parser_CAPI' (most likely due to a circular import)
-    import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
+    try:
+        import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
+    except ImportError:  # pragma: lax no cover
+        pass
 
     # https://github.com/temporalio/sdk-python/blob/3244f8bffebee05e0e7efefb1240a75039903dda/tests/test_client.py#L112C1-L113C1
-    import pytest
     from inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
@@ -165,7 +165,7 @@ async def client_with_logfire(temporal_env: WorkflowEnvironment) -> Client:
 
 
 # Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
-model = OpenAIModel(
+model = OpenAIChatModel(
     'gpt-4o',
     provider=OpenAIProvider(
         api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key'),
@@ -209,7 +209,7 @@ class Deps(BaseModel):
 
 async def event_stream_handler(
     ctx: RunContext[Deps],
-    stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
+    stream: AsyncIterable[AgentStreamEvent],
 ):
     logfire.info(f'{ctx.run_step=}')
     async for event in stream:
@@ -220,8 +220,15 @@ async def get_country(ctx: RunContext[Deps]) -> str:
     return ctx.deps.country
 
 
-def get_weather(city: str) -> str:
-    return 'sunny'
+class WeatherArgs(BaseModel):
+    city: str
+
+
+def get_weather(args: WeatherArgs) -> str:
+    if args.city == 'Mexico City':
+        return 'sunny'
+    else:
+        return 'unknown'  # pragma: no cover
 
 
 @dataclass
@@ -242,7 +249,7 @@ complex_agent = Agent(
     toolsets=[
         FunctionToolset[Deps](tools=[get_country], id='country'),
         MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
-        DeferredToolset(tool_defs=[ToolDefinition(name='deferred')], id='deferred'),
+        ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
     ],
     tools=[get_weather],
     event_stream_handler=event_stream_handler,
@@ -372,25 +379,56 @@ async def test_complex_agent_run_in_workflow(
                                             ],
                                         )
                                     ],
-                                ),
-                                BasicSpan(content='ctx.run_step=1'),
+                                )
                             ],
                         ),
-                        BasicSpan(content='ctx.run_step=1'),
                         BasicSpan(
-                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                        ),
+                                    ],
+                                )
+                            ],
                         ),
                         BasicSpan(
-                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                        ),
+                                    ],
+                                )
+                            ],
                         ),
                         BasicSpan(
                             content='running 2 tools',
                             children=[
                                 BasicSpan(content='running tool: get_country'),
                                 BasicSpan(
-                                    content=IsStr(
-                                        regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
-                                    )
+                                    content='StartActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(
+                                            content='RunActivity:agent__complex_agent__event_stream_handler',
+                                            children=[
+                                                BasicSpan(content='ctx.run_step=1'),
+                                                BasicSpan(
+                                                    content=IsStr(
+                                                        regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
+                                                    )
+                                                ),
+                                            ],
+                                        )
+                                    ],
                                 ),
                                 BasicSpan(
                                     content='running tool: get_product_name',
@@ -406,9 +444,20 @@ async def test_complex_agent_run_in_workflow(
                                     ],
                                 ),
                                 BasicSpan(
-                                    content=IsStr(
-                                        regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
-                                    )
+                                    content='StartActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(
+                                            content='RunActivity:agent__complex_agent__event_stream_handler',
+                                            children=[
+                                                BasicSpan(content='ctx.run_step=1'),
+                                                BasicSpan(
+                                                    content=IsStr(
+                                                        regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
+                                                    )
+                                                ),
+                                            ],
+                                        )
+                                    ],
                                 ),
                             ],
                         ),
@@ -452,13 +501,22 @@ async def test_complex_agent_run_in_workflow(
                                             ],
                                         )
                                     ],
-                                ),
-                                BasicSpan(content='ctx.run_step=2'),
+                                )
                             ],
                         ),
-                        BasicSpan(content='ctx.run_step=2'),
                         BasicSpan(
-                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=2'),
+                                        BasicSpan(
+                                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                        ),
+                                    ],
+                                )
+                            ],
                         ),
                         BasicSpan(
                             content='running 1 tool',
@@ -477,9 +535,20 @@ async def test_complex_agent_run_in_workflow(
                                     ],
                                 ),
                                 BasicSpan(
-                                    content=IsStr(
-                                        regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
-                                    )
+                                    content='StartActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(
+                                            content='RunActivity:agent__complex_agent__event_stream_handler',
+                                            children=[
+                                                BasicSpan(content='ctx.run_step=2'),
+                                                BasicSpan(
+                                                    content=IsStr(
+                                                        regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
+                                                    )
+                                                ),
+                                            ],
+                                        )
+                                    ],
                                 ),
                             ],
                         ),
@@ -628,11 +697,9 @@ async def test_complex_agent_run_in_workflow(
                                             ],
                                         )
                                     ],
-                                ),
-                                BasicSpan(content='ctx.run_step=3'),
+                                )
                             ],
                         ),
-                        BasicSpan(content='ctx.run_step=3'),
                     ],
                 ),
                 BasicSpan(content='CompleteWorkflow:ComplexAgentWorkflow'),
@@ -642,11 +709,11 @@ async def test_complex_agent_run_in_workflow(
 
 
 async def test_complex_agent_run(allow_model_requests: None):
-    events: list[AgentStreamEvent | HandleResponseEvent] = []
+    events: list[AgentStreamEvent] = []
 
     async def event_stream_handler(
         ctx: RunContext[Deps],
-        stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
+        stream: AsyncIterable[AgentStreamEvent],
     ):
         async for event in stream:
             events.append(event)
@@ -943,7 +1010,7 @@ async def test_multiple_agents(allow_model_requests: None, client: Client):
 
 
 async def test_agent_name_collision(allow_model_requests: None, client: Client):
-    with pytest.raises(ValueError, match='More than one activity named agent__simple_agent__model_request'):
+    with pytest.raises(ValueError, match='More than one activity named agent__simple_agent__event_stream_handler'):
         async with Worker(
             client,
             task_queue=TASK_QUEUE,
@@ -1009,9 +1076,9 @@ async def test_temporal_agent():
     assert toolsets[3].id == 'mcp'
     assert toolsets[3].wrapped == complex_agent.toolsets[2]
 
-    # Unwrapped 'deferred' toolset
-    assert isinstance(toolsets[4], DeferredToolset)
-    assert toolsets[4].id == 'deferred'
+    # Unwrapped 'external' toolset
+    assert isinstance(toolsets[4], ExternalToolset)
+    assert toolsets[4].id == 'external'
     assert toolsets[4] == complex_agent.toolsets[3]
 
     assert [
@@ -1019,6 +1086,7 @@ async def test_temporal_agent():
         for activity in complex_temporal_agent.temporal_activities
     ] == snapshot(
         [
+            'agent__complex_agent__event_stream_handler',
             'agent__complex_agent__model_request',
             'agent__complex_agent__model_request_stream',
             'agent__complex_agent__toolset__<agent>__call_tool',
@@ -1167,7 +1235,7 @@ async def test_temporal_agent_iter_in_workflow(allow_model_requests: None, clien
 
 async def simple_event_stream_handler(
     ctx: RunContext[None],
-    stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
+    stream: AsyncIterable[AgentStreamEvent],
 ):
     pass
 
@@ -1542,3 +1610,369 @@ async def test_logfire_plugin(client: Client):
     plugin = LogfirePlugin(lambda: setup_logfire(metrics=False))
     new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
     assert new_client.service_client.config.runtime is None
+
+
+hitl_agent = Agent(
+    model,
+    name='hitl_agent',
+    output_type=[str, DeferredToolRequests],
+    instructions='Just call tools without asking for confirmation.',
+)
+
+
+@hitl_agent.tool
+async def create_file(ctx: RunContext[None], path: str) -> None:
+    raise CallDeferred
+
+
+@hitl_agent.tool
+async def delete_file(ctx: RunContext[None], path: str) -> bool:
+    if not ctx.tool_call_approved:
+        raise ApprovalRequired
+    return True
+
+
+hitl_temporal_agent = TemporalAgent(hitl_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class HitlAgentWorkflow:
+    def __init__(self):
+        self._status: Literal['running', 'waiting_for_results', 'done'] = 'running'
+        self._deferred_tool_requests: DeferredToolRequests | None = None
+        self._deferred_tool_results: DeferredToolResults | None = None
+
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
+        while True:
+            result = await hitl_temporal_agent.run(
+                message_history=messages, deferred_tool_results=self._deferred_tool_results
+            )
+            messages = result.all_messages()
+
+            if isinstance(result.output, DeferredToolRequests):
+                self._deferred_tool_requests = result.output
+                self._deferred_tool_results = None
+                self._status = 'waiting_for_results'
+
+                await workflow.wait_condition(lambda: self._deferred_tool_results is not None)
+                self._status = 'running'
+            else:
+                self._status = 'done'
+                return result
+
+    @workflow.query
+    def get_status(self) -> Literal['running', 'waiting_for_results', 'done']:
+        return self._status
+
+    @workflow.query
+    def get_deferred_tool_requests(self) -> DeferredToolRequests | None:
+        return self._deferred_tool_requests
+
+    @workflow.signal
+    def set_deferred_tool_results(self, results: DeferredToolResults) -> None:
+        self._status = 'running'
+        self._deferred_tool_requests = None
+        self._deferred_tool_results = results
+
+
+async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[HitlAgentWorkflow],
+        plugins=[AgentPlugin(hitl_temporal_agent)],
+    ):
+        workflow = await client.start_workflow(  # pyright: ignore[reportUnknownMemberType]
+            HitlAgentWorkflow.run,
+            args=['Delete the file `.env` and create `test.txt`'],
+            id=HitlAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        while True:
+            await asyncio.sleep(1)
+            status = await workflow.query(HitlAgentWorkflow.get_status)  # pyright: ignore[reportUnknownMemberType]
+            if status == 'done':
+                break
+            elif status == 'waiting_for_results':  # pragma: no branch
+                deferred_tool_requests = await workflow.query(HitlAgentWorkflow.get_deferred_tool_requests)  # pyright: ignore[reportUnknownMemberType]
+                assert deferred_tool_requests is not None
+
+                results = DeferredToolResults()
+                # Approve all calls
+                for tool_call in deferred_tool_requests.approvals:
+                    results.approvals[tool_call.tool_call_id] = True
+
+                for tool_call in deferred_tool_requests.calls:
+                    results.calls[tool_call.tool_call_id] = 'Success'
+
+                await workflow.signal(HitlAgentWorkflow.set_deferred_tool_results, results)
+
+        result = await workflow.result()
+        assert result.output == snapshot(
+            'The file `.env` has been deleted and `test.txt` has been created successfully.'
+        )
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Delete the file `.env` and create `test.txt`',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    instructions='Just call tools without asking for confirmation.',
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='delete_file',
+                            args='{"path": ".env"}',
+                            tool_call_id='call_jYdIdRZHxZTn5bWCq5jlMrJi',
+                        ),
+                        ToolCallPart(
+                            tool_name='create_file',
+                            args='{"path": "test.txt"}',
+                            tool_call_id='call_TmlTVWQbzrXCZ4jNsCVNbNqu',
+                        ),
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=71,
+                        output_tokens=46,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id=IsStr(),
+                    finish_reason='tool_call',
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='delete_file',
+                            content=True,
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='create_file',
+                            content='Success',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        ),
+                    ],
+                    instructions='Just call tools without asking for confirmation.',
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            content='The file `.env` has been deleted and `test.txt` has been created successfully.'
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=133,
+                        output_tokens=19,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                ),
+            ]
+        )
+
+
+model_retry_agent = Agent(model, name='model_retry_agent')
+
+
+@model_retry_agent.tool_plain
+def get_weather_in_city(city: str) -> str:
+    if city != 'Mexico City':
+        raise ModelRetry('Did you mean Mexico City?')
+    return 'sunny'
+
+
+model_retry_temporal_agent = TemporalAgent(model_retry_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class ModelRetryWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str]:
+        result = await model_retry_temporal_agent.run(prompt)
+        return result
+
+
+async def test_temporal_agent_with_model_retry(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ModelRetryWorkflow],
+        plugins=[AgentPlugin(model_retry_temporal_agent)],
+    ):
+        workflow = await client.start_workflow(  # pyright: ignore[reportUnknownMemberType]
+            ModelRetryWorkflow.run,
+            args=['What is the weather in CDMX?'],
+            id=ModelRetryWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        result = await workflow.result()
+        assert result.output == snapshot('The weather in Mexico City is currently sunny.')
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='What is the weather in CDMX?',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_weather_in_city',
+                            args='{"city":"CDMX"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=47,
+                        output_tokens=17,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id=IsStr(),
+                    finish_reason='tool_call',
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Did you mean Mexico City?',
+                            tool_name='get_weather_in_city',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_weather_in_city',
+                            args='{"city":"Mexico City"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=87,
+                        output_tokens=17,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id=IsStr(),
+                    finish_reason='tool_call',
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_weather_in_city',
+                            content='sunny',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The weather in Mexico City is currently sunny.')],
+                    usage=RequestUsage(
+                        input_tokens=116,
+                        output_tokens=10,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                ),
+            ]
+        )
+
+
+class CustomModelSettings(ModelSettings, total=False):
+    custom_setting: str
+
+
+def return_settings(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(str(agent_info.model_settings))])
+
+
+model_settings = CustomModelSettings(max_tokens=123, custom_setting='custom_value')
+model = FunctionModel(return_settings, settings=model_settings)
+
+settings_agent = Agent(model, name='settings_agent')
+
+# This needs to be done before the `TemporalAgent` is bound to the workflow.
+settings_temporal_agent = TemporalAgent(settings_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class SettingsAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await settings_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_custom_model_settings(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SettingsAgentWorkflow],
+        plugins=[AgentPlugin(settings_temporal_agent)],
+    ):
+        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            SettingsAgentWorkflow.run,
+            args=['Give me those settings'],
+            id=SettingsAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot("{'max_tokens': 123, 'custom_setting': 'custom_value'}")

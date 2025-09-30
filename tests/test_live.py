@@ -3,10 +3,10 @@
 WARNING: running these tests will make use of the relevant API tokens (and cost money).
 """
 
+import json
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import Callable
 
 import httpx
 import pytest
@@ -22,10 +22,10 @@ pytestmark = [
 
 
 def openai(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    return OpenAIModel('gpt-4o-mini', provider=OpenAIProvider(http_client=http_client))
+    return OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(http_client=http_client))
 
 
 def gemini(_: httpx.AsyncClient, _tmp_path: Path) -> Model:
@@ -34,22 +34,30 @@ def gemini(_: httpx.AsyncClient, _tmp_path: Path) -> Model:
     return GoogleModel('gemini-1.5-pro')
 
 
-def vertexai(_: httpx.AsyncClient, tmp_path: Path) -> Model:
+def vertexai(http_client: httpx.AsyncClient, tmp_path: Path) -> Model:
     from google.oauth2 import service_account
 
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
-    service_account_content = os.environ['GOOGLE_SERVICE_ACCOUNT_CONTENT']
-    service_account_path = tmp_path / 'service_account.json'
-    service_account_path.write_text(service_account_content)
+    if service_account_path := os.getenv('GOOGLE_APPLICATION_CREDENTIALS'):
+        project_id = json.loads(Path(service_account_path).read_text())['project_id']
+    elif service_account_content := os.getenv('GOOGLE_SERVICE_ACCOUNT_CONTENT'):
+        project_id = json.loads(service_account_content)['project_id']
+        service_account_path = tmp_path / 'service_account.json'
+        service_account_path.write_text(service_account_content)
+    else:
+        pytest.skip(
+            'VertexAI live test requires GOOGLE_APPLICATION_CREDENTIALS or GOOGLE_SERVICE_ACCOUNT_CONTENT to be set'
+        )
 
     credentials = service_account.Credentials.from_service_account_file(  # type: ignore[reportUnknownReturnType]
         service_account_path,
         scopes=['https://www.googleapis.com/auth/cloud-platform'],
     )
-    provider = GoogleProvider(credentials=credentials)
-    return GoogleModel('gemini-1.5-flash', provider=provider)
+    provider = GoogleProvider(credentials=credentials, project=project_id)
+    provider.client.aio._api_client._async_httpx_client = http_client  # type: ignore
+    return GoogleModel('gemini-2.0-flash', provider=provider)
 
 
 def groq(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
@@ -67,10 +75,10 @@ def anthropic(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 
 
 def ollama(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    return OpenAIModel(
+    return OpenAIChatModel(
         'qwen2:0.5b', provider=OpenAIProvider(base_url='http://localhost:11434/v1/', http_client=http_client)
     )
 
@@ -91,11 +99,9 @@ def cohere(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 
 params = [
     pytest.param(openai, id='openai'),
-    pytest.param(gemini, marks=pytest.mark.skip(reason='API seems very flaky'), id='gemini'),
-    pytest.param(
-        vertexai, marks=pytest.mark.skip(reason='This needs to be fixed. It raises RuntimeError.'), id='vertexai'
-    ),
-    pytest.param(groq, id='groq'),
+    pytest.param(gemini, id='gemini', marks=pytest.mark.skip(reason='API seems very flaky')),
+    pytest.param(vertexai, id='vertexai'),
+    pytest.param(groq, id='groq', marks=pytest.mark.skip(reason='test_structured has started failing')),
     pytest.param(anthropic, id='anthropic'),
     pytest.param(ollama, id='ollama'),
     pytest.param(mistral, id='mistral'),

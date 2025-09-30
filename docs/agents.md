@@ -9,10 +9,10 @@ The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptua
 
 | **Component**                                             | **Description**                                                                                           |
 | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| [System prompt(s)](#system-prompts)                       | A set of instructions for the LLM written by the developer.                                               |
+| [Instructions](#instructions)                             | A set of instructions for the LLM written by the developer.                                               |
 | [Function tool(s)](tools.md) and [toolsets](toolsets.md)  | Functions that the LLM may call to get information while generating a response.                           |
 | [Structured output type](output.md)                       | The structured datatype the LLM must return at the end of a run, if specified.                            |
-| [Dependency type constraint](dependencies.md)             | System prompt functions, tools, and output validators may all use dependencies when they're run.          |
+| [Dependency type constraint](dependencies.md)             | Dynamic instructions functions, tools, and output functions may all use dependencies when they're run.          |
 | [LLM model](api/models/base.md)                           | Optional default LLM model associated with the agent. Can also be specified when running the agent.       |
 | [Model Settings](#additional-configuration)               | Optional default model settings to help fine tune requests. Can also be specified when running the agent. |
 
@@ -115,22 +115,20 @@ The example below shows how to stream events and text output. You can also [stre
 import asyncio
 from collections.abc import AsyncIterable
 from datetime import date
-from typing import Union
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     AgentStreamEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    HandleResponseEvent,
     PartDeltaEvent,
     PartStartEvent,
+    RunContext,
     TextPartDelta,
     ThinkingPartDelta,
     ToolCallPartDelta,
 )
-from pydantic_ai.tools import RunContext
 
 weather_agent = Agent(
     'openai:gpt-4o',
@@ -152,7 +150,7 @@ output_messages: list[str] = []
 
 async def event_stream_handler(
     ctx: RunContext,
-    event_stream: AsyncIterable[Union[AgentStreamEvent, HandleResponseEvent]],
+    event_stream: AsyncIterable[AgentStreamEvent],
 ):
     async for event in event_stream:
         if isinstance(event, PartStartEvent):
@@ -217,9 +215,9 @@ Unlike `run_stream()`, it always runs the agent graph to completion even if text
     To get the best of both worlds, at the expense of some additional complexity, you can use [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] as described in the next section, which lets you [iterate over the agent graph](#iterating-over-an-agents-graph) and [stream both events and output](#streaming-all-events-and-output) at every step.
 
 ```python {title="run_events.py" requires="run_stream_events.py"}
-from run_stream_events import weather_agent, event_stream_handler, output_messages
-
 import asyncio
+
+from run_stream_events import event_stream_handler, output_messages, weather_agent
 
 
 async def main():
@@ -283,7 +281,6 @@ async def main():
     [
         UserPromptNode(
             user_prompt='What is the capital of France?',
-            instructions=None,
             instructions_functions=[],
             system_prompts=(),
             system_prompt_functions=[],
@@ -302,9 +299,7 @@ async def main():
         CallToolsNode(
             model_response=ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
-                usage=Usage(
-                    requests=1, request_tokens=56, response_tokens=7, total_tokens=63
-                ),
+                usage=RequestUsage(input_tokens=56, output_tokens=7),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
             )
@@ -348,7 +343,6 @@ async def main():
         [
             UserPromptNode(
                 user_prompt='What is the capital of France?',
-                instructions=None,
                 instructions_functions=[],
                 system_prompts=(),
                 system_prompt_functions=[],
@@ -367,12 +361,7 @@ async def main():
             CallToolsNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='The capital of France is Paris.')],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=56,
-                        response_tokens=7,
-                        total_tokens=63,
-                    ),
+                    usage=RequestUsage(input_tokens=56, output_tokens=7),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                 )
@@ -391,7 +380,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 #### Accessing usage and final output
 
-You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage()`. This method returns a [`Usage`][pydantic_ai.usage.Usage] object containing the usage data.
+You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage()`. This method returns a [`RunUsage`][pydantic_ai.usage.RunUsage] object containing the usage data.
 
 Once the run finishes, `agent_run.result` becomes a [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
 
@@ -404,18 +393,18 @@ import asyncio
 from dataclasses import dataclass
 from datetime import date
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartDeltaEvent,
     PartStartEvent,
+    RunContext,
     TextPartDelta,
     ThinkingPartDelta,
     ToolCallPartDelta,
 )
-from pydantic_ai.tools import RunContext
 
 
 @dataclass
@@ -550,16 +539,14 @@ _(This example is complete, it can be run "as is")_
 #### Usage Limits
 
 Pydantic AI offers a [`UsageLimits`][pydantic_ai.usage.UsageLimits] structure to help you limit your
-usage (tokens and/or requests) on model runs.
+usage (tokens, requests, and tool calls) on model runs.
 
 You can apply these settings by passing the `usage_limits` argument to the `run{_sync,_stream}` functions.
 
 Consider the following example, where we limit the number of response tokens:
 
 ```py
-from pydantic_ai import Agent
-from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
 
 agent = Agent('anthropic:claude-3-5-sonnet-latest')
 
@@ -570,7 +557,7 @@ result_sync = agent.run_sync(
 print(result_sync.output)
 #> Rome
 print(result_sync.usage())
-#> Usage(requests=1, request_tokens=62, response_tokens=1, total_tokens=63)
+#> RunUsage(input_tokens=62, output_tokens=1, requests=1)
 
 try:
     result_sync = agent.run_sync(
@@ -579,7 +566,7 @@ try:
     )
 except UsageLimitExceeded as e:
     print(e)
-    #> Exceeded the response_tokens_limit of 10 (response_tokens=32)
+    #> Exceeded the output_tokens_limit of 10 (output_tokens=32)
 ```
 
 Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling:
@@ -587,9 +574,7 @@ Restricting the number of requests can be useful in preventing infinite loops or
 ```py
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry
-from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai import Agent, ModelRetry, UsageLimitExceeded, UsageLimits
 
 
 class NeverOutputType(TypedDict):
@@ -625,8 +610,32 @@ except UsageLimitExceeded as e:
 1. This tool has the ability to retry 5 times before erroring, simulating a tool that might get stuck in a loop.
 2. This run will error after 3 requests, preventing the infinite tool calling.
 
+##### Capping tool calls
+
+If you need a limit on the number of successful tool invocations within a single run, use `tool_calls_limit`:
+
+```py
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.usage import UsageLimits
+
+agent = Agent('anthropic:claude-3-5-sonnet-latest')
+
+@agent.tool_plain
+def do_work() -> str:
+    return 'ok'
+
+try:
+    # Allow at most one executed tool call in this run
+    agent.run_sync('Please call the tool twice', usage_limits=UsageLimits(tool_calls_limit=1))
+except UsageLimitExceeded as e:
+    print(e)
+    #> The next tool call would exceed the tool_calls_limit of 1 (tool_calls=1)
+```
+
 !!! note
-    This is especially relevant if you've registered many tools. The `request_limit` can be used to prevent the model from calling them in a loop too many times.
+    - Usage limits are especially relevant if you've registered many tools. Use `request_limit` to bound the number of model turns, and `tool_calls_limit` to cap the number of successful tool executions within a run.
+    - These limits are enforced at the final stage before the LLM is called. If your limits are stricter than your retry settings, the usage limit will be reached before all retries are attempted.
 
 #### Model (Run) Settings
 
@@ -644,12 +653,11 @@ For example, if you'd like to set the `temperature` setting to `0.0` to ensure l
 you can do the following:
 
 ```py
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai import Agent, ModelSettings
+from pydantic_ai.models.openai import OpenAIChatModel
 
 # 1. Model-level defaults
-model = OpenAIModel(
+model = OpenAIChatModel(
     'gpt-4o',
     settings=ModelSettings(temperature=0.8, max_tokens=500)  # Base defaults
 )
@@ -920,10 +928,10 @@ Note that returning an empty string will result in no instruction message added.
 
 Validation errors from both function tool parameter validation and [structured output validation](output.md#structured-output) can be passed back to the model with a request to retry.
 
-You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](tools.md) or [output validator function](output.md#output-validator-functions) to tell the model it should retry generating a response.
+You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](tools.md) or [output function](output.md#output-functions) to tell the model it should retry generating a response.
 
-- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.Agent.__init__], a [specific tool][pydantic_ai.Agent.tool], or an [output validator][pydantic_ai.Agent.__init__].
-- You can access the current retry count from within a tool or output validator via [`ctx.retry`][pydantic_ai.tools.RunContext].
+- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.Agent.__init__], a [specific tool][pydantic_ai.Agent.tool], or [outputs][pydantic_ai.Agent.__init__].
+- You can access the current retry count from within a tool or output function via [`ctx.retry`][pydantic_ai.tools.RunContext].
 
 Here's an example:
 
@@ -1018,9 +1026,7 @@ with capture_run_messages() as messages:  # (2)!
                         tool_call_id='pyd_ai_tool_call_id',
                     )
                 ],
-                usage=Usage(
-                    requests=1, request_tokens=62, response_tokens=4, total_tokens=66
-                ),
+                usage=RequestUsage(input_tokens=62, output_tokens=4),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
             ),
@@ -1042,9 +1048,7 @@ with capture_run_messages() as messages:  # (2)!
                         tool_call_id='pyd_ai_tool_call_id',
                     )
                 ],
-                usage=Usage(
-                    requests=1, request_tokens=72, response_tokens=8, total_tokens=80
-                ),
+                usage=RequestUsage(input_tokens=72, output_tokens=8),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
             ),

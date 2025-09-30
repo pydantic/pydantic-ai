@@ -2,8 +2,9 @@ from __future__ import annotations as _annotations
 
 import functools
 import sys
+from collections.abc import Callable
 from functools import partial
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 from dirty_equals import HasRepr

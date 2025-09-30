@@ -18,9 +18,9 @@ and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`A
 
     E.g. you've awaited one of the following coroutines:
 
-    * [`StreamedRunResult.stream()`][pydantic_ai.result.StreamedRunResult.stream]
+    * [`StreamedRunResult.stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output]
     * [`StreamedRunResult.stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text]
-    * [`StreamedRunResult.stream_structured()`][pydantic_ai.result.StreamedRunResult.stream_structured]
+    * [`StreamedRunResult.stream_responses()`][pydantic_ai.result.StreamedRunResult.stream_responses]
     * [`StreamedRunResult.get_output()`][pydantic_ai.result.StreamedRunResult.get_output]
 
     **Note:** The final result message will NOT be added to result messages if you use [`.stream_text(delta=True)`][pydantic_ai.result.StreamedRunResult.stream_text] since in this case the result content is never built as one string.
@@ -58,7 +58,7 @@ print(result.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=Usage(requests=1, request_tokens=60, response_tokens=12, total_tokens=72),
+        usage=RequestUsage(input_tokens=60, output_tokens=12),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
     ),
@@ -126,7 +126,7 @@ async def main():
                         content='Did you hear about the toothpaste scandal? They called it Colgate.'
                     )
                 ],
-                usage=Usage(request_tokens=50, response_tokens=12, total_tokens=62),
+                usage=RequestUsage(input_tokens=50, output_tokens=12),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
             ),
@@ -180,7 +180,7 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=Usage(requests=1, request_tokens=60, response_tokens=12, total_tokens=72),
+        usage=RequestUsage(input_tokens=60, output_tokens=12),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
     ),
@@ -198,7 +198,7 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=Usage(requests=1, request_tokens=61, response_tokens=26, total_tokens=87),
+        usage=RequestUsage(input_tokens=61, output_tokens=26),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
     ),
@@ -221,8 +221,10 @@ Here's an example showing how:
 ```python {title="serialize messages to json"}
 from pydantic_core import to_jsonable_python
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessagesTypeAdapter  # (1)!
+from pydantic_ai import (
+    Agent,
+    ModelMessagesTypeAdapter,  # (1)!
+)
 
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
 
@@ -239,7 +241,7 @@ result2 = agent.run_sync(  # (3)!
 1. Alternatively, you can create a `TypeAdapter` from scratch:
    ```python {lint="skip" format="skip"}
    from pydantic import TypeAdapter
-   from pydantic_ai.messages import ModelMessage
+   from pydantic_ai import ModelMessage
    ModelMessagesTypeAdapter = TypeAdapter(list[ModelMessage])
    ```
 2. Alternatively you can serialize to/from JSON directly:
@@ -299,7 +301,7 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=Usage(requests=1, request_tokens=60, response_tokens=12, total_tokens=72),
+        usage=RequestUsage(input_tokens=60, output_tokens=12),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
     ),
@@ -317,7 +319,7 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=Usage(requests=1, request_tokens=61, response_tokens=26, total_tokens=87),
+        usage=RequestUsage(input_tokens=61, output_tokens=26),
         model_name='gemini-1.5-pro',
         timestamp=datetime.datetime(...),
     ),
@@ -346,8 +348,8 @@ The `history_processors` is a list of callables that take a list of
 Each processor is applied in sequence, and processors can be either synchronous or asynchronous.
 
 ```python {title="simple_history_processor.py"}
-from pydantic_ai import Agent
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -378,8 +380,7 @@ message_history = [
 You can use the `history_processor` to only keep the recent messages:
 
 ```python {title="keep_recent_messages.py"}
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai import Agent, ModelMessage
 
 
 async def keep_recent_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -402,9 +403,7 @@ History processors can optionally accept a [`RunContext`][pydantic_ai.tools.RunC
 additional information about the current run, such as dependencies, model information, and usage statistics:
 
 ```python {title="context_aware_processor.py"}
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage
-from pydantic_ai.tools import RunContext
+from pydantic_ai import Agent, ModelMessage, RunContext
 
 
 def context_aware_processor(
@@ -429,8 +428,7 @@ This allows for more sophisticated message processing based on the current state
 Use an LLM to summarize older messages to preserve context while reducing tokens.
 
 ```python {title="summarize_old_messages.py"}
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai import Agent, ModelMessage
 
 # Use a cheaper model to summarize old messages.
 summarize_agent = Agent(
@@ -467,8 +465,8 @@ You can test what messages are actually sent to the model provider using
 ```python {title="test_history_processor.py"}
 import pytest
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -517,8 +515,7 @@ def test_history_processor(function_model: FunctionModel, received_messages: lis
 You can also use multiple processors:
 
 ```python {title="multiple_history_processors.py"}
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelRequest
+from pydantic_ai import Agent, ModelMessage, ModelRequest
 
 
 def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:

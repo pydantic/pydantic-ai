@@ -7,25 +7,23 @@ import os
 import re
 import secrets
 import sys
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
-from typing_extensions import TypeAlias
 from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
-from pydantic_ai import Agent
-from pydantic_ai.messages import BinaryContent
+from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.models import Model, cached_async_http_client
 
 __all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'IsInstance', 'TestEnv', 'ClientWithHandler', 'try_import'
@@ -341,6 +339,13 @@ def document_content(assets_path: Path) -> BinaryContent:
 
 
 @pytest.fixture(scope='session')
+def text_document_content(assets_path: Path) -> BinaryContent:
+    content = assets_path.joinpath('dummy.txt').read_text()
+    bin_content = BinaryContent(data=content.encode(), media_type='text/plain')
+    return bin_content
+
+
+@pytest.fixture(scope='session')
 def deepseek_api_key() -> str:
     return os.getenv('DEEPSEEK_API_KEY', 'mock-api-key')
 
@@ -391,6 +396,11 @@ def heroku_inference_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def cerebras_api_key() -> str:
+    return os.getenv('CEREBRAS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def bedrock_provider():
     try:
         import boto3
@@ -409,7 +419,7 @@ def bedrock_provider():
         pytest.skip('boto3 is not installed')
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture()
 def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
     # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
     if not os.getenv('CI', False):
@@ -418,7 +428,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
     try:
         from google.genai import _api_client
     except ImportError:
-        pytest.skip('google is not installed')
+        return  # do nothing if this isn't installed
 
     @dataclass
     class NoOpCredentials:
@@ -431,11 +441,11 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
             return False
 
     return_value = (NoOpCredentials(), 'pydantic-ai')
-    mocker.patch.object(_api_client, '_load_auth', return_value=return_value)
+    mocker.patch.object(_api_client, 'load_auth', return_value=return_value)
 
 
 @pytest.fixture()
-async def vertex_provider():  # pragma: lax no cover
+async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
     # NOTE: You need to comment out this line to rewrite the cassettes locally.
     if not os.getenv('CI', False):
         pytest.skip('Requires properly configured local google vertex config to pass')
@@ -476,10 +486,10 @@ def model(
 
             return TestModel()
         elif request.param == 'openai':
-            from pydantic_ai.models.openai import OpenAIModel
+            from pydantic_ai.models.openai import OpenAIChatModel
             from pydantic_ai.providers.openai import OpenAIProvider
 
-            return OpenAIModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+            return OpenAIChatModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
         elif request.param == 'anthropic':
             from pydantic_ai.models.anthropic import AnthropicModel
             from pydantic_ai.providers.anthropic import AnthropicProvider

@@ -15,7 +15,7 @@ and `chat_app.ts` which renders messages in the browser.
 
 ## Running the Example
 
-With [dependencies installed and environment variables set](./index.md#usage), run:
+With [dependencies installed and environment variables set](./setup.md#usage), run:
 
 ```bash
 python/uv-run -m pydantic_ai_examples.chat_app

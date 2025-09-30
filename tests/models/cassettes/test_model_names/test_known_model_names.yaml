@@ -4,8 +4,6 @@ interactions:
     headers:
       accept:
       - '*/*'
-      accept-encoding:
-      - gzip, deflate
       connection:
       - keep-alive
       host:
@@ -14,10 +12,6 @@ interactions:
     uri: https://us.inference.heroku.com/available-models
   response:
     headers:
-      cache-control:
-      - no-cache, no-store, must-revalidate
-      connection:
-      - keep-alive
       content-length:
       - '760'
       content-security-policy:
@@ -86,6 +80,71 @@ interactions:
       - us
       type:
       - text-to-image
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      connection:
+      - keep-alive
+      host:
+      - api.cerebras.ai
+    method: GET
+    uri: https://api.cerebras.ai/v1/models
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      content-length:
+      - '762'
+      content-type:
+      - application/json
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=3600; includeSubDomains
+    parsed_body:
+      data:
+      - created: 0
+        id: llama-4-scout-17b-16e-instruct
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: qwen-3-32b
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: llama-3.3-70b
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: qwen-3-235b-a22b-instruct-2507
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: llama-4-maverick-17b-128e-instruct
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: qwen-3-coder-480b
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: gpt-oss-120b
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: qwen-3-235b-a22b-thinking-2507
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: llama3.1-8b
+        object: model
+        owned_by: Cerebras
+      object: list
     status:
       code: 200
       message: OK

@@ -2,11 +2,10 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Literal, Union, cast
+from typing import Literal, cast
 
 from typing_extensions import assert_never
 
-from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 from pydantic_ai.exceptions import UserError
 
 from .. import ModelHTTPError, usage
@@ -14,6 +13,7 @@ from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool
 from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    FinishReason,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -30,19 +30,18 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    check_allow_model_requests,
-)
+from . import Model, ModelRequestParameters, check_allow_model_requests
 
 try:
     from cohere import (
         AssistantChatMessageV2,
+        AssistantMessageV2ContentItem,
         AsyncClientV2,
+        ChatFinishReason,
         ChatMessageV2,
         SystemChatMessageV2,
         TextAssistantMessageV2ContentItem,
+        ThinkingAssistantMessageV2ContentItem,
         ToolCallV2,
         ToolCallV2Function,
         ToolChatMessageV2,
@@ -76,13 +75,21 @@ LatestCohereModelNames = Literal[
 ]
 """Latest Cohere models."""
 
-CohereModelName = Union[str, LatestCohereModelNames]
+CohereModelName = str | LatestCohereModelNames
 """Possible Cohere model names.
 
 Since Cohere supports a variety of date-stamped models, we explicitly list the latest models but
 allow any name in the type hints.
 See [Cohere's docs](https://docs.cohere.com/v2/docs/models) for a list of all available models.
 """
+
+_FINISH_REASON_MAP: dict[ChatFinishReason, FinishReason] = {
+    'COMPLETE': 'stop',
+    'STOP_SEQUENCE': 'stop',
+    'MAX_TOKENS': 'length',
+    'TOOL_CALL': 'tool_call',
+    'ERROR': 'error',
+}
 
 
 class CohereModelSettings(ModelSettings, total=False):
@@ -106,7 +113,7 @@ class CohereModel(Model):
     client: AsyncClientV2 = field(repr=False)
 
     _model_name: CohereModelName = field(repr=False)
-    _system: str = field(default='cohere', repr=False)
+    _provider: Provider[AsyncClientV2] = field(repr=False)
 
     def __init__(
         self,
@@ -131,6 +138,7 @@ class CohereModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
@@ -139,6 +147,16 @@ class CohereModel(Model):
     def base_url(self) -> str:
         client_wrapper = self.client._client_wrapper  # type: ignore
         return str(client_wrapper.get_base_url())
+
+    @property
+    def model_name(self) -> CohereModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -149,18 +167,7 @@ class CohereModel(Model):
         check_allow_model_requests()
         response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}), model_request_parameters)
         model_response = self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
-
-    @property
-    def model_name(self) -> CohereModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     async def _chat(
         self,
@@ -195,11 +202,12 @@ class CohereModel(Model):
     def _process_response(self, response: V2ChatResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         parts: list[ModelResponsePart] = []
-        if response.message.content is not None and len(response.message.content) > 0:
-            # While Cohere's API returns a list, it only does that for future proofing
-            # and currently only one item is being returned.
-            choice = response.message.content[0]
-            parts.extend(split_content_into_text_and_thinking(choice.text, self.profile.thinking_tags))
+        if response.message.content is not None:
+            for content in response.message.content:
+                if content.type == 'text':
+                    parts.append(TextPart(content=content.text))
+                elif content.type == 'thinking':  # pragma: no branch
+                    parts.append(ThinkingPart(content=content.thinking))
         for c in response.message.tool_calls or []:
             if c.function and c.function.name and c.function.arguments:  # pragma: no branch
                 parts.append(
@@ -209,7 +217,19 @@ class CohereModel(Model):
                         tool_call_id=c.id or _generate_tool_call_id(),
                     )
                 )
-        return ModelResponse(parts=parts, usage=_map_usage(response), model_name=self._model_name)
+
+        raw_finish_reason = response.finish_reason
+        provider_details = {'finish_reason': raw_finish_reason}
+        finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
+        return ModelResponse(
+            parts=parts,
+            usage=_map_usage(response),
+            model_name=self._model_name,
+            provider_name=self._provider.name,
+            finish_reason=finish_reason,
+            provider_details=provider_details,
+        )
 
     def _map_messages(self, messages: list[ModelMessage]) -> list[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
@@ -219,25 +239,29 @@ class CohereModel(Model):
                 cohere_messages.extend(self._map_user_message(message))
             elif isinstance(message, ModelResponse):
                 texts: list[str] = []
+                thinking: list[str] = []
                 tool_calls: list[ToolCallV2] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         texts.append(item.content)
                     elif isinstance(item, ThinkingPart):
-                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
-                        # please open an issue. The below code is the code to send thinking to the provider.
-                        # texts.append(f'<think>\n{item.content}\n</think>')
-                        pass
+                        thinking.append(item.content)
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                         # This is currently never returned from cohere
                         pass
                     else:
                         assert_never(item)
+
                 message_param = AssistantChatMessageV2(role='assistant')
-                if texts:
-                    message_param.content = [TextAssistantMessageV2ContentItem(text='\n\n'.join(texts))]
+                if texts or thinking:
+                    contents: list[AssistantMessageV2ContentItem] = []
+                    if thinking:
+                        contents.append(ThinkingAssistantMessageV2ContentItem(thinking='\n\n'.join(thinking)))
+                    if texts:  # pragma: no branch
+                        contents.append(TextAssistantMessageV2ContentItem(text='\n\n'.join(texts)))
+                    message_param.content = contents
                 if tool_calls:
                     message_param.tool_calls = tool_calls
                 cohere_messages.append(message_param)
@@ -301,10 +325,10 @@ class CohereModel(Model):
                 assert_never(part)
 
 
-def _map_usage(response: V2ChatResponse) -> usage.Usage:
+def _map_usage(response: V2ChatResponse) -> usage.RequestUsage:
     u = response.usage
     if u is None:
-        return usage.Usage()
+        return usage.RequestUsage()
     else:
         details: dict[str, int] = {}
         if u.billed_units is not None:
@@ -317,11 +341,10 @@ def _map_usage(response: V2ChatResponse) -> usage.Usage:
             if u.billed_units.classifications:  # pragma: no cover
                 details['classifications'] = int(u.billed_units.classifications)
 
-        request_tokens = int(u.tokens.input_tokens) if u.tokens and u.tokens.input_tokens else None
-        response_tokens = int(u.tokens.output_tokens) if u.tokens and u.tokens.output_tokens else None
-        return usage.Usage(
-            request_tokens=request_tokens,
-            response_tokens=response_tokens,
-            total_tokens=(request_tokens or 0) + (response_tokens or 0),
+        request_tokens = int(u.tokens.input_tokens) if u.tokens and u.tokens.input_tokens else 0
+        response_tokens = int(u.tokens.output_tokens) if u.tokens and u.tokens.output_tokens else 0
+        return usage.RequestUsage(
+            input_tokens=request_tokens,
+            output_tokens=response_tokens,
             details=details,
         )

@@ -11,9 +11,6 @@ You need to either install [`pydantic-ai`](../install.md), or[`pydantic-ai-slim`
 pip/uv-add "pydantic-ai-slim[mcp]"
 ```
 
-!!! note
-    MCP integration requires Python 3.10 or higher.
-
 ## Usage
 
 Pydantic AI comes with two ways to connect to MCP servers:
@@ -22,7 +19,7 @@ Pydantic AI comes with two ways to connect to MCP servers:
 - [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] which connects to an MCP server using the [HTTP SSE](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) transport
 - [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] which runs the server as a subprocess and connects to it using the [stdio](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) transport
 
-Examples of all three are shown below; [mcp-run-python](run-python.md) is used as the MCP server in all examples.
+Examples of all three are shown below.
 
 Each MCP server instance is a [toolset](../toolsets.md) and can be registered with an [`Agent`][pydantic_ai.Agent] using the `toolsets` argument.
 
@@ -38,7 +35,7 @@ You can use the [`async with agent`][pydantic_ai.Agent.__aenter__] context manag
 
 Before creating the Streamable HTTP client, we need to run a server that supports the Streamable HTTP transport.
 
-```python {title="streamable_http_server.py" py="3.10" dunder_name="not_main"}
+```python {title="streamable_http_server.py" dunder_name="not_main"}
 from mcp.server.fastmcp import FastMCP
 
 app = FastMCP()
@@ -53,7 +50,7 @@ if __name__ == '__main__':
 
 Then we can create the client:
 
-```python {title="mcp_streamable_http_client.py" py="3.10"}
+```python {title="mcp_streamable_http_client.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
@@ -62,16 +59,16 @@ agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
 
 async def main():
     async with agent:  # (3)!
-        result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
+        result = await agent.run('What is 7 plus 5?')
     print(result.output)
-    #> There are 9,208 days between January 1, 2000, and March 18, 2025.
+    #> The answer is 12.
 ```
 
 1. Define the MCP server with the URL used to connect.
 2. Create an agent with the MCP server attached.
 3. Create a client session to connect to the server.
 
-_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 **What's happening here?**
 
@@ -100,59 +97,59 @@ Will display as follows:
 [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] connects over HTTP using the [HTTP + Server Sent Events transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) to a server.
 
 !!! note
-    [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] requires an MCP server to be running and accepting HTTP connections before running the agent. Running the server is not managed by Pydantic AI.
+    The SSE transport in MCP is deprecated, you should use Streamable HTTP instead.
 
-The name "HTTP" is used since this implementation will be adapted in future to use the new
-[Streamable HTTP](https://github.com/modelcontextprotocol/specification/pull/206) currently in development.
+Before creating the SSE client, we need to run a server that supports the SSE transport.
 
-Before creating the SSE client, we need to run the server (docs [here](run-python.md)):
 
-```bash {title="terminal (run sse server)"}
-deno run \
-  -N -R=node_modules -W=node_modules --node-modules-dir=auto \
-  jsr:@pydantic/mcp-run-python sse
+```python {title="sse_server.py" dunder_name="not_main"}
+from mcp.server.fastmcp import FastMCP
+
+app = FastMCP()
+
+@app.tool()
+def add(a: int, b: int) -> int:
+    return a + b
+
+if __name__ == '__main__':
+    app.run(transport='sse')
 ```
 
-```python {title="mcp_sse_client.py" py="3.10"}
+Then we can create the client:
+
+```python {title="mcp_sse_client.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerSSE
 
-server = MCPServerSSE(url='http://localhost:3001/sse')  # (1)!
+server = MCPServerSSE('http://localhost:3001/sse')  # (1)!
 agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
 
 
 async def main():
     async with agent:  # (3)!
-        result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
+        result = await agent.run('What is 7 plus 5?')
     print(result.output)
-    #> There are 9,208 days between January 1, 2000, and March 18, 2025.
+    #> The answer is 12.
 ```
 
 1. Define the MCP server with the URL used to connect.
 2. Create an agent with the MCP server attached.
 3. Create a client session to connect to the server.
 
-_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ### MCP "stdio" Server
 
-The other transport offered by MCP is the [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. In this case, you'd use the [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] class.
+MCP also offers [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. In this case, you'd use the [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] class.
 
-```python {title="mcp_stdio_client.py" py="3.10"}
+In this example [mcp-run-python](https://github.com/pydantic/mcp-run-python) is used as the MCP server.
+
+```python {title="mcp_stdio_client.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
 server = MCPServerStdio(  # (1)!
-    'deno',
-    args=[
-        'run',
-        '-N',
-        '-R=node_modules',
-        '-W=node_modules',
-        '--node-modules-dir=auto',
-        'jsr:@pydantic/mcp-run-python',
-        'stdio',
-    ]
+    'uv', args=['run', 'mcp-run-python', 'stdio'], timeout=10
 )
 agent = Agent('openai:gpt-4o', toolsets=[server])
 
@@ -164,23 +161,75 @@ async def main():
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```
 
-1. See [MCP Run Python](run-python.md) for more information.
+1. See [MCP Run Python](https://github.com/pydantic/mcp-run-python) for more information.
 
-## Tool call customisation
+## Loading MCP Servers from Configuration
+
+Instead of creating MCP server instances individually in code, you can load multiple servers from a JSON configuration file using [`load_mcp_servers()`][pydantic_ai.mcp.load_mcp_servers].
+
+This is particularly useful when you need to manage multiple MCP servers or want to configure servers externally without modifying code.
+
+### Configuration Format
+
+The configuration file should be a JSON file with an `mcpServers` object containing server definitions. Each server is identified by a unique key and contains the configuration for that server type:
+
+```json {title="mcp_config.json"}
+{
+  "mcpServers": {
+    "python-runner": {
+      "command": "uv",
+      "args": ["run", "mcp-run-python", "stdio"]
+    },
+    "weather-api": {
+      "url": "http://localhost:3001/sse"
+    },
+    "calculator": {
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+!!! note
+    The MCP server is only inferred to be an SSE server because of the `/sse` suffix.
+    Any other server with the "url" field will be inferred to be a Streamable HTTP server.
+
+    We made this decision given that the SSE transport is deprecated.
+
+### Usage
+
+```python {title="mcp_config_loader.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import load_mcp_servers
+
+# Load all servers from configuration file
+servers = load_mcp_servers('mcp_config.json')
+
+# Create agent with all loaded servers
+agent = Agent('openai:gpt-5', toolsets=servers)
+
+async def main():
+    async with agent:
+        result = await agent.run('What is 7 plus 5?')
+    print(result.output)
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+## Tool call customization
 
 The MCP servers provide the ability to set a `process_tool_call` which allows
-the customisation of tool call requests and their responses.
+the customization of tool call requests and their responses.
 
 A common use case for this is to inject metadata to the requests which the server
-call needs.
+call needs:
 
-```python {title="mcp_process_tool_call.py" py="3.10"}
+```python {title="mcp_process_tool_call.py"}
 from typing import Any
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.mcp import CallToolFunc, MCPServerStdio, ToolResult
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import RunContext
 
 
 async def process_tool_call(
@@ -193,7 +242,7 @@ async def process_tool_call(
     return await call_tool(name, tool_args, {'deps': ctx.deps})
 
 
-server = MCPServerStdio('python', ['mcp_server.py'], process_tool_call=process_tool_call)
+server = MCPServerStdio('python', args=['mcp_server.py'], process_tool_call=process_tool_call)
 agent = Agent(
     model=TestModel(call_tools=['echo_deps']),
     deps_type=int,
@@ -208,24 +257,58 @@ async def main():
     #> {"echo_deps":{"echo":"This is an echo message","deps":42}}
 ```
 
+How to access the metadata is MCP server SDK specific. For example with the [MCP Python
+SDK](https://github.com/modelcontextprotocol/python-sdk), it is accessible via the
+[`ctx: Context`](https://github.com/modelcontextprotocol/python-sdk#context)
+argument that can be included on tool call handlers:
+
+```python {title="mcp_server.py"}
+from typing import Any
+
+from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.session import ServerSession
+
+mcp = FastMCP('Pydantic AI MCP Server')
+log_level = 'unset'
+
+
+@mcp.tool()
+async def echo_deps(ctx: Context[ServerSession, None]) -> dict[str, Any]:
+    """Echo the run context.
+
+    Args:
+        ctx: Context object containing request and session information.
+
+    Returns:
+        Dictionary with an echo message and the deps.
+    """
+    await ctx.info('This is an info message')
+
+    deps: Any = getattr(ctx.request_context.meta, 'deps')
+    return {'echo': 'This is an echo message', 'deps': deps}
+
+if __name__ == '__main__':
+    mcp.run()
+```
+
 ## Using Tool Prefixes to Avoid Naming Conflicts
 
 When connecting to multiple MCP servers that might provide tools with the same name, you can use the `tool_prefix` parameter to avoid naming conflicts. This parameter adds a prefix to all tool names from a specific server.
 
 This allows you to use multiple servers that might have overlapping tool names without conflicts:
 
-```python {title="mcp_tool_prefix_http_client.py" py="3.10"}
+```python {title="mcp_tool_prefix_http_client.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerSSE
 
 # Create two servers with different prefixes
 weather_server = MCPServerSSE(
-    url='http://localhost:3001/sse',
+    'http://localhost:3001/sse',
     tool_prefix='weather'  # Tools will be prefixed with 'weather_'
 )
 
 calculator_server = MCPServerSSE(
-    url='http://localhost:3002/sse',
+    'http://localhost:3002/sse',
     tool_prefix='calc'  # Tools will be prefixed with 'calc_'
 )
 
@@ -234,6 +317,10 @@ calculator_server = MCPServerSSE(
 # - 'calc_get_data'
 agent = Agent('openai:gpt-4o', toolsets=[weather_server, calculator_server])
 ```
+
+## Tool metadata
+
+MCP tools can include metadata that provides additional information about the tool's characteristics, which can be useful when [filtering tools][pydantic_ai.toolsets.FilteredToolset]. The `meta`, `annotations`, and `output_schema` fields can be found on the `metadata` dict on the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] object that's passed to filter functions.
 
 ## Custom TLS / SSL configuration
 
@@ -247,19 +334,19 @@ All HTTP-based MCP client classes
 parameter that lets you pass your own pre-configured
 [`httpx.AsyncClient`](https://www.python-httpx.org/async/).
 
-```python {title="mcp_custom_tls_client.py" py="3.10"}
-import httpx
+```python {title="mcp_custom_tls_client.py"}
 import ssl
+
+import httpx
 
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerSSE
 
-
 # Trust an internal / self-signed CA
-ssl_ctx = ssl.create_default_context(cafile="/etc/ssl/private/my_company_ca.pem")
+ssl_ctx = ssl.create_default_context(cafile='/etc/ssl/private/my_company_ca.pem')
 
 # OPTIONAL: if the server requires **mutual TLS** load your client certificate
-ssl_ctx.load_cert_chain(certfile="/etc/ssl/certs/client.crt", keyfile="/etc/ssl/private/client.key",)
+ssl_ctx.load_cert_chain(certfile='/etc/ssl/certs/client.crt', keyfile='/etc/ssl/private/client.key',)
 
 http_client = httpx.AsyncClient(
     verify=ssl_ctx,
@@ -267,10 +354,10 @@ http_client = httpx.AsyncClient(
 )
 
 server = MCPServerSSE(
-    url="http://localhost:3001/sse",
+    'http://localhost:3001/sse',
     http_client=http_client,  # (1)!
 )
-agent = Agent("openai:gpt-4o", toolsets=[server])
+agent = Agent('openai:gpt-4o', toolsets=[server])
 
 async def main():
     async with agent:
@@ -280,7 +367,7 @@ async def main():
 ```
 
 1. When you supply `http_client`, Pydantic AI re-uses this client for every
-   request.  Anything supported by **httpx** (`verify`, `cert`, custom
+   request. Anything supported by **httpx** (`verify`, `cert`, custom
    proxies, timeouts, etc.) therefore applies to all MCP traffic.
 
 ## MCP Sampling
@@ -318,13 +405,13 @@ Pydantic AI supports sampling as both a client and server. See the [server](./se
 
 Sampling is automatically supported by Pydantic AI agents when they act as a client.
 
-To be able to use sampling, an MCP server instance needs to have a [`sampling_model`][pydantic_ai.mcp.MCPServerStdio.sampling_model] set. This can be done either directly on the server using the constructor keyword argument or the property, or by using [`agent.set_mcp_sampling_model()`][pydantic_ai.Agent.set_mcp_sampling_model] to set the agent's model or one specified as an argument as the sampling model on all MCP servers registered with that agent.
+To be able to use sampling, an MCP server instance needs to have a [`sampling_model`][pydantic_ai.mcp.MCPServer.sampling_model] set. This can be done either directly on the server using the constructor keyword argument or the property, or by using [`agent.set_mcp_sampling_model()`][pydantic_ai.Agent.set_mcp_sampling_model] to set the agent's model or one specified as an argument as the sampling model on all MCP servers registered with that agent.
 
 Let's say we have an MCP server that wants to use sampling (in this case to generate an SVG as per the tool arguments).
 
 ??? example "Sampling MCP Server"
 
-    ```python {title="generate_svg.py" py="3.10"}
+    ```python {title="generate_svg.py"}
     import re
     from pathlib import Path
 
@@ -362,11 +449,11 @@ Let's say we have an MCP server that wants to use sampling (in this case to gene
 
 Using this server with an `Agent` will automatically allow sampling:
 
-```python {title="sampling_mcp_client.py" py="3.10" requires="generate_svg.py"}
+```python {title="sampling_mcp_client.py" requires="generate_svg.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
-server = MCPServerStdio(command='python', args=['generate_svg.py'])
+server = MCPServerStdio('python', args=['generate_svg.py'])
 agent = Agent('openai:gpt-4o', toolsets=[server])
 
 
@@ -378,16 +465,156 @@ async def main():
     #> Image file written to robot_punk.svg.
 ```
 
-_(This example is complete, it can be run "as is" with Python 3.10+)_
+_(This example is complete, it can be run "as is")_
 
-You can disallow sampling by setting [`allow_sampling=False`][pydantic_ai.mcp.MCPServerStdio.allow_sampling] when creating the server reference, e.g.:
+You can disallow sampling by setting [`allow_sampling=False`][pydantic_ai.mcp.MCPServer.allow_sampling] when creating the server reference, e.g.:
 
-```python {title="sampling_disallowed.py" hl_lines="6" py="3.10"}
+```python {title="sampling_disallowed.py" hl_lines="6"}
 from pydantic_ai.mcp import MCPServerStdio
 
 server = MCPServerStdio(
-    command='python',
+    'python',
     args=['generate_svg.py'],
     allow_sampling=False,
 )
 ```
+
+## Elicitation
+
+In MCP, [elicitation](https://modelcontextprotocol.io/docs/concepts/elicitation) allows a server to request for [structured input](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#supported-schema-types) from the client for missing or additional context during a session.
+
+Elicitation let models essentially say "Hold on - I need to know X before i can continue" rather than requiring everything upfront or taking a shot in the dark.
+
+### How Elicitation works
+
+Elicitation introduces a new protocol message type called [`ElicitRequest`](https://modelcontextprotocol.io/specification/2025-06-18/schema#elicitrequest), which is sent from the server to the client when it needs additional information. The client can then respond with an [`ElicitResult`](https://modelcontextprotocol.io/specification/2025-06-18/schema#elicitresult) or an `ErrorData` message.
+
+Here's a typical interaction:
+
+- User makes a request to the MCP server (e.g. "Book a table at that Italian place")
+- The server identifies that it needs more information (e.g. "Which Italian place?", "What date and time?")
+- The server sends an `ElicitRequest` to the client asking for the missing information.
+- The client receives the request, presents it to the user (e.g. via a terminal prompt, GUI dialog, or web interface).
+- User provides the requested information, `decline` or `cancel` the request.
+- The client sends an `ElicitResult` back to the server with the user's response.
+- With the structured data, the server can continue processing the original request.
+
+This allows for a more interactive and user-friendly experience, especially for multi-staged workflows. Instead of requiring all information upfront, the server can ask for it as needed, making the interaction feel more natural.
+
+### Setting up Elicitation
+
+To enable elicitation, provide an [`elicitation_callback`][pydantic_ai.mcp.MCPServer.elicitation_callback] function when creating your MCP server instance:
+
+```python {title="restaurant_server.py"}
+from mcp.server.fastmcp import Context, FastMCP
+from pydantic import BaseModel, Field
+
+mcp = FastMCP(name='Restaurant Booking')
+
+
+class BookingDetails(BaseModel):
+    """Schema for restaurant booking information."""
+
+    restaurant: str = Field(description='Choose a restaurant')
+    party_size: int = Field(description='Number of people', ge=1, le=8)
+    date: str = Field(description='Reservation date (DD-MM-YYYY)')
+
+
+@mcp.tool()
+async def book_table(ctx: Context) -> str:
+    """Book a restaurant table with user input."""
+    # Ask user for booking details using Pydantic schema
+    result = await ctx.elicit(message='Please provide your booking details:', schema=BookingDetails)
+
+    if result.action == 'accept' and result.data:
+        booking = result.data
+        return f'✅ Booked table for {booking.party_size} at {booking.restaurant} on {booking.date}'
+    elif result.action == 'decline':
+        return 'No problem! Maybe another time.'
+    else:  # cancel
+        return 'Booking cancelled.'
+
+
+if __name__ == '__main__':
+    mcp.run(transport='stdio')
+```
+
+This server demonstrates elicitation by requesting structured booking details from the client when the `book_table` tool is called. Here's how to create a client that handles these elicitation requests:
+
+```python {title="client_example.py" requires="restaurant_server.py" test="skip"}
+import asyncio
+from typing import Any
+
+from mcp.client.session import ClientSession
+from mcp.shared.context import RequestContext
+from mcp.types import ElicitRequestParams, ElicitResult
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStdio
+
+
+async def handle_elicitation(
+    context: RequestContext[ClientSession, Any, Any],
+    params: ElicitRequestParams,
+) -> ElicitResult:
+    """Handle elicitation requests from MCP server."""
+    print(f'\n{params.message}')
+
+    if not params.requestedSchema:
+        response = input('Response: ')
+        return ElicitResult(action='accept', content={'response': response})
+
+    # Collect data for each field
+    properties = params.requestedSchema['properties']
+    data = {}
+
+    for field, info in properties.items():
+        description = info.get('description', field)
+
+        value = input(f'{description}: ')
+
+        # Convert to proper type based on JSON schema
+        if info.get('type') == 'integer':
+            data[field] = int(value)
+        else:
+            data[field] = value
+
+    # Confirm
+    confirm = input('\nConfirm booking? (y/n/c): ').lower()
+
+    if confirm == 'y':
+        print('Booking details:', data)
+        return ElicitResult(action='accept', content=data)
+    elif confirm == 'n':
+        return ElicitResult(action='decline')
+    else:
+        return ElicitResult(action='cancel')
+
+
+# Set up MCP server connection
+restaurant_server = MCPServerStdio(
+    'python', args=['restaurant_server.py'], elicitation_callback=handle_elicitation
+)
+
+# Create agent
+agent = Agent('openai:gpt-4o', toolsets=[restaurant_server])
+
+
+async def main():
+    """Run the agent to book a restaurant table."""
+    async with agent:
+        result = await agent.run('Book me a table')
+        print(f'\nResult: {result.output}')
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+```
+
+### Supported Schema Types
+
+MCP elicitation supports string, number, boolean, and enum types with flat object structures only. These limitations ensure reliable cross-client compatibility. See [supported schema types](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#supported-schema-types) for details.
+
+### Security
+
+MCP Elicitation requires careful handling - servers must not request sensitive information, and clients must implement user approval controls with clear explanations. See [security considerations](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#security-considerations) for details.

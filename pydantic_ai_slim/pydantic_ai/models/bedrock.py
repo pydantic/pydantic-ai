@@ -2,29 +2,27 @@ from __future__ import annotations
 
 import functools
 import typing
-import warnings
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import count
-from typing import TYPE_CHECKING, Any, Generic, Literal, Union, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 import anyio
 import anyio.to_thread
 from typing_extensions import ParamSpec, assert_never
 
-from pydantic_ai import _utils, usage
-from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
+from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
+    FinishReason,
     ImageUrl,
     ModelMessage,
+    ModelProfileSpec,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
@@ -37,9 +35,12 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
+    _utils,
+    usage,
 )
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
-from pydantic_ai.profiles import ModelProfileSpec
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile
 from pydantic_ai.settings import ModelSettings
@@ -49,6 +50,7 @@ if TYPE_CHECKING:
     from botocore.client import BaseClient
     from botocore.eventstream import EventStream
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
+    from mypy_boto3_bedrock_runtime.literals import StopReasonType
     from mypy_boto3_bedrock_runtime.type_defs import (
         ContentBlockOutputTypeDef,
         ContentBlockUnionTypeDef,
@@ -56,6 +58,7 @@ if TYPE_CHECKING:
         ConverseResponseTypeDef,
         ConverseStreamMetadataEventTypeDef,
         ConverseStreamOutputTypeDef,
+        ConverseStreamResponseTypeDef,
         DocumentBlockTypeDef,
         GuardrailConfigurationTypeDef,
         ImageBlockTypeDef,
@@ -64,7 +67,6 @@ if TYPE_CHECKING:
         PerformanceConfigurationTypeDef,
         PromptVariableValuesTypeDef,
         ReasoningContentBlockOutputTypeDef,
-        ReasoningTextBlockTypeDef,
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
@@ -125,7 +127,7 @@ LatestBedrockModelNames = Literal[
 ]
 """Latest Bedrock models."""
 
-BedrockModelName = Union[str, LatestBedrockModelNames]
+BedrockModelName = str | LatestBedrockModelNames
 """Possible Bedrock model names.
 
 Since Bedrock supports a variety of date-stamped models, we explicitly list the latest models but allow any name in the type hints.
@@ -135,6 +137,15 @@ See [the Bedrock docs](https://docs.aws.amazon.com/bedrock/latest/userguide/mode
 
 P = ParamSpec('P')
 T = typing.TypeVar('T')
+
+_FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
+    'content_filtered': 'content_filter',
+    'end_turn': 'stop',
+    'guardrail_intervened': 'content_filter',
+    'max_tokens': 'length',
+    'stop_sequence': 'stop',
+    'tool_use': 'tool_call',
+}
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -190,17 +201,7 @@ class BedrockConverseModel(Model):
     client: BedrockRuntimeClient
 
     _model_name: BedrockModelName = field(repr=False)
-    _system: str = field(default='bedrock', repr=False)
-
-    @property
-    def model_name(self) -> str:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider, ex: openai."""
-        return self._system
+    _provider: Provider[BaseClient] = field(repr=False)
 
     def __init__(
         self,
@@ -226,28 +227,36 @@ class BedrockConverseModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = cast('BedrockRuntimeClient', provider.client)
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    @property
+    def base_url(self) -> str:
+        return str(self.client.meta.endpoint_url)
+
+    @property
+    def model_name(self) -> str:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
-        tool_spec: ToolSpecificationTypeDef = {
-            'name': f.name,
-            'inputSchema': {'json': f.parameters_json_schema},
-        }
+        tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
 
         if f.description:  # pragma: no branch
             tool_spec['description'] = f.description
 
         return {'toolSpec': tool_spec}
-
-    @property
-    def base_url(self) -> str:
-        return str(self.client.meta.endpoint_url)
 
     async def request(
         self,
@@ -258,7 +267,6 @@ class BedrockConverseModel(Model):
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, False, settings, model_request_parameters)
         model_response = await self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -274,7 +282,9 @@ class BedrockConverseModel(Model):
         yield BedrockStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self.model_name,
-            _event_stream=response,
+            _event_stream=response['stream'],
+            _provider_name=self._provider.name,
+            _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
 
     async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
@@ -282,13 +292,24 @@ class BedrockConverseModel(Model):
         if message := response['output'].get('message'):  # pragma: no branch
             for item in message['content']:
                 if reasoning_content := item.get('reasoningContent'):
-                    reasoning_text = reasoning_content.get('reasoningText')
-                    if reasoning_text:  # pragma: no branch
-                        thinking_part = ThinkingPart(
-                            content=reasoning_text['text'],
-                            signature=reasoning_text.get('signature'),
+                    if redacted_content := reasoning_content.get('redactedContent'):
+                        items.append(
+                            ThinkingPart(
+                                id='redacted_content',
+                                content='',
+                                signature=redacted_content.decode('utf-8'),
+                                provider_name=self.system,
+                            )
                         )
-                        items.append(thinking_part)
+                    elif reasoning_text := reasoning_content.get('reasoningText'):  # pragma: no branch
+                        signature = reasoning_text.get('signature')
+                        items.append(
+                            ThinkingPart(
+                                content=reasoning_text['text'],
+                                signature=signature,
+                                provider_name=self.system if signature else None,
+                            )
+                        )
                 if text := item.get('text'):
                     items.append(TextPart(content=text))
                 elif tool_use := item.get('toolUse'):
@@ -299,13 +320,24 @@ class BedrockConverseModel(Model):
                             tool_call_id=tool_use['toolUseId'],
                         ),
                     )
-        u = usage.Usage(
-            request_tokens=response['usage']['inputTokens'],
-            response_tokens=response['usage']['outputTokens'],
-            total_tokens=response['usage']['totalTokens'],
+        u = usage.RequestUsage(
+            input_tokens=response['usage']['inputTokens'],
+            output_tokens=response['usage']['outputTokens'],
         )
-        vendor_id = response.get('ResponseMetadata', {}).get('RequestId', None)
-        return ModelResponse(items, usage=u, model_name=self.model_name, vendor_id=vendor_id)
+        response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
+        raw_finish_reason = response['stopReason']
+        provider_details = {'finish_reason': raw_finish_reason}
+        finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
+        return ModelResponse(
+            parts=items,
+            usage=u,
+            model_name=self.model_name,
+            provider_response_id=response_id,
+            provider_name=self._provider.name,
+            finish_reason=finish_reason,
+            provider_details=provider_details,
+        )
 
     @overload
     async def _messages_create(
@@ -314,7 +346,7 @@ class BedrockConverseModel(Model):
         stream: Literal[True],
         model_settings: BedrockModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> EventStream[ConverseStreamOutputTypeDef]:
+    ) -> ConverseStreamResponseTypeDef:
         pass
 
     @overload
@@ -333,7 +365,7 @@ class BedrockConverseModel(Model):
         stream: bool,
         model_settings: BedrockModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> ConverseResponseTypeDef | EventStream[ConverseStreamOutputTypeDef]:
+    ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
         system_prompt, bedrock_messages = await self._map_messages(messages)
         inference_config = self._map_inference_config(model_settings)
 
@@ -370,7 +402,6 @@ class BedrockConverseModel(Model):
 
         if stream:
             model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse_stream, **params))
-            model_response = model_response['stream']
         else:
             model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
         return model_response
@@ -424,7 +455,7 @@ class BedrockConverseModel(Model):
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
-                    if isinstance(part, SystemPromptPart):
+                    if isinstance(part, SystemPromptPart) and part.content:
                         system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
                         bedrock_messages.extend(await self._map_user_prompt(part, document_count))
@@ -474,20 +505,27 @@ class BedrockConverseModel(Model):
                     if isinstance(item, TextPart):
                         content.append({'text': item.content})
                     elif isinstance(item, ThinkingPart):
-                        if BedrockModelProfile.from_profile(self.profile).bedrock_send_back_thinking_parts:
-                            reasoning_text: ReasoningTextBlockTypeDef = {
-                                'text': item.content,
-                            }
-                            if item.signature:
-                                reasoning_text['signature'] = item.signature
-                            reasoning_content: ReasoningContentBlockOutputTypeDef = {
-                                'reasoningText': reasoning_text,
-                            }
+                        if (
+                            item.provider_name == self.system
+                            and item.signature
+                            and BedrockModelProfile.from_profile(self.profile).bedrock_send_back_thinking_parts
+                        ):
+                            if item.id == 'redacted_content':
+                                reasoning_content: ReasoningContentBlockOutputTypeDef = {
+                                    'redactedContent': item.signature.encode('utf-8'),
+                                }
+                            else:
+                                reasoning_content: ReasoningContentBlockOutputTypeDef = {
+                                    'reasoningText': {
+                                        'text': item.content,
+                                        'signature': item.signature,
+                                    }
+                                }
                             content.append({'reasoningContent': reasoning_content})
                         else:
-                            # NOTE: We don't pass the thinking part to Bedrock for models other than Claude since it raises an error.
-                            pass
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):
+                            start_tag, end_tag = self.profile.thinking_tags
+                            content.append({'text': '\n'.join([start_tag, item.content, end_tag])})
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
                         pass
                     else:
                         assert isinstance(item, ToolCallPart)
@@ -543,7 +581,7 @@ class BedrockConverseModel(Model):
                         content.append({'video': {'format': format, 'source': {'bytes': item.data}}})
                     else:
                         raise NotImplementedError('Binary content is not supported yet.')
-                elif isinstance(item, (ImageUrl, DocumentUrl, VideoUrl)):
+                elif isinstance(item, ImageUrl | DocumentUrl | VideoUrl):
                     downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
                     format = downloaded_item['data_type']
                     if item.kind == 'image-url':
@@ -595,7 +633,9 @@ class BedrockStreamedResponse(StreamedResponse):
 
     _model_name: BedrockModelName
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
+    _provider_name: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _provider_response_id: str | None = None
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
@@ -603,78 +643,91 @@ class BedrockStreamedResponse(StreamedResponse):
         This method should be implemented by subclasses to translate the vendor-specific stream of events into
         pydantic_ai-format events.
         """
+        if self._provider_response_id is not None:  # pragma: no cover
+            self.provider_response_id = self._provider_response_id
+
         chunk: ConverseStreamOutputTypeDef
         tool_id: str | None = None
         async for chunk in _AsyncIteratorWrapper(self._event_stream):
-            # TODO(Marcelo): Switch this to `match` when we drop Python 3.9 support.
-            if 'messageStart' in chunk:
-                continue
-            if 'messageStop' in chunk:
-                continue
-            if 'metadata' in chunk:
-                if 'usage' in chunk['metadata']:  # pragma: no branch
-                    self._usage += self._map_usage(chunk['metadata'])
-                continue
-            if 'contentBlockStart' in chunk:
-                index = chunk['contentBlockStart']['contentBlockIndex']
-                start = chunk['contentBlockStart']['start']
-                if 'toolUse' in start:  # pragma: no branch
-                    tool_use_start = start['toolUse']
-                    tool_id = tool_use_start['toolUseId']
-                    tool_name = tool_use_start['name']
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=index,
-                        tool_name=tool_name,
-                        args=None,
-                        tool_call_id=tool_id,
-                    )
-                    if maybe_event:  # pragma: no branch
-                        yield maybe_event
-            if 'contentBlockDelta' in chunk:
-                index = chunk['contentBlockDelta']['contentBlockIndex']
-                delta = chunk['contentBlockDelta']['delta']
-                if 'reasoningContent' in delta:
-                    if text := delta['reasoningContent'].get('text'):
-                        yield self._parts_manager.handle_thinking_delta(
+            match chunk:
+                case {'messageStart': _}:
+                    continue
+                case {'messageStop': message_stop}:
+                    raw_finish_reason = message_stop['stopReason']
+                    self.provider_details = {'finish_reason': raw_finish_reason}
+                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                case {'metadata': metadata}:
+                    if 'usage' in metadata:  # pragma: no branch
+                        self._usage += self._map_usage(metadata)
+                case {'contentBlockStart': content_block_start}:
+                    index = content_block_start['contentBlockIndex']
+                    start = content_block_start['start']
+                    if 'toolUse' in start:  # pragma: no branch
+                        tool_use_start = start['toolUse']
+                        tool_id = tool_use_start['toolUseId']
+                        tool_name = tool_use_start['name']
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=index,
-                            content=text,
-                            signature=delta['reasoningContent'].get('signature'),
+                            tool_name=tool_name,
+                            args=None,
+                            tool_call_id=tool_id,
                         )
-                    else:  # pragma: no cover
-                        warnings.warn(
-                            f'Only text reasoning content is supported yet, but you got {delta["reasoningContent"]}. '
-                            'Please report this to the maintainers.',
-                            UserWarning,
+                        if maybe_event:  # pragma: no branch
+                            yield maybe_event
+                case {'contentBlockDelta': content_block_delta}:
+                    index = content_block_delta['contentBlockIndex']
+                    delta = content_block_delta['delta']
+                    if 'reasoningContent' in delta:
+                        if redacted_content := delta['reasoningContent'].get('redactedContent'):
+                            yield self._parts_manager.handle_thinking_delta(
+                                vendor_part_id=index,
+                                id='redacted_content',
+                                signature=redacted_content.decode('utf-8'),
+                                provider_name=self.provider_name,
+                            )
+                        else:
+                            signature = delta['reasoningContent'].get('signature')
+                            yield self._parts_manager.handle_thinking_delta(
+                                vendor_part_id=index,
+                                content=delta['reasoningContent'].get('text'),
+                                signature=signature,
+                                provider_name=self.provider_name if signature else None,
+                            )
+                    if 'text' in delta:
+                        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
+                    if 'toolUse' in delta:
+                        tool_use = delta['toolUse']
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=index,
+                            tool_name=tool_use.get('name'),
+                            args=tool_use.get('input'),
+                            tool_call_id=tool_id,
                         )
-                if 'text' in delta:
-                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
-                if 'toolUse' in delta:
-                    tool_use = delta['toolUse']
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=index,
-                        tool_name=tool_use.get('name'),
-                        args=tool_use.get('input'),
-                        tool_call_id=tool_id,
-                    )
-                    if maybe_event:  # pragma: no branch
-                        yield maybe_event
-
-    @property
-    def timestamp(self) -> datetime:
-        return self._timestamp
+                        if maybe_event:  # pragma: no branch
+                            yield maybe_event
+                case _:
+                    pass  # pyright wants match statements to be exhaustive
 
     @property
     def model_name(self) -> str:
         """Get the model name of the response."""
         return self._model_name
 
-    def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.Usage:
-        return usage.Usage(
-            request_tokens=metadata['usage']['inputTokens'],
-            response_tokens=metadata['usage']['outputTokens'],
-            total_tokens=metadata['usage']['totalTokens'],
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
+
+    @property
+    def timestamp(self) -> datetime:
+        return self._timestamp
+
+    def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.RequestUsage:
+        return usage.RequestUsage(
+            input_tokens=metadata['usage']['inputTokens'],
+            output_tokens=metadata['usage']['outputTokens'],
         )
 
 

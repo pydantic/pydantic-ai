@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Union, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import (
     BaseModel,
@@ -17,7 +17,7 @@ from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapH
 if TYPE_CHECKING:
     # This import seems to fail on Pydantic 2.10.1 in CI
     from pydantic import ModelWrapValidatorHandler
-    # TODO: Try removing this when we update to pydantic 2.11
+    # TODO: Remove this once pydantic 2.11 is the min supported version
 
 
 class EvaluatorSpec(BaseModel):
@@ -112,7 +112,7 @@ class EvaluatorSpec(BaseModel):
             return handler(self)
 
 
-class _SerializedEvaluatorSpec(RootModel[Union[str, dict[str, Any]]]):
+class _SerializedEvaluatorSpec(RootModel[str | dict[str, Any]]):
     """Internal class for handling the serialized form of an EvaluatorSpec.
 
     This is an auxiliary class used to serialize/deserialize instances of EvaluatorSpec

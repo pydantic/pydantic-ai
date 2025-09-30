@@ -3,12 +3,12 @@ from __future__ import annotations as _annotations
 import os
 from typing import Literal, overload
 
-from httpx import AsyncClient as AsyncHTTPClient
+import httpx
 from openai import AsyncOpenAI
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import (
     OpenAIJsonSchemaTransformer,
@@ -59,9 +59,6 @@ class MoonshotAIProvider(Provider[AsyncOpenAI]):
             supports_json_object_output=True,
         ).update(profile)
 
-    # ---------------------------------------------------------------------
-    # Construction helpers
-    # ---------------------------------------------------------------------
     @overload
     def __init__(self) -> None: ...
 
@@ -69,7 +66,7 @@ class MoonshotAIProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: AsyncHTTPClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -79,7 +76,7 @@ class MoonshotAIProvider(Provider[AsyncOpenAI]):
         *,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: AsyncHTTPClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         api_key = api_key or os.getenv('MOONSHOTAI_API_KEY')
         if not api_key and openai_client is None:

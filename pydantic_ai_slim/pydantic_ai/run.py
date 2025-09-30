@@ -3,9 +3,8 @@ from __future__ import annotations as _annotations
 import dataclasses
 from collections.abc import AsyncIterator
 from copy import deepcopy
-from typing import Any, Generic, overload
-
-from typing_extensions import Literal
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Generic, Literal, overload
 
 from pydantic_graph import End, GraphRun, GraphRunContext
 
@@ -16,8 +15,10 @@ from . import (
     usage as _usage,
 )
 from .output import OutputDataT
-from .result import FinalResult
 from .tools import AgentDepsT
+
+if TYPE_CHECKING:
+    from .result import FinalResult
 
 
 @dataclasses.dataclass(repr=False)
@@ -47,7 +48,6 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         [
             UserPromptNode(
                 user_prompt='What is the capital of France?',
-                instructions=None,
                 instructions_functions=[],
                 system_prompts=(),
                 system_prompt_functions=[],
@@ -66,9 +66,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             CallToolsNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='The capital of France is Paris.')],
-                    usage=Usage(
-                        requests=1, request_tokens=56, response_tokens=7, total_tokens=63
-                    ),
+                    usage=RequestUsage(input_tokens=56, output_tokens=7),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                 )
@@ -102,7 +100,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def ctx(self) -> GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any]]:
         """The current context of the agent run."""
         return GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any]](
-            self._graph_run.state, self._graph_run.deps
+            state=self._graph_run.state, deps=self._graph_run.deps
         )
 
     @property
@@ -184,7 +182,6 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 [
                     UserPromptNode(
                         user_prompt='What is the capital of France?',
-                        instructions=None,
                         instructions_functions=[],
                         system_prompts=(),
                         system_prompt_functions=[],
@@ -203,12 +200,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     CallToolsNode(
                         model_response=ModelResponse(
                             parts=[TextPart(content='The capital of France is Paris.')],
-                            usage=Usage(
-                                requests=1,
-                                request_tokens=56,
-                                response_tokens=7,
-                                total_tokens=63,
-                            ),
+                            usage=RequestUsage(input_tokens=56, output_tokens=7),
                             model_name='gpt-4o',
                             timestamp=datetime.datetime(...),
                         )
@@ -235,7 +227,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         assert isinstance(next_node, End), f'Unexpected node type: {type(next_node)}'
         return next_node
 
-    def usage(self) -> _usage.Usage:
+    def usage(self) -> _usage.RunUsage:
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
         return self._graph_run.state.usage
 
@@ -352,6 +344,12 @@ class AgentRunResult(Generic[OutputDataT]):
             self.new_messages(output_tool_return_content=output_tool_return_content)
         )
 
-    def usage(self) -> _usage.Usage:
+    def usage(self) -> _usage.RunUsage:
         """Return the usage of the whole run."""
         return self._state.usage
+
+    def timestamp(self) -> datetime:
+        """Return the timestamp of last response."""
+        model_response = self.all_messages()[-1]
+        assert isinstance(model_response, _messages.ModelResponse)
+        return model_response.timestamp

@@ -43,24 +43,24 @@ This example uses [`run_ag_ui()`][pydantic_ai.ag_ui.run_ag_ui] and performs its 
 This can be modified to work with any web framework.
 
 ```py {title="run_ag_ui.py"}
+import json
+from http import HTTPStatus
+
 from ag_ui.core import RunAgentInput
 from fastapi import FastAPI
-from http import HTTPStatus
 from fastapi.requests import Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import ValidationError
-import json
 
 from pydantic_ai import Agent
-from pydantic_ai.ag_ui import run_ag_ui, SSE_CONTENT_TYPE
-
+from pydantic_ai.ag_ui import SSE_CONTENT_TYPE, run_ag_ui
 
 agent = Agent('openai:gpt-4.1', instructions='Be fun!')
 
 app = FastAPI()
 
 
-@app.post("/")
+@app.post('/')
 async def run_agent(request: Request) -> Response:
     accept = request.headers.get('accept', SSE_CONTENT_TYPE)
     try:
@@ -97,12 +97,11 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ag_ui import handle_ag_ui_request
 
-
 agent = Agent('openai:gpt-4.1', instructions='Be fun!')
 
 app = FastAPI()
 
-@app.post("/")
+@app.post('/')
 async def run_agent(request: Request) -> Response:
     return await handle_ag_ui_request(agent, request)
 ```
@@ -119,7 +118,7 @@ This will expose the agent as an AG-UI server, and your frontend can start sendi
 
 This example uses [`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui] to turn the agent into a stand-alone ASGI application:
 
-```py {title="agent_to_ag_ui.py" py="3.10" hl_lines="4"}
+```py {title="agent_to_ag_ui.py" hl_lines="4"}
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4.1', instructions='Be fun!')
@@ -171,7 +170,7 @@ validate state contained in [`RunAgentInput.state`](https://docs.ag-ui.com/sdk/j
     If the `state` field's type is a Pydantic `BaseModel` subclass, the raw state dictionary on the request is automatically validated. If not, you can validate the raw value yourself in your dependencies dataclass's `__post_init__` method.
 
 
-```python {title="ag_ui_state.py" py="3.10"}
+```python {title="ag_ui_state.py"}
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
@@ -205,17 +204,16 @@ user experiences with frontend user interfaces.
 
 ### Events
 
-Pydantic AI tools can send
-[AG-UI events](https://docs.ag-ui.com/concepts/events) simply by defining a tool
-which returns a (subclass of)
-[`BaseEvent`](https://docs.ag-ui.com/sdk/python/core/events#baseevent), which allows
-for custom events and state updates.
+Pydantic AI tools can send [AG-UI events](https://docs.ag-ui.com/concepts/events) simply by returning a
+[`ToolReturn`](tools-advanced.md#advanced-tool-returns) object with a
+[`BaseEvent`](https://docs.ag-ui.com/sdk/python/core/events#baseevent) (or a list of events) as `metadata`,
+which allows for custom events and state updates.
 
-```python {title="ag_ui_tool_events.py" py="3.10"}
+```python {title="ag_ui_tool_events.py"}
 from ag_ui.core import CustomEvent, EventType, StateSnapshotEvent
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, ToolReturn
 from pydantic_ai.ag_ui import StateDeps
 
 
@@ -234,27 +232,35 @@ app = agent.to_ag_ui(deps=StateDeps(DocumentState()))
 
 
 @agent.tool
-async def update_state(ctx: RunContext[StateDeps[DocumentState]]) -> StateSnapshotEvent:
-    return StateSnapshotEvent(
-        type=EventType.STATE_SNAPSHOT,
-        snapshot=ctx.deps.state,
+async def update_state(ctx: RunContext[StateDeps[DocumentState]]) -> ToolReturn:
+    return ToolReturn(
+        return_value='State updated',
+        metadata=[
+            StateSnapshotEvent(
+                type=EventType.STATE_SNAPSHOT,
+                snapshot=ctx.deps.state,
+            ),
+        ],
     )
 
 
 @agent.tool_plain
-async def custom_events() -> list[CustomEvent]:
-    return [
-        CustomEvent(
-            type=EventType.CUSTOM,
-            name='count',
-            value=1,
-        ),
-        CustomEvent(
-            type=EventType.CUSTOM,
-            name='count',
-            value=2,
-        ),
-    ]
+async def custom_events() -> ToolReturn:
+    return ToolReturn(
+        return_value='Count events sent',
+        metadata=[
+            CustomEvent(
+                type=EventType.CUSTOM,
+                name='count',
+                value=1,
+            ),
+            CustomEvent(
+                type=EventType.CUSTOM,
+                name='count',
+                value=2,
+            ),
+        ]
+    )
 ```
 
 Since `app` is an ASGI application, it can be used with any ASGI server:

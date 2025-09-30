@@ -13,14 +13,15 @@ import functools
 import inspect
 import sys
 import time
+import traceback
 import warnings
-from collections.abc import Awaitable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from inspect import iscoroutinefunction
 from pathlib import Path
-from typing import Any, Callable, Generic, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, Union, cast
 
 import anyio
 import logfire_api
@@ -35,30 +36,24 @@ from typing_extensions import NotRequired, Self, TypedDict, TypeVar
 
 from pydantic_evals._utils import get_event_loop
 
-from ._utils import get_unwrapped_function_name, task_group_gather
+from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
 from .evaluators import EvaluationResult, Evaluator
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.common import DEFAULT_EVALUATORS
 from .evaluators.context import EvaluatorContext
+from .evaluators.evaluator import EvaluatorFailure
 from .evaluators.spec import EvaluatorSpec
 from .otel import SpanTree
 from .otel._context_subtree import context_subtree
-from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate
+from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate, ReportCaseFailure
+
+if TYPE_CHECKING:
+    from pydantic_ai.retries import RetryConfig
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup  # pragma: lax no cover
 else:
     ExceptionGroup = ExceptionGroup  # pragma: lax no cover
-
-# while waiting for https://github.com/pydantic/logfire/issues/745
-try:
-    import logfire._internal.stack_info
-except ImportError:
-    pass
-else:
-    from pathlib import Path
-
-    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)  # pyright: ignore[reportPrivateImportUsage]
 
 __all__ = (
     'Case',
@@ -84,6 +79,7 @@ _YAML_SCHEMA_LINE_PREFIX = '# yaml-language-server: $schema='
 
 
 _REPORT_CASES_ADAPTER = TypeAdapter(list[ReportCase])
+_REPORT_CASE_FAILURES_ADAPTER = TypeAdapter(list[ReportCaseFailure])
 _REPORT_CASE_AGGREGATE_ADAPTER = TypeAdapter(ReportCaseAggregate)
 
 
@@ -171,11 +167,6 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
         self.evaluators = list(evaluators)
 
 
-# TODO: Consider making one or more of the following changes to this type:
-#  * Add `task: Callable[[InputsT], Awaitable[OutputT]` as a field
-#  * Add `inputs_type`, `output_type`, etc. as kwargs on `__init__`
-#  * Rename to `Evaluation`
-# TODO: Allow `task` to be sync _or_ async
 class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', arbitrary_types_allowed=True):
     """A dataset of test [cases][pydantic_evals.Case].
 
@@ -263,6 +254,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         name: str | None = None,
         max_concurrency: int | None = None,
         progress: bool = True,
+        retry_task: RetryConfig | None = None,
+        retry_evaluators: RetryConfig | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -277,6 +270,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             max_concurrency: The maximum number of concurrent evaluations of the task to allow.
                 If None, all cases will be evaluated concurrently.
             progress: Whether to show a progress bar for the evaluation. Defaults to `True`.
+            retry_task: Optional retry configuration for the task execution.
+            retry_evaluators: Optional retry configuration for evaluator execution.
 
         Returns:
             A report containing the results of the evaluation.
@@ -287,29 +282,49 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else AsyncExitStack()
 
-        with _logfire.span('evaluate {name}', name=name) as eval_span, progress_bar or nullcontext():
+        with (
+            logfire_span('evaluate {name}', name=name, n_cases=len(self.cases)) as eval_span,
+            progress_bar or nullcontext(),
+        ):
             task_id = progress_bar.add_task(f'Evaluating {name}', total=total_cases) if progress_bar else None
 
             async def _handle_case(case: Case[InputsT, OutputT, MetadataT], report_case_name: str):
                 async with limiter:
-                    result = await _run_task_and_evaluators(task, case, report_case_name, self.evaluators)
+                    result = await _run_task_and_evaluators(
+                        task, case, report_case_name, self.evaluators, retry_task, retry_evaluators
+                    )
                     if progress_bar and task_id is not None:  # pragma: no branch
                         progress_bar.update(task_id, advance=1)
                     return result
 
+            if (context := eval_span.context) is None:  # pragma: no cover
+                trace_id = None
+                span_id = None
+            else:
+                trace_id = f'{context.trace_id:032x}'
+                span_id = f'{context.span_id:016x}'
+            cases_and_failures = await task_group_gather(
+                [
+                    lambda case=case, i=i: _handle_case(case, case.name or f'Case {i}')
+                    for i, case in enumerate(self.cases, 1)
+                ]
+            )
+            cases: list[ReportCase] = []
+            failures: list[ReportCaseFailure] = []
+            for item in cases_and_failures:
+                if isinstance(item, ReportCase):
+                    cases.append(item)
+                else:
+                    failures.append(item)
             report = EvaluationReport(
                 name=name,
-                cases=await task_group_gather(
-                    [
-                        lambda case=case, i=i: _handle_case(case, case.name or f'Case {i}')
-                        for i, case in enumerate(self.cases, 1)
-                    ]
-                ),
+                cases=cases,
+                failures=failures,
+                span_id=span_id,
+                trace_id=trace_id,
             )
-            # TODO(DavidM): This attribute will be too big in general; remove it once we can use child spans in details panel:
-            eval_span.set_attribute('cases', _REPORT_CASES_ADAPTER.dump_python(report.cases))
-            # TODO(DavidM): Remove this 'averages' attribute once we compute it in the details panel
-            eval_span.set_attribute('averages', _REPORT_CASE_AGGREGATE_ADAPTER.dump_python(report.averages()))
+            if (averages := report.averages()) is not None and averages.assertions is not None:
+                eval_span.set_attribute('assertion_pass_rate', averages.assertions)
         return report
 
     def evaluate_sync(
@@ -318,6 +333,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         name: str | None = None,
         max_concurrency: int | None = None,
         progress: bool = True,
+        retry_task: RetryConfig | None = None,
+        retry_evaluators: RetryConfig | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -331,12 +348,21 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             max_concurrency: The maximum number of concurrent evaluations of the task to allow.
                 If None, all cases will be evaluated concurrently.
             progress: Whether to show a progress bar for the evaluation. Defaults to True.
+            retry_task: Optional retry configuration for the task execution.
+            retry_evaluators: Optional retry configuration for evaluator execution.
 
         Returns:
             A report containing the results of the evaluation.
         """
         return get_event_loop().run_until_complete(
-            self.evaluate(task, name=name, max_concurrency=max_concurrency, progress=progress)
+            self.evaluate(
+                task,
+                name=name,
+                max_concurrency=max_concurrency,
+                progress=progress,
+                retry_task=retry_task,
+                retry_evaluators=retry_evaluators,
+            )
         )
 
     def add_case(
@@ -636,7 +662,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             def _make_typed_dict(cls_name_prefix: str, fields: dict[str, Any]) -> Any:
                 td = TypedDict(f'{cls_name_prefix}_{name}', fields)  # pyright: ignore[reportArgumentType]
                 config = ConfigDict(extra='forbid', arbitrary_types_allowed=True)
-                # TODO: Replace with pydantic.with_config after pydantic 2.11 is released
+                # TODO: Replace with pydantic.with_config once pydantic 2.11 is the min supported version
                 td.__pydantic_config__ = config  # pyright: ignore[reportAttributeAccessIssue]
                 return td
 
@@ -737,7 +763,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         See <https://github.com/json-schema-org/json-schema-spec/issues/828> for context, that seems to be the nearest
         there is to a spec for this.
         """
-        context = cast(Union[dict[str, Any], None], info.context)
+        context = cast(dict[str, Any] | None, info.context)
         if isinstance(context, dict) and (schema := context.get('$schema')):
             return {'$schema': schema} | nxt(self)
         else:
@@ -817,13 +843,16 @@ class _TaskRun:
 
 
 async def _run_task(
-    task: Callable[[InputsT], Awaitable[OutputT] | OutputT], case: Case[InputsT, OutputT, MetadataT]
+    task: Callable[[InputsT], Awaitable[OutputT] | OutputT],
+    case: Case[InputsT, OutputT, MetadataT],
+    retry: RetryConfig | None = None,
 ) -> EvaluatorContext[InputsT, OutputT, MetadataT]:
     """Run a task on a case and return the context for evaluators.
 
     Args:
         task: The task to run.
         case: The case to run the task on.
+        retry: The retry config to use.
 
     Returns:
         An EvaluatorContext containing the inputs, actual output, expected output, and metadata.
@@ -831,39 +860,51 @@ async def _run_task(
     Raises:
         Exception: Any exception raised by the task.
     """
-    task_run = _TaskRun()
-    if _CURRENT_TASK_RUN.get() is not None:  # pragma: no cover
-        raise RuntimeError('A task run has already been entered. Task runs should not be nested')
 
-    # Note: the current behavior is for task execution errors to just bubble up all the way and kill the evaluation.
-    # Should we handle them for the user in some way? If so, I guess we'd want to do that here.
-    token = _CURRENT_TASK_RUN.set(task_run)
-    try:
-        with _logfire.span('execute {task}', task=get_unwrapped_function_name(task)) as task_span:
-            with context_subtree() as span_tree:
+    async def _run_once():
+        task_run_ = _TaskRun()
+        if _CURRENT_TASK_RUN.get() is not None:  # pragma: no cover
+            raise RuntimeError('A task run has already been entered. Task runs should not be nested')
+
+        token = _CURRENT_TASK_RUN.set(task_run_)
+        try:
+            with (
+                logfire_span('execute {task}', task=get_unwrapped_function_name(task)) as task_span,
+                context_subtree() as span_tree_,
+            ):
                 t0 = time.perf_counter()
                 if iscoroutinefunction(task):
-                    task_output = cast(OutputT, await task(case.inputs))
+                    task_output_ = cast(OutputT, await task(case.inputs))
                 else:
-                    task_output = cast(OutputT, await to_thread.run_sync(task, case.inputs))
+                    task_output_ = cast(OutputT, await to_thread.run_sync(task, case.inputs))
                 fallback_duration = time.perf_counter() - t0
-    finally:
-        _CURRENT_TASK_RUN.reset(token)
+            duration_ = _get_span_duration(task_span, fallback_duration)
+            return task_run_, task_output_, duration_, span_tree_
+        finally:
+            _CURRENT_TASK_RUN.reset(token)
+
+    if retry:
+        # import from pydantic_ai.retries to trigger more descriptive import error if tenacity is missing
+        from pydantic_ai.retries import retry as tenacity_retry
+
+        _run_once = tenacity_retry(**retry)(_run_once)
+
+    task_run, task_output, duration, span_tree = await _run_once()
 
     if isinstance(span_tree, SpanTree):  # pragma: no branch
-        # TODO: Question: Should we make this metric-attributes functionality more user-configurable in some way before merging?
-        #   Note: the use of otel for collecting these metrics is the main reason why I think we should require at least otel as a dependency, if not logfire;
-        #   otherwise, we don't have a great way to get usage data from arbitrary frameworks.
-        #   Ideally we wouldn't need to hard-code the specific logic here, but I'm not sure a great way to expose it to
-        #   users. Maybe via an argument of type Callable[[SpanTree], dict[str, int | float]] or similar?
+        # Idea for making this more configurable: replace the following logic with a call to a user-provided function
+        #   of type Callable[[_TaskRun, SpanTree], None] or similar, (maybe no _TaskRun and just use the public APIs).
+        #   That way users can customize this logic. We'd default to a function that does the current thing but also
+        #   allow `None` to disable it entirely.
         for node in span_tree:
-            if node.attributes.get('gen_ai.operation.name') == 'chat':
-                task_run.increment_metric('requests', 1)
             for k, v in node.attributes.items():
-                if not isinstance(v, (int, float)):
+                if k == 'gen_ai.operation.name' and v == 'chat':
+                    task_run.increment_metric('requests', 1)
+                elif not isinstance(v, int | float):
                     continue
-                # TODO: Revisit this choice to strip the prefix..
-                if k.startswith('gen_ai.usage.details.'):
+                elif k == 'operation.cost':
+                    task_run.increment_metric('cost', v)
+                elif k.startswith('gen_ai.usage.details.'):
                     task_run.increment_metric(k.removeprefix('gen_ai.usage.details.'), v)
                 elif k.startswith('gen_ai.usage.'):
                     task_run.increment_metric(k.removeprefix('gen_ai.usage.'), v)
@@ -874,7 +915,7 @@ async def _run_task(
         metadata=case.metadata,
         expected_output=case.expected_output,
         output=task_output,
-        duration=_get_span_duration(task_span, fallback_duration),
+        duration=duration,
         _span_tree=span_tree,
         attributes=task_run.attributes,
         metrics=task_run.metrics,
@@ -886,7 +927,9 @@ async def _run_task_and_evaluators(
     case: Case[InputsT, OutputT, MetadataT],
     report_case_name: str,
     dataset_evaluators: list[Evaluator[InputsT, OutputT, MetadataT]],
-) -> ReportCase[InputsT, OutputT, MetadataT]:
+    retry_task: RetryConfig | None,
+    retry_evaluators: RetryConfig | None,
+) -> ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]:
     """Run a task on a case and evaluate the results.
 
     Args:
@@ -894,64 +937,83 @@ async def _run_task_and_evaluators(
         case: The case to run the task on.
         report_case_name: The name to use for this case in the report.
         dataset_evaluators: Evaluators from the dataset to apply to this case.
+        retry_task: The retry config to use for running the task.
+        retry_evaluators: The retry config to use for running the evaluators.
 
     Returns:
         A ReportCase containing the evaluation results.
     """
-    with _logfire.span(
-        'case: {case_name}',
-        task_name=get_unwrapped_function_name(task),
-        case_name=report_case_name,
-        inputs=case.inputs,
-        metadata=case.metadata,
-        expected_output=case.expected_output,
-    ) as case_span:
-        t0 = time.time()
-        scoring_context = await _run_task(task, case)
+    trace_id: str | None = None
+    span_id: str | None = None
+    try:
+        with logfire_span(
+            'case: {case_name}',
+            task_name=get_unwrapped_function_name(task),
+            case_name=report_case_name,
+            inputs=case.inputs,
+            metadata=case.metadata,
+            expected_output=case.expected_output,
+        ) as case_span:
+            context = case_span.context
+            if context is not None:  # pragma: no branch
+                trace_id = f'{context.trace_id:032x}'
+                span_id = f'{context.span_id:016x}'
 
-        case_span.set_attribute('output', scoring_context.output)
-        case_span.set_attribute('task_duration', scoring_context.duration)
-        case_span.set_attribute('metrics', scoring_context.metrics)
-        case_span.set_attribute('attributes', scoring_context.attributes)
+            t0 = time.time()
+            scoring_context = await _run_task(task, case, retry_task)
 
-        evaluators = case.evaluators + dataset_evaluators
-        evaluator_outputs: list[EvaluationResult] = []
-        if evaluators:
-            evaluator_outputs_by_task = await task_group_gather(
-                [lambda ev=ev: run_evaluator(ev, scoring_context) for ev in evaluators]
-            )
-            evaluator_outputs += [out for outputs in evaluator_outputs_by_task for out in outputs]
+            case_span.set_attribute('output', scoring_context.output)
+            case_span.set_attribute('task_duration', scoring_context.duration)
+            case_span.set_attribute('metrics', scoring_context.metrics)
+            case_span.set_attribute('attributes', scoring_context.attributes)
 
-        assertions, scores, labels = _group_evaluator_outputs_by_type(evaluator_outputs)
-        case_span.set_attribute('assertions', _evaluation_results_adapter.dump_python(assertions))
-        case_span.set_attribute('scores', _evaluation_results_adapter.dump_python(scores))
-        case_span.set_attribute('labels', _evaluation_results_adapter.dump_python(labels))
+            evaluators = case.evaluators + dataset_evaluators
+            evaluator_outputs: list[EvaluationResult] = []
+            evaluator_failures: list[EvaluatorFailure] = []
+            if evaluators:
+                evaluator_outputs_by_task = await task_group_gather(
+                    [lambda ev=ev: run_evaluator(ev, scoring_context, retry_evaluators) for ev in evaluators]
+                )
+                for outputs in evaluator_outputs_by_task:
+                    if isinstance(outputs, EvaluatorFailure):
+                        evaluator_failures.append(outputs)
+                    else:
+                        evaluator_outputs.extend(outputs)
 
-        context = case_span.context
-        if context is None:  # pragma: no cover
-            trace_id = ''
-            span_id = ''
-        else:
-            trace_id = f'{context.trace_id:032x}'
-            span_id = f'{context.span_id:016x}'
+            assertions, scores, labels = _group_evaluator_outputs_by_type(evaluator_outputs)
+            case_span.set_attribute('assertions', _evaluation_results_adapter.dump_python(assertions))
+            case_span.set_attribute('scores', _evaluation_results_adapter.dump_python(scores))
+            case_span.set_attribute('labels', _evaluation_results_adapter.dump_python(labels))
         fallback_duration = time.time() - t0
 
-    return ReportCase[InputsT, OutputT, MetadataT](
-        name=report_case_name,
-        inputs=case.inputs,
-        metadata=case.metadata,
-        expected_output=case.expected_output,
-        output=scoring_context.output,
-        metrics=scoring_context.metrics,
-        attributes=scoring_context.attributes,
-        scores=scores,
-        labels=labels,
-        assertions=assertions,
-        task_duration=scoring_context.duration,
-        total_duration=_get_span_duration(case_span, fallback_duration),
-        trace_id=trace_id,
-        span_id=span_id,
-    )
+        return ReportCase[InputsT, OutputT, MetadataT](
+            name=report_case_name,
+            inputs=case.inputs,
+            metadata=case.metadata,
+            expected_output=case.expected_output,
+            output=scoring_context.output,
+            metrics=scoring_context.metrics,
+            attributes=scoring_context.attributes,
+            scores=scores,
+            labels=labels,
+            assertions=assertions,
+            task_duration=scoring_context.duration,
+            total_duration=_get_span_duration(case_span, fallback_duration),
+            trace_id=trace_id,
+            span_id=span_id,
+            evaluator_failures=evaluator_failures,
+        )
+    except Exception as exc:
+        return ReportCaseFailure[InputsT, OutputT, MetadataT](
+            name=report_case_name,
+            inputs=case.inputs,
+            metadata=case.metadata,
+            expected_output=case.expected_output,
+            error_message=f'{type(exc).__name__}: {exc}',
+            error_stacktrace=traceback.format_exc(),
+            trace_id=trace_id,
+            span_id=span_id,
+        )
 
 
 _evaluation_results_adapter = TypeAdapter(Mapping[str, EvaluationResult])

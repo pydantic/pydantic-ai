@@ -34,8 +34,7 @@ from openai import AsyncOpenAI
 from pydantic import TypeAdapter
 from typing_extensions import AsyncGenerator
 
-from pydantic_ai import RunContext
-from pydantic_ai.agent import Agent
+from pydantic_ai import Agent, RunContext
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')

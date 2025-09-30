@@ -11,7 +11,7 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     import openai
 
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.grok import GrokProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
@@ -51,7 +51,7 @@ def test_grok_pass_openai_client() -> None:
 
 def test_grok_model_profile():
     provider = GrokProvider(api_key='api-key')
-    model = OpenAIModel('grok-3', provider=provider)
+    model = OpenAIChatModel('grok-3', provider=provider)
     assert isinstance(model.profile, OpenAIModelProfile)
     assert model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
     assert model.profile.openai_supports_strict_tool_definition is False

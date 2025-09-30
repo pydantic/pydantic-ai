@@ -7,7 +7,7 @@ import shutil
 import ssl
 import sys
 from collections.abc import AsyncIterator, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from inspect import FrameInfo
 from io import StringIO
 from pathlib import Path
@@ -18,52 +18,57 @@ import pytest
 from _pytest.mark import ParameterSet
 from devtools import debug
 from pytest_examples import CodeExample, EvalExample, find_examples
+from pytest_examples.config import ExamplesConfig as BaseExamplesConfig
 from pytest_mock import MockerFixture
 from rich.console import Console
 
-from pydantic_ai import ModelHTTPError
-from pydantic_ai._run_context import RunContext
-from pydantic_ai._utils import group_by_temporal
-from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    AbstractToolset,
+    ModelHTTPError,
     ModelMessage,
     ModelResponse,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolsetTool,
     UserPromptPart,
 )
+from pydantic_ai._run_context import RunContext
+from pydantic_ai._utils import group_by_temporal
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from .conftest import ClientWithHandler, TestEnv, try_import
 
-try:
-    from pydantic_ai.providers.google import GoogleProvider
-except ImportError:  # pragma: lax no cover
-    GoogleProvider = None
-
-
-try:
-    import logfire
-except ImportError:  # pragma: lax no cover
-    logfire = None
-
-
 with try_import() as imports_successful:
+    # We check whether pydantic_ai_examples is importable as a proxy for whether all extras are installed, as some docs examples require them
+    import pydantic_ai_examples  # pyright: ignore[reportUnusedImport] # noqa: F401
+
     from pydantic_evals.reporting import EvaluationReport
 
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
-    pytest.mark.skipif(logfire is None or GoogleProvider is None, reason='logfire or google-provider not installed'),
 ]
 code_examples: dict[str, CodeExample] = {}
+
+
+@dataclass
+class ExamplesConfig(BaseExamplesConfig):
+    known_first_party: list[str] = field(default_factory=list)
+    known_local_folder: list[str] = field(default_factory=list)
+
+    def ruff_config(self) -> tuple[str, ...]:
+        config = super().ruff_config()
+        if self.known_first_party:  # pragma: no branch
+            config = (*config, '--config', f'lint.isort.known-first-party = {self.known_first_party}')
+        if self.known_local_folder:
+            config = (*config, '--config', f'lint.isort.known-local-folder = {self.known_local_folder}')
+        return config
 
 
 def find_filter_examples() -> Iterable[ParameterSet]:
@@ -113,6 +118,7 @@ def test_docs_examples(  # noqa: C901
     allow_model_requests: None,
     env: TestEnv,
     tmp_path_cwd: Path,
+    vertex_provider_auth: None,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
@@ -140,10 +146,9 @@ def test_docs_examples(  # noqa: C901
 
     mocker.patch('pydantic_evals.dataset.EvaluationReport', side_effect=CustomEvaluationReport)
 
-    if sys.version_info >= (3, 10):  # pragma: lax no cover
-        mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
-        mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
-        mocker.patch('mcp.server.fastmcp.FastMCP')
+    mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
+    mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
+    mocker.patch('mcp.server.fastmcp.FastMCP')
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
@@ -157,6 +162,7 @@ def test_docs_examples(  # noqa: C901
     env.set('AWS_SECRET_ACCESS_KEY', 'testing')
     env.set('AWS_DEFAULT_REGION', 'us-east-1')
     env.set('VERCEL_AI_GATEWAY_API_KEY', 'testing')
+    env.set('CEREBRAS_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
@@ -166,7 +172,7 @@ def test_docs_examples(  # noqa: C901
     dunder_name = prefix_settings.get('dunder_name', '__main__')
     requires = prefix_settings.get('requires')
 
-    ruff_target_version: str = 'py39'
+    ruff_target_version: str = 'py310'
     if python_version:
         python_version_info = tuple(int(v) for v in python_version.split('.'))
         if sys.version_info < python_version_info:
@@ -177,8 +183,10 @@ def test_docs_examples(  # noqa: C901
     if opt_test.startswith('skip') and opt_lint.startswith('skip'):
         pytest.skip('both running code and lint skipped')
 
+    known_local_folder: list[str] = []
     if requires:
         for req in requires.split(','):
+            known_local_folder.append(Path(req).stem)
             if ex := code_examples.get(req):
                 (tmp_path_cwd / req).write_text(ex.source)
             else:  # pragma: no cover
@@ -196,7 +204,16 @@ def test_docs_examples(  # noqa: C901
 
     line_length = int(prefix_settings.get('line_length', '88'))
 
-    eval_example.set_config(ruff_ignore=ruff_ignore, target_version=ruff_target_version, line_length=line_length)  # type: ignore[reportArgumentType]
+    eval_example.config = ExamplesConfig(
+        ruff_ignore=ruff_ignore,
+        target_version=ruff_target_version,  # type: ignore[reportArgumentType]
+        line_length=line_length,
+        isort=True,
+        upgrade=True,
+        quotes='single',
+        known_first_party=['pydantic_ai', 'pydantic_evals', 'pydantic_graph'],
+        known_local_folder=known_local_folder,
+    )
     eval_example.print_callback = print_callback
     eval_example.include_print = custom_include_print
 
@@ -211,8 +228,8 @@ def test_docs_examples(  # noqa: C901
 
     if opt_test.startswith('skip'):
         pytest.skip(opt_test[4:].lstrip(' -') or 'running code skipped')
-    elif opt_test.startswith('ci_only') and os.environ.get('GITHUB_ACTIONS', '').lower() != 'true':
-        pytest.skip(opt_test[7:].lstrip(' -') or 'running code skipped in local tests')  # pragma: no cover
+    elif opt_test.startswith('ci_only') and os.getenv('GITHUB_ACTIONS', '').lower() != 'true':
+        pytest.skip(opt_test[7:].lstrip(' -') or 'running code skipped in local tests')  # pragma: lax no cover
     else:
         test_globals: dict[str, str] = {'__name__': dunder_name}
 
@@ -283,11 +300,12 @@ class MockMCPServer(AbstractToolset[Any]):
         return None  # pragma: lax no cover
 
 
-text_responses: dict[str, str | ToolCallPart] = {
+text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Calculate the factorial of 15 and show your work': 'The factorial of 15 is **1,307,674,368,000**.',
     'Use the web to get the current time.': "In San Francisco, it's 8:21:41 pm PDT on Wednesday, August 6, 2025.",
     'Give me a sentence with the biggest news in AI this week.': 'Scientists have developed a universal AI detector that can identify deepfake videos.',
     'How many days between 2000-01-01 and 2025-03-18?': 'There are 9,208 days between January 1, 2000, and March 18, 2025.',
+    'What is 7 plus 5?': 'The answer is 12.',
     'What is the weather like in West London and in Wiltshire?': (
         'The weather in West London is raining, while in Wiltshire it is sunny.'
     ),
@@ -304,6 +322,7 @@ text_responses: dict[str, str | ToolCallPart] = {
     'Who was Albert Einstein?': 'Albert Einstein was a German-born theoretical physicist.',
     'What was his most famous equation?': "Albert Einstein's most famous equation is (E = mc^2).",
     'What is the date?': 'Hello Frank, the date today is 2032-01-02.',
+    'What is this? https://ai.pydantic.dev': 'A Python agent framework for building Generative AI applications.',
     'Put my money on square eighteen': ToolCallPart(
         tool_name='roulette_wheel', args={'square': 18}, tool_call_id='pyd_ai_tool_call_id'
     ),
@@ -368,6 +387,7 @@ text_responses: dict[str, str | ToolCallPart] = {
         'The capital of Italy is Rome (Roma, in Italian), which has been a cultural and political center for centuries.'
         'Rome is known for its rich history, stunning architecture, and delicious cuisine.'
     ),
+    'Please call the tool twice': ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id'),
     'Begin infinite retry loop!': ToolCallPart(
         tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id'
     ),
@@ -464,6 +484,22 @@ text_responses: dict[str, str | ToolCallPart] = {
         tool_name='final_result',
         args={'name': 'John Doe', 'age': 30},
     ),
+    'Delete `__init__.py`, write `Hello, world!` to `README.md`, and clear `.env`': [
+        ToolCallPart(tool_name='delete_file', args={'path': '__init__.py'}, tool_call_id='delete_file'),
+        ToolCallPart(
+            tool_name='update_file',
+            args={'path': 'README.md', 'content': 'Hello, world!'},
+            tool_call_id='update_file_readme',
+        ),
+        ToolCallPart(tool_name='update_file', args={'path': '.env', 'content': ''}, tool_call_id='update_file_dotenv'),
+    ],
+    'Calculate the answer to the ultimate question of life, the universe, and everything': ToolCallPart(
+        tool_name='calculate_answer',
+        args={'question': 'the ultimate question of life, the universe, and everything'},
+        tool_call_id='pyd_ai_tool_call_id',
+    ),
+    'Remember that I live in Mexico City': "Got it! I've recorded that you live in Mexico City. I'll remember this for future reference.",
+    'Where do I live?': 'You live in Mexico City.',
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -584,8 +620,14 @@ async def model_logic(  # noqa: C901
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse(parts=[TextPart(response)])
+            elif isinstance(response, Sequence):
+                return ModelResponse(parts=list(response))
             else:
                 return ModelResponse(parts=[response])
+        elif m.content == 'The secret is 1234':
+            return ModelResponse(parts=[TextPart('The secret is safe with me')])
+        elif m.content == 'What is the secret code?':
+            return ModelResponse(parts=[TextPart('1234')])
 
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
@@ -625,6 +667,8 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'do_work':
+        return ModelResponse(parts=[ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id')])
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':
         return ModelResponse(
             parts=[ToolCallPart(tool_name='calc_volume', args={'size': 6}, tool_call_id='pyd_ai_tool_call_id')]
@@ -735,6 +779,18 @@ async def model_logic(  # noqa: C901
                 )
             ]
         )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file':
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    'I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.'
+                )
+            ]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'calculate_answer':
+        return ModelResponse(
+            parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
+        )
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')
@@ -763,10 +819,16 @@ async def stream_model_logic(  # noqa C901
             text_chunk = json_text[chunk_index : chunk_index + 15]
             yield {1: DeltaToolCall(json_args=text_chunk)}
 
-    async def stream_part_response(r: str | ToolCallPart) -> AsyncIterator[str | DeltaToolCalls]:
+    async def stream_part_response(
+        r: str | ToolCallPart | Sequence[ToolCallPart],
+    ) -> AsyncIterator[str | DeltaToolCalls]:
         if isinstance(r, str):
             async for chunk in stream_text_response(r):
                 yield chunk
+        elif isinstance(r, Sequence):
+            for part in r:
+                async for chunk in stream_tool_call_response(part):
+                    yield chunk
         else:
             async for chunk in stream_tool_call_response(r):
                 yield chunk
@@ -806,17 +868,17 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         mock_fallback_models: list[Model] = []
         for m in model.models:
             try:
-                from pydantic_ai.models.openai import OpenAIModel
+                from pydantic_ai.models.openai import OpenAIChatModel
             except ImportError:  # pragma: lax no cover
-                OpenAIModel = type(None)
+                OpenAIChatModel = type(None)
 
-            if isinstance(m, OpenAIModel):
-                # Raise an HTTP error for OpenAIModel
+            if isinstance(m, OpenAIChatModel):
+                # Raise an HTTP error for OpenAIChatModel
                 mock_fallback_models.append(FunctionModel(raise_http_error, model_name=m.model_name))
             else:
                 mock_fallback_models.append(mock_infer_model(m))
         return FallbackModel(*mock_fallback_models)
-    if isinstance(model, (FunctionModel, TestModel)):
+    if isinstance(model, FunctionModel | TestModel):
         return model
     else:
         model_name = model if isinstance(model, str) else model.model_name

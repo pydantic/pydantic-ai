@@ -1,0 +1,189 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '414'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=hqG7YTrLAdrCNKQU34H3qhIKxESTvFsG9X7OjEzKuDk-1756198142-1.0.1.1-WG8.rT3zC66xxHN6c33AcERCdH0FDum2a7djbEu85gy9rEiq9nTHQVY8g5BAZ_DmviuVxhphMwTsxDclYqQCobIlgurA9g.prg5M_i9PZyM
+      host:
+      - api.cerebras.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: qwen-3-coder-480b
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            title: Location
+            type: object
+        type: function
+    uri: https://api.cerebras.ai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '645'
+      content-type:
+      - application/json
+      inference-id:
+      - chatcmpl-65763e70-ba85-41a3-a758-4dc3fcb73c9a
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=3600; includeSubDomains
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: The capital of France is Paris. If you need more information about Paris or any other details, feel free
+            to ask!
+          role: assistant
+      created: 1756198142
+      id: chatcmpl-65763e70-ba85-41a3-a758-4dc3fcb73c9a
+      model: qwen-3-coder-480b
+      object: chat.completion
+      system_fingerprint: fp_4405be376d055dc5bff7
+      time_info:
+        completion_time: 0.045860486
+        created: 1756198142
+        prompt_time: 0.011004894
+        queue_time: 0.001344637
+        total_time: 0.05971097946166992
+      usage:
+        completion_tokens: 25
+        prompt_tokens: 304
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 329
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '727'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=hqG7YTrLAdrCNKQU34H3qhIKxESTvFsG9X7OjEzKuDk-1756198142-1.0.1.1-WG8.rT3zC66xxHN6c33AcERCdH0FDum2a7djbEu85gy9rEiq9nTHQVY8g5BAZ_DmviuVxhphMwTsxDclYqQCobIlgurA9g.prg5M_i9PZyM
+      host:
+      - api.cerebras.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      - content: The capital of France is Paris. If you need more information about Paris or any other details, feel free
+          to ask!
+        role: assistant
+      - content: |-
+          Validation feedback:
+          Plain text responses are not permitted, please include your response in a tool call
+
+          Fix the errors and try again.
+        role: user
+      model: qwen-3-coder-480b
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            title: Location
+            type: object
+        type: function
+    uri: https://api.cerebras.ai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '672'
+      content-type:
+      - application/json
+      inference-id:
+      - chatcmpl-6659125c-6d06-402c-be3b-4640aa64ffa2
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=3600; includeSubDomains
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "Paris", "country": "France"}'
+              name: final_result
+            id: b8847f144
+            type: function
+      created: 1756198143
+      id: chatcmpl-6659125c-6d06-402c-be3b-4640aa64ffa2
+      model: qwen-3-coder-480b
+      object: chat.completion
+      system_fingerprint: fp_4405be376d055dc5bff7
+      time_info:
+        completion_time: 0.103362557
+        created: 1756198143
+        prompt_time: 0.22219986
+        queue_time: 0.346436935
+        total_time: 0.6736249923706055
+      usage:
+        completion_tokens: 33
+        prompt_tokens: 364
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 397
+    status:
+      code: 200
+      message: OK
+version: 1

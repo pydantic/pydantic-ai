@@ -7,9 +7,7 @@ import pytest
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
-from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import (
+from pydantic_ai import (
     BinaryContent,
     DocumentUrl,
     FinalResultEvent,
@@ -32,15 +30,19 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.agent import Agent
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
@@ -58,7 +60,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
     assert result.output == snapshot(
         "Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
     )
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=7, response_tokens=30, total_tokens=37))
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=7, output_tokens=30))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -79,9 +81,12 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                         content="Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=7, response_tokens=30, total_tokens=37),
+                usage=RequestUsage(input_tokens=7, output_tokens=30),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -111,7 +116,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
 
     result = await agent.run('What was the temperature in London 1st January 2022?', output_type=Response)
     assert result.output == snapshot({'temperature': '30°C', 'date': datetime.date(2022, 1, 1), 'city': 'London'})
-    assert result.usage() == snapshot(Usage(requests=2, request_tokens=1236, response_tokens=298, total_tokens=1534))
+    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=1236, output_tokens=298, tool_calls=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -137,9 +142,12 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
                     ),
                 ],
-                usage=Usage(requests=1, request_tokens=551, response_tokens=132, total_tokens=683),
+                usage=RequestUsage(input_tokens=551, output_tokens=132),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -162,9 +170,12 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
                     ),
                 ],
-                usage=Usage(requests=1, request_tokens=685, response_tokens=166, total_tokens=851),
+                usage=RequestUsage(input_tokens=685, output_tokens=166),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -262,9 +273,12 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
                     ),
                 ],
-                usage=Usage(requests=1, request_tokens=417, response_tokens=69, total_tokens=486),
+                usage=RequestUsage(input_tokens=417, output_tokens=69),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -286,9 +300,12 @@ I'm sorry, but the tool I have does not support retrieving the capital of France
 """
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=509, response_tokens=108, total_tokens=617),
+                usage=RequestUsage(input_tokens=509, output_tokens=108),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -553,9 +570,12 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                         content='The capital of France is Paris. Paris is not only the political and economic hub of the country but also a major center for culture, fashion, art, and tourism. It is renowned for its rich history, iconic landmarks such as the Eiffel Tower, Notre-Dame Cathedral, and the Louvre Museum, as well as its influence on global culture and cuisine.'
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=13, response_tokens=71, total_tokens=84),
+                usage=RequestUsage(input_tokens=13, output_tokens=71),
                 model_name='us.amazon.nova-pro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -593,9 +613,9 @@ async def test_bedrock_multiple_documents_in_history(
     )
 
 
-async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    deepseek_model = BedrockConverseModel('us.deepseek.r1-v1:0', provider=bedrock_provider)
-    agent = Agent(deepseek_model)
+async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel('us.deepseek.r1-v1:0', provider=bedrock_provider)
+    agent = Agent(m)
 
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
@@ -603,33 +623,84 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
-                usage=Usage(requests=1, request_tokens=12, response_tokens=882, total_tokens=894),
+                usage=RequestUsage(input_tokens=12, output_tokens=693),
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
         ]
     )
 
-    anthropic_model = BedrockConverseModel('us.anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
     result = await agent.run(
         'Considering the way to cross the street, analogously, how do I cross the river?',
-        model=anthropic_model,
-        model_settings=BedrockModelSettings(
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
+                usage=RequestUsage(input_tokens=33, output_tokens=907),
+                model_name='us.deepseek.r1-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
             bedrock_additional_model_requests_fields={
                 'thinking': {'type': 'enabled', 'budget_tokens': 1024},
             }
         ),
-        message_history=result.all_messages(),
     )
+    agent = Agent(m)
+
+    result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
-                parts=[IsInstance(TextPart), IsInstance(ThinkingPart)],
-                usage=Usage(requests=1, request_tokens=12, response_tokens=882, total_tokens=894),
-                model_name='us.deepseek.r1-v1:0',
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=42, output_tokens=313),
+                model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
             ModelRequest(
                 parts=[
                     UserPromptPart(
@@ -642,13 +713,307 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        signature='ErcBCkgIAhABGAIiQMuiyDObz/Z/ryneAVaQDk4iH6JqSNKJmJTwpQ1RqPz07UFTEffhkJW76u0WVKZaYykZAHmZl/IbQOPDLGU0nhQSDDuHLg82YIApYmWyfhoMe8vxT1/WGTJwyCeOIjC5OfF0+c6JOAvXvv9ElFXHo3yS3am1V0KpTiFj4YCy/bqfxv1wFGBw0KOMsTgq7ugqHeuOpzNM91a/RgtYHUdrcAKm9iCRu24jIOCjr5+h',
+                        signature=IsStr(),
+                        provider_name='bedrock',
                     ),
                     IsInstance(TextPart),
                 ],
-                usage=Usage(requests=1, request_tokens=636, response_tokens=690, total_tokens=1326),
+                usage=RequestUsage(input_tokens=334, output_tokens=432),
+                model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel(
+        'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={
+                'thinking': {'type': 'enabled', 'budget_tokens': 1024},
+            }
+        ),
+    )
+    agent = Agent(m)
+
+    result = await agent.run(
+        'ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_content',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=92, output_tokens=176),
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'What was that?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What was that?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_content',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=182, output_tokens=258),
+                model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_redacted_stream(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    m = BedrockConverseModel(
+        'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={
+                'thinking': {'type': 'enabled', 'budget_tokens': 1024},
+            }
+        ),
+    )
+    agent = Agent(m)
+
+    event_parts: list[Any] = []
+    async with agent.iter(
+        user_prompt='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB'
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_content',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_content',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=92, output_tokens=253),
+                model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_content',
+                    signature=IsStr(),
+                    provider_name='bedrock',
+                ),
+            ),
+            PartStartEvent(
+                index=1,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_content',
+                    signature=IsStr(),
+                    provider_name='bedrock',
+                ),
+            ),
+            PartStartEvent(index=2, part=TextPart(content="I notice you've sent what appears to be some")),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' kind of command or trigger string, but I don')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta="'t respond to special codes or")),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=" triggers. That string doesn't have")),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' any special meaning to me.')),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+
+If you have a question you\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=2, delta=TextPartDelta(content_delta="'d like to discuss or need assistance with something")
+            ),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=", I'd be happy to help in")),
+            PartDeltaEvent(
+                index=2, delta=TextPartDelta(content_delta=' a straightforward conversation. What would you like to')
+            ),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' talk about today?')),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_from_other_model(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, openai_api_key: str
+):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIResponsesModel('gpt-5', provider=provider)
+    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
+    agent = Agent(m, system_prompt='You are a helpful assistant.', model_settings=settings)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful assistant.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                        signature='gAAAAABowgAKxFTo-oXVZ9WpxX1o2XmQkqXqGTeqSbHjr1hsNXhe0QDBXDnKBMrBVbYympkJVMbAIsYJuZ8P3-DmXZVwYJR_F1cfpCbt97TxVSbG7WIbUp-H1vYpN3oA2-hlP-G76YzOGJzHQy1bWWluUC4GsPP194NpVANRnTUBQakfwhOgk9WE2Op7SyzfdHxYV5vpRPcrXRMrLZYZFUXM6D6ROZljjaZKNj9KaluIOdiTZydQnKVyZs0ffjIpNe6Cn9jJNAUH-cxKfOJ3fmUVN213tTr-PveUkAdlYwCRdtq_IlrFrr1gp6hiMgtdQXxSdtjPuoMfQEZTsI-FiAGFipYDrN5Gu_YXlqX1Lmzbb2famCXTYp6bWljYT14pCSMA-OZrJWsgj4tSahyZIgNq_E_cvHnQ-iJo1ACH0Jt22soOFBhAhSG8rLOG8O5ZkmF7sGUr1MbP56LLkz29NPgh98Zsyxp4tM33QH5XPrMC7MOfTvzj8TyhRH31CWHScQl3AJq1o3z2K3qgl6spkmWIwWLjbo4DBzFz6-wRPBm5Fv60hct1oFuYjXL-ntOBASLOAES7U3Cvb56VPex7JdmTyzb-XP7jNhYzWK-69HgGZaMhOJJmLGZhu8Xp9P6GPnXiQpyL5LvcX_FEiR6CzpkhhS54IryQx2UW7VadUMnpvwEUwtT2c9xoh6WEwt2kTDj65DyzRwFdcms3WG_B1cSe5iwBN1JAQm3ay04dSG-a5JNVqFyaW7r1NcVts3HWC2c-S9Z_Xjse548XftM_aD97KTqoiR5GxU95geXvrWI8szDSYSueSGCTI8L7bCDO-iKE4RQEmyS8ZbqMSWyQgClVQOR5CF3jPKb6hP7ofoQlPRuMyMY8AqyWGeY9bbWb-LjrSDpRTAR6af8Ip5JYr4rlcG1YqEWYT-MqiCPw3ZJqBXUICSpz9ZHQNTrYIzkJZqPg-hCqvFkOCUtvOYSDtGkAe9x1ekPqlV0IuWLxAmjqbkGH0QCaYAF90wVQUgWPkVWfQ6ULRz2sveQDZf0P8rVZw6ATEvZVnkml6VDbaH69lMyvzls7suvEZJxS5osyjrGfkt6L4nsvhZS7Nuxj2TcRxSEXxo5kULEqAO85Ivsm4j7R1Cxb2h8I4ZZZ_-DnkbWsgd7DELMI-CYtpAWLFl4K4VaMBT6mNAuud545BemUlWnQgmrde4aS7Q_W5GP11iQea9_JcJr6DMf4Y40NDr_fPVU5p7q1bnc1xtwkIpyx0uEeXHEZDR8k-5apBXScJtmelzpiy-25oJdSU5xtgVPrb77kVyJofPtujplZoqMh6MOqTdIhIMm_Goy_Wne4W39hVI01b2vwduBaCCaX6M8uACX96s454WPitX4MYAVc65UHF0BTFskEcbY5bFZpzcWb39VTfra-Ru2URvdo_66qmUd-03XzLKiMsqJHGclhaU6XBqaIo9qD8FjLVT9DOx56eh3GFvYA1dxvgbp6gyOg7bOBL0KDarT9Vmo40vGvwyCT_a2S_6Oki6uBU_3bf-jGvtum4tkN--wZkBrhOj7L8onItPoAZQXjYXrcXfVC1KR_xA0IOxYZD59G1rBxTDlvatIFwhvoISinkU-zPkKMpralHlxDicmJrBsKsy-mZWCF5qHeWF36pjE35dE9GxR28xw1Ed0pA_kOIgMKSKCiRWUYY8D1jAHKzimnj_4VTKR05kTp30pasr0IUMl2celsQMDv1D2atEJ_65CeRio5cnNGUR_Z73LJ-fqLkSjSxlE2YvtcKX7bdF6bSq3EqDtOdLVUjYl_pxRaUNMRmahQUJXGsDx7X-W9xUgQmAq09qT3lh1fhVUgdtUuuaoNY_M1s5V0E5ePuu_C6Duuz8WCcecbhrcbI3FDQSJn_XHK6ImLMYBowGRYVkBE_Rf7q7Hj4zdF-3bVE_QDce3syZNshCYK5kO8mvADptgdNVG7lEiZ9TIQPBd-XWRUrZ3XvIfGVJFVMjh_Laq8RTDyvvId7iQDuvq89hQ86hlfWteEl8HzuwpakWnogg3CCStX5CMGpYUWWkOCUu2LCH2H4EBaeCcAPLCmEoxcpKS182kYLm8-4ShRz-YOMIEmE9TL2za15I6BCBi9OhQGcLSl4BquhfBVHyxmkEN7_g102yI1Ocucux8q_HLMo5UZz0KALRQy4qmNpnLg9f4Yetj6msezjuU17Ji1ofIcadglOYy2J3Aswf58M9fCwCfB6hAHRYM2XkYzJ3nc0VosWA0er90zqKOeM1-erWC-skbupO-8nw9DA5OtnJTZOLnhGRjzXqna0E5R69wOHi3yvb3zzv2K9fLMKi11bCM_cnel9ItcFM-AYQ0AhBTZ3sTn-tpIf3IVNCvnCxMWvbO-MBmoexQnPorA0SL6n_nL49Y9Zb7UgwCyNGmhsFjIlSXu-YG-yCV1lVXBYoEPDwa2eCaMwph0QneXPHHMUs_i9PuFVI-nwfEiwU0b4tk8x3tWdkltvtzhjB8fxQxJNrk-ykNhuEYfQMQ0_MCqIRD097_gjO8q-eFUjnuiVqqoQ9_rH9QCxABdA8afoNt0hFxBwR6d57P81_XKOnApyrPx0DjsuKVTBFoCWccKX4DZuQT_PhmsFtPquNp6OPWQM5a8HzKntjz_HgFYnyS5p6n0hBGZVC_GDtFEm8JELcwuVoSLSXhI_XKnck2FIhHA5YQ4vLGOhCEEZoINkDdq3oNgm-NiP-DpG2LYetLl4ljlUpRBUizmWn4Fr3jhIt8rmQwqmFj6aMDSEM0Sgen9DsUH7H3uGK2NipvFv2Uxic5aXAKQ37EFjxPFqvKXlDl-hLnUXtkXLXBbmgCJJw6nBvm-SeIxU_eKnWHkhtdnkNZrmNFaq0OYZKk-moYSxEgzxasQNYGtkN89LqAhRTS6dIbb4nXa8ArvuHTJ_qpLFjGF3SSX98Y53cgtSdGTTmHQ6_v0BmeKCWhRd83vPrmFosif57AXyBVk0HJ5YdeueitsBCyXcJmeCntrT4zDlujwuMWK7wDO4vGMj3nIIyuJMJjtpD_auuDLmpYHqmKTHm8Ob8R2jJIwDhJIupkTldX5kHZmo6Nyh8tjeMgeEbp4Tp05CfyUTWWM16gaGkwW2Gto3sJtv0AiA_PzSN_dDziD5fRSH2Q2JTW4g03Uc9SBelL2fFiQifPSc3-mI4i8QHIswd_qPnSAnHxBW6SLJFqY-qIG6soLzt2VnH5hpVvakMfO27A82DQrcoFDFsqRb8KgLEoL5u-6NbgwKSNFjfIrLFg9IzrQI7oktylkFrc_EWL_smmL6iuT5WEYt4jBwtMvyDD6nVHzzx7jd8J3XQqjXfWuH_uTAX6cOHprzaPn05QRAluZgcBL-FSQJ3Qw7PjpoiLyd3DGL77nfl_m9cpAnpz3ojtajP7Gb-aq_xa_JIqxbnuBDBkeyN8pOQp--ZD7T2BOAgS7poVoqPFXRYIJOwKtOcrj6UdPN2yrx-44ZMTJYzwcGELnFRs32PKx8TiiF1pKSwo4NB5Z97_0k_WbyBwyNajMtRUPmEuTr9VoO7CBwe1r3U3iIZbBKCfJjiG5FQToqzku31_YAs5OIIaV4B9ifLt5PwUA4mO-7XqgO1VQQjt2cUQo3Ui3EKWEJ-ov7F3wf_byGsguBwv2qMuAQiLBqs5jxrJUxyYIJAM7B_TtUjpQnNERvHEkt9TxCN8Kc6L-MejMOfu3VPdArf38naQjvBjBAZDznV639bkIRED7-soJbGMcGEyGWUqAVs9vkFleO9S4YLNvFShwo3ujBd7SMMdAyvi851CXT5uN5SDtaxmQnUGzAXmPJ9-UoJF23lSGB26eMdnIerzFoYMCgWPHyvt949IrsUKnpjuxebqQYVSrppmhIIrD8R255bJGSscVwdbrd9iA9-gHoB3UzCr5pd3gfW9Z6ynT4dQVILqtj0KgrDOHw4AIBqmwaecTBi5BeyXJx2oF1ClqS_7AanfqNToLcAwaKXnrK4RGyrX_mXHUFX9cT-o-eGqhi0lifCcJixwb3kG2AhP1USNNsCz31m40_c7cm7JcqLbzCnz4hvbivUvON5rf6kQ8PrfrjNrZA73VVIKhgZBDHxsHa3skwQvq-JH_3QulELy1-6vL5Kq84bg3ZPQxOUtxBRuyjxEJkpgG-sED2pYsKrUPqo0Ku_ggMTQjvoGGYRBt5uMlVX4pdB1zhOe1ZjcvPb8IwnL_BdLX4NvLpN97KH9Ot45bLeVTCGpv5UH8Nnm5CzQ53wqsOUD-9u5hqrSwx89sF7h8TlN9non95r7b_oHkU1R_czZ-ZjL6EubsUx4w-rWKwVU7GYde-ie62v8jcaLhkM72O4B0UvCfY2t3GtruZ4OirX44hWfOPujFr5L6bOkVSMKONJFooIJ2RIwCw64Mczkle2zQZ1P3u1DrMS5s65h-gNTwSGw3qyQBwF58-um9ycDis6f6O0ggqubsCDlsW7Vdnk_GlETHLDQ7lR_lRG1g3kRQEhKz2iwzxQan01X021EJd4TlocJYafpp8HU_rgcJdUmcvPFgB2xysE6F1vYdUAdovDztLftb5Bad4aKueUfDs8haq9TBgosHQinvKFfazE2StHUaEAVK_BiOYrH1XsrFQlXuMwhQlRgA9L3Q663gMrnhnfcQPSNd7P5EhqbadtddoVrLOKhMD5yBJj9RiC0vamCGVr2LA7hStIPBGysTBanE3u4bT-TKe2qCOskvfR2xU8NSlai9b8d57zkuxklf7LaDnMi-xu9TOqduYFfXOn87uqjaN3_emcq0NExYcQ1fMUMcbOuGoW6qeWlWmMtANjI3VaJCa_v2JYJ4cyl4gUoboC42d2esKg_Em2XfqUkKQh4XTG673LC1ebToWGPRvFtTQM3gZ4Wh5JY4pL58VeSsf1jhINWsytNpgGckHCK11BzUUx4MABT2BuMWf-a_5DV4KYdmXHn_AKAqoZWHgE2hC2Q6DUEaKTm7AV56Cm5vo-NibALDGH1zG8ih5C3dmHvQmES7vUOVM1jPS6k7paHXEwnPFE9M-zg6XmjKjdvSZ04lauZEeCjSJPb4E_v-uWlwkdHsDcTxfj9oTjfEpX0mZxIuT_Ex7Mx2I7DUHDUQgKgZT9n1TQym9patiPO8VYzYuoXrsEeLS1Mk5N3AmQXeB89x85_Xj2plBbDOqqMpAD2uMBXwHI4kut10unkHhl3S0JtA1tE0ukxTRaitpDQveHfao0tQC8gy4JEA6M5AD7iyWOm_iuW9baElC-R_g_6s_X1t2qv4mWwd8P-h7yFm4XEZg_oJEIA40hGwSPKD1d-b9QRz7Kl734V5RvMw1ekdsvZ9dVKNcPffkGX0inTp8RgkOWFUnS0hZpxuNbte3-rGWEt6Syy4x2jaH-Zr6o667kigSt1Q3cQO_eqQtq4VWuFmYIbDzkEbIKmIHY52gh-rB5k-FMQqCs-ay5Blj_IpvfcImMtrZBrbhL89gzGNRonBZEa-9kJeu4jr2_DLzw14KJR5zVNwiGLub3jJkgYqOZZ5ee_oNchx3v68S3wHyFnZA9IIaXRZjYLMrjD699h9SZvkTHdGAwICpyOjrfYbgX_7woRp1ZWBslOamnw6mDqJAk22nb1a8cpdGNP2IjXVRtuqIB8y36bHEFjChDTxERZ2dsz7a2mp5qM2Xz75OGBM77DAjnGpU7GFXDnolAnAsU5T3dd-LLnVlVhvzyuZWg7ZdH-0WsVVCezyIsQnm3WMpdPrlUcHtT6fyY2fhJVIm1QJEES5wEiEPMRrmGQ68V-q8TWlrPan6LU5Kr8Ak0nJKhE-r5bcaemeUbIsY4a9n2YDZck9CI6VGumMccelQ61Bhs5vgQ0W4AID90TXnUtJjWrVcgdhrLCWV_kv2_YSqDDoI6TM0oJKNaoNeG2HXCxXpHy8izUvfMwHvdniW3c4BPnvMpQW83bXrMPteKk-CFXdwQ6bB2PzzXAzWTp5q6D5cLWAyPJjju4AmopBUJmRwp0tjulMCClWqMiB08y8DIWDDLAAaG7Q-de-_Q-T6tZy4LRk_c0sYOtAaNCA1HgTDSLvP4j-xeuu8DrKv5SqefP2J7LLFM_JAi1gRh_84NUvUDvBdexr9wZI8eXjnnoDvP6KTosKCLmSC_ErmtzRXfUg1mz5fNVtlKSm03tqzmfL46iKDATVuEejDtlo34djj7uBV5DUw4lDIpQY1VsO1Ozgpoz9i8sNcRKQ-K3Of-vDL6R28gLBUq0Xo3nm1hAJgjc68C57jrMlJhD8GM6AeoGnnhDTfJ2xuxsdnH6i06qFUKcuTmA8l23Ek-A3ryx8DHAIaRX40d3e5MwaUqbglufHWBGId7KBiaiFuD3LhJC0CLl23XyHf225Rd4lir9LpltmuaRLnyS0FwIGZMaRmxQ-SWB2fDVzj81SJpo9lPDsuLu_ji7AA1cx-PnTj5fVp3APeRmy9E0A2v8hCKm4C6tPuvgC7Xp6MV8epxYIsGRiTy5wlHQE0FUuOdBtBH0rmGJDf4HQJoZHjhDhOJZqkvlDtEowB1mtndHgRz-0lpQurRm-RwKvl4n0quBfWZ1GL_PmiZIO36Iyyw4BRt3c1a5Zc5ilweQcle_-ZxawS1aAXXOaknt2c6AGB5JnmrTz2dXS7A8M20uNp7Cv8RoeiCYjPa1Co3Nr_6BuQL7HFxNsyk1AXDbG2qUJljSeWG3YFkaPHxgTw7aAefXrFFL_GNPi0YtageYJq3WN6lrdQ2CB0g7QLoj9dsHlAGhm8PtUESBUBbSyJVOm1lCuGGbB7psYxOLLO3BSqnXHb0--sDiyCTKMi-80rtMiHttXC3zAxXUFQjTre3a8KNohgPWx1PTAbxf96enJ33rhBV-2ewMIROT9j-K_Esee0eWUcTmt9v0yHW-V5ij0Hopx7oaXadNQLdgBJwUDf6R9xEktHhzUkyJ0g73gjrKQz2EidorhljD9LSFMAlUuRTkUhG35crMduH9TAAEgOHXZI24CD5Fz3n2KgXKoxWHlpaLlTwBXK1xLHVCrqCqvsBo60w5FV7cmdNTBjFbDU1EKSHLopt_aMgtT_6Fg1ZT6H2p0CAvvbinLkTLop3pSVU1_itnzRHOf3ayHzMrmSN_pI_03Of_63ZuHJmRWRCd7s1PviAo-B1LcG52VTanJz0JCF1RAlPj9-2DIgJLxDgNcPI96cTqZBbLk-rwKlebrmX6d5CBg3V5pmJKkgLIj5FpTmhiXhqDHHJvu-BxfzDQl2c8QtQYF6aygihfCCluN5biEv51XKRDpC-S3sU3USofDTgcg1pznwUvVv2eL8nWywckhIHWnip7z_ptCTmyn7BEzzgRgGLA_pLG17SPRJP6laoXHG_dprfpRM7gcLJZQ2zk29W2zVEpFwWePGpnQbpPjPqcOBiQfewxwnLHEuV8yGBR7Y-SEKrc6M6v8AHYk9oLXaRu1qBKkLUKSzKQhNFtfl-h-J8Adf0W9hxYSt6QNzf1YUuE8H_w2SrUGcVnsCnIQY_xu11sJ-0d-T2oFelzeEoasMeeCDamuFQye14ps0k4cM8vXpk_7ZrVE7rQmEpW40_n1iNHwB4UINg9CnQGXH98DzBBCoGPZpA1SELOwGTcJGcBZVQ5Tfey1SRFwXWJO0QFHfDb5-_tQUj9o30MhJBGxOftnwLaFROLgq3FuSBRM9dYsdlpHe1SILQXKVIwjXcOVMFgmbDq_hMSNFlMvblX9LLBduT9cXk6JhBVcxb8-oKbvbjL7zqQHOgke3ZC6oDEvcew2YzLMiNLiyGxJcthsyDfrWbhbq9DSRE7lYq9AVeh_Zc2wZq0RFh4CJGhXtW8WobIOY8JPIkyQKD4W_mKRxchykWyrCRliFId1Tzbgzu1NKxdZLiGZchs7MRgd-c_Kk0mDAvcVqyCSw5ZnlG8qWxmgwods9KD80tww2Bvp87a9Jwf-S8_PhqqG3ggGuLLm2CH71h7v6uA7f9-aCJKnlPiyb43OU2IK-rRgJf_U6VNAs1n0-RwWlaMttgA5wcecqRUlkneFkWpJOKDXpuAR9vwfoArMnPnp0jGQDN3-OPymX4xsYY6L4k0zC6j3zz9K2wgcGFD9kliVy2qwbeAqWL37Qdnr6sEbkxusF6IiYh-POUU_8rCQX03_uw0XHroHwK4mFajchjXmOY8ykOBQCIGPwCNI446xFhqWFDytDTXq9Eu651PlEqDELIcRwQz6KYWNJNlEFi4_f4GYS8sn0wpwte5R9QuaaLjc38obGBswmh15l9PrMvrWklBnnEZpV3NWmxQViKWcuey_QG_hRfQ-8Kjhv0f4D4L-d52x89yVXeVu0wbN_GstklEGCCecqvmQi1vXDf2FKr69Md-TE-mAh9pA-72vepP3guNcHz6PqzzOQX9Sj1uNZCkB0heHrXuCunn_Elv3ZvHZ-9AE26ybqtRVxaHtYrbtX9AKVk7ud_YdFPxSq-HeavXCXOBDGxEVleN03Q01jj7xoz5MjhKrVDF7XOobW0xMLtPfJLLmEGkBtSrLFCDGo1T7T3DnEiFQzXZutM50_l0k_3DxzDKhI4s5rOeeTMjSXDaxjM52LLgwAanVnMtKEsEXFVF4b5xvu_xn5CzqW5T0TTDOFXm2Gdxj-t59bgRGmnO56K85rTGgeJyXBroTz8cS4hkgfm2fQKiDAQZ5iMJeY4iqKZJTrOYb0IueB_ez-I8XW_dibgUd-WcJNKYKf4KnZR9_Z8o4OofbCdVj2mcgunpgjbTCORNWj7IpYmkHcbIQFtXnnts_2WNf-TtE6xr-iIVkwGABYE7ugHl1BUO5yKuDmeTOijSxWQGO22dzPnGVQ4O7AuXUYBFRa6FKVEIIVyk49ggvgRFFerncqEW1s8LR9gCzMIsxH2jCOyOSqjWGdZncRqDWhF6NYgFsqs3BDGYspC1vd9KFYppnH5W7MRYb2Duoi9yb7SQhNarto9KaqqgiTdEWeOw3kSkTZxa1moEh8F3ueFWhjQXNW4I3_inDPUdw0Xcf703y7uitnAsi-235tGC36JkWMR9M9Dx1cQSnS0NWhOYjUPPrKSHW8QCY-ZAfEUSJfixJeXEEUI0YmuGlFCIrLFvtlqFjxzqJW4JPCfnB0jCC9Z07d7rwHznYBSkr_cis4gNwnPOa11060WODyso6zRSJ7Q57bPhULvgnMZHZq2hl5dygeAz-elG8XYIUmr8jwXKuVGT_hl13cNI5QHaxshgdJuTzE362jxI4c0usFIVIzwhX6KqDFtWIZ5skj8iGioS6pDkY5tTj91aRu1ZL9eQ7KSLBbPeqhZCjQJGuudUr4u7HGuz8lQR0KvuZqKGGaybbPYwzJSx9qkGwqr_RNT7RW7oDxNiPlUHEf1qvED5M5FBFt_YlTmVtLQDJHRxvx3jv-Nc9pm6tew-et17Z0lMcXypXhr138RTXZYHSwJXsHMTNNGZFHCuZsyrq-PywrzCm-i6tXstJXx79s9os_dAaYgMtYEjPNRCb29LjaNw6OL60MKAl0Fung52DEDjnxFCTp9ygM_IkmLw95r9nhdq3smfsasefn6cp3YnEG3skKDswqS2Ul8Pilfqz3JI7mVucw4zA08ICIXAxB_L8_MPXUPPrVrdcf2HHicjjFs5L7mabPyv6blX2uB0BJ8Pcsdr_qdm-JbxmEEZZnxmtaG0VPgo23-DaHHIdMnNa-4cElpS64Tqcanin5QIsd1e1jIBJcjLmGOjV0eJpawOICK6dIhgdAsgLyXT-ItiUkVc_7NrPdpe0Fag7jMtvqXlvi-JljdILhGfbT7o-rNPY2iJ32jKUIDVZTSADQRf7Psnt40y3m1Ccx6aN3JVhNrgihrfjMF4rhZkqrh7Rlzs350VVOar8RblBoycjjBh9-xyXXSp4OWebr4rK6w76HQqKoOdQZvFrBG0Y3Qfkq1tNnJyy7QA3ZZwhnVPzmvi7GeCLIZMNQLQ2A3mUvZXcmmcI2NmLBJuTHoQ5IBhmtMA9_b1qVTt-8iy0jIklazgzzUa0Zdl3IAuptdmJT7AGneTDhrR60WBnxVbbjJa-_LvOyVdEVimw6wNuUO0HIuyLo7s5MkR1D1SNShzV7PUtM2YKxUxbE1zEHkqiTIF1P5RxIhh85XAaIaJMlIxjhvtIUy--jiuzLh9HDDjDCuSMRrqOk958lSAkZnProYbHuRI12ViZ561Z4-whNCQwctuoP68FvRWLByoO2NtNSaPBC9aqNx6OWHcTTGdaip8MZLmD_xPjoq6O04HNxBsaCQeo2xqMkeoB74m_8HtZQIPHyEgW2cAnDDOPDRFspt8KN9TMgAWTf_Pa7eI1ZvWo1vZtjOUi9E9SARkpmtFNtaQP_NRLp_76h9B_piPJCdzuIl9QXbwscJOaDHIlYfeauN1j1zMGmSY1jS2UPNPF7Qfy1wUcdxLFuzGy_1YPe6i8DoMimj_c995kmHFKi9jIdBHrTz5p-pX_E01O95Wd1mzgCeQCo643zzQ10c93MASc5dgHgCjyTfT4RATHXhVrhhjnamu0xnLxIHt0qA43qDfQd23xzzp5gA0KLoQ-b9fYpo5tjD3z-A6BuVES9k9W60WN3nwxJiil6rjHSHxzq_rmoDj--EOBsKv5TcismcMk4IdBgoKWcsHGW43c5t5gmaA6c1QZPDHZWTnkHPZIsH2U1kMcsNHoWG-H-xQ65cz6cceu_ATRu26etMuEZo4ecqNSENhCQq7NlkEnWVacuW7qybowkEr2uIU-BB_wI1oHPKVupH-0ZOHsVZOgktQ5g1DWiXUVloBabeRIZJt7fDYFs5oNgXxggElnN9fK-fb8BQb9j2BraENpRQonC68YsbFQLoyefvK3WnO1GFQQg7qDqzhU9PgMU6CIYfMfuHAoFiXtaTsnykAIv7m0nckJn8nldATLqakn72ObT_rzRQXi_cKoksBvKel4sqg7FtoM9no5s9a3wT1OwRXNUZ5Jg5iYyFW9mlRV4-Pwo67XhiipGG-iXsqxlhmDQjmeJoBfOKfm3MWJccFO9hMReoCp1DDqP5wxG_1gFMhl4mHPgxQW24pRrYOO00YYdR9VVrsBdjalyjo4mK5PuWqP0O3BKTZ7-Al2P5_VyQ2MxMZAZCkHSE5tRIkq0k29sZLPM58yUwN5FkIrzop2PR_VNYNa2eY2jK-mVv7eYvwcq9LcF6JbJN79K9YyPI-dqKutPoFzFXQEijdF77VbVDQYN5v33gKMYWIyXUb_ZgBFZ9wwZkGkzK7aRR22QVhUMk-M6dZrVH365Cmnboiq_7ZqSIa49uF1qlWbCljkpXMDxF8i0YGRdx4CUSU6vfyKyMUtCb-c6ZxGztojxz72-u3SwPOEJeRNUjpgH25LHo21ORRGuDHM0p04CyxXYe6YH-qYyINgouQ58GorDnhZJfLssqXFDEV_HeQfuZp-KsEnHSMDgX7ibItCu_ETXE2ano2M0XnOjdmSPRHl1aFyQAWkHsgTsrlzucRFcDhkK1BNIGPgC4eWce4bsaf_DHP0OJW8qVEnd15Oj1r9Om2K-vL5pYCLySkxA85DSgMKNOXPsPV3wGkiJjLJqn250v5aiwAziMHrcY5ik4Fm2AvDlRXPvGqXOuQG-zJsFc05J-1TBLgT1wZ1b2mw_qihmlJt71mthNKfgjmCMtx6WVKgRGM2lhdZ6gXt_9AkBcf3Rax9inuLnPgfaOZSCNa-MMR5yVa7ql7i-NwvuupwuuTuuKGkXv_-T3EK-Ky418dDDOMTgpW8nHiUM6Y5uBu6v__N8NMYvnJmujw6dUTNMR-R6vgaXdDtzs6a4KAccwIgqQ43uhgDexj9x4OB4304dKb5PJ2HpgIlnXlhjB-JGmnQAbAIaLrEcW9V0S0PX4H_Mz4NGqaAtDTeeiw=',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                    ),
+                    TextPart(content=IsStr(), id='msg_68c200091ccc8191b38e07ea231e862d0003919771fccd27'),
+                ],
+                usage=RequestUsage(input_tokens=23, output_tokens=2030, details={'reasoning_tokens': 1728}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68c1ffe0f9a48191894c46b63c1a4f440003919771fccd27',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        model=BedrockConverseModel(
+            'us.anthropic.claude-sonnet-4-20250514-v1:0',
+            provider=bedrock_provider,
+            settings=BedrockModelSettings(
+                bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+            ),
+        ),
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=1241, output_tokens=495),
+                model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -720,11 +1085,19 @@ async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: Bed
 
 
 async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    m = BedrockConverseModel('us.deepseek.r1-v1:0', provider=bedrock_provider)
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={
+                'thinking': {'type': 'enabled', 'budget_tokens': 1024},
+            }
+        ),
+    )
     agent = Agent(m)
 
     event_parts: list[Any] = []
-    async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
+    async with agent.iter(user_prompt='Hello') as agent_run:
         async for node in agent_run:
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
@@ -733,690 +1106,56 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
 
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=ThinkingPart(content='Okay')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', so')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' user is')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' asking how to')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' cross the street')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Let me')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' think')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' about how')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to approach')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' this. First')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', I need')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to make sure')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' I cover')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' all the basic')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' steps,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' but also')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' consider different')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' scenarios. Maybe')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' start with the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' obvious:')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' finding')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a cross')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='walk.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' But wait,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' not all')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' streets')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' have cross')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='walks,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' especially in less')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' urban areas.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' So I should')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' mention looking')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' for')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a crosswalk')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' or')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' pedestrian crossing')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' signals')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- first.
-
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Then, check')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' for traffic lights')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. If')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=" there's")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a traffic light')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', wait')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' for the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' walk')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' signal. But')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' sometimes')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' people might not')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' know what')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the symbols')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' mean. Maybe')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' explain the "')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='walk"')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and "don')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='\'t walk"')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' signals. Also')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', in')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' some places')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', there')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' are count')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='down tim')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='ers which')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' can help.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' But what')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=" if there's")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' no traffic')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' light?')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Then they should')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' look both ways')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' for cars.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' But how')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' many')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' times?')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Usually')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' left')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='-right')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='-left,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' but maybe clarify')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- that.
-
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Wait, but')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' in')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' some countries,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' traffic comes')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' from the opposite')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' direction')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Like')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' in')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the UK,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' cars')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' drive on the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' left. So')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' maybe add')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a note')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' about being')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' aware of the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' local traffic direction')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Also')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', distractions')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' like')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' using a')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' phone while crossing')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Em')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='phasize the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' importance of staying')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' focused')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and not')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' being')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- distracted.
-
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='What')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' about children')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' or')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' people')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' with disabilities?')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Maybe mention using')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' pedestrian')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' bridges')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' or tunnels')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' if available.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Also, making')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' eye contact with')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' drivers to')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' ensure they see')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' you. But')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' not')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' all drivers')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' might make')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' eye contact,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' so maybe that')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s not")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' always')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- reliable.
-
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Oh')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', and')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' jaywalk')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='ing. Should')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' I mention that')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=" it's illegal")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' in some places')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and safer')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to use')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' crosswalks?')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Yes')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', that')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s important for")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' legal')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' safety reasons.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Also, even')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' if the walk')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' signal is on')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', check')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' for turning')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' vehicles')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that might not')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' stop')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. B')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='icycles and')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' motorcycles')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' can be')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' quieter')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' harder to hear')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', so remind')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' listen')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' as')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' well as look')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
-.
-
-Wait\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', what about')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' at night')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='? W')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='earing reflective clothing')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' or carrying')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a light to')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' be more')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' visible. That')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s a good")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' point. Also')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' in groups')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' if possible,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' as more')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' people are more')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' visible.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' But during')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' COVID')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', maybe')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' social distancing affects')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that? Not')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' sure if that')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s still")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' concern,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' but maybe skip')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' part unless necessary')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
-.
-
-Let\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' me outline')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the steps:')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 1.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Find a safe')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' point. ')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='2. Observe')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' traffic signals.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 3.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Look both ways')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. ')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='4. Make')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' sure')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' it')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s safe.")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 5.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Stay visible')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. 6')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Walk')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' straight')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' across.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 7')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Stay')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' alert. Maybe')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' add tips')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' for')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' different situations')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' like un')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='marked')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' crossings, intersections')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' with')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' signals')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
-, etc.
-
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Also')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', include safety')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' tips like avoiding')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' distractions,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' watching')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' for turning')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' vehicles, and')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' being cautious')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' at night.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Maybe mention pedestrian')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' rights')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' but')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' also the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' need')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to be')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' cautious regardless')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Should')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' I mention')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' using')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' pedestrian')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' bridges')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' or under')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='passes as')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' alternatives?')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Yes, that')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s a good")),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- idea.
-
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Wait, but')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' in some countries')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', even')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' if you')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' have the right')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' of way,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' drivers might not')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' stop.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=" So it's")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' better to always')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' ensure')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' vehicle')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' is stopping before')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' crossing. Maybe')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' emphasize')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that even')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' if you')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' have the signal')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', check')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' cars are stopping')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
-.
-
-Also\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', the importance')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' of not')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' assuming')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that drivers can')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' see you.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Sometimes')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' drivers')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' are')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' distracted too')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. So')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' being')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' proactive in')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- ensuring safety.
-
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Let')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' me check if')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' I missed')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' anything.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Maybe the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' basic')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' steps are')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' covered')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', but adding')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' extra tips makes')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' it comprehensive')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Okay')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', I think')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=" that's a")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' solid structure')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Now,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' present it in')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a clear,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' step-by-step')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' manner with')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' some')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' bullet')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' points or')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' numbered')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' list')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Make sure the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' language is simple')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and easy to')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' understand,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' avoiding jargon.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Al')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='right, time')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to put it')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' all together.\n')),
-            PartStartEvent(
-                index=1,
-                part=TextPart(
-                    content="""\
-
-
-"""
-                ),
-            ),
+            PartStartEvent(index=0, part=ThinkingPart(content='The')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' user has')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' greeted me with')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a simple "Hello".')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' I should respond in')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a friendly and wel')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='coming manner.')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' This is a')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' straightforward greeting')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=',')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=" so I'll respond warm")),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='ly and ask')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' how I can help')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' them today.')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta=IsStr(), provider_name='bedrock')),
+            PartStartEvent(index=1, part=TextPart(content='Hello! It')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Crossing the')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' street safely involves')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' careful')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' observation')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' and awareness.')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=" Here's")),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' a step')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='-by-step guide')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-:
-
-###\
-"""
-                ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta="'s nice")),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' to meet you.')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' How can I help')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you today?')),
+        ]
+    )
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ]
             ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Basic')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Steps**')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' **Find a')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Safe Spot')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='**:')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Use a **')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='crosswalk**')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' or pedestrian signal')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' if available.')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Avoid j')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='aywalking')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=', as it')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' in')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' many areas')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' and less')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' safe.  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='   -')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' If no')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' crosswalk exists')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=', choose')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' a well')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='-lit area with')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' clear visibility in')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='2. **')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Check Traffic Signals')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' - Wait')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' for the')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' "walk')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='" signal')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' or')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' green light')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' at intersections')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='.  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='   - Watch')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' for count')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='down timers')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' to ensure you')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' have enough time')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='3. **')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Look Both')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Ways**:  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='   - **')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Left-Right')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='-Left**:')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Glance left')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=', right')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=', and')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' left again (')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='or right')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='-left-right')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' in countries')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' where traffic drives')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' on the left')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=', like the')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' UK).  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='   - Listen')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' for approaching')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' vehicles,')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' especially bikes')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' or quiet')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' electric')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='4. **')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Ensure All')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Traffic')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Has')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Stopped**:')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' - Make')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' eye contact with')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' drivers if possible')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' wait')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' for vehicles')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' to come')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' to a')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' complete stop before')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' stepping')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' into')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' the road')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Watch for turning')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' vehicles,')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' even if you')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' have the right')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' of')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='5. **')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Cross Prompt')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='ly and')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Saf')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='ely**:  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='   - Walk')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' straight across')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='—')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' run or')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' stop')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' midway')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' - Stay inside')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' cross')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='walk')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' lines')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' if they')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-.
-
-6\
-"""
-                ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user has greeted me with a simple "Hello". I should respond in a friendly and welcoming manner. This is a straightforward greeting, so I\'ll respond warmly and ask how I can help them today.',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content="Hello! It's nice to meet you. How can I help you today?"),
+                ],
+                usage=RequestUsage(input_tokens=36, output_tokens=73),
+                model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='. **Stay')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Alert Until')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' You')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Reach the Other')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Side**:  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='   -')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Keep scanning')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' for traffic as')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you cross')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='. Avoid')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' distractions like phones')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
- or headphones.
-
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
----
-
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='### **Additional')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Tips**')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='At')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Night**:')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Wear reflective')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' clothing or carry')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' a flashlight')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' to improve')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' visibility.  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='- **With')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Kids')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' or')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Disabilities**: Hold')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' hands with')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' children,')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' use assistive')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' devices')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' (e.g')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='., white')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' canes).')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Seek')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' pedestrian bridges')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' or under')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='passes if')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' available.  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='- **Un')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='marked Roads')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='**: Cross')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' where')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' can see on')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='coming traffic clearly')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=', and never')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' assume drivers see')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you.  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='- **')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='International Travel')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='**: Note')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' local traffic patterns')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' (e.g')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='., left')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='-side driving)')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' and pedestrian')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' customs')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-.
-
-### **\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Remember**:')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Right')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' of Way ≠')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Inv')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='incibility**:')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Even with')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' signal, double')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='-check that')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' cars')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' are stopping.')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Distractions Kill')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='**: Stay')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' focused—')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='no texting')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' or scrolling while')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='By following these')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' steps,')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='ll minimize')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' risks and')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' cross')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' safely')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='!')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' 🚶')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='♂')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='️🚦')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='')),
         ]
     )
 
@@ -1464,7 +1203,7 @@ async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvi
     )
 
 
-async def test_bedrock_anthropic_no_tool_choice(bedrock_provider: BedrockProvider):
+async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
     my_tool = ToolDefinition(
         name='my_tool',
         description='This is my tool',
@@ -1472,7 +1211,7 @@ async def test_bedrock_anthropic_no_tool_choice(bedrock_provider: BedrockProvide
     )
     mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=False, output_tools=[])
 
-    # Models other than Anthropic support tool_choice
+    # Amazon Nova supports tool_choice
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     tool_config = model._map_tool_config(mrp)  # type: ignore[reportPrivateUsage]
 
@@ -1493,8 +1232,29 @@ async def test_bedrock_anthropic_no_tool_choice(bedrock_provider: BedrockProvide
         }
     )
 
-    # Anthropic models don't support tool_choice
+    # Anthropic supports tool_choice
     model = BedrockConverseModel('us.anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    tool_config = model._map_tool_config(mrp)  # type: ignore[reportPrivateUsage]
+
+    assert tool_config == snapshot(
+        {
+            'tools': [
+                {
+                    'toolSpec': {
+                        'name': 'my_tool',
+                        'description': 'This is my tool',
+                        'inputSchema': {
+                            'json': {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}}
+                        },
+                    }
+                }
+            ],
+            'toolChoice': {'any': {}},
+        }
+    )
+
+    # Other models don't support tool_choice
+    model = BedrockConverseModel('us.meta.llama4-maverick-17b-instruct-v1:0', provider=bedrock_provider)
     tool_config = model._map_tool_config(mrp)  # type: ignore[reportPrivateUsage]
 
     assert tool_config == snapshot(

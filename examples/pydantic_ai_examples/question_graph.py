@@ -12,6 +12,8 @@ from pathlib import Path
 
 import logfire
 from groq import BaseModel
+
+from pydantic_ai import Agent, ModelMessage, format_as_xml
 from pydantic_graph import (
     BaseNode,
     End,
@@ -19,9 +21,6 @@ from pydantic_graph import (
     GraphRunContext,
 )
 from pydantic_graph.persistence.file import FileStatePersistence
-
-from pydantic_ai import Agent, format_as_xml
-from pydantic_ai.messages import ModelMessage
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')

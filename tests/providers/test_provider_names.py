@@ -25,6 +25,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.grok import GrokProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
+    from pydantic_ai.providers.litellm import LiteLLMProvider
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
     from pydantic_ai.providers.ollama import OllamaProvider
@@ -52,6 +53,7 @@ with try_import() as imports_successful:
         ('heroku', HerokuProvider, 'HEROKU_INFERENCE_KEY'),
         ('github', GitHubProvider, 'GITHUB_API_KEY'),
         ('ollama', OllamaProvider, 'OLLAMA_BASE_URL'),
+        ('litellm', LiteLLMProvider, None),
     ]
 
 if not imports_successful():

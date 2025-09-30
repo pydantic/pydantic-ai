@@ -1,10 +1,14 @@
-from dataclasses import dataclass
+from __future__ import annotations as _annotations
+
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, computed_field
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+from typing_extensions import Self
 
 from pydantic_ai import format_as_xml
 
@@ -18,6 +22,19 @@ class ExampleDataclass:
 class ExamplePydanticModel(BaseModel):
     name: str
     age: int
+
+
+class ExamplePydanticFields(BaseModel):
+    name: str = Field(description="The person's name")
+    age: int = Field(description='Years', title='Age', default=18)
+    height: float = Field(description="The person's height", exclude=True)
+    children: list[Self] | None = Field(title='child', alias='child_list', default=None)
+
+    @computed_field(title='Location')
+    def location(self) -> str | None:
+        if self.name == 'John':
+            return 'Australia'
+        return None
 
 
 @pytest.mark.parametrize(
@@ -124,7 +141,373 @@ class ExamplePydanticModel(BaseModel):
     ],
 )
 def test_root_tag(input_obj: Any, output: str):
-    assert format_as_xml(input_obj, root_tag='examples', item_tag='example') == output
+    assert format_as_xml(input_obj, root_tag='examples', item_tag='example', include_field_info=False) == output
+    assert format_as_xml(input_obj, root_tag='examples', item_tag='example', include_field_info='once') == output
+
+
+@pytest.mark.parametrize(
+    'input_obj,use_fields,output',
+    [
+        pytest.param(
+            ExamplePydanticFields(
+                name='John',
+                age=42,
+                height=160.0,
+                child_list=[
+                    ExamplePydanticFields(name='Liam', height=150),
+                    ExamplePydanticFields(name='Alice', height=160),
+                ],
+            ),
+            'once',
+            snapshot("""\
+<name description="The person's name">John</name>
+<age title="Age" description="Years">42</age>
+<children title="child">
+  <ExamplePydanticFields>
+    <name>Liam</name>
+    <age>18</age>
+    <children>null</children>
+    <location title="Location">null</location>
+  </ExamplePydanticFields>
+  <ExamplePydanticFields>
+    <name>Alice</name>
+    <age>18</age>
+    <children>null</children>
+    <location>null</location>
+  </ExamplePydanticFields>
+</children>
+<location>Australia</location>\
+"""),
+            id='pydantic model with fields',
+        ),
+        pytest.param(
+            [
+                ExamplePydanticFields(
+                    name='John',
+                    age=42,
+                    height=160.0,
+                    child_list=[
+                        ExamplePydanticFields(name='Liam', height=150),
+                        ExamplePydanticFields(name='Alice', height=160),
+                    ],
+                )
+            ],
+            'once',
+            snapshot("""\
+<ExamplePydanticFields>
+  <name description="The person's name">John</name>
+  <age title="Age" description="Years">42</age>
+  <children title="child">
+    <ExamplePydanticFields>
+      <name>Liam</name>
+      <age>18</age>
+      <children>null</children>
+      <location title="Location">null</location>
+    </ExamplePydanticFields>
+    <ExamplePydanticFields>
+      <name>Alice</name>
+      <age>18</age>
+      <children>null</children>
+      <location>null</location>
+    </ExamplePydanticFields>
+  </children>
+  <location>Australia</location>
+</ExamplePydanticFields>\
+"""),
+            id='list[pydantic model with fields]',
+        ),
+        pytest.param(
+            ExamplePydanticFields(
+                name='John',
+                age=42,
+                height=160.0,
+                child_list=[
+                    ExamplePydanticFields(name='Liam', height=150),
+                    ExamplePydanticFields(name='Alice', height=160),
+                ],
+            ),
+            False,
+            snapshot("""\
+<name>John</name>
+<age>42</age>
+<children>
+  <ExamplePydanticFields>
+    <name>Liam</name>
+    <age>18</age>
+    <children>null</children>
+    <location>null</location>
+  </ExamplePydanticFields>
+  <ExamplePydanticFields>
+    <name>Alice</name>
+    <age>18</age>
+    <children>null</children>
+    <location>null</location>
+  </ExamplePydanticFields>
+</children>
+<location>Australia</location>\
+"""),
+            id='pydantic model without fields',
+        ),
+    ],
+)
+def test_fields(input_obj: Any, use_fields: bool, output: str):
+    assert format_as_xml(input_obj, include_field_info=use_fields) == output
+
+
+def test_repeated_field_attributes():
+    class DataItem(BaseModel):
+        user1: ExamplePydanticFields
+        user2: ExamplePydanticFields
+
+    data = ExamplePydanticFields(
+        name='John',
+        age=42,
+        height=160.0,
+        child_list=[
+            ExamplePydanticFields(name='Liam', height=150),
+            ExamplePydanticFields(name='Alice', height=160),
+        ],
+    )
+    assert (
+        format_as_xml(data, include_field_info=True)
+        == """\
+<name description="The person's name">John</name>
+<age title="Age" description="Years">42</age>
+<children title="child">
+  <ExamplePydanticFields>
+    <name description="The person's name">Liam</name>
+    <age title="Age" description="Years">18</age>
+    <children title="child">null</children>
+    <location title="Location">null</location>
+  </ExamplePydanticFields>
+  <ExamplePydanticFields>
+    <name description="The person's name">Alice</name>
+    <age title="Age" description="Years">18</age>
+    <children title="child">null</children>
+    <location title="Location">null</location>
+  </ExamplePydanticFields>
+</children>
+<location title="Location">Australia</location>\
+"""
+    )
+
+    assert (
+        format_as_xml(DataItem(user1=data, user2=data.model_copy()), include_field_info=True)
+        == """\
+<user1>
+  <name description="The person's name">John</name>
+  <age title="Age" description="Years">42</age>
+  <children title="child">
+    <ExamplePydanticFields>
+      <name description="The person's name">Liam</name>
+      <age title="Age" description="Years">18</age>
+      <children title="child">null</children>
+      <location title="Location">null</location>
+    </ExamplePydanticFields>
+    <ExamplePydanticFields>
+      <name description="The person's name">Alice</name>
+      <age title="Age" description="Years">18</age>
+      <children title="child">null</children>
+      <location title="Location">null</location>
+    </ExamplePydanticFields>
+  </children>
+  <location title="Location">Australia</location>
+</user1>
+<user2>
+  <name description="The person's name">John</name>
+  <age title="Age" description="Years">42</age>
+  <children title="child">
+    <ExamplePydanticFields>
+      <name description="The person's name">Liam</name>
+      <age title="Age" description="Years">18</age>
+      <children title="child">null</children>
+      <location title="Location">null</location>
+    </ExamplePydanticFields>
+    <ExamplePydanticFields>
+      <name description="The person's name">Alice</name>
+      <age title="Age" description="Years">18</age>
+      <children title="child">null</children>
+      <location title="Location">null</location>
+    </ExamplePydanticFields>
+  </children>
+  <location title="Location">Australia</location>
+</user2>\
+"""
+    )
+
+    assert (
+        format_as_xml(DataItem(user1=data, user2=data.model_copy()), include_field_info='once')
+        == """\
+<user1>
+  <name description="The person's name">John</name>
+  <age title="Age" description="Years">42</age>
+  <children title="child">
+    <ExamplePydanticFields>
+      <name>Liam</name>
+      <age>18</age>
+      <children>null</children>
+      <location title="Location">null</location>
+    </ExamplePydanticFields>
+    <ExamplePydanticFields>
+      <name>Alice</name>
+      <age>18</age>
+      <children>null</children>
+      <location>null</location>
+    </ExamplePydanticFields>
+  </children>
+  <location>Australia</location>
+</user1>
+<user2>
+  <name>John</name>
+  <age>42</age>
+  <children>
+    <ExamplePydanticFields>
+      <name>Liam</name>
+      <age>18</age>
+      <children>null</children>
+      <location>null</location>
+    </ExamplePydanticFields>
+    <ExamplePydanticFields>
+      <name>Alice</name>
+      <age>18</age>
+      <children>null</children>
+      <location>null</location>
+    </ExamplePydanticFields>
+  </children>
+  <location>Australia</location>
+</user2>\
+"""
+    )
+
+
+def test_nested_data():
+    @dataclass
+    class DataItem1:
+        id: str | None = None
+        source: str = field(default='none', metadata={'description': 'the source', 'date': '19990805'})
+
+    class ModelItem1(BaseModel):
+        name: str = Field(description='Name')
+        value: int
+        items: list[DataItem1] = Field(description='Items')
+
+    @pydantic_dataclass
+    class DataItem2:
+        model: ModelItem1 = field(metadata={'title': 'the model', 'description': 'info'})
+        others: tuple[ModelItem1] | None = None
+        count: int = field(default=10, metadata={'info': 'a count'})
+
+    data = {
+        'values': [
+            DataItem2(
+                ModelItem1(name='Alice', value=42, items=[DataItem1('xyz')]),
+                (ModelItem1(name='Liam', value=3, items=[]),),
+            ),
+            DataItem2(
+                ModelItem1(
+                    name='Bob',
+                    value=7,
+                    items=[
+                        DataItem1('a'),
+                        DataItem1(source='xx'),
+                    ],
+                ),
+                count=42,
+            ),
+        ]
+    }
+
+    assert (
+        format_as_xml(data, include_field_info='once')
+        == """
+<values>
+  <DataItem2>
+    <model title="the model" description="info">
+      <name description="Name">Alice</name>
+      <value>42</value>
+      <items description="Items">
+        <DataItem1>
+          <id>xyz</id>
+          <source description="the source">none</source>
+        </DataItem1>
+      </items>
+    </model>
+    <others>
+      <ModelItem1>
+        <name>Liam</name>
+        <value>3</value>
+        <items />
+      </ModelItem1>
+    </others>
+    <count>10</count>
+  </DataItem2>
+  <DataItem2>
+    <model>
+      <name>Bob</name>
+      <value>7</value>
+      <items>
+        <DataItem1>
+          <id>a</id>
+          <source>none</source>
+        </DataItem1>
+        <DataItem1>
+          <id>null</id>
+          <source>xx</source>
+        </DataItem1>
+      </items>
+    </model>
+    <others>null</others>
+    <count>42</count>
+  </DataItem2>
+</values>
+""".strip()
+    )
+
+    assert (
+        format_as_xml(data, include_field_info=False)
+        == """
+<values>
+  <DataItem2>
+    <model>
+      <name>Alice</name>
+      <value>42</value>
+      <items>
+        <DataItem1>
+          <id>xyz</id>
+          <source>none</source>
+        </DataItem1>
+      </items>
+    </model>
+    <others>
+      <ModelItem1>
+        <name>Liam</name>
+        <value>3</value>
+        <items />
+      </ModelItem1>
+    </others>
+    <count>10</count>
+  </DataItem2>
+  <DataItem2>
+    <model>
+      <name>Bob</name>
+      <value>7</value>
+      <items>
+        <DataItem1>
+          <id>a</id>
+          <source>none</source>
+        </DataItem1>
+        <DataItem1>
+          <id>null</id>
+          <source>xx</source>
+        </DataItem1>
+      </items>
+    </model>
+    <others>null</others>
+    <count>42</count>
+  </DataItem2>
+</values>
+""".strip()
+    )
 
 
 @pytest.mark.parametrize(
@@ -192,6 +575,15 @@ def test_invalid_value():
 def test_invalid_key():
     with pytest.raises(TypeError, match='Unsupported key type for XML formatting'):
         format_as_xml({(1, 2): 42})
+
+
+def test_parse_invalid_value():
+    class Invalid(BaseModel):
+        name: str = Field(default='Alice', title='Name')
+        bad: Any = object()
+
+    with pytest.raises(TypeError, match='Unsupported type'):
+        format_as_xml(Invalid(), include_field_info='once')
 
 
 def test_set():

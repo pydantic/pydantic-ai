@@ -25,7 +25,7 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     import openai
 
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 
@@ -70,7 +70,7 @@ def test_openrouter_pass_openai_client() -> None:
 
 async def test_openrouter_with_google_model(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenAIModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = OpenAIChatModel('google/gemini-2.0-flash-exp:free', provider=provider)
     agent = Agent(model, instructions='Be helpful.')
     response = await agent.run('Tell me a joke.')
     assert response.output == snapshot("""\

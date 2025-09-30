@@ -19,11 +19,10 @@ Since agents are stateless and designed to be global, you do not need to include
 You'll generally want to pass [`ctx.usage`][pydantic_ai.RunContext.usage] to the [`usage`][pydantic_ai.agent.AbstractAgent.run] keyword argument of the delegate agent run so usage within that run counts towards the total usage of the parent agent run.
 
 !!! note "Multiple models"
-    Agent delegation doesn't need to use the same model for each agent. If you choose to use different models within a run, calculating the monetary cost from the final [`result.usage()`][pydantic_ai.agent.AgentRunResult.usage] of the run will not be possible, but you can still use [`UsageLimits`][pydantic_ai.usage.UsageLimits] to avoid unexpected costs.
+    Agent delegation doesn't need to use the same model for each agent. If you choose to use different models within a run, calculating the monetary cost from the final [`result.usage()`][pydantic_ai.agent.AgentRunResult.usage] of the run will not be possible, but you can still use [`UsageLimits`][pydantic_ai.usage.UsageLimits] — including `request_limit`, `total_tokens_limit`, and `tool_calls_limit` — to avoid unexpected costs or runaway tool loops.
 
 ```python {title="agent_delegation_simple.py"}
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai import Agent, RunContext, UsageLimits
 
 joke_selection_agent = Agent(  # (1)!
     'openai:gpt-4o',
@@ -48,12 +47,12 @@ async def joke_factory(ctx: RunContext[None], count: int) -> list[str]:
 
 result = joke_selection_agent.run_sync(
     'Tell me a joke.',
-    usage_limits=UsageLimits(request_limit=5, total_tokens_limit=300),
+    usage_limits=UsageLimits(request_limit=5, total_tokens_limit=500),
 )
 print(result.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 print(result.usage())
-#> Usage(requests=3, request_tokens=204, response_tokens=24, total_tokens=228)
+#> RunUsage(input_tokens=204, output_tokens=24, requests=3, tool_calls=1)
 ```
 
 1. The "parent" or controlling agent.
@@ -106,7 +105,7 @@ joke_selection_agent = Agent(
     ),
 )
 joke_generation_agent = Agent(
-    'gemini-1.5-flash',
+    'google-gla:gemini-1.5-flash',
     deps_type=ClientAndKey,  # (4)!
     output_type=list[str],
     system_prompt=(
@@ -144,7 +143,7 @@ async def main():
         print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
         print(result.usage())  # (6)!
-        #> Usage(requests=4, request_tokens=309, response_tokens=32, total_tokens=341)
+        #> RunUsage(input_tokens=309, output_tokens=32, requests=4, tool_calls=2)
 ```
 
 1. Define a dataclass to hold the client and API key dependencies.
@@ -181,14 +180,12 @@ Here agents don't need to use the same deps.
 Here we show two agents used in succession, the first to find a flight and the second to extract the user's seat preference.
 
 ```python {title="programmatic_handoff.py"}
-from typing import Literal, Union
+from typing import Literal
 
 from pydantic import BaseModel, Field
 from rich.prompt import Prompt
 
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.messages import ModelMessage
-from pydantic_ai.usage import Usage, UsageLimits
+from pydantic_ai import Agent, ModelMessage, RunContext, RunUsage, UsageLimits
 
 
 class FlightDetails(BaseModel):
@@ -199,9 +196,9 @@ class Failed(BaseModel):
     """Unable to find a satisfactory choice."""
 
 
-flight_search_agent = Agent[None, Union[FlightDetails, Failed]](  # (1)!
+flight_search_agent = Agent[None, FlightDetails | Failed](  # (1)!
     'openai:gpt-4o',
-    output_type=Union[FlightDetails, Failed],  # type: ignore
+    output_type=FlightDetails | Failed,  # type: ignore
     system_prompt=(
         'Use the "flight_search" tool to find a flight '
         'from the given origin to the given destination.'
@@ -212,7 +209,7 @@ flight_search_agent = Agent[None, Union[FlightDetails, Failed]](  # (1)!
 @flight_search_agent.tool  # (2)!
 async def flight_search(
     ctx: RunContext[None], origin: str, destination: str
-) -> Union[FlightDetails, None]:
+) -> FlightDetails | None:
     # in reality, this would call a flight search API or
     # use a browser to scrape a flight search website
     return FlightDetails(flight_number='AK456')
@@ -221,8 +218,8 @@ async def flight_search(
 usage_limits = UsageLimits(request_limit=15)  # (3)!
 
 
-async def find_flight(usage: Usage) -> Union[FlightDetails, None]:  # (4)!
-    message_history: Union[list[ModelMessage], None] = None
+async def find_flight(usage: RunUsage) -> FlightDetails | None:  # (4)!
+    message_history: list[ModelMessage] | None = None
     for _ in range(3):
         prompt = Prompt.ask(
             'Where would you like to fly from and to?',
@@ -247,9 +244,9 @@ class SeatPreference(BaseModel):
 
 
 # This agent is responsible for extracting the user's seat selection
-seat_preference_agent = Agent[None, Union[SeatPreference, Failed]](  # (5)!
+seat_preference_agent = Agent[None, SeatPreference | Failed](  # (5)!
     'openai:gpt-4o',
-    output_type=Union[SeatPreference, Failed],  # type: ignore
+    output_type=SeatPreference | Failed,  # type: ignore
     system_prompt=(
         "Extract the user's seat preference. "
         'Seats A and F are window seats. '
@@ -259,8 +256,8 @@ seat_preference_agent = Agent[None, Union[SeatPreference, Failed]](  # (5)!
 )
 
 
-async def find_seat(usage: Usage) -> SeatPreference:  # (6)!
-    message_history: Union[list[ModelMessage], None] = None
+async def find_seat(usage: RunUsage) -> SeatPreference:  # (6)!
+    message_history: list[ModelMessage] | None = None
     while True:
         answer = Prompt.ask('What seat would you like?')
 
@@ -278,7 +275,7 @@ async def find_seat(usage: Usage) -> SeatPreference:  # (6)!
 
 
 async def main():  # (7)!
-    usage: Usage = Usage()
+    usage: RunUsage = RunUsage()
 
     opt_flight_details = await find_flight(usage)
     if opt_flight_details is not None:

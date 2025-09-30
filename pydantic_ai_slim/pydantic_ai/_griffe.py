@@ -2,9 +2,10 @@ from __future__ import annotations as _annotations
 
 import logging
 import re
+from collections.abc import Callable
 from contextlib import contextmanager
 from inspect import Signature
-from typing import TYPE_CHECKING, Any, Callable, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from griffe import Docstring, DocstringSectionKind, Object as GriffeObject
 

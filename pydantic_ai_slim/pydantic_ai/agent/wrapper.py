@@ -15,6 +15,7 @@ from ..run import AgentRun
 from ..settings import ModelSettings
 from ..tools import (
     AgentDepsT,
+    DeferredToolResults,
     Tool,
     ToolFuncEither,
 )
@@ -72,11 +73,12 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.Usage | None = None,
+        usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
@@ -88,11 +90,12 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.Usage | None = None,
+        usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
@@ -104,11 +107,12 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.Usage | None = None,
+        usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
@@ -140,7 +144,6 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             [
                 UserPromptNode(
                     user_prompt='What is the capital of France?',
-                    instructions=None,
                     instructions_functions=[],
                     system_prompts=(),
                     system_prompt_functions=[],
@@ -159,9 +162,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
                 CallToolsNode(
                     model_response=ModelResponse(
                         parts=[TextPart(content='The capital of France is Paris.')],
-                        usage=Usage(
-                            requests=1, request_tokens=56, response_tokens=7, total_tokens=63
-                        ),
+                        usage=RequestUsage(input_tokens=56, output_tokens=7),
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
                     )
@@ -178,6 +179,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
+            deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
@@ -193,6 +195,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             user_prompt=user_prompt,
             output_type=output_type,
             message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
             model=model,
             deps=deps,
             model_settings=model_settings,

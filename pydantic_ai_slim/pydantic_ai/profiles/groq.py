@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from . import ModelProfile
 
 
-@dataclass
+@dataclass(kw_only=True)
 class GroqModelProfile(ModelProfile):
     """Profile for models used with GroqModel.
 

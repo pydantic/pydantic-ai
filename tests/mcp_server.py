@@ -3,23 +3,24 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP, Image
-from mcp.server.session import ServerSessionT
-from mcp.shared.context import LifespanContextT, RequestT
+from mcp.server.session import ServerSession
 from mcp.types import (
     BlobResourceContents,
+    CreateMessageResult,
     EmbeddedResource,
     ResourceLink,
     SamplingMessage,
     TextContent,
     TextResourceContents,
+    ToolAnnotations,
 )
-from pydantic import AnyUrl
+from pydantic import AnyUrl, BaseModel
 
 mcp = FastMCP('Pydantic AI MCP Server')
 log_level = 'unset'
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title='Celsius to Fahrenheit'))
 async def celsius_to_fahrenheit(celsius: float) -> float:
     """Convert Celsius to Fahrenheit.
 
@@ -135,6 +136,11 @@ async def get_dict() -> dict[str, Any]:
     return {'foo': 'bar', 'baz': 123}
 
 
+@mcp.tool(structured_output=False)
+async def get_unstructured_dict() -> dict[str, Any]:
+    return {'foo': 'bar', 'baz': 123}
+
+
 @mcp.tool()
 async def get_error(value: bool = False):
     if value:
@@ -170,7 +176,7 @@ async def get_log_level(ctx: Context) -> str:  # type: ignore
 
 
 @mcp.tool()
-async def echo_deps(ctx: Context[ServerSessionT, LifespanContextT, RequestT]) -> dict[str, Any]:
+async def echo_deps(ctx: Context[ServerSession, None]) -> dict[str, Any]:
     """Echo the run context.
 
     Args:
@@ -186,7 +192,7 @@ async def echo_deps(ctx: Context[ServerSessionT, LifespanContextT, RequestT]) ->
 
 
 @mcp.tool()
-async def use_sampling(ctx: Context, foo: str) -> str:  # type: ignore
+async def use_sampling(ctx: Context[ServerSession, None], foo: str) -> CreateMessageResult:
     """Use sampling callback."""
 
     result = await ctx.session.create_message(
@@ -199,7 +205,23 @@ async def use_sampling(ctx: Context, foo: str) -> str:  # type: ignore
         temperature=0.5,
         stop_sequences=['potato'],
     )
-    return result.model_dump_json(indent=2)
+    return result
+
+
+class UserResponse(BaseModel):
+    response: str
+
+
+@mcp.tool()
+async def use_elicitation(ctx: Context[ServerSession, None], question: str) -> str:
+    """Use elicitation callback to ask the user a question."""
+
+    result = await ctx.elicit(message=question, schema=UserResponse)
+
+    if result.action == 'accept' and result.data:
+        return f'User responded: {result.data.response}'
+    else:
+        return f'User {result.action}ed the elicitation'
 
 
 @mcp._mcp_server.set_logging_level()  # pyright: ignore[reportPrivateUsage]

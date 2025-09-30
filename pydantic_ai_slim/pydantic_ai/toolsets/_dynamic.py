@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from typing import Any, Callable, Union
+from typing import Any, TypeAlias
 
-from typing_extensions import Self, TypeAlias
+from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
 from .abstract import AbstractToolset, ToolsetTool
 
 ToolsetFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT]],
-    Union[AbstractToolset[AgentDepsT], None, Awaitable[Union[AbstractToolset[AgentDepsT], None]]],
+    AbstractToolset[AgentDepsT] | None | Awaitable[AbstractToolset[AgentDepsT] | None],
 ]
 """A sync/async function which takes a run context and returns a toolset."""
 

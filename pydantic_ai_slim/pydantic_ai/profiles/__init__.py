@@ -1,8 +1,8 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, fields, replace
 from textwrap import dedent
-from typing import Callable, Union
 
 from typing_extensions import Self
 
@@ -18,7 +18,7 @@ __all__ = [
 ]
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ModelProfile:
     """Describes how requests to and responses from specific models or families of models need to be constructed and processed to get the best results, independent of the model and provider classes used."""
 
@@ -52,7 +52,7 @@ class ModelProfile:
     This is a workaround for models that emit `<think>\n</think>\n\n` or an empty text part ahead of tool calls (e.g. Ollama + Qwen3),
     which we don't want to end up treating as a final result when using `run_stream` with `str` a valid `output_type`.
 
-    This is currently only used by `OpenAIModel`, `HuggingFaceModel`, and `GroqModel`.
+    This is currently only used by `OpenAIChatModel`, `HuggingFaceModel`, and `GroqModel`.
     """
 
     @classmethod
@@ -75,6 +75,6 @@ class ModelProfile:
         return replace(self, **non_default_attrs)
 
 
-ModelProfileSpec = Union[ModelProfile, Callable[[str], Union[ModelProfile, None]]]
+ModelProfileSpec = ModelProfile | Callable[[str], ModelProfile | None]
 
 DEFAULT_PROFILE = ModelProfile()

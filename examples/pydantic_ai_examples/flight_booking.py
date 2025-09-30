@@ -11,9 +11,14 @@ import logfire
 from pydantic import BaseModel, Field
 from rich.prompt import Prompt
 
-from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.messages import ModelMessage
-from pydantic_ai.usage import Usage, UsageLimits
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRetry,
+    RunContext,
+    RunUsage,
+    UsageLimits,
+)
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -182,7 +187,7 @@ async def main():
         req_date=datetime.date(2025, 1, 10),
     )
     message_history: list[ModelMessage] | None = None
-    usage: Usage = Usage()
+    usage: RunUsage = RunUsage()
     # run the agent until a satisfactory flight is found
     while True:
         result = await search_agent.run(
@@ -213,7 +218,7 @@ async def main():
                 )
 
 
-async def find_seat(usage: Usage) -> SeatPreference:
+async def find_seat(usage: RunUsage) -> SeatPreference:
     message_history: list[ModelMessage] | None = None
     while True:
         answer = Prompt.ask('What seat would you like?')

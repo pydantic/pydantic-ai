@@ -3,11 +3,11 @@ from __future__ import annotations as _annotations
 import inspect
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import Json, TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator, to_json
 from typing_extensions import Self, TypedDict, TypeVar, assert_never
 
@@ -15,10 +15,11 @@ from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UserError
 from .output import (
-    DeferredToolCalls,
+    DeferredToolRequests,
     NativeOutput,
     OutputDataT,
     OutputMode,
+    OutputObjectDefinition,
     OutputSpec,
     OutputTypeOrFunction,
     PromptedOutput,
@@ -49,12 +50,12 @@ At some point, it may make sense to change the input to OutputValidatorFunc to b
 resolve these potential variance issues.
 """
 
-OutputValidatorFunc = Union[
-    Callable[[RunContext[AgentDepsT], OutputDataT_inv], OutputDataT_inv],
-    Callable[[RunContext[AgentDepsT], OutputDataT_inv], Awaitable[OutputDataT_inv]],
-    Callable[[OutputDataT_inv], OutputDataT_inv],
-    Callable[[OutputDataT_inv], Awaitable[OutputDataT_inv]],
-]
+OutputValidatorFunc = (
+    Callable[[RunContext[AgentDepsT], OutputDataT_inv], OutputDataT_inv]
+    | Callable[[RunContext[AgentDepsT], OutputDataT_inv], Awaitable[OutputDataT_inv]]
+    | Callable[[OutputDataT_inv], OutputDataT_inv]
+    | Callable[[OutputDataT_inv], Awaitable[OutputDataT_inv]]
+)
 """
 A function that always takes and returns the same type of data (which is the result type of an agent run), and:
 
@@ -196,7 +197,7 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
 
 @dataclass
 class BaseOutputSchema(ABC, Generic[OutputDataT]):
-    allows_deferred_tool_calls: bool
+    allows_deferred_tools: bool
 
     @abstractmethod
     def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
@@ -249,10 +250,10 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
         """Build an OutputSchema dataclass from an output type."""
         raw_outputs = _flatten_output_spec(output_spec)
 
-        outputs = [output for output in raw_outputs if output is not DeferredToolCalls]
-        allows_deferred_tool_calls = len(outputs) < len(raw_outputs)
-        if len(outputs) == 0 and allows_deferred_tool_calls:
-            raise UserError('At least one output type must be provided other than `DeferredToolCalls`.')
+        outputs = [output for output in raw_outputs if output is not DeferredToolRequests]
+        allows_deferred_tools = len(outputs) < len(raw_outputs)
+        if len(outputs) == 0 and allows_deferred_tools:
+            raise UserError('At least one output type must be provided other than `DeferredToolRequests`.')
 
         if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):
             if len(outputs) > 1:
@@ -265,7 +266,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                     description=output.description,
                     strict=output.strict,
                 ),
-                allows_deferred_tool_calls=allows_deferred_tool_calls,
+                allows_deferred_tools=allows_deferred_tools,
             )
         elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):
             if len(outputs) > 1:
@@ -278,7 +279,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                     description=output.description,
                 ),
                 template=output.template,
-                allows_deferred_tool_calls=allows_deferred_tool_calls,
+                allows_deferred_tools=allows_deferred_tools,
             )
 
         text_outputs: Sequence[type[str] | TextOutput[OutputDataT]] = []
@@ -313,21 +314,21 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
 
             if toolset:
                 return ToolOrTextOutputSchema(
-                    processor=text_output_schema, toolset=toolset, allows_deferred_tool_calls=allows_deferred_tool_calls
+                    processor=text_output_schema,
+                    toolset=toolset,
+                    allows_deferred_tools=allows_deferred_tools,
                 )
             else:
-                return PlainTextOutputSchema(
-                    processor=text_output_schema, allows_deferred_tool_calls=allows_deferred_tool_calls
-                )
+                return PlainTextOutputSchema(processor=text_output_schema, allows_deferred_tools=allows_deferred_tools)
 
         if len(tool_outputs) > 0:
-            return ToolOutputSchema(toolset=toolset, allows_deferred_tool_calls=allows_deferred_tool_calls)
+            return ToolOutputSchema(toolset=toolset, allows_deferred_tools=allows_deferred_tools)
 
         if len(other_outputs) > 0:
             schema = OutputSchemaWithoutMode(
                 processor=cls._build_processor(other_outputs, name=name, description=description, strict=strict),
                 toolset=toolset,
-                allows_deferred_tool_calls=allows_deferred_tool_calls,
+                allows_deferred_tools=allows_deferred_tools,
             )
             if default_mode:
                 schema = schema.with_default_mode(default_mode)
@@ -371,23 +372,19 @@ class OutputSchemaWithoutMode(BaseOutputSchema[OutputDataT]):
         self,
         processor: ObjectOutputProcessor[OutputDataT] | UnionOutputProcessor[OutputDataT],
         toolset: OutputToolset[Any] | None,
-        allows_deferred_tool_calls: bool,
+        allows_deferred_tools: bool,
     ):
-        super().__init__(allows_deferred_tool_calls)
+        super().__init__(allows_deferred_tools)
         self.processor = processor
         self._toolset = toolset
 
     def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
         if mode == 'native':
-            return NativeOutputSchema(
-                processor=self.processor, allows_deferred_tool_calls=self.allows_deferred_tool_calls
-            )
+            return NativeOutputSchema(processor=self.processor, allows_deferred_tools=self.allows_deferred_tools)
         elif mode == 'prompted':
-            return PromptedOutputSchema(
-                processor=self.processor, allows_deferred_tool_calls=self.allows_deferred_tool_calls
-            )
+            return PromptedOutputSchema(processor=self.processor, allows_deferred_tools=self.allows_deferred_tools)
         elif mode == 'tool':
-            return ToolOutputSchema(toolset=self.toolset, allows_deferred_tool_calls=self.allows_deferred_tool_calls)
+            return ToolOutputSchema(toolset=self.toolset, allows_deferred_tools=self.allows_deferred_tools)
         else:
             assert_never(mode)
 
@@ -550,8 +547,8 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
 class ToolOutputSchema(OutputSchema[OutputDataT]):
     _toolset: OutputToolset[Any] | None
 
-    def __init__(self, toolset: OutputToolset[Any] | None, allows_deferred_tool_calls: bool):
-        super().__init__(allows_deferred_tool_calls)
+    def __init__(self, toolset: OutputToolset[Any] | None, allows_deferred_tools: bool):
+        super().__init__(allows_deferred_tools)
         self._toolset = toolset
 
     @property
@@ -575,22 +572,14 @@ class ToolOrTextOutputSchema(ToolOutputSchema[OutputDataT], PlainTextOutputSchem
         self,
         processor: PlainTextOutputProcessor[OutputDataT] | None,
         toolset: OutputToolset[Any] | None,
-        allows_deferred_tool_calls: bool,
+        allows_deferred_tools: bool,
     ):
-        super().__init__(toolset=toolset, allows_deferred_tool_calls=allows_deferred_tool_calls)
+        super().__init__(toolset=toolset, allows_deferred_tools=allows_deferred_tools)
         self.processor = processor
 
     @property
     def mode(self) -> OutputMode:
         return 'tool_or_text'
-
-
-@dataclass
-class OutputObjectDefinition:
-    json_schema: ObjectJsonSchema
-    name: str | None = None
-    description: str | None = None
-    strict: bool | None = None
 
 
 @dataclass(init=False)
@@ -628,21 +617,33 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
             json_schema = self._function_schema.json_schema
             json_schema['description'] = self._function_schema.description
         else:
-            type_adapter: TypeAdapter[Any]
+            json_schema_type_adapter: TypeAdapter[Any]
+            validation_type_adapter: TypeAdapter[Any]
             if _utils.is_model_like(output):
-                type_adapter = TypeAdapter(output)
+                json_schema_type_adapter = validation_type_adapter = TypeAdapter(output)
             else:
                 self.outer_typed_dict_key = 'response'
+                output_type: type[OutputDataT] = cast(type[OutputDataT], output)
+
                 response_data_typed_dict = TypedDict(  # noqa: UP013
                     'response_data_typed_dict',
-                    {'response': cast(type[OutputDataT], output)},  # pyright: ignore[reportInvalidTypeForm]
+                    {'response': output_type},  # pyright: ignore[reportInvalidTypeForm]
                 )
-                type_adapter = TypeAdapter(response_data_typed_dict)
+                json_schema_type_adapter = TypeAdapter(response_data_typed_dict)
+
+                # More lenient validator: allow either the native type or a JSON string containing it
+                # i.e. `response: OutputDataT | Json[OutputDataT]`, as some models don't follow the schema correctly,
+                # e.g. `BedrockConverseModel('us.meta.llama3-2-11b-instruct-v1:0')`
+                response_validation_typed_dict = TypedDict(  # noqa: UP013
+                    'response_validation_typed_dict',
+                    {'response': output_type | Json[output_type]},  # pyright: ignore[reportInvalidTypeForm]
+                )
+                validation_type_adapter = TypeAdapter(response_validation_typed_dict)
 
             # Really a PluggableSchemaValidator, but it's API-compatible
-            self.validator = cast(SchemaValidator, type_adapter.validator)
+            self.validator = cast(SchemaValidator, validation_type_adapter.validator)
             json_schema = _utils.check_object_json_schema(
-                type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+                json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
             )
 
             if self.outer_typed_dict_key:

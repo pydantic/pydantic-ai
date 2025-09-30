@@ -5,12 +5,13 @@ import os
 import httpx
 from openai import AsyncOpenAI
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
@@ -50,6 +51,7 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             'deepseek': deepseek_model_profile,
             'mistral': mistral_model_profile,
             'command': cohere_model_profile,
+            'gpt-oss': harmony_model_profile,
         }
 
         profile = None
@@ -58,7 +60,7 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             if model_name.startswith(prefix):
                 profile = profile_func(model_name)
 
-        # As OllamaProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+        # As OllamaProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
         return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
 

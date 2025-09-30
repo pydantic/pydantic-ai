@@ -22,20 +22,19 @@ authors = [
     { name = "Douwe Maan", email = "douwe@pydantic.dev" },
 ]
 license = "MIT"
+license-files = ["LICENSE"]
 readme = "README.md"
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Topic :: Internet",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -43,17 +42,17 @@ classifiers = [
     "Framework :: Pydantic",
     "Framework :: Pydantic :: 2",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,evals,ag-ui,retries,temporal]=={{ version }}",
+    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,evals,ag-ui,retries,temporal,logfire]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 examples = ["pydantic-ai-examples=={{ version }}"]
-logfire = ["logfire>=3.14.1"]
 a2a = ["fasta2a>=0.4.1"]
+dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
@@ -76,7 +75,6 @@ members = [
     "pydantic_ai_slim",
     "pydantic_evals",
     "pydantic_graph",
-    "mcp-run-python",
     "clai",
     "examples",
 ]
@@ -104,7 +102,8 @@ dev = [
     "pytest-xdist>=3.6.1",
     # Needed for PyCharm users
     "pip>=25.2",
-    "genai-prices>=0.0.22",
+    "genai-prices>=0.0.28",
+    "mcp-run-python>=0.0.20",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [
@@ -113,6 +112,7 @@ docs = [
     "mkdocs>=1.6.1",
     "mkdocs-glightbox>=0.4.0",
     "mkdocs-llmstxt>=0.2.0",
+    'mkdocs-redirects>=1.2.2',
     "mkdocs-material[imaging]>=9.5.45",
     "mkdocstrings-python>=1.12.2",
     "griffe-warnings-deprecated>=1.1.0",
@@ -127,12 +127,11 @@ include = ["/README.md", "/Makefile", "/tests"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py310"
 include = [
     "pydantic_ai_slim/**/*.py",
     "pydantic_evals/**/*.py",
     "pydantic_graph/**/*.py",
-    "mcp-run-python/**/*.py",
     "examples/**/*.py",
     "clai/**/*.py",
     "tests/**/*.py",
@@ -162,7 +161,7 @@ ignore = [
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
-known-first-party = ["pydantic_ai"]
+known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph"]
 # weird issue with ruff thinking fasta2a is still editable
 known-third-party = ["fasta2a"]
 
@@ -178,7 +177,6 @@ docstring-code-format = false
 quote-style = "single"
 
 [tool.ruff.lint.per-file-ignores]
-"mcp-run-python/**/*.py" = ["D", "TID251"]
 "examples/**/*.py" = ["D101", "D103"]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
@@ -194,7 +192,6 @@ include = [
     "pydantic_ai_slim",
     "pydantic_evals",
     "pydantic_graph",
-    "mcp-run-python",
     "tests",
     "examples",
     "clai",
@@ -208,10 +205,8 @@ executionEnvironments = [
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
-    "mcp-run-python/node_modules",
-    "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk requires Python 3.10+ so cannot be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/ext/aci.py",               # aci-sdk is too niche to be added as an (optional) dependency
 ]
-extraPaths = ["mcp-run-python/stubs"]
 
 [tool.mypy]
 files = "tests/typed_agent.py,tests/typed_graph.py"
@@ -253,7 +248,7 @@ include = [
 omit = [
     "tests/test_live.py",
     "tests/example_modules/*.py",
-    "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk requires Python 3.10+ so cannot be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk is too niche to be added as an (optional) dependency
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:
@@ -268,7 +263,7 @@ disable_warnings = ["include-ignored"]
 source = [
     ".",
     "/home/runner/work/pydantic-ai/pydantic-ai",
-    "/System/Volumes/Data/home/runner/work/pydantic-ai/pydantic-ai"
+    "/System/Volumes/Data/home/runner/work/pydantic-ai/pydantic-ai",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#report

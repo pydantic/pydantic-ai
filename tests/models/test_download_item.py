@@ -1,8 +1,6 @@
-from typing import Union
-
 import pytest
 
-from pydantic_ai.messages import AudioUrl, DocumentUrl, ImageUrl, VideoUrl
+from pydantic_ai import AudioUrl, DocumentUrl, ImageUrl, VideoUrl
 from pydantic_ai.models import UserError, download_item
 
 from ..conftest import IsInstance, IsStr
@@ -20,7 +18,7 @@ pytestmark = [pytest.mark.anyio]
     ),
 )
 async def test_download_item_raises_user_error_with_gs_uri(
-    url: Union[AudioUrl, DocumentUrl, ImageUrl, VideoUrl],
+    url: AudioUrl | DocumentUrl | ImageUrl | VideoUrl,
 ) -> None:
     with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported.'):
         _ = await download_item(url, data_format='bytes')

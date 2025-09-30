@@ -12,9 +12,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import (
+from pydantic_ai import (
     BinaryContent,
     ModelRequest,
     ModelResponse,
@@ -25,21 +23,26 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.agent import Agent
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.mcp import MCPServerStreamableHTTP, load_mcp_servers
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from mcp import ErrorData, McpError, SamplingMessage
-    from mcp.types import CreateMessageRequestParams, ImageContent, TextContent
+    from mcp.client.session import ClientSession
+    from mcp.shared.context import RequestContext
+    from mcp.types import CreateMessageRequestParams, ElicitRequestParams, ElicitResult, ImageContent, TextContent
 
     from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response
     from pydantic_ai.mcp import CallToolFunc, MCPServerSSE, MCPServerStdio, ToolResult
     from pydantic_ai.models.google import GoogleModel
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -57,7 +60,7 @@ def mcp_server() -> MCPServerStdio:
 
 @pytest.fixture
 def model(openai_api_key: str) -> Model:
-    return OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    return OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
 
 @pytest.fixture
@@ -67,21 +70,21 @@ def agent(model: Model, mcp_server: MCPServerStdio) -> Agent:
 
 @pytest.fixture
 def run_context(model: Model) -> RunContext[int]:
-    return RunContext(deps=0, model=model, usage=Usage())
+    return RunContext(deps=0, model=model, usage=RunUsage())
 
 
 async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(16)
+        assert len(tools) == snapshot(18)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert isinstance(tools[0].description, str)
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
 
         # Test calling the temperature conversion tool
         result = await server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
-        assert result == snapshot('32.0')
+        assert result == snapshot(32.0)
 
 
 async def test_reentrant_context_manager():
@@ -105,6 +108,19 @@ async def test_context_manager_initialization_error() -> None:
     assert server._write_stream._closed  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_aexit_called_more_times_than_aenter():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    with pytest.raises(ValueError, match='MCPServer.__aexit__ called more times than __aenter__'):
+        await server.__aexit__(None, None, None)
+
+    async with server:
+        pass  # This will call __aenter__ and __aexit__ once each
+
+    with pytest.raises(ValueError, match='MCPServer.__aexit__ called more times than __aenter__'):
+        await server.__aexit__(None, None, None)
+
+
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
     async with server:
@@ -114,7 +130,7 @@ async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
         result = await server.call_tool(
             'foo_celsius_to_fahrenheit', {'celsius': 0}, run_context, tools['foo_celsius_to_fahrenheit']
         )
-        assert result == snapshot('32.0')
+        assert result == snapshot(32.0)
 
 
 async def test_stdio_server_with_cwd(run_context: RunContext[int]):
@@ -122,7 +138,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.get_tools(run_context)
-        assert len(tools) == snapshot(16)
+        assert len(tools) == snapshot(18)
 
 
 async def test_process_tool_call(run_context: RunContext[int]) -> int:
@@ -178,7 +194,6 @@ def test_sse_server_conflicting_timeout_params():
         )
 
 
-@pytest.mark.vcr()
 async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('What is 0 degrees Celsius in Fahrenheit?')
@@ -201,28 +216,28 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                             tool_call_id='call_QssdxTGkPblTYHmyVES1tKBj',
                         )
                     ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=195,
-                        response_tokens=19,
-                        total_tokens=214,
+                    usage=RequestUsage(
+                        input_tokens=195,
+                        output_tokens=19,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRlnvvqIPFofAtKqtQKMWZkgXhzlT',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id='chatcmpl-BRlnvvqIPFofAtKqtQKMWZkgXhzlT',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
                             tool_name='celsius_to_fahrenheit',
-                            content='32.0',
+                            content=32.0,
                             tool_call_id='call_QssdxTGkPblTYHmyVES1tKBj',
                             timestamp=IsDatetime(),
                         )
@@ -230,22 +245,22 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                 ),
                 ModelResponse(
                     parts=[TextPart(content='0 degrees Celsius is equal to 32 degrees Fahrenheit.')],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=227,
-                        response_tokens=13,
-                        total_tokens=240,
+                    usage=RequestUsage(
+                        input_tokens=227,
+                        output_tokens=13,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRlnyjUo5wlyqvdNdM5I8vIWjo1qF',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
+                    provider_response_id='chatcmpl-BRlnyjUo5wlyqvdNdM5I8vIWjo1qF',
+                    finish_reason='stop',
                 ),
             ]
         )
@@ -269,7 +284,7 @@ async def test_agent_with_conflict_tool_name(agent: Agent):
 
 async def test_agent_with_prefix_tool_name(openai_api_key: str):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
-    model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
         model,
         toolsets=[server],
@@ -286,7 +301,6 @@ async def test_agent_with_prefix_tool_name(openai_api_key: str):
             await agent.run('No conflict')
 
 
-@pytest.mark.vcr()
 async def test_agent_with_server_not_running(agent: Agent, allow_model_requests: None):
     result = await agent.run('What is 0 degrees Celsius in Fahrenheit?')
     assert result.output == snapshot('0 degrees Celsius is 32.0 degrees Fahrenheit.')
@@ -296,10 +310,6 @@ async def test_log_level_unset(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     assert server.log_level is None
     async with server:
-        tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(16)
-        assert tools[13].name == 'get_log_level'
-
         result = await server.direct_call_tool('get_log_level', {})
         assert result == snapshot('unset')
 
@@ -312,7 +322,6 @@ async def test_log_level_set(run_context: RunContext[int]):
         assert result == snapshot('info')
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('What is the weather in Mexico City?')
@@ -337,22 +346,22 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                             tool_call_id='call_m9goNwaHBbU926w47V7RtWPt',
                         )
                     ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=194,
-                        response_tokens=18,
-                        total_tokens=212,
+                    usage=RequestUsage(
+                        input_tokens=194,
+                        output_tokens=18,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRlo3e1Ud2lnvkddMilmwC7LAemiy',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id='chatcmpl-BRlo3e1Ud2lnvkddMilmwC7LAemiy',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -370,28 +379,27 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                             content='The weather in Mexico City is currently sunny with a temperature of 26 degrees Celsius.'
                         )
                     ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=234,
-                        response_tokens=19,
-                        total_tokens=253,
+                    usage=RequestUsage(
+                        input_tokens=234,
+                        output_tokens=19,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRlo41LxqBYgGKWgGrQn67fQacOLp',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
+                    provider_response_id='chatcmpl-BRlo41LxqBYgGKWgGrQn67fQacOLp',
+                    finish_reason='stop',
                 ),
             ]
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_text_resource(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('Get me the product name')
@@ -414,22 +422,22 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                             tool_call_id='call_LaiWltzI39sdquflqeuF0EyE',
                         )
                     ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=200,
-                        response_tokens=12,
-                        total_tokens=212,
+                    usage=RequestUsage(
+                        input_tokens=200,
+                        output_tokens=12,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRmhyweJVYonarb7s9ckIMSHf2vHo',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id='chatcmpl-BRmhyweJVYonarb7s9ckIMSHf2vHo',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -443,28 +451,27 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The product name is "Pydantic AI".')],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=224,
-                        response_tokens=12,
-                        total_tokens=236,
+                    usage=RequestUsage(
+                        input_tokens=224,
+                        output_tokens=12,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRmhzqXFObpYwSzREMpJvX9kbDikR',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
+                    provider_response_id='chatcmpl-BRmhzqXFObpYwSzREMpJvX9kbDikR',
+                    finish_reason='stop',
                 ),
             ]
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_text_resource_link(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('Get me the product name via get_product_name_link')
@@ -487,22 +494,22 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                             tool_call_id='call_qi5GtBeIEyT7Y3yJvVFIi062',
                         )
                     ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=305,
-                        response_tokens=12,
-                        total_tokens=317,
+                    usage=RequestUsage(
+                        input_tokens=305,
+                        output_tokens=12,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BwdHSFe0EykAOpf0LWZzsWAodIQzb',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id='chatcmpl-BwdHSFe0EykAOpf0LWZzsWAodIQzb',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -516,28 +523,27 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The product name is "Pydantic AI".')],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=332,
-                        response_tokens=11,
-                        total_tokens=343,
+                    usage=RequestUsage(
+                        input_tokens=332,
+                        output_tokens=11,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BwdHTIlBZWzXJPBR8VTOdC4O57ZQA',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
+                    provider_response_id='chatcmpl-BwdHTIlBZWzXJPBR8VTOdC4O57ZQA',
+                    finish_reason='stop',
                 ),
             ]
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_image_resource(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
     async with agent:
         result = await agent.run('Get me the image resource')
@@ -562,22 +568,22 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                             tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
                         )
                     ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=191,
-                        response_tokens=12,
-                        total_tokens=203,
+                    usage=RequestUsage(
+                        input_tokens=191,
+                        output_tokens=12,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRlo7KYJVXuNZ5lLLdYcKZDsX2CHb',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id='chatcmpl-BRlo7KYJVXuNZ5lLLdYcKZDsX2CHb',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -596,28 +602,27 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                             content='This is an image of a sliced kiwi with a vibrant green interior and black seeds.'
                         )
                     ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=1332,
-                        response_tokens=19,
-                        total_tokens=1351,
+                    usage=RequestUsage(
+                        input_tokens=1332,
+                        output_tokens=19,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRloBGHh27w3fQKwxq4fX2cPuZJa9',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
+                    provider_response_id='chatcmpl-BRloBGHh27w3fQKwxq4fX2cPuZJa9',
+                    finish_reason='stop',
                 ),
             ]
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_image_resource_link(
     allow_model_requests: None, agent: Agent, image_content: BinaryContent
 ):
@@ -644,22 +649,22 @@ async def test_tool_returning_image_resource_link(
                             tool_call_id='call_eVFgn54V9Nuh8Y4zvuzkYjUp',
                         )
                     ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=305,
-                        response_tokens=12,
-                        total_tokens=317,
+                    usage=RequestUsage(
+                        input_tokens=305,
+                        output_tokens=12,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BwdHygYePH1mZgHo2Xxzib0Y7sId7',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id='chatcmpl-BwdHygYePH1mZgHo2Xxzib0Y7sId7',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -678,28 +683,27 @@ async def test_tool_returning_image_resource_link(
                             content='This is an image of a sliced kiwi fruit. It shows the green, seed-speckled interior with fuzzy brown skin around the edges.'
                         )
                     ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=1452,
-                        response_tokens=29,
-                        total_tokens=1481,
+                    usage=RequestUsage(
+                        input_tokens=1452,
+                        output_tokens=29,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BwdI2D2r9dvqq3pbsA0qgwKDEdTtD',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
+                    provider_response_id='chatcmpl-BwdI2D2r9dvqq3pbsA0qgwKDEdTtD',
+                    finish_reason='stop',
                 ),
             ]
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_audio_resource(
     allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
 ):
@@ -714,16 +718,15 @@ async def test_tool_returning_audio_resource(
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_audio_resource', args={}, tool_call_id=IsStr())],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=383,
-                        response_tokens=12,
-                        total_tokens=520,
-                        details={'thoughts_tokens': 125, 'text_prompt_tokens': 383},
+                    usage=RequestUsage(
+                        input_tokens=383, output_tokens=137, details={'thoughts_tokens': 125, 'text_prompt_tokens': 383}
                     ),
                     model_name='models/gemini-2.5-pro-preview-05-06',
                     timestamp=IsDatetime(),
-                    vendor_details={'finish_reason': 'STOP'},
+                    provider_name='google-gla',
+                    provider_details={'finish_reason': 'STOP'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
                 ),
                 ModelRequest(
                     parts=[
@@ -738,26 +741,27 @@ async def test_tool_returning_audio_resource(
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The audio resource contains a voice saying "Hello, my name is Marcelo."')],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=575,
-                        response_tokens=15,
-                        total_tokens=590,
+                    usage=RequestUsage(
+                        input_tokens=575,
+                        output_tokens=15,
+                        input_audio_tokens=144,
                         details={'text_prompt_tokens': 431, 'audio_prompt_tokens': 144},
                     ),
                     model_name='models/gemini-2.5-pro-preview-05-06',
                     timestamp=IsDatetime(),
-                    vendor_details={'finish_reason': 'STOP'},
+                    provider_name='google-gla',
+                    provider_details={'finish_reason': 'STOP'},
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
                 ),
             ]
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_audio_resource_link(
     allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
 ):
-    model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=GoogleProvider(api_key=gemini_api_key))
+    model = GoogleModel('gemini-2.5-pro', provider=GoogleProvider(api_key=gemini_api_key))
     async with agent:
         result = await agent.run("What's the content of the audio resource via get_audio_resource_link?", model=model)
         assert result.output == snapshot('00:05')
@@ -773,21 +777,26 @@ async def test_tool_returning_audio_resource_link(
                 ),
                 ModelResponse(
                     parts=[
-                        TextPart(
-                            content='The content of the audio resource is at a link that can be accessed by calling the function `get_audio_resource_link`.'
+                        ThinkingPart(
+                            content='',
+                            signature=IsStr(),
+                            provider_name='google-gla',
                         ),
-                        ToolCallPart(tool_name='get_audio_resource_link', args={}, tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='get_audio_resource_link',
+                            args={},
+                            tool_call_id=IsStr(),
+                        ),
                     ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=561,
-                        response_tokens=41,
-                        total_tokens=797,
-                        details={'thoughts_tokens': 195, 'text_prompt_tokens': 561},
+                    usage=RequestUsage(
+                        input_tokens=605, output_tokens=168, details={'thoughts_tokens': 154, 'text_prompt_tokens': 605}
                     ),
-                    model_name='models/gemini-2.5-pro',
+                    model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
-                    vendor_details={'finish_reason': 'STOP'},
+                    provider_name='google-gla',
+                    provider_details={'finish_reason': 'STOP'},
+                    provider_response_id='Pe_BaJGqOKSdz7IP0NqogA8',
+                    finish_reason='stop',
                 ),
                 ModelRequest(
                     parts=[
@@ -797,27 +806,34 @@ async def test_tool_returning_audio_resource_link(
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                         ),
-                        UserPromptPart(content=['This is file 2d36ae:', audio_content], timestamp=IsDatetime()),
+                        UserPromptPart(
+                            content=[
+                                'This is file 2d36ae:',
+                                audio_content,
+                            ],
+                            timestamp=IsDatetime(),
+                        ),
                     ]
                 ),
                 ModelResponse(
                     parts=[TextPart(content='00:05')],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=784,
-                        response_tokens=5,
-                        total_tokens=789,
-                        details={'text_prompt_tokens': 640, 'audio_prompt_tokens': 144},
+                    usage=RequestUsage(
+                        input_tokens=801,
+                        output_tokens=5,
+                        input_audio_tokens=144,
+                        details={'text_prompt_tokens': 657, 'audio_prompt_tokens': 144},
                     ),
-                    model_name='models/gemini-2.5-pro',
+                    model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
-                    vendor_details={'finish_reason': 'STOP'},
+                    provider_name='google-gla',
+                    provider_details={'finish_reason': 'STOP'},
+                    provider_response_id='QO_BaLC6AozQz7IPh5Kj4Q4',
+                    finish_reason='stop',
                 ),
             ]
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_image(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
     async with agent:
         result = await agent.run('Get me an image')
@@ -840,22 +856,22 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                             tool_call_id='call_Q7xG8CCG0dyevVfUS0ubsDdN',
                         )
                     ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=190,
-                        response_tokens=11,
-                        total_tokens=201,
+                    usage=RequestUsage(
+                        input_tokens=190,
+                        output_tokens=11,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRloGQJWIX0Qk7gtNzF4s2Fez0O29',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id='chatcmpl-BRloGQJWIX0Qk7gtNzF4s2Fez0O29',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -876,28 +892,27 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Here is an image of a sliced kiwi on a white background.')],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=1329,
-                        response_tokens=15,
-                        total_tokens=1344,
+                    usage=RequestUsage(
+                        input_tokens=1329,
+                        output_tokens=15,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRloJHR654fSD0fcvLWZxtKtn0pag',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
+                    provider_response_id='chatcmpl-BRloJHR654fSD0fcvLWZxtKtn0pag',
+                    finish_reason='stop',
                 ),
             ]
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('Get me a dict, respond on one line')
@@ -914,22 +929,22 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_dict', args='{}', tool_call_id='call_oqKviITBj8PwpQjGyUu4Zu5x')],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=195,
-                        response_tokens=11,
-                        total_tokens=206,
+                    usage=RequestUsage(
+                        input_tokens=195,
+                        output_tokens=11,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRloOs7Bb2tq8wJyy9Rv7SQ7L65a7',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id='chatcmpl-BRloOs7Bb2tq8wJyy9Rv7SQ7L65a7',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -943,28 +958,97 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"foo":"bar","baz":123}')],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=222,
-                        response_tokens=11,
-                        total_tokens=233,
+                    usage=RequestUsage(
+                        input_tokens=222,
+                        output_tokens=11,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRloPczU1HSCWnreyo21DdNtdOM7L',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
+                    provider_response_id='chatcmpl-BRloPczU1HSCWnreyo21DdNtdOM7L',
+                    finish_reason='stop',
                 ),
             ]
         )
 
 
-@pytest.mark.vcr()
+async def test_tool_returning_unstructured_dict(allow_model_requests: None, agent: Agent):
+    async with agent:
+        result = await agent.run('Get me an unstructured dict, respond on one line')
+        assert result.output == snapshot('{"foo":"bar","baz":123}')
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Get me an unstructured dict, respond on one line',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_unstructured_dict', args='{}', tool_call_id='call_R0n2R7S9vL2aZOX25T9jahTd'
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=343,
+                        output_tokens=12,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id='chatcmpl-CLbP82ODQMEznhobUKdq6Rjn9Aa12',
+                    finish_reason='tool_call',
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_unstructured_dict',
+                            content={'foo': 'bar', 'baz': 123},
+                            tool_call_id='call_R0n2R7S9vL2aZOX25T9jahTd',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"foo":"bar","baz":123}')],
+                    usage=RequestUsage(
+                        input_tokens=374,
+                        output_tokens=10,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
+                    provider_response_id='chatcmpl-CLbPAOYN3jPYdvYeD8JNOOXF5N554',
+                    finish_reason='stop',
+                ),
+            ]
+        )
+
+
 async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('Get me an error, pass False as a value, unless the tool tells you otherwise')
@@ -989,22 +1073,22 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             tool_call_id='call_rETXZWddAGZSHyVHAxptPGgc',
                         )
                     ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=203,
-                        response_tokens=15,
-                        total_tokens=218,
+                    usage=RequestUsage(
+                        input_tokens=203,
+                        output_tokens=15,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRloSNg7aGSp1rXDkhInjMIUHKd7A',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id='chatcmpl-BRloSNg7aGSp1rXDkhInjMIUHKd7A',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -1024,22 +1108,22 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             tool_call_id='call_4xGyvdghYKHN8x19KWkRtA5N',
                         )
                     ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=250,
-                        response_tokens=15,
-                        total_tokens=265,
+                    usage=RequestUsage(
+                        input_tokens=250,
+                        output_tokens=15,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRloTvSkFeX4DZKQLqfH9KbQkWlpt',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id='chatcmpl-BRloTvSkFeX4DZKQLqfH9KbQkWlpt',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -1057,28 +1141,27 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             content='I called the tool with the correct parameter, and it returned: "This is not an error."'
                         )
                     ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=277,
-                        response_tokens=22,
-                        total_tokens=299,
+                    usage=RequestUsage(
+                        input_tokens=277,
+                        output_tokens=22,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRloU3MhnqNEqujs28a3ofRbs7VPF',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
+                    provider_response_id='chatcmpl-BRloU3MhnqNEqujs28a3ofRbs7VPF',
+                    finish_reason='stop',
                 ),
             ]
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('Call the none tool and say Hello')
@@ -1095,22 +1178,22 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_none', args='{}', tool_call_id='call_mJTuQ2Cl5SaHPTJbIILEUhJC')],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=193,
-                        response_tokens=11,
-                        total_tokens=204,
+                    usage=RequestUsage(
+                        input_tokens=193,
+                        output_tokens=11,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRloX2RokWc9j9PAXAuNXGR73WNqY',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id='chatcmpl-BRloX2RokWc9j9PAXAuNXGR73WNqY',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -1124,28 +1207,27 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Hello! How can I assist you today?')],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=212,
-                        response_tokens=11,
-                        total_tokens=223,
+                    usage=RequestUsage(
+                        input_tokens=212,
+                        output_tokens=11,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRloYWGujk8yE94gfVSsM1T1Ol2Ej',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
+                    provider_response_id='chatcmpl-BRloYWGujk8yE94gfVSsM1T1Ol2Ej',
+                    finish_reason='stop',
                 ),
             ]
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_multiple_items(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
     async with agent:
         result = await agent.run('Get me multiple items and summarize in one sentence')
@@ -1170,22 +1252,22 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                             tool_call_id='call_kL0TvjEVQBDGZrn1Zv7iNYOW',
                         )
                     ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=195,
-                        response_tokens=12,
-                        total_tokens=207,
+                    usage=RequestUsage(
+                        input_tokens=195,
+                        output_tokens=12,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRlobKLgm6vf79c9O8sloZaYx3coC',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id='chatcmpl-BRlobKLgm6vf79c9O8sloZaYx3coC',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -1215,25 +1297,41 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                             content='The data includes two strings, a dictionary with a key-value pair, and an image of a sliced kiwi.'
                         )
                     ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=1355,
-                        response_tokens=24,
-                        total_tokens=1379,
+                    usage=RequestUsage(
+                        input_tokens=1355,
+                        output_tokens=24,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
                             'reasoning_tokens': 0,
                             'rejected_prediction_tokens': 0,
-                            'cached_tokens': 0,
                         },
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRloepWR5NJpTgSqFBGTSPeM1SWm8',
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
+                    provider_response_id='chatcmpl-BRloepWR5NJpTgSqFBGTSPeM1SWm8',
+                    finish_reason='stop',
                 ),
             ]
         )
+
+
+async def test_tool_metadata_extraction():
+    """Test that MCP tool metadata is properly extracted into ToolDefinition."""
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+        tools = [tool.tool_def for tool in (await server.get_tools(ctx)).values()]
+        # find `celsius_to_fahrenheit`
+        celsius_to_fahrenheit = next(tool for tool in tools if tool.name == 'celsius_to_fahrenheit')
+        assert celsius_to_fahrenheit.metadata is not None
+        assert celsius_to_fahrenheit.metadata.get('annotations') is not None
+        assert celsius_to_fahrenheit.metadata.get('annotations', {}).get('title', None) == 'Celsius to Fahrenheit'
+        assert celsius_to_fahrenheit.metadata.get('output_schema') is not None
+        assert celsius_to_fahrenheit.metadata.get('output_schema', {}).get('type', None) == 'object'
 
 
 async def test_client_sampling(run_context: RunContext[int]):
@@ -1243,9 +1341,9 @@ async def test_client_sampling(run_context: RunContext[int]):
         result = await server.direct_call_tool('use_sampling', {'foo': 'bar'})
         assert result == snapshot(
             {
-                'meta': None,
+                '_meta': None,
                 'role': 'assistant',
-                'content': {'type': 'text', 'text': 'sampling model response', 'annotations': None, 'meta': None},
+                'content': {'type': 'text', 'text': 'sampling model response', 'annotations': None, '_meta': None},
                 'model': 'test',
                 'stopReason': None,
             }
@@ -1293,7 +1391,8 @@ def test_map_from_mcp_params_model_request():
                 parts=[
                     UserPromptPart(content='xx', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(
-                        content=[BinaryContent(data=b'img', media_type='image/png')], timestamp=IsNow(tz=timezone.utc)
+                        content=[BinaryContent(data=b'img', media_type='image/png', identifier='978ea7')],
+                        timestamp=IsNow(tz=timezone.utc),
                     ),
                 ]
             )
@@ -1322,3 +1421,56 @@ def test_map_from_mcp_params_model_response():
 def test_map_from_model_response():
     with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ThinkingPart, expected TextPart'):
         map_from_model_response(ModelResponse(parts=[ThinkingPart(content='Thinking...')]))
+
+
+async def test_elicitation_callback_functionality(run_context: RunContext[int]):
+    """Test that elicitation callback is actually called and works."""
+    # Track callback execution
+    callback_called = False
+    callback_message = None
+    callback_response = 'Yes, proceed with the action'
+
+    async def mock_elicitation_callback(
+        context: RequestContext[ClientSession, Any, Any], params: ElicitRequestParams
+    ) -> ElicitResult:
+        nonlocal callback_called, callback_message
+        callback_called = True
+        callback_message = params.message
+        return ElicitResult(action='accept', content={'response': callback_response})
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], elicitation_callback=mock_elicitation_callback)
+
+    async with server:
+        # Call the tool that uses elicitation
+        result = await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
+
+        # Verify the callback was called
+        assert callback_called, 'Elicitation callback should have been called'
+        assert callback_message == 'Should I continue?', 'Callback should receive the question'
+        assert result == f'User responded: {callback_response}', 'Tool should return the callback response'
+
+
+async def test_elicitation_callback_not_set(run_context: RunContext[int]):
+    """Test that elicitation fails when no callback is set."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    async with server:
+        # Should raise an error when elicitation is attempted without callback
+        with pytest.raises(ModelRetry, match='Elicitation not supported'):
+            await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
+
+
+def test_load_mcp_servers(tmp_path: Path):
+    config = tmp_path / 'mcp.json'
+
+    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/mcp"}}}')
+    assert load_mcp_servers(config) == snapshot([MCPServerStreamableHTTP(url='https://example.com/mcp')])
+
+    config.write_text('{"mcpServers": {"potato": {"command": "python", "args": ["-m", "tests.mcp_server"]}}}')
+    assert load_mcp_servers(config) == snapshot([MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'])])
+
+    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/sse"}}}')
+    assert load_mcp_servers(config) == snapshot([MCPServerSSE(url='https://example.com/sse')])
+
+    with pytest.raises(FileNotFoundError):
+        load_mcp_servers(tmp_path / 'does_not_exist.json')
