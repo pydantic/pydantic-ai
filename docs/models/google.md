@@ -110,7 +110,7 @@ agent = Agent(model)
 
 #### Customizing Model
 
-You can access models from the [Model Garden](https://cloud.google.com/model-garden?hl=en) that support the generateContent API and are available under your GCP project, including but not limited to Gemini, using one of the following `model_name` patterns: 
+You can access models from the [Model Garden](https://cloud.google.com/model-garden?hl=en) that support the generateContent API and are available under your GCP project, including but not limited to Gemini, using one of the following `model_name` patterns:
 
 - `{model_id}` for Gemini models
 - `{publisher}/{model_id}`
