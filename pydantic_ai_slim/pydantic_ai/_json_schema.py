@@ -6,7 +6,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic_ai.exceptions import UserError
+from .exceptions import UserError
 
 JsonSchema = dict[str, Any]
 
