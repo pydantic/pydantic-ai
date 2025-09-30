@@ -110,7 +110,7 @@ agent = Agent(model)
 
 #### Customizing Model
 
-You can access models from the [Model Garden](https://cloud.google.com/model-garden?hl=en) that support the generateContent API and are available under your GCP project, including but not limited to Gemini, using one of the following `model_name` patterns: `{model_id}`, `publishers/{publisher}/models/{model_id}`, or `projects/{project}/locations/{location}/publishers/{publisher}/models/{model_id}`.
+You can access models from the [Model Garden](https://cloud.google.com/model-garden?hl=en) that support the generateContent API and are available under your GCP project, including but not limited to Gemini, using one of the following `model_name` patterns: `{model_id}` for Gemini models, `{publisher}/{model_id}`, `publishers/{publisher}/models/{model_id}`, or `projects/{project}/locations/{location}/publishers/{publisher}/models/{model_id}`.
 
 ```python
 from google.oauth2 import service_account
@@ -128,7 +128,7 @@ provider = GoogleProvider(
     project='your-gcp-project-id',
     location='us-central1',  # the region where the model is available
 )
-model = GoogleModel('llama-3.3-70b-instruct-maas', provider=provider)
+model = GoogleModel('meta/llama-3.3-70b-instruct-maas', provider=provider)
 agent = Agent(model)
 ...
 ```
