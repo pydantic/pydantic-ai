@@ -339,6 +339,13 @@ def document_content(assets_path: Path) -> BinaryContent:
 
 
 @pytest.fixture(scope='session')
+def text_document_content(assets_path: Path) -> BinaryContent:
+    content = assets_path.joinpath('dummy.txt').read_text()
+    bin_content = BinaryContent(data=content.encode(), media_type='text/plain')
+    return bin_content
+
+
+@pytest.fixture(scope='session')
 def deepseek_api_key() -> str:
     return os.getenv('DEEPSEEK_API_KEY', 'mock-api-key')
 

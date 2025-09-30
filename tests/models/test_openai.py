@@ -1119,6 +1119,16 @@ async def test_document_as_binary_content_input(
     assert result.output == snapshot('The main content of the document is "Dummy PDF file."')
 
 
+async def test_text_document_as_binary_content_input(
+    allow_model_requests: None, text_document_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['What is the main content on this document?', text_document_content])
+    assert result.output == snapshot('The main content of the document is simply "Dummy TXT file."')
+
+
 async def test_document_as_binary_content_input_with_tool(
     allow_model_requests: None, document_content: BinaryContent, openai_api_key: str
 ):
