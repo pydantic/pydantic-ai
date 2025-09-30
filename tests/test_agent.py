@@ -1468,9 +1468,30 @@ def test_output_type_structured_dict_nested():
 
 def test_structured_dict_recursive_refs():
     class Node(BaseModel):
-        nodes: list['Node']
+        nodes: list['Node'] | dict[str, 'Node']
 
     schema = Node.model_json_schema()
+    assert schema == snapshot(
+        {
+            '$defs': {
+                'Node': {
+                    'properties': {
+                        'nodes': {
+                            'anyOf': [
+                                {'items': {'$ref': '#/$defs/Node'}, 'type': 'array'},
+                                {'additionalProperties': {'$ref': '#/$defs/Node'}, 'type': 'object'},
+                            ],
+                            'title': 'Nodes',
+                        }
+                    },
+                    'required': ['nodes'],
+                    'title': 'Node',
+                    'type': 'object',
+                }
+            },
+            '$ref': '#/$defs/Node',
+        }
+    )
     with pytest.raises(
         UserError,
         match=re.escape(
