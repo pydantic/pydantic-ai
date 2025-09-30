@@ -3062,4 +3062,3 @@ async def test_openai_binary_content_unsupported_type() -> None:
         AssertionError, match="Expected code to be unreachable, but got: {'city': 'Paris', 'country': 'France'}"
     ):
         await OpenAIChatModel._map_user_prompt(part)  # type: ignore[reportPrivateUsage]
-
