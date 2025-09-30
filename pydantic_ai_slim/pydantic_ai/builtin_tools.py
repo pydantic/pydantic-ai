@@ -6,7 +6,14 @@ from typing import Literal
 
 from typing_extensions import TypedDict
 
-__all__ = ('AbstractBuiltinTool', 'WebSearchTool', 'WebSearchUserLocation', 'CodeExecutionTool', 'UrlContextTool')
+__all__ = (
+    'AbstractBuiltinTool',
+    'WebSearchTool',
+    'WebSearchUserLocation',
+    'CodeExecutionTool',
+    'UrlContextTool',
+    'MemoryTool',
+)
 
 
 @dataclass(kw_only=True)
