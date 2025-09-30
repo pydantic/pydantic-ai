@@ -34,10 +34,10 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
