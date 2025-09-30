@@ -238,12 +238,10 @@ print(result.output)
 """
 Got it! I've recorded that you live in Mexico City. I'll remember this for future reference.
 """
-# > Got it! I've recorded that you live in Mexico City. I'll remember this for future reference.
 
 result = agent.run_sync('Where do I live?')
 print(result.output)
 #> You live in Mexico City.
-# > You live in Mexico City.
 ```
 
 ## API Reference

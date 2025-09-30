@@ -368,7 +368,7 @@ class AnthropicModel(Model):
             _provider_name=self._provider.name,
         )
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[BetaToolParam]:
+    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[BetaToolUnionParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     def _add_builtin_tools(
