@@ -37,7 +37,7 @@ from ..messages import (
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
-from ..settings import ModelSettings, merge_model_settings
+from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -225,7 +225,10 @@ class GoogleModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
-        model_settings = merge_model_settings(self.settings, model_settings)
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, False, model_settings, model_request_parameters)
         return self._process_response(response)
@@ -237,6 +240,10 @@ class GoogleModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> usage.RequestUsage:
         check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         model_settings = cast(GoogleModelSettings, model_settings or {})
         contents, generation_config = await self._build_content_and_config(
             messages, model_settings, model_request_parameters
@@ -292,7 +299,10 @@ class GoogleModel(Model):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
-        model_settings = merge_model_settings(self.settings, model_settings)
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
         yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
