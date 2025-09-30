@@ -133,3 +133,15 @@ class UrlContextTool(AbstractBuiltinTool):
 
     kind: str = 'url_context'
     """The kind of tool."""
+
+
+class MemoryTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to use memory.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    kind: str = 'memory'
+    """The kind of tool."""

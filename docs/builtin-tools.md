@@ -9,6 +9,7 @@ Pydantic AI supports the following builtin tools:
 - **[`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool]**: Allows agents to search the web
 - **[`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool]**: Enables agents to execute code in a secure environment
 - **[`UrlContextTool`][pydantic_ai.builtin_tools.UrlContextTool]**: Enables agents to pull URL contents into their context
+- **[`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool]**: Enables agents to use memory
 
 These tools are passed to the agent via the `builtin_tools` parameter and are executed by the model provider's infrastructure.
 
@@ -158,6 +159,91 @@ agent = Agent('google-gla:gemini-2.5-flash', builtin_tools=[UrlContextTool()])
 
 result = agent.run_sync('What is this? https://ai.pydantic.dev')
 # > A Python agent framework for building Generative AI applications.
+```
+
+## Memory Tool
+
+The [`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool] enables your agent to use memory.
+
+### Provider Support
+
+| Provider | Supported | Notes |
+|----------|-----------|-------|
+| Anthropic | ✅ | Requires a tool named `memory` to be defined that implements [specific sub-commands](https://docs.claude.com/en/docs/agents-and-tools/tool-use/memory-tool#tool-commands). You can use a subclass of [`anthropic.lib.tools.BetaAbstractMemoryTool`](https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/lib/tools/_beta_builtin_memory_tool.py) as documented below. |
+| Google | ❌ | |
+| OpenAI | ❌ | |
+| Groq | ❌ | |
+| Bedrock | ❌ | |
+| Mistral | ❌ | |
+| Cohere | ❌ | |
+| HuggingFace | ❌ | |
+
+### Usage
+
+The Anthropic SDK provides an abstract [`BetaAbstractMemoryTool`](https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/lib/tools/_beta_builtin_memory_tool.py) class that you can subclass to create your own memory storage solution (e.g., database, cloud storage, encrypted files, etc.). Their [`LocalFilesystemMemoryTool`](https://github.com/anthropics/anthropic-sdk-python/blob/main/examples/memory/basic.py) example can serve as a starting point.
+
+The following example uses a subclass that hard-codes a specific memory. The bits specific to Pydantic AI are the `MemoryTool` built-in tool and the `memory` tool definition that forwards commands to the `call` method of the `BetaAbstractMemoryTool` subclass.
+
+```py title="anthropic_memory.py"
+from typing import Any
+
+from anthropic.lib.tools import BetaAbstractMemoryTool
+from anthropic.types.beta import (
+    BetaMemoryTool20250818CreateCommand,
+    BetaMemoryTool20250818DeleteCommand,
+    BetaMemoryTool20250818InsertCommand,
+    BetaMemoryTool20250818RenameCommand,
+    BetaMemoryTool20250818StrReplaceCommand,
+    BetaMemoryTool20250818ViewCommand,
+)
+
+from pydantic_ai import Agent
+from pydantic_ai.builtin_tools import MemoryTool
+
+
+class FakeMemoryTool(BetaAbstractMemoryTool):
+    def view(self, command: BetaMemoryTool20250818ViewCommand) -> str:
+        return 'The user lives in Mexico City.'
+
+    def create(self, command: BetaMemoryTool20250818CreateCommand) -> str:
+        return f'File created successfully at {command.path}'
+
+    def str_replace(self, command: BetaMemoryTool20250818StrReplaceCommand) -> str:
+        return f'File {command.path} has been edited'
+
+    def insert(self, command: BetaMemoryTool20250818InsertCommand) -> str:
+        return f'Text inserted at line {command.insert_line} in {command.path}'
+
+    def delete(self, command: BetaMemoryTool20250818DeleteCommand) -> str:
+        return f'File deleted: {command.path}'
+
+    def rename(self, command: BetaMemoryTool20250818RenameCommand) -> str:
+        return f'Renamed {command.old_path} to {command.new_path}'
+
+    def clear_all_memory(self) -> str:
+        return 'All memory cleared'
+
+fake_memory = FakeMemoryTool()
+
+agent = Agent('anthropic:claude-sonnet-4-5', builtin_tools=[MemoryTool()])
+
+
+@agent.tool_plain
+def memory(**command: Any) -> Any:
+    return fake_memory.call(command)
+
+
+result = agent.run_sync('Remember that I live in Mexico City')
+print(result.output)
+"""
+Got it! I've recorded that you live in Mexico City. I'll remember this for future reference.
+"""
+# > Got it! I've recorded that you live in Mexico City. I'll remember this for future reference.
+
+result = agent.run_sync('Where do I live?')
+print(result.output)
+#> You live in Mexico City.
+# > You live in Mexico City.
 ```
 
 ## API Reference

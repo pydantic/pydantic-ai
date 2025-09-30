@@ -10,11 +10,10 @@ from typing import Any, Literal, cast, overload
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
-from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
-
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
+from ..builtin_tools import CodeExecutionTool, MemoryTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
@@ -68,6 +67,7 @@ try:
         BetaContentBlockParam,
         BetaImageBlockParam,
         BetaInputJSONDelta,
+        BetaMemoryTool20250818Param,
         BetaMessage,
         BetaMessageParam,
         BetaMetadataParam,
@@ -255,8 +255,7 @@ class AnthropicModel(Model):
     ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
         # standalone function to make it easier to override
         tools = self._get_tools(model_request_parameters)
-        builtin_tools, tool_headers = self._get_builtin_tools(model_request_parameters)
-        tools += builtin_tools
+        tools, beta_features = self._add_builtin_tools(tools, model_request_parameters)
 
         tool_choice: BetaToolChoiceParam | None
 
@@ -279,9 +278,11 @@ class AnthropicModel(Model):
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
-            for k, v in tool_headers.items():
-                extra_headers.setdefault(k, v)
             extra_headers.setdefault('User-Agent', get_user_agent())
+            if beta_features:
+                if 'anthropic-beta' in extra_headers:
+                    beta_features.insert(0, extra_headers['anthropic-beta'])
+                extra_headers['anthropic-beta'] = ','.join(beta_features)
 
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
@@ -370,11 +371,10 @@ class AnthropicModel(Model):
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[BetaToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
-    def _get_builtin_tools(
-        self, model_request_parameters: ModelRequestParameters
-    ) -> tuple[list[BetaToolUnionParam], dict[str, str]]:
-        tools: list[BetaToolUnionParam] = []
-        extra_headers: dict[str, str] = {}
+    def _add_builtin_tools(
+        self, tools: list[BetaToolUnionParam], model_request_parameters: ModelRequestParameters
+    ) -> tuple[list[BetaToolUnionParam], list[str]]:
+        beta_features: list[str] = []
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 user_location = UserLocation(type='approximate', **tool.user_location) if tool.user_location else None
@@ -389,13 +389,20 @@ class AnthropicModel(Model):
                     )
                 )
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
-                extra_headers['anthropic-beta'] = 'code-execution-2025-05-22'
                 tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
+                beta_features.append('code-execution-2025-05-22')
+            elif isinstance(tool, MemoryTool):  # pragma: no branch
+                if 'memory' not in model_request_parameters.tool_defs:
+                    raise UserError("Built-in `MemoryTool` requires a 'memory' tool to be defined.")
+                # Replace the memory tool definition with the built-in memory tool
+                tools = [tool for tool in tools if tool['name'] != 'memory']
+                tools.append(BetaMemoryTool20250818Param(name='memory', type='memory_20250818'))
+                beta_features.append('context-management-2025-06-27')
             else:  # pragma: no cover
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
-        return tools, extra_headers
+        return tools, beta_features
 
     async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[BetaMessageParam]]:  # noqa: C901
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
