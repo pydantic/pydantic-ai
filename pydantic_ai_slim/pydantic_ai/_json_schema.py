@@ -54,7 +54,7 @@ class JsonSchemaTransformer(ABC):
         if not self.prefer_inlined_defs and self.defs:
             handled['$defs'] = {k: self._handle(v) for k, v in self.defs.items()}
 
-        elif self.recursive_refs:  # pragma: no cover
+        elif self.recursive_refs:
             # If we are preferring inlined defs and there are recursive refs, we _have_ to use a $defs+$ref structure
             # We try to use whatever the original root key was, but if it is already in use,
             # we modify it to avoid collisions.
