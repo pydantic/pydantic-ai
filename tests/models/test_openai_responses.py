@@ -3953,3 +3953,443 @@ async def test_openai_responses_image_generation_tool_without_image_output(
             ),
         ]
     )
+
+
+async def test_openai_responses_image_or_text_output(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, output_type=str | Image)
+
+    result = await agent.run('Tell me a two-sentence story about an axolotl.')
+    assert result.output == snapshot(IsStr())
+
+    result = await agent.run('Generate an image of an axolotl.')
+    assert result.output == snapshot(
+        Image(
+            data=IsBytes(),
+            media_type='image/png',
+            identifier='f77253',
+        )
+    )
+
+
+async def test_openai_responses_image_generation_with_tool_output(allow_model_requests: None, openai_api_key: str):
+    class Animal(BaseModel):
+        species: str
+        name: str
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()], output_type=Animal)
+
+    result = await agent.run('Generate an image of an axolotl.')
+    assert result.output == snapshot(Animal(species='Axolotl', name='Axie'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of an axolotl.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_0360827931d9421b0068dd832972fc81a0a1d7b8703a3f8f9c',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=Image(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='918a98',
+                        ),
+                        id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
+                    ),
+                    TextPart(content='', id='msg_0360827931d9421b0068dd836f4de881a0ae6d58054d203eb2'),
+                ],
+                usage=RequestUsage(input_tokens=2253, output_tokens=1755, details={'reasoning_tokens': 1600}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0360827931d9421b0068dd8328c08c81a0ba854f245883906f',
+                finish_reason='stop',
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please include your response in a tool call.',
+                        tool_call_id='pyd_ai_c17837271fb04f3f8e5b2961344d8d8d',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_0360827931d9421b0068dd8371573081a09265815c4896c60f',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"species":"Axolotl","name":"Axie"}',
+                        tool_call_id='call_eE7MHM5WMJnMt5srV69NmBJk|fc_0360827931d9421b0068dd83918a8c81a08a765e558fd5e071',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=587, output_tokens=2587, details={'reasoning_tokens': 2560}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0360827931d9421b0068dd8370a70081a09d6de822ee43bbc4',
+                finish_reason='stop',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='call_eE7MHM5WMJnMt5srV69NmBJk|fc_0360827931d9421b0068dd83918a8c81a08a765e558fd5e071',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_image_generation_with_native_output(allow_model_requests: None, openai_api_key: str):
+    class Animal(BaseModel):
+        species: str
+        name: str
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()], output_type=NativeOutput(Animal))
+
+    result = await agent.run('Generate an image of an axolotl.')
+    assert result.output == snapshot(Animal(species='Ambystoma mexicanum', name='Axolotl'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of an axolotl.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_09b7ce6df817433c0068dd840825f481a08746132be64b7dbc',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=Image(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='4ed317',
+                        ),
+                        id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
+                    ),
+                    TextPart(
+                        content='{"species":"Ambystoma mexicanum","name":"Axolotl"}',
+                        id='msg_09b7ce6df817433c0068dd8455d66481a0a265a59089859b56',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1789, output_tokens=1312, details={'reasoning_tokens': 1152}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_09b7ce6df817433c0068dd8407c37881a0ad817ef3cc3a3600',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_image_generation_with_prompted_output(allow_model_requests: None, openai_api_key: str):
+    class Animal(BaseModel):
+        species: str
+        name: str
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()], output_type=PromptedOutput(Animal))
+
+    result = await agent.run('Generate an image of an axolotl.')
+    assert result.output == snapshot(Animal(species='axolotl', name='Axel'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of an axolotl.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"species": {"type": "string"}, "name": {"type": "string"}}, "required": ["species", "name"], "title": "Animal", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_0d14a5e3c26c21180068dd8721f7e08190964fcca3611acaa8',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=Image(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='958792',
+                        ),
+                        id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
+                    ),
+                    TextPart(
+                        content='{"species":"axolotl","name":"Axel"}',
+                        id='msg_0d14a5e3c26c21180068dd8763b4508190bb7487109f73e1f4',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1812, output_tokens=1313, details={'reasoning_tokens': 1152}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0d14a5e3c26c21180068dd871d439081908dc36e63fab0cedf',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_image_generation_with_tools(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, output_type=Image)
+
+    @agent.tool_plain
+    async def get_animal() -> str:
+        return 'axolotl'
+
+    result = await agent.run('Generate an image of the animal returned by the get_animal tool.')
+    assert result.output == snapshot(
+        Image(
+            data=IsBytes(),
+            media_type='image/png',
+            identifier='160d47',
+        )
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of the animal returned by the get_animal tool.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_0481074da98340df0068dd88e41588819180570a0cf50d0e6e',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_animal',
+                        args='{}',
+                        tool_call_id='call_t76xO1K2zqrJkawkU3tur8vj|fc_0481074da98340df0068dd88f000688191afaf54f799b1dfaf',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=389, output_tokens=721, details={'reasoning_tokens': 704}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0481074da98340df0068dd88dceb1481918b1d167d99bc51cd',
+                finish_reason='stop',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_animal',
+                        content='axolotl',
+                        tool_call_id='call_t76xO1K2zqrJkawkU3tur8vj|fc_0481074da98340df0068dd88f000688191afaf54f799b1dfaf',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=Image(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='160d47',
+                        ),
+                        id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
+                    ),
+                    TextPart(content='', id='msg_0481074da98340df0068dd8934b3f48191920fd2feb9de2332'),
+                ],
+                usage=RequestUsage(input_tokens=1294, output_tokens=65, details={'reasoning_tokens': 0}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0481074da98340df0068dd88f0ba04819185a168065ef28040',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_multiple_images(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, output_type=Image)
+
+    result = await agent.run('Generate two separate images of axolotls.')
+    # The first image is used as output
+    assert result.output == snapshot(
+        Image(
+            data=IsBytes(),
+            media_type='image/png',
+            identifier='2a8c51',
+        )
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate two separate images of axolotls.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_0b6169df6e16e9690068dd80d6daec8191ba71651890c0e1e1',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_0b6169df6e16e9690068dd80f7b070819189831dcc01b98a2a',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_0b6169df6e16e9690068dd80f7b070819189831dcc01b98a2a',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=Image(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='2a8c51',
+                        ),
+                        id='ig_0b6169df6e16e9690068dd80f7b070819189831dcc01b98a2a',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_0b6169df6e16e9690068dd8125f4448191bac6818b54114209',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_0b6169df6e16e9690068dd8125f4448191bac6818b54114209',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=Image(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='dd7c41',
+                        ),
+                        id='ig_0b6169df6e16e9690068dd8125f4448191bac6818b54114209',
+                    ),
+                    TextPart(content='', id='msg_0b6169df6e16e9690068dd8163a99c8191ae96a95eaa8e6365'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2675,
+                    output_tokens=2157,
+                    details={'reasoning_tokens': 1984},
+                ),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0b6169df6e16e9690068dd80d64aec81919c65f238307673bb',
+                finish_reason='stop',
+            ),
+        ]
+    )

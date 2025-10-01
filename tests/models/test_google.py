@@ -2732,3 +2732,72 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
             ),
         ]
     )
+
+
+async def test_google_image_or_text_output(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    agent = Agent(m, output_type=str | Image)
+
+    result = await agent.run('Tell me a two-sentence story about an axolotl, no image please.')
+    assert result.output == snapshot(
+        'In a hidden cave, a shy axolotl named Pip spent its days dreaming of the world beyond its murky pond. One evening, a glimmering portal appeared, offering Pip a chance to explore the vibrant, unknown depths of the ocean.'
+    )
+
+    result = await agent.run('Generate an image of an axolotl.')
+    assert result.output == snapshot(
+        Image(
+            data=IsBytes(),
+            media_type='image/png',
+            identifier='f82faf',
+        )
+    )
+
+
+async def test_google_image_generation_with_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
+    class Animal(BaseModel):
+        species: str
+        name: str
+
+    model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    agent = Agent(model=model, output_type=Animal)
+
+    with pytest.raises(UserError, match='Tool output is not supported by the model.'):
+        await agent.run('Generate an image of an axolotl.')
+
+
+async def test_google_image_generation_with_native_output(allow_model_requests: None, google_provider: GoogleProvider):
+    class Animal(BaseModel):
+        species: str
+        name: str
+
+    model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    agent = Agent(model=model, output_type=NativeOutput(Animal))
+
+    with pytest.raises(UserError, match='Native structured output is not supported by the model.'):
+        await agent.run('Generate an image of an axolotl.')
+
+
+async def test_google_image_generation_with_prompted_output(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    class Animal(BaseModel):
+        species: str
+        name: str
+
+    model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    agent = Agent(model=model, output_type=PromptedOutput(Animal))
+
+    with pytest.raises(UserError, match='JSON output is not supported by the model.'):
+        await agent.run('Generate an image of an axolotl.')
+
+
+async def test_google_image_generation_with_tools(allow_model_requests: None, google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    agent = Agent(model=model, output_type=Image)
+
+    @agent.tool_plain
+    async def get_animal() -> str:
+        return 'axolotl'  # pragma: no cover
+
+    with pytest.raises(UserError, match='Tools are not supported by the model.'):
+        await agent.run('Generate an image of an animal returned by the get_animal tool.')

@@ -276,17 +276,6 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
         if allows_image:
             outputs = [output for output in outputs if output is not _messages.Image]
 
-        # TODO (DouweM): What if the model outputs a mix of text, tool calls, and images?
-        # We always prefer output tool calls over images, but would we want to support a mix of text and images, e.g. `list[str, Image]`?
-        # What about other types in the list? Would those become output tools for individual types, or for `list[T]` since `list` implies multiple?
-        # But then why would `str` in the list mean "plain text output" rather than a tool that returns `list[str]`?
-        # Easier: just support `Image` at top level, require user to parse text out of model response.
-        # Could you use a function that calls a model that returns an Image as an output function, to allow that alongside other output types?
-        # ImageOutputSchema? TextOutputSchema with allows_image=True?
-        # TODO (DouweM): Does OpenAI support image_generation tool + native output?
-        # TODO (DouweM): Does Google support image + native output?
-        # TODO (DouweM): Does Google's image-preview model support {output, deferred, function} tool calls?
-
         if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):
             if len(outputs) > 1:
                 raise UserError('`NativeOutput` must be the only output type.')  # pragma: no cover
@@ -589,7 +578,7 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
         """Raise an error if the mode is not supported by the model."""
         super().raise_if_unsupported(profile)
         if not profile.supports_tools:
-            raise UserError('Output tools are not supported by the model.')
+            raise UserError('Tool output is not supported by the model.')
 
 
 class BaseOutputProcessor(ABC, Generic[OutputDataT]):
