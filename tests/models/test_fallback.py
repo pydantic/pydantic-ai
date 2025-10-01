@@ -169,6 +169,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'attributes': {
                     'model_name': 'fallback:function:failure_response:,function:success_response:',
                     'agent_name': 'agent',
+                    'gen_ai.agent.name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'gen_ai.usage.input_tokens': 51,
@@ -268,6 +269,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                 'attributes': {
                     'model_name': 'fallback:function::failure_response_stream,function::success_response_stream',
                     'agent_name': 'agent',
+                    'gen_ai.agent.name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'gen_ai.usage.input_tokens': 50,
@@ -375,6 +377,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'attributes': {
                     'model_name': 'fallback:function:failure_response:,function:failure_response:',
                     'agent_name': 'agent',
+                    'gen_ai.agent.name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'pydantic_ai.all_messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]}],
