@@ -2895,3 +2895,18 @@ async def test_google_image_generation_tool(allow_model_requests: None, google_p
         match="`ImageGenerationTool` is not supported by the model. Use an 'image-preview' model instead.",
     ):
         await agent.run('Generate an image of an animal returned by the get_animal tool.')
+
+
+async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash-image-preview', provider=vertex_provider)
+
+    agent = Agent(model, output_type=Image)
+
+    result = await agent.run('Generate an image of an axolotl.')
+    assert result.output == snapshot(
+        Image(
+            data=IsBytes(),
+            media_type='image/png',
+            identifier='f3edd8',
+        )
+    )
