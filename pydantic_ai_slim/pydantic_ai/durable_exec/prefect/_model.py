@@ -21,7 +21,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
 from ._run_context import SerializableRunContext
-from ._utils import TaskConfig
+from ._types import TaskConfig
 
 
 class PrefectStreamedResponse(StreamedResponse):

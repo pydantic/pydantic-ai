@@ -10,7 +10,7 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, U
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._run_context import SerializableRunContext
-from ._utils import TaskConfig
+from ._types import TaskConfig
 
 if TYPE_CHECKING:
     from collections.abc import Callable

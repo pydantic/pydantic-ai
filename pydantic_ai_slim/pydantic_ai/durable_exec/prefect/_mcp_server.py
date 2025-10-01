@@ -11,7 +11,7 @@ from pydantic_ai import AbstractToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._run_context import SerializableRunContext
-from ._utils import TaskConfig
+from ._types import TaskConfig
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPServer, ToolResult

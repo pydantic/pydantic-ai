@@ -254,12 +254,45 @@ Pydantic AI also integrates with [Pydantic Logfire](../logfire.md) for detailed 
 
 For more information about Prefect monitoring, see the [Prefect documentation](https://docs.prefect.io/).
 
-## Advanced: Deployments and Scheduling
+## Deployments and Scheduling
 
-Prefect supports deploying flows for scheduled or event-driven execution. While this is beyond the scope of basic Pydantic AI integration, you can:
+`PrefectAgent` provides a [`serve()`][pydantic_ai.durable_exec.prefect.PrefectAgent.serve] method that creates a Prefect deployment and starts a long-running process to monitor for scheduled work:
 
-* Create [Prefect deployments](https://docs.prefect.io/v3/deploy/infrastructure-examples/docker) to run agents on a schedule
-* Use [Prefect work pools](https://docs.prefect.io/v3/deploy/dynamic-infra/push-runs-serverless) for distributed execution
-* Trigger agent runs via [Prefect automations](https://docs.prefect.io/v3/automate/events/automations-triggers)
+```python {title="serve_agent.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.prefect import PrefectAgent
 
-For more information, see the [Prefect deployment guides](https://docs.prefect.io/v3/deploy/infrastructure-examples/docker).
+agent = Agent(
+    'openai:gpt-4o',
+    name='daily_report_agent',
+    instructions='Generate a daily summary report.',
+)
+
+prefect_agent = PrefectAgent(agent)
+
+# Serve the agent with a daily schedule
+prefect_agent.serve(
+    name='daily-report-deployment',
+    cron='0 9 * * *',  # Run daily at 9am
+    parameters={'user_prompt': 'Generate today\'s report'},
+    tags=['production', 'reports'],
+)
+```
+
+This method accepts scheduling options:
+
+- **`cron`**: Cron schedule string (e.g., `'0 9 * * *'` for daily at 9am)
+- **`interval`**: Schedule interval in seconds or as a timedelta
+- **`rrule`**: iCalendar RRule schedule string
+- **`triggers`**: Event-based triggers for the deployment
+
+And deployment configuration:
+
+- **`name`**: Deployment name (defaults to agent name)
+- **`parameters`**: Default parameters for agent runs (e.g., `user_prompt`, `deps`)
+- **`tags`**: Tags for filtering and organization
+- **`version`**: Version identifier for tracking changes
+- **`limit`**: Maximum number of concurrent runs
+- **`paused`**: Start with the schedule paused
+
+For more advanced deployment patterns, see the [Prefect deployment documentation](https://docs.prefect.io/v3/deploy/infrastructure-examples/docker).
