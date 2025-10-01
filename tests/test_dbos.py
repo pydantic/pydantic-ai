@@ -120,8 +120,8 @@ DBOS_CONFIG: DBOSConfig = {
     'name': 'pydantic_dbos_tests',
     'system_database_url': f'sqlite:///{DBOS_SQLITE_FILE}',
     'run_admin_server': False,
-    # enable_otlp requires dbos>1.14
-    'enable_otlp': True,
+    # disable_otlp: False means OTLP is enabled (requires dbos>1.14)
+    'disable_otlp': False,
 }
 
 
