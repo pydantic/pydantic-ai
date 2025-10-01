@@ -225,13 +225,27 @@ class MCPServer(AbstractToolset[Any], ABC):
             except McpError as e:
                 raise exceptions.ModelRetry(e.error.message)
 
-        content = [await self._map_tool_result_part(part) for part in result.content]
-
         if result.isError:
-            text = '\n'.join(str(part) for part in content)
-            raise exceptions.ModelRetry(text)
-        else:
-            return content[0] if len(content) == 1 else content
+            message: str | None = None
+            if result.content:  # pragma: no branch
+                text_parts = [part.text for part in result.content if isinstance(part, mcp_types.TextContent)]
+                message = '\n'.join(text_parts)
+
+            raise exceptions.ModelRetry(message or 'MCP tool call failed')
+
+        # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
+        # See https://github.com/modelcontextprotocol/python-sdk#structured-output
+        if (structured := result.structuredContent) and not any(
+            not isinstance(part, mcp_types.TextContent) for part in result.content
+        ):
+            # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want to use the raw value returned by the tool function.
+            # See https://github.com/modelcontextprotocol/python-sdk#structured-output
+            if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured:
+                return structured['result']
+            return structured
+
+        mapped = [await self._map_tool_result_part(part) for part in result.content]
+        return mapped[0] if len(mapped) == 1 else mapped
 
     async def call_tool(
         self,
@@ -540,7 +554,7 @@ class MCPServerStdio(MCPServer):
             f'args={self.args!r}',
         ]
         if self.id:
-            repr_args.append(f'id={self.id!r}')
+            repr_args.append(f'id={self.id!r}')  # pragma: lax no cover
         return f'{self.__class__.__name__}({", ".join(repr_args)})'
 
     def __eq__(self, value: object, /) -> bool:

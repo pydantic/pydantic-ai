@@ -1212,8 +1212,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         Example:
         ```python
-        from pydantic_ai import Agent, RunContext
-        from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+        from pydantic_ai import AbstractToolset, Agent, FunctionToolset, RunContext
 
         agent = Agent('test', deps_type=str)
 

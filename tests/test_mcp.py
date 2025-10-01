@@ -12,10 +12,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
-from pydantic_ai.mcp import MCPServerStreamableHTTP, load_mcp_servers
-from pydantic_ai.messages import (
+from pydantic_ai import (
     BinaryContent,
     ModelRequest,
     ModelResponse,
@@ -26,6 +23,9 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.agent import Agent
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.mcp import MCPServerStreamableHTTP, load_mcp_servers
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
@@ -77,14 +77,14 @@ async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(17)
+        assert len(tools) == snapshot(18)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert isinstance(tools[0].description, str)
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
 
         # Test calling the temperature conversion tool
         result = await server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
-        assert result == snapshot('32.0')
+        assert result == snapshot(32.0)
 
 
 async def test_reentrant_context_manager():
@@ -130,7 +130,7 @@ async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
         result = await server.call_tool(
             'foo_celsius_to_fahrenheit', {'celsius': 0}, run_context, tools['foo_celsius_to_fahrenheit']
         )
-        assert result == snapshot('32.0')
+        assert result == snapshot(32.0)
 
 
 async def test_stdio_server_with_cwd(run_context: RunContext[int]):
@@ -138,7 +138,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.get_tools(run_context)
-        assert len(tools) == snapshot(17)
+        assert len(tools) == snapshot(18)
 
 
 async def test_process_tool_call(run_context: RunContext[int]) -> int:
@@ -237,7 +237,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     parts=[
                         ToolReturnPart(
                             tool_name='celsius_to_fahrenheit',
-                            content='32.0',
+                            content=32.0,
                             tool_call_id='call_QssdxTGkPblTYHmyVES1tKBj',
                             timestamp=IsDatetime(),
                         )
@@ -310,10 +310,6 @@ async def test_log_level_unset(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     assert server.log_level is None
     async with server:
-        tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(17)
-        assert tools[13].name == 'get_log_level'
-
         result = await server.direct_call_tool('get_log_level', {})
         assert result == snapshot('unset')
 
@@ -983,6 +979,76 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
         )
 
 
+async def test_tool_returning_unstructured_dict(allow_model_requests: None, agent: Agent):
+    async with agent:
+        result = await agent.run('Get me an unstructured dict, respond on one line')
+        assert result.output == snapshot('{"foo":"bar","baz":123}')
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Get me an unstructured dict, respond on one line',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_unstructured_dict', args='{}', tool_call_id='call_R0n2R7S9vL2aZOX25T9jahTd'
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=343,
+                        output_tokens=12,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id='chatcmpl-CLbP82ODQMEznhobUKdq6Rjn9Aa12',
+                    finish_reason='tool_call',
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_unstructured_dict',
+                            content={'foo': 'bar', 'baz': 123},
+                            tool_call_id='call_R0n2R7S9vL2aZOX25T9jahTd',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"foo":"bar","baz":123}')],
+                    usage=RequestUsage(
+                        input_tokens=374,
+                        output_tokens=10,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
+                    provider_response_id='chatcmpl-CLbPAOYN3jPYdvYeD8JNOOXF5N554',
+                    finish_reason='stop',
+                ),
+            ]
+        )
+
+
 async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('Get me an error, pass False as a value, unless the tool tells you otherwise')
@@ -1275,9 +1341,9 @@ async def test_client_sampling(run_context: RunContext[int]):
         result = await server.direct_call_tool('use_sampling', {'foo': 'bar'})
         assert result == snapshot(
             {
-                'meta': None,
+                '_meta': None,
                 'role': 'assistant',
-                'content': {'type': 'text', 'text': 'sampling model response', 'annotations': None, 'meta': None},
+                'content': {'type': 'text', 'text': 'sampling model response', 'annotations': None, '_meta': None},
                 'model': 'test',
                 'stopReason': None,
             }

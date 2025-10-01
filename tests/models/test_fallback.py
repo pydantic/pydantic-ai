@@ -11,8 +11,7 @@ from dirty_equals import IsJson
 from inline_snapshot import snapshot
 from pydantic_core import to_json
 
-from pydantic_ai import Agent, ModelHTTPError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai import Agent, ModelHTTPError, ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.settings import ModelSettings
