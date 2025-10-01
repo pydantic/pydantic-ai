@@ -1275,7 +1275,7 @@ def test_logfire_output_function_v2_v3(
     summary = get_logfire_summary()
 
     if instrument is True or isinstance(instrument, InstrumentationSettings) and instrument.version == 2:
-        [output_function_atttributes] = [
+        [output_function_attributes] = [
             attributes
             for attributes in summary.attributes.values()
             if attributes.get('gen_ai.tool.name') == 'final_result'
@@ -1297,7 +1297,7 @@ def test_logfire_output_function_v2_v3(
                 }
             ]
         )
-        assert output_function_atttributes == snapshot(
+        assert output_function_attributes == snapshot(
             {
                 'gen_ai.tool.name': 'final_result',
                 'logfire.msg': 'running output function: final_result',
@@ -1322,7 +1322,7 @@ def test_logfire_output_function_v2_v3(
         )
 
     elif isinstance(instrument, InstrumentationSettings) and instrument.version == 3:
-        [output_function_atttributes] = [
+        [output_function_attributes] = [
             attributes
             for attributes in summary.attributes.values()
             if attributes.get('gen_ai.tool.name') == 'final_result'
@@ -1344,7 +1344,7 @@ def test_logfire_output_function_v2_v3(
                 }
             ]
         )
-        assert output_function_atttributes == snapshot(
+        assert output_function_attributes == snapshot(
             {
                 'gen_ai.tool.name': 'final_result',
                 'logfire.msg': 'running output function: final_result',
