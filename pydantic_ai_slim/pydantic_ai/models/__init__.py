@@ -41,7 +41,7 @@ from ..messages import (
 )
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-from ..settings import ModelSettings
+from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 
@@ -389,6 +389,23 @@ class Model(ABC):
                 )
 
         return model_request_parameters
+
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        """Prepare request inputs before they are passed to the provider.
+
+        This merges the given ``model_settings`` with the model's own ``settings`` attribute and ensures
+        ``customize_request_parameters`` is applied to the resolved
+        [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters]. Subclasses can override this method if
+        they need to customize the preparation flow further, but most implementations should simply call
+        ``self.prepare_request(...)`` at the start of their ``request`` (and related) methods.
+        """
+        merged_settings = merge_model_settings(self.settings, model_settings)
+        customized_parameters = self.customize_request_parameters(model_request_parameters)
+        return merged_settings, customized_parameters
 
     @property
     @abstractmethod

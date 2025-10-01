@@ -205,6 +205,10 @@ class AnthropicModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         response = await self._messages_create(
             messages, False, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )
@@ -220,6 +224,10 @@ class AnthropicModel(Model):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         response = await self._messages_create(
             messages, True, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )
