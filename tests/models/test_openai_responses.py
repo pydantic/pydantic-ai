@@ -3514,13 +3514,6 @@ plt.show()\r
                         tool_call_id='ci_68cdc39029a481909399d54b0a3637a10187028ba77f15f7',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
-                        tool_name='code_execution',
-                        content={'status': 'completed', 'logs': ["'/mnt/data/y_equals_x_squared.png'"]},
-                        tool_call_id='ci_68cdc39029a481909399d54b0a3637a10187028ba77f15f7',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
                     FilePart(
                         content=Image(
                             data=IsBytes(),
@@ -3528,6 +3521,13 @@ plt.show()\r
                             identifier='653a61',
                         ),
                         id='ci_68cdc39029a481909399d54b0a3637a10187028ba77f15f7',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={'status': 'completed', 'logs': ["'/mnt/data/y_equals_x_squared.png'"]},
+                        tool_call_id='ci_68cdc39029a481909399d54b0a3637a10187028ba77f15f7',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
                     ),
                     TextPart(
                         content=IsStr(),
@@ -3654,6 +3654,14 @@ out_path\
                         tool_call_id='ci_68cdc3be6f3481908f64d8f0a71dc6bb0187028ba77f15f7',
                         provider_name='openai',
                     ),
+                    FilePart(
+                        content=Image(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='81863d',
+                        ),
+                        id='ci_68cdc3be6f3481908f64d8f0a71dc6bb0187028ba77f15f7',
+                    ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
                         content={
@@ -3669,14 +3677,6 @@ out_path\
                         tool_call_id='ci_68cdc3be6f3481908f64d8f0a71dc6bb0187028ba77f15f7',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                    ),
-                    FilePart(
-                        content=Image(
-                            data=IsBytes(),
-                            media_type='image/png',
-                            identifier='81863d',
-                        ),
-                        id='ci_68cdc3be6f3481908f64d8f0a71dc6bb0187028ba77f15f7',
                     ),
                     TextPart(
                         content="""\
@@ -3703,9 +3703,1476 @@ If you want different colors or a holographic gradient background, tell me your 
     )
 
 
-async def test_openai_responses_image_generation_tool(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_code_execution_return_image_stream(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=OpenAIProvider(api_key=openai_api_key),
+        settings=OpenAIResponsesModelSettings(openai_include_code_execution_outputs=True),
+    )
 
+    agent = Agent(model=model, builtin_tools=[CodeExecutionTool()], output_type=Image)
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='Create a chart of y=x^2 for x=-5 to 5') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.output == snapshot(
+        Image(
+            data=IsBytes(),
+            media_type='image/png',
+            identifier='df0d78',
+        )
+    )
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Create a chart of y=x^2 for x=-5 to 5',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_06c1a26fd89d07f20068dd936ae09c8197b90141e9bf8c36b1',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args="{\"container_id\":\"cntr_68dd936a4cfc81908bdd4f2a2f542b5c0a0e691ad2bfd833\",\"code\":\"import numpy as np\\r\\nimport matplotlib.pyplot as plt\\r\\n\\r\\n# Data\\r\\nx = np.linspace(-5, 5, 1001)\\r\\ny = x**2\\r\\n\\r\\n# Plot\\r\\nfig, ax = plt.subplots(figsize=(6, 4))\\r\\nax.plot(x, y, label='y = x^2', color='#1f77b4')\\r\\nxi = np.arange(-5, 6)\\r\\nyi = xi**2\\r\\nax.scatter(xi, yi, color='#d62728', s=30, zorder=3, label='integer points')\\r\\n\\r\\nax.set_xlabel('x')\\r\\nax.set_ylabel('y')\\r\\nax.set_title('Parabola y = x^2 for x in [-5, 5]')\\r\\nax.grid(True, alpha=0.3)\\r\\nax.set_xlim(-5, 5)\\r\\nax.set_ylim(0, 26)\\r\\nax.legend()\\r\\n\\r\\nplt.tight_layout()\\r\\n\\r\\n# Save image\\r\\nout_path = '/mnt/data/y_eq_x_squared_plot.png'\\r\\nfig.savefig(out_path, dpi=200)\\r\\n\\r\\nout_path\"}",
+                        tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=Image(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='df0d78',
+                        ),
+                        id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
+                        tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=2772, output_tokens=1166, details={'reasoning_tokens': 896}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_06c1a26fd89d07f20068dd9367869c819788cb28e6f19eff9b',
+                finish_reason='stop',
+            ),
+        ]
+    )
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='',
+                    id='rs_06c1a26fd89d07f20068dd936ae09c8197b90141e9bf8c36b1',
+                    signature=IsStr(),
+                    provider_name='openai',
+                ),
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                    provider_name='openai',
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='{"container_id":"cntr_68dd936a4cfc81908bdd4f2a2f542b5c0a0e691ad2bfd833","code":"',
+                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='import', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' numpy', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' as', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' np', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='import', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' matplotlib', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.pyplot', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' as', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' plt', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='\\r\\n\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='#', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' Data', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' =', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' np', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.linspace', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(-', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='5', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' ', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='5', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' ', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='100', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='1', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=')\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='y', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' =', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='**', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='2', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='\\r\\n\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='#', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' Plot', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='fig', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' =', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' plt', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.subplots', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(figsize', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='=(', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='6', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' ', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='4', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='))\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.plot', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' y', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' label', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="='", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='y', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' =', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='^', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='2', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="',", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' color', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="='#", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='1', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='f', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='77', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='b', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='4', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="')\\r\\n", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='xi', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' =', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' np', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.arange', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(-', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='5', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' ', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='6', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=')\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='yi', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' =', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' xi', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='**', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='2', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.scatter', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='i', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' yi', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' color', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="='#", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='d', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='627', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='28', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="',", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' s', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='=', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='30', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' z', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='order', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='=', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='3', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' label', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="='", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='integer', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' points', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="')\\r\\n\\r\\n", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.set', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_xlabel', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="('", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="')\\r\\n", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.set', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_ylabel', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="('", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='y', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="')\\r\\n", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.set', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_title', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="('", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='Par', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ab', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ola', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' y', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' =', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='^', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='2', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' for', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' in', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' [-', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='5', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' ', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='5', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=']', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="')\\r\\n", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.grid', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(True', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' alpha', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='=', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='0', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='3', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=')\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.set', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_xlim', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(-', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='5', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' ', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='5', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=')\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.set', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_ylim', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='0', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' ', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='26', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=')\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.legend', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='()\\r\\n\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='plt', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.tight', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_layout', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='()\\r\\n\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='#', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' Save', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' image', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='out', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_path', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' =', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=" '/", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='mnt', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='/data', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='/y', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_eq', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_squared', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_plot', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.png', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="'\\r\\n", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='fig', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.savefig', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(out', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_path', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' dpi', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='=', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='200', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=')\\r\\n\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='out', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_path', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='"}', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartStartEvent(
+                index=2,
+                part=FilePart(
+                    content=Image(
+                        data=IsBytes(),
+                        media_type='image/png',
+                        identifier='df0d78',
+                    ),
+                    id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                ),
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartStartEvent(
+                index=3,
+                part=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
+                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                ),
+            ),
+            PartStartEvent(
+                index=4, part=TextPart(content='Here', id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4')
+            ),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' chart')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' y')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' =')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' x')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='^')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='2')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' for')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' x')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' from')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' -')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='5')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' to')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='5')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='  \n')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='Download')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' image')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=':')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' [')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='Download')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' chart')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='](')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='sandbox')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=':/')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='mnt')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='/data')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='/y')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='_eq')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='_x')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='_squared')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='_plot')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.png')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=')')),
+            BuiltinToolCallEvent(
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args="{\"container_id\":\"cntr_68dd936a4cfc81908bdd4f2a2f542b5c0a0e691ad2bfd833\",\"code\":\"import numpy as np\\r\\nimport matplotlib.pyplot as plt\\r\\n\\r\\n# Data\\r\\nx = np.linspace(-5, 5, 1001)\\r\\ny = x**2\\r\\n\\r\\n# Plot\\r\\nfig, ax = plt.subplots(figsize=(6, 4))\\r\\nax.plot(x, y, label='y = x^2', color='#1f77b4')\\r\\nxi = np.arange(-5, 6)\\r\\nyi = xi**2\\r\\nax.scatter(xi, yi, color='#d62728', s=30, zorder=3, label='integer points')\\r\\n\\r\\nax.set_xlabel('x')\\r\\nax.set_ylabel('y')\\r\\nax.set_title('Parabola y = x^2 for x in [-5, 5]')\\r\\nax.grid(True, alpha=0.3)\\r\\nax.set_xlim(-5, 5)\\r\\nax.set_ylim(0, 26)\\r\\nax.legend()\\r\\n\\r\\nplt.tight_layout()\\r\\n\\r\\n# Save image\\r\\nout_path = '/mnt/data/y_eq_x_squared_plot.png'\\r\\nfig.savefig(out_path, dpi=200)\\r\\n\\r\\nout_path\"}",
+                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                    provider_name='openai',
+                )
+            ),
+            BuiltinToolResultEvent(
+                result=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
+                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                )
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_image_generation(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, output_type=Image)
 
     result = await agent.run('Generate an image of an axolotl.')
@@ -3741,13 +5208,6 @@ async def test_openai_responses_image_generation_tool(allow_model_requests: None
                         tool_call_id='ig_68cdc3ed36dc8191b543d16151961f8e08537600f5445fc6',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
-                        tool_name='image_generation',
-                        content={'status': 'completed'},
-                        tool_call_id='ig_68cdc3ed36dc8191b543d16151961f8e08537600f5445fc6',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
                     FilePart(
                         content=Image(
                             data=IsBytes(),
@@ -3755,6 +5215,13 @@ async def test_openai_responses_image_generation_tool(allow_model_requests: None
                             identifier='68b13f',
                         ),
                         id='ig_68cdc3ed36dc8191b543d16151961f8e08537600f5445fc6',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_68cdc3ed36dc8191b543d16151961f8e08537600f5445fc6',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
                     ),
                     TextPart(content='', id='msg_68cdc42eae2c81918eeacdbceb60d7fa08537600f5445fc6'),
                 ],
@@ -3805,13 +5272,6 @@ async def test_openai_responses_image_generation_tool(allow_model_requests: None
                         tool_call_id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
-                        tool_name='image_generation',
-                        content={'status': 'completed'},
-                        tool_call_id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
                     FilePart(
                         content=Image(
                             data=IsBytes(),
@@ -3819,6 +5279,13 @@ async def test_openai_responses_image_generation_tool(allow_model_requests: None
                             identifier='2b4fea',
                         ),
                         id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
                     ),
                     TextPart(content='', id='msg_68cdc4c5951c8191ace8044f1e89571508537600f5445fc6'),
                 ],
@@ -3834,6 +5301,160 @@ async def test_openai_responses_image_generation_tool(allow_model_requests: None
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_image_generation_stream(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, output_type=Image)
+
+    async with agent.run_stream('Generate an image of an axolotl') as result:
+        assert await result.get_output() == snapshot(
+            Image(
+                data=IsBytes(),
+                media_type='image/png',
+                identifier='be46a2',
+            )
+        )
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='Generate an image of an axolotl.') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.output == snapshot(
+        Image(
+            data=IsBytes(),
+            media_type='image/png',
+            identifier='69eaa4',
+        )
+    )
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of an axolotl.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_00d13c4dbac420df0068dd91a321d8819faab4a11031f79355',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=Image(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='69eaa4',
+                        ),
+                        id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=1588,
+                    output_tokens=1114,
+                    details={'reasoning_tokens': 960},
+                ),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+            ),
+        ]
+    )
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='',
+                    id='rs_00d13c4dbac420df0068dd91a321d8819faab4a11031f79355',
+                    signature=IsStr(),
+                    provider_name='openai',
+                ),
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='image_generation',
+                    tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                    provider_name='openai',
+                ),
+            ),
+            PartStartEvent(
+                index=2,
+                part=FilePart(
+                    content=Image(
+                        data=IsBytes(),
+                        media_type='image/png',
+                        identifier='69eaa4',
+                    ),
+                    id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                ),
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartStartEvent(
+                index=2,
+                part=FilePart(
+                    content=Image(
+                        data=IsBytes(),
+                        media_type='image/png',
+                        identifier='69eaa4',
+                    ),
+                    id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                ),
+            ),
+            PartStartEvent(
+                index=3,
+                part=BuiltinToolReturnPart(
+                    tool_name='image_generation',
+                    content={'status': 'completed'},
+                    tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                ),
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='image_generation',
+                    tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                    provider_name='openai',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='image_generation',
+                    content={'status': 'completed'},
+                    tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                )
             ),
         ]
     )
@@ -3875,13 +5496,6 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         tool_call_id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
-                        tool_name='image_generation',
-                        content={'status': 'completed'},
-                        tool_call_id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
                     FilePart(
                         content=Image(
                             data=IsBytes(),
@@ -3889,6 +5503,13 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                             identifier='c51b7b',
                         ),
                         id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
                     ),
                     TextPart(content='', id='msg_68cdec605234819fab332bfc0ba35a5d079003437d26d0c0'),
                 ],
@@ -3924,13 +5545,6 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         tool_call_id='ig_68cdec701280819fab216c216ff58efe079003437d26d0c0',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
-                        tool_name='image_generation',
-                        content={'status': 'completed'},
-                        tool_call_id='ig_68cdec701280819fab216c216ff58efe079003437d26d0c0',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
                     FilePart(
                         content=Image(
                             data=IsBytes(),
@@ -3938,6 +5552,13 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                             identifier='c9d559',
                         ),
                         id='ig_68cdec701280819fab216c216ff58efe079003437d26d0c0',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_68cdec701280819fab216c216ff58efe079003437d26d0c0',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
                     ),
                     TextPart(content='', id='msg_68cdecb54530819f9e25118291f5d1fe079003437d26d0c0'),
                 ],
@@ -4005,13 +5626,6 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         tool_call_id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
-                        tool_name='image_generation',
-                        content={'status': 'completed'},
-                        tool_call_id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
                     FilePart(
                         content=Image(
                             data=IsBytes(),
@@ -4019,6 +5633,13 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                             identifier='918a98',
                         ),
                         id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
                     ),
                     TextPart(content='', id='msg_0360827931d9421b0068dd836f4de881a0ae6d58054d203eb2'),
                 ],
@@ -4034,7 +5655,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 parts=[
                     RetryPromptPart(
                         content='Please include your response in a tool call.',
-                        tool_call_id='pyd_ai_c17837271fb04f3f8e5b2961344d8d8d',
+                        tool_call_id='pyd_ai_3b0916e0f74147af8f8593315296a84d',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -4108,13 +5729,6 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                         tool_call_id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
-                        tool_name='image_generation',
-                        content={'status': 'completed'},
-                        tool_call_id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
                     FilePart(
                         content=Image(
                             data=IsBytes(),
@@ -4122,6 +5736,13 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                             identifier='4ed317',
                         ),
                         id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
                     ),
                     TextPart(
                         content='{"species":"Ambystoma mexicanum","name":"Axolotl"}',
@@ -4180,13 +5801,6 @@ Don't include any text or Markdown fencing before or after.\
                         tool_call_id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
-                        tool_name='image_generation',
-                        content={'status': 'completed'},
-                        tool_call_id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
                     FilePart(
                         content=Image(
                             data=IsBytes(),
@@ -4194,6 +5808,13 @@ Don't include any text or Markdown fencing before or after.\
                             identifier='958792',
                         ),
                         id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
                     ),
                     TextPart(
                         content='{"species":"axolotl","name":"Axel"}',
@@ -4277,13 +5898,6 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         tool_call_id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
-                        tool_name='image_generation',
-                        content={'status': 'completed'},
-                        tool_call_id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
                     FilePart(
                         content=Image(
                             data=IsBytes(),
@@ -4291,6 +5905,13 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                             identifier='160d47',
                         ),
                         id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
                     ),
                     TextPart(content='', id='msg_0481074da98340df0068dd8934b3f48191920fd2feb9de2332'),
                 ],
@@ -4342,13 +5963,6 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         tool_call_id='ig_0b6169df6e16e9690068dd80f7b070819189831dcc01b98a2a',
                         provider_name='openai',
                     ),
-                    BuiltinToolReturnPart(
-                        tool_name='image_generation',
-                        content={'status': 'completed'},
-                        tool_call_id='ig_0b6169df6e16e9690068dd80f7b070819189831dcc01b98a2a',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
                     FilePart(
                         content=Image(
                             data=IsBytes(),
@@ -4357,16 +5971,16 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         ),
                         id='ig_0b6169df6e16e9690068dd80f7b070819189831dcc01b98a2a',
                     ),
-                    BuiltinToolCallPart(
-                        tool_name='image_generation',
-                        tool_call_id='ig_0b6169df6e16e9690068dd8125f4448191bac6818b54114209',
-                        provider_name='openai',
-                    ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
                         content={'status': 'completed'},
-                        tool_call_id='ig_0b6169df6e16e9690068dd8125f4448191bac6818b54114209',
+                        tool_call_id='ig_0b6169df6e16e9690068dd80f7b070819189831dcc01b98a2a',
                         timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_0b6169df6e16e9690068dd8125f4448191bac6818b54114209',
                         provider_name='openai',
                     ),
                     FilePart(
@@ -4376,6 +5990,13 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                             identifier='dd7c41',
                         ),
                         id='ig_0b6169df6e16e9690068dd8125f4448191bac6818b54114209',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_0b6169df6e16e9690068dd8125f4448191bac6818b54114209',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
                     ),
                     TextPart(content='', id='msg_0b6169df6e16e9690068dd8163a99c8191ae96a95eaa8e6365'),
                 ],

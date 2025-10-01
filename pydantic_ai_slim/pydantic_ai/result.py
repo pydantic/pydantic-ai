@@ -160,6 +160,17 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
                 )
             return cast(OutputDataT, deferred_tool_requests)
+        elif self._output_schema.allows_image and (
+            image := next(
+                (
+                    part.content
+                    for part in message.parts
+                    if isinstance(part, _messages.FilePart) and isinstance(part.content, _messages.Image)
+                ),
+                None,
+            )
+        ):
+            return cast(OutputDataT, image)
         elif text_processor := self._output_schema.text_processor:
             text = ''
             for part in message.parts:

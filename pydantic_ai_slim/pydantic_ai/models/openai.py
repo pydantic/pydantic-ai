@@ -995,9 +995,9 @@ class OpenAIResponsesModel(Model):
             elif isinstance(item, responses.ResponseCodeInterpreterToolCall):
                 call_part, return_part, file_parts = _map_code_interpreter_tool_call(item, self.system)
                 items.append(call_part)
-                items.append(return_part)
                 if file_parts:
                     items.extend(file_parts)
+                items.append(return_part)
             elif isinstance(item, responses.ResponseFunctionWebSearch):
                 call_part, return_part = _map_web_search_tool_call(item, self.system)
                 items.append(call_part)
@@ -1005,9 +1005,9 @@ class OpenAIResponsesModel(Model):
             elif isinstance(item, responses.response_output_item.ImageGenerationCall):
                 call_part, return_part, file_part = _map_image_generation_tool_call(item, self.system)
                 items.append(call_part)
-                items.append(return_part)
                 if file_part:
                     items.append(file_part)
+                items.append(return_part)
             elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the ComputerUse built-in tool
                 pass
@@ -1701,7 +1701,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     pass
                 elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
                     call_part, _ = _map_web_search_tool_call(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_builtin_tool_call_part(
+                    yield self._parts_manager.handle_part(
                         vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                     )
                 elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
@@ -1712,7 +1712,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     args_json_delta = args_json[:-2]
                     assert args_json_delta.endswith('code":"')
 
-                    yield self._parts_manager.handle_builtin_tool_call_part(
+                    yield self._parts_manager.handle_part(
                         vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                     )
                     maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -1722,8 +1722,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 elif isinstance(chunk.item, responses.response_output_item.ImageGenerationCall):
-                    # TODO (DouweM): Handle image generation result
-                    pass
+                    call_part, _, _ = _map_image_generation_tool_call(chunk.item, self.provider_name)
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
 
                 else:
                     warnings.warn(  # pragma: no cover
@@ -1742,12 +1742,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             provider_name=self.provider_name,
                         )
                 elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
-                    _, return_part, _ = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
-                    # TODO (DouweM): Handle file parts
-
-                    yield self._parts_manager.handle_builtin_tool_return_part(
-                        vendor_part_id=f'{chunk.item.id}-return', part=return_part
-                    )
+                    _, return_part, file_parts = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
+                    for i, file_part in enumerate(file_parts):
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-file-{i}', part=file_part
+                        )
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
                 elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
                     call_part, return_part = _map_web_search_tool_call(chunk.item, self.provider_name)
 
@@ -1758,9 +1758,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
 
-                    yield self._parts_manager.handle_builtin_tool_return_part(
-                        vendor_part_id=f'{chunk.item.id}-return', part=return_part
-                    )
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
+                elif isinstance(chunk.item, responses.response_output_item.ImageGenerationCall):
+                    _, return_part, file_part = _map_image_generation_tool_call(chunk.item, self.provider_name)
+                    if file_part:
+                        yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-file', part=file_part)
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
                 yield self._parts_manager.handle_thinking_delta(
@@ -1833,6 +1836,25 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             elif isinstance(chunk, responses.ResponseCodeInterpreterCallInterpretingEvent):
                 pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseImageGenCallCompletedEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseImageGenCallGeneratingEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseImageGenCallInProgressEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseImageGenCallPartialImageEvent):
+                file_part = FilePart(
+                    content=Image(
+                        data=base64.b64decode(chunk.partial_image_b64),
+                        media_type='image/png',
+                    ),
+                    id=chunk.item_id,
+                )
+                yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item_id}-file', part=file_part)
 
             else:  # pragma: no cover
                 warnings.warn(
@@ -2000,6 +2022,7 @@ def _map_web_search_tool_call(
 def _map_image_generation_tool_call(
     item: responses.response_output_item.ImageGenerationCall, provider_name: str
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart, FilePart | None]:
+    status = item.status
     file_part: FilePart | None = None
     if item.result:
         # TODO (DouweM): Include additional attributes not currently on types
@@ -2022,6 +2045,9 @@ def _map_image_generation_tool_call(
             id=item.id,
         )
 
+        # For some reason, the streaming API leaves `status` as `generating` even though generation has completed.
+        status = 'completed'
+
     return (
         BuiltinToolCallPart(
             tool_name=ImageGenerationTool.kind,
@@ -2032,7 +2058,7 @@ def _map_image_generation_tool_call(
             tool_name=ImageGenerationTool.kind,
             tool_call_id=item.id,
             content={
-                'status': item.status,
+                'status': status,
             },
             provider_name=provider_name,
         ),

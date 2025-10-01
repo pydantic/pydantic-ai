@@ -27,9 +27,11 @@ from .._run_context import RunContext
 from ..builtin_tools import AbstractBuiltinTool
 from ..exceptions import UserError
 from ..messages import (
+    FilePart,
     FileUrl,
     FinalResultEvent,
     FinishReason,
+    Image,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -866,9 +868,11 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
     """Return an appropriate FinalResultEvent if `e` corresponds to a part that will produce a final result."""
     if isinstance(e, PartStartEvent):
         new_part = e.part
-        if isinstance(new_part, TextPart) and params.allow_text_output:  # pragma: no branch
+        if (isinstance(new_part, TextPart) and params.allow_text_output) or (
+            isinstance(new_part, FilePart) and params.allow_image_output and isinstance(new_part.content, Image)
+        ):
             return FinalResultEvent(tool_name=None, tool_call_id=None)
-        elif isinstance(new_part, ToolCallPart) and (tool_def := params.tool_defs.get(new_part.tool_name)):
+        if isinstance(new_part, ToolCallPart) and (tool_def := params.tool_defs.get(new_part.tool_name)):
             if tool_def.kind == 'output':
                 return FinalResultEvent(tool_name=new_part.tool_name, tool_call_id=new_part.tool_call_id)
             elif tool_def.defer:

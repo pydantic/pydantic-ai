@@ -320,12 +320,12 @@ class FunctionStreamedResponse(StreamedResponse):
                         if content := delta.args_as_json_str():  # pragma: no branch
                             response_tokens = _estimate_string_tokens(content)
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                        yield self._parts_manager.handle_builtin_tool_call_part(vendor_part_id=dtc_index, part=delta)
+                        yield self._parts_manager.handle_part(vendor_part_id=dtc_index, part=delta)
                     elif isinstance(delta, BuiltinToolReturnPart):
                         if content := delta.model_response_str():  # pragma: no branch
                             response_tokens = _estimate_string_tokens(content)
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                        yield self._parts_manager.handle_builtin_tool_return_part(vendor_part_id=dtc_index, part=delta)
+                        yield self._parts_manager.handle_part(vendor_part_id=dtc_index, part=delta)
                     else:
                         assert_never(delta)
 

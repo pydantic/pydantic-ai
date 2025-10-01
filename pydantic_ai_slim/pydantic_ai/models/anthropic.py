@@ -698,17 +698,17 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 elif isinstance(current_block, BetaServerToolUseBlock):
-                    yield self._parts_manager.handle_builtin_tool_call_part(
+                    yield self._parts_manager.handle_part(
                         vendor_part_id=event.index,
                         part=_map_server_tool_use_block(current_block, self.provider_name),
                     )
                 elif isinstance(current_block, BetaWebSearchToolResultBlock):
-                    yield self._parts_manager.handle_builtin_tool_return_part(
+                    yield self._parts_manager.handle_part(
                         vendor_part_id=event.index,
                         part=_map_web_search_tool_result_block(current_block, self.provider_name),
                     )
                 elif isinstance(current_block, BetaCodeExecutionToolResultBlock):
-                    yield self._parts_manager.handle_builtin_tool_return_part(
+                    yield self._parts_manager.handle_part(
                         vendor_part_id=event.index,
                         part=_map_code_execution_tool_result_block(current_block, self.provider_name),
                     )

@@ -2684,6 +2684,89 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
     )
 
 
+async def test_google_image_generation_stream(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    agent = Agent(m, output_type=Image)
+
+    async with agent.run_stream('Generate an image of an axolotl') as result:
+        assert await result.get_output() == snapshot(
+            Image(
+                data=IsBytes(),
+                media_type='image/png',
+                identifier='9ff9cc',
+            )
+        )
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='Generate an image of an axolotl.') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.output == snapshot(
+        Image(
+            data=IsBytes(),
+            media_type='image/png',
+            identifier='2af2a7',
+        )
+    )
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of an axolotl.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Here you go! '),
+                    FilePart(
+                        content=Image(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='2af2a7',
+                        )
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=10,
+                    output_tokens=1295,
+                    details={'text_prompt_tokens': 10, 'image_candidates_tokens': 1290},
+                ),
+                model_name='gemini-2.5-flash-image-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+            ),
+        ]
+    )
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='Here you go!')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' ')),
+            PartStartEvent(
+                index=1,
+                part=FilePart(
+                    content=Image(
+                        data=IsBytes(),
+                        media_type='image/png',
+                        identifier='2af2a7',
+                    )
+                ),
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+        ]
+    )
+
+
 async def test_google_image_generation_with_text(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
     agent = Agent(m)
@@ -2691,7 +2774,6 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
     result = await agent.run('Generate an illustrated two-sentence story about an axolotl.')
     messages = result.all_messages()
 
-    # TODO (DouweM): Add a way to get `list[str, Image]` as output?
     assert result.output == snapshot(
         'Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip who loved to explore. One day, while venturing further than usual, Pip discovered a shimmering, ancient coin that granted wishes! '
     )

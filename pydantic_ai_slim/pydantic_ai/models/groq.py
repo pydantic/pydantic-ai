@@ -548,12 +548,12 @@ class GroqStreamedResponse(StreamedResponse):
                         )
                         if call_part:
                             executed_tool_call_id = call_part.tool_call_id
-                            yield self._parts_manager.handle_builtin_tool_call_part(
+                            yield self._parts_manager.handle_part(
                                 vendor_part_id=f'executed_tools-{tool.index}-call', part=call_part
                             )
                         if return_part:
                             executed_tool_call_id = None
-                            yield self._parts_manager.handle_builtin_tool_return_part(
+                            yield self._parts_manager.handle_part(
                                 vendor_part_id=f'executed_tools-{tool.index}-return', part=return_part
                             )
 

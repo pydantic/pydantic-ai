@@ -622,8 +622,8 @@ class GeminiStreamedResponse(StreamedResponse):
             #     candidate.grounding_metadata, self.provider_name
             # )
             # if web_search_call and web_search_return:
-            #     yield self._parts_manager.handle_builtin_tool_call_part(vendor_part_id=uuid4(), part=web_search_call)
-            #     yield self._parts_manager.handle_builtin_tool_return_part(
+            #     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_search_call)
+            #     yield self._parts_manager.handle_part(
             #         vendor_part_id=uuid4(), part=web_search_return
             #     )
 
@@ -665,9 +665,21 @@ class GeminiStreamedResponse(StreamedResponse):
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
+                elif part.inline_data is not None:
+                    data = part.inline_data.data
+                    mime_type = part.inline_data.mime_type
+                    assert data and mime_type, 'Inline data must have data and mime type'
+                    if mime_type.startswith('image/'):
+                        content = Image(data=data, media_type=mime_type)
+                    else:
+                        content = BinaryContent(data=data, media_type=mime_type)
+                    yield self._parts_manager.handle_part(
+                        vendor_part_id=uuid4(),
+                        part=FilePart(content=content),
+                    )
                 elif part.executable_code is not None:
                     code_execution_tool_call_id = _utils.generate_tool_call_id()
-                    yield self._parts_manager.handle_builtin_tool_call_part(
+                    yield self._parts_manager.handle_part(
                         vendor_part_id=uuid4(),
                         part=_map_executable_code(
                             part.executable_code, self.provider_name, code_execution_tool_call_id
@@ -675,7 +687,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     )
                 elif part.code_execution_result is not None:
                     assert code_execution_tool_call_id is not None
-                    yield self._parts_manager.handle_builtin_tool_return_part(
+                    yield self._parts_manager.handle_part(
                         vendor_part_id=uuid4(),
                         part=_map_code_execution_result(
                             part.code_execution_result, self.provider_name, code_execution_tool_call_id
