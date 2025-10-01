@@ -16,6 +16,7 @@ import anyio
 import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from mcp import Implementation
 from pydantic import BaseModel, Discriminator, Field, Tag
 from pydantic_core import CoreSchema, core_schema
 from typing_extensions import Self, assert_never, deprecated
@@ -99,6 +100,9 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     max_retries: int
     """The maximum number of times to retry a tool call."""
+
+    server_info: Implementation | None
+    """The information send by the MCP server during initialization."""
 
     elicitation_callback: ElicitationFnT | None = None
     """Callback function to handle elicitation requests from the server."""
@@ -312,8 +316,8 @@ class MCPServer(AbstractToolset[Any], ABC):
                     self._client = await exit_stack.enter_async_context(client)
 
                     with anyio.fail_after(self.timeout):
-                        await self._client.initialize()
-
+                        result = await self._client.initialize()
+                        self.server_info = result.serverInfo
                         if log_level := self.log_level:
                             await self._client.set_logging_level(log_level)
 
