@@ -1276,9 +1276,11 @@ def test_logfire_output_function_v2_v3(
     summary = get_logfire_summary()
 
     if instrument is True or isinstance(instrument, InstrumentationSettings) and instrument.version == 2:
-        output_function_atttributes = next(
-            (attr for attr in summary.attributes.values() if attr.get('gen_ai.tool.name') == 'final_result'),
-        )
+        [output_function_atttributes] = [
+            attributes
+            for attributes in summary.attributes.values()
+            if attributes.get('gen_ai.tool.name') == 'final_result'
+        ]
         assert summary.traces == snapshot(
             [
                 {
@@ -1321,9 +1323,9 @@ def test_logfire_output_function_v2_v3(
         )
 
     elif isinstance(instrument, InstrumentationSettings) and instrument.version == 3:
-        output_function_atttributes = next(
+        [output_function_atttributes] = [
             (attr for attr in summary.attributes.values() if attr.get('gen_ai.tool.name') == 'final_result'),
-        )
+        ]
         assert summary.traces == snapshot(
             [
                 {
@@ -1389,9 +1391,9 @@ def test_output_type_function_logfire_attributes(
     summary = get_logfire_summary()
 
     # Find the output function span attributes
-    output_function_attributes = next(
+    [output_function_attributes] = [
         attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
-    )
+    ]
 
     if include_content:
         assert output_function_attributes == snapshot(
@@ -1453,9 +1455,9 @@ def test_output_type_function_with_run_context_logfire_attributes(
     summary = get_logfire_summary()
 
     # Find the output function span attributes
-    output_function_attributes = next(
+    [output_function_attributes] = [
         attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
-    )
+    ]
 
     if include_content:
         assert output_function_attributes == snapshot(
