@@ -137,7 +137,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _output_schema: _output.BaseOutputSchema[OutputDataT] = dataclasses.field(repr=False)
     _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = dataclasses.field(repr=False)
-    _instructions: Instructions[AgentDepsT] = dataclasses.field(repr=False)
+    _instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompts: tuple[str, ...] = dataclasses.field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
@@ -312,7 +312,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_schema = _output.OutputSchema[OutputDataT].build(output_type, default_mode=default_output_mode)
         self._output_validators = []
 
-        self._instructions = instructions
+        self._instructions = self._normalize_instructions(instructions)
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -352,56 +352,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_tools: ContextVar[
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
-        self._override_instructions: ContextVar[_utils.Option[Instructions[AgentDepsT]]] = ContextVar(
-            '_override_instructions', default=None
-        )
+        self._override_instructions: ContextVar[
+            _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
+        ] = ContextVar('_override_instructions', default=None)
 
         self._enter_lock = Lock()
         self._entered_count = 0
         self._exit_stack = None
-
-    def _get_instructions(
-        self,
-    ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
-        override_instructions = self._override_instructions.get()
-        instructions_value: Instructions[AgentDepsT] = (
-            override_instructions.value if override_instructions else self._instructions
-        )
-
-        literal_parts: list[str] = []
-        functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
-
-        if instructions_value is None:
-            instructions_iterable: Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = ()
-        elif isinstance(instructions_value, str):
-            instructions_iterable = (instructions_value,)
-        elif callable(instructions_value):
-            instructions_iterable = (instructions_value,)
-        else:
-            instructions_iterable = instructions_value
-
-        for instruction in instructions_iterable:
-            if isinstance(instruction, str):
-                literal_parts.append(instruction)
-            elif callable(instruction):
-                functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](instruction))
-            else:  # pragma: no cover
-                raise ValueError(f'Invalid instruction: {instruction}')
-
-        literal = '\n'.join(literal_parts).strip() or None
-        return literal, functions
-
-    def _append_instruction(self, instruction: _system_prompt.SystemPromptFunc[AgentDepsT]) -> None:
-        if self._instructions is None:
-            instructions_list: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = [instruction]
-        elif isinstance(self._instructions, str):
-            instructions_list = [self._instructions, instruction]
-        elif callable(self._instructions):
-            instructions_list = [self._instructions, instruction]
-        else:
-            instructions_list = [*self._instructions, instruction]  # pragma: no cover
-
-        self._instructions = instructions_list
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
@@ -794,7 +751,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tools_token = None
 
         if _utils.is_set(instructions):
-            instructions_token = self._override_instructions.set(_utils.Some(instructions))
+            normalized_instructions = self._normalize_instructions(instructions)
+            instructions_token = self._override_instructions.set(_utils.Some(normalized_instructions))
         else:
             instructions_token = None
 
@@ -871,12 +829,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             def decorator(
                 func_: _system_prompt.SystemPromptFunc[AgentDepsT],
             ) -> _system_prompt.SystemPromptFunc[AgentDepsT]:
-                self._append_instruction(func_)
+                self._instructions.append(func_)
                 return func_
 
             return decorator
         else:
-            self._append_instruction(func)
+            self._instructions.append(func)
             return func
 
     @overload
@@ -1316,6 +1274,34 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return some_deps.value
         else:
             return deps
+
+    def _normalize_instructions(
+        self,
+        instructions: Instructions[AgentDepsT],
+    ) -> list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]:
+        if instructions is None:
+            return []
+        if isinstance(instructions, str) or callable(instructions):
+            return [instructions]
+        return list(instructions)
+
+    def _get_instructions(
+        self,
+    ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
+        override_instructions = self._override_instructions.get()
+        instructions = override_instructions.value if override_instructions else self._instructions
+
+        literal_parts: list[str] = []
+        functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
+
+        for instruction in instructions:
+            if isinstance(instruction, str):
+                literal_parts.append(instruction)
+            else:
+                functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](instruction))
+
+        literal = '\n'.join(literal_parts).strip() or None
+        return literal, functions
 
     def _get_toolset(
         self,
