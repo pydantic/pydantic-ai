@@ -377,8 +377,6 @@ class HuggingFaceModel(Model):
                 },
             }
         )
-        if f.strict is not None:
-            tool_param['function']['strict'] = f.strict
         return tool_param
 
     async def _map_user_message(
