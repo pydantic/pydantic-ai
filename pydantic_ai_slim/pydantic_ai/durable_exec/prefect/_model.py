@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
-from prefect import task
+from prefect import get_run_logger, task
 from prefect.context import FlowRunContext
 
 from pydantic_ai import (
@@ -85,8 +85,19 @@ class PrefectModel(WrapperModel):
         # Get model name for task description
         model_name = getattr(self.wrapped, 'model_name', 'unknown')
 
+        async def wrapped_request(
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            logger = get_run_logger()
+            logger.info(f'Making model request to {model_name} with {len(messages)} messages')
+            response = await super(PrefectModel, self).request(messages, model_settings, model_request_parameters)
+            logger.info(f'Model request completed. Tokens: {response.usage.total_tokens}')
+            return response
+
         return await task(
-            super(PrefectModel, self).request,
+            wrapped_request,
             name=f'Model Request: {model_name}',
             **self.task_config,
         )(messages, model_settings, model_request_parameters)
@@ -127,6 +138,9 @@ class PrefectModel(WrapperModel):
             **self.task_config,
         )
         async def request_stream_task(ctx: SerializableRunContext | None) -> ModelResponse:
+            logger = get_run_logger()
+            logger.info(f'Making streaming model request to {model_name} with {len(messages)} messages')
+
             # Unwrap to get the original RunContext
             unwrapped_ctx = ctx.unwrap() if ctx is not None else None
 
@@ -143,7 +157,9 @@ class PrefectModel(WrapperModel):
                 # Consume the entire stream
                 async for _ in streamed_response:
                     pass
-            return streamed_response.get()
+            response = streamed_response.get()
+            logger.info(f'Streaming model request completed. Tokens: {response.usage.total_tokens}')
+            return response
 
         response = await request_stream_task(serializable_ctx)
         yield PrefectStreamedResponse(model_request_parameters, response)

@@ -5,7 +5,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, context
 from contextvars import ContextVar
 from typing import Any, overload
 
-from prefect import flow, task
+from prefect import flow, get_run_logger, task
 from prefect.context import FlowRunContext
 from typing_extensions import Never
 
@@ -47,6 +47,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         mcp_task_config: TaskConfig | None = None,
         model_task_config: TaskConfig | None = None,
+        tool_task_config: TaskConfig | None = None,
+        tool_task_config_by_name: dict[str, TaskConfig | None] | None = None,
     ):
         """Wrap an agent to enable it with Prefect durable flows, by automatically offloading model requests, tool calls, and MCP server communication to Prefect tasks.
 
@@ -58,6 +60,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             event_stream_handler: Optional event stream handler to use instead of the one set on the wrapped agent.
             mcp_task_config: The base Prefect task config to use for MCP server tasks. If no config is provided, use the default settings of Prefect.
             model_task_config: The Prefect task config to use for model request tasks. If no config is provided, use the default settings of Prefect.
+            tool_task_config: The default Prefect task config to use for tool calls. If no config is provided, use the default settings of Prefect.
+            tool_task_config_by_name: Per-tool task configuration. Keys are tool names, values are TaskConfig or None (None disables task wrapping for that tool).
         """
         super().__init__(wrapped)
 
@@ -71,6 +75,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         # Merge the config with the default Prefect config
         self._mcp_task_config = mcp_task_config or {}
         self._model_task_config = model_task_config or {}
+        self._tool_task_config = tool_task_config or {}
+        self._tool_task_config_by_name = tool_task_config_by_name or {}
 
         if not isinstance(wrapped.model, Model):
             raise UserError(
@@ -98,6 +104,18 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                         wrapped=toolset,
                         task_config=self._mcp_task_config,
                     )
+
+            # Replace FunctionToolset with PrefectFunctionToolset
+            from pydantic_ai import FunctionToolset
+
+            from ._function_toolset import PrefectFunctionToolset
+
+            if isinstance(toolset, FunctionToolset):
+                return PrefectFunctionToolset(
+                    wrapped=toolset,
+                    task_config=self._tool_task_config,
+                    tool_task_config=self._tool_task_config_by_name,
+                )
 
             return toolset
 
@@ -250,11 +268,15 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         """
         @flow(name=f'{self._name} Run')
         async def wrapped_run_flow() -> AgentRunResult[Any]:
+            logger = get_run_logger()
+            prompt_str = str(user_prompt)
+            logger.info(f'Starting agent run with prompt: {prompt_str}')
+
             # Mark that we're inside a PrefectAgent flow
             token = _in_prefect_agent_flow.set(True)
             try:
                 with self._prefect_overrides():
-                    return await super(WrapperAgent, self).run(
+                    result = await super(WrapperAgent, self).run(
                         user_prompt,
                         output_type=output_type,
                         message_history=message_history,
@@ -268,6 +290,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                         toolsets=toolsets,
                         event_stream_handler=event_stream_handler,
                     )
+                    logger.info(f'Agent run completed. Requests: {result.usage().requests}, Tool calls: {result.usage().tool_calls}')
+                    return result
             finally:
                 _in_prefect_agent_flow.reset(token)
 
@@ -362,11 +386,16 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         """
         @flow(name=f'{self._name} Sync Run')
         def wrapped_run_sync_flow() -> AgentRunResult[Any]:
+            logger = get_run_logger()
+            prompt_str = str(user_prompt)
+            prompt_preview = prompt_str[:100] + '...' if len(prompt_str) > 100 else prompt_str
+            logger.info(f'Starting sync agent run with prompt: {prompt_preview}')
+
             # Mark that we're inside a PrefectAgent flow
             token = _in_prefect_agent_flow.set(True)
             try:
                 with self._prefect_overrides():
-                    return super(PrefectAgent, self).run_sync(
+                    result = super(PrefectAgent, self).run_sync(
                         user_prompt,
                         output_type=output_type,
                         message_history=message_history,
@@ -380,6 +409,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                         toolsets=toolsets,
                         event_stream_handler=event_stream_handler,
                     )
+                    logger.info(f'Sync agent run completed. Requests: {result.usage().requests}, Tool calls: {result.usage().tool_calls}')
+                    return result
             finally:
                 _in_prefect_agent_flow.reset(token)
 

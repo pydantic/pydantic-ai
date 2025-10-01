@@ -46,10 +46,11 @@ See the [Prefect documentation](https://docs.prefect.io/) for more information.
 Any agent can be wrapped in a [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent] to get durable execution. `PrefectAgent` automatically:
 
 * Wraps [`Agent.run`][pydantic_ai.Agent.run] and [`Agent.run_sync`][pydantic_ai.Agent.run_sync] as Prefect flows.
-* Wraps [model requests](../models/overview.md) and [MCP communication](../mcp/client.md) as Prefect tasks.
+* Wraps [model requests](../models/overview.md) as Prefect tasks.
+* Wraps [tool calls](../tools.md) as Prefect tasks (configurable per-tool).
+* Wraps [MCP communication](../mcp/client.md) as Prefect tasks.
 
-Custom tool functions and event stream handlers are **not automatically wrapped** by Prefect.
-If they involve I/O or non-deterministic behavior, you can explicitly decorate them with `@task` from Prefect.
+Event stream handlers are **not automatically wrapped** by Prefect. If they involve I/O or non-deterministic behavior, you can explicitly decorate them with `@task` from Prefect.
 
 The original agent, model, and MCP server can still be used as normal outside the Prefect flow.
 
@@ -95,17 +96,42 @@ For more information on how to use Prefect in Python applications, see their [Py
 
 When using Prefect with Pydantic AI agents, there are a few important considerations to ensure workflows behave correctly.
 
-### Agent and Toolset Requirements
+### Agent Requirements
 
 Each agent instance must have a unique `name` so Prefect can correctly identify and track its flows and tasks.
 
-Tools and event stream handlers are not automatically wrapped by Prefect. You can decide how to integrate them:
+### Tool Wrapping
 
-* Decorate with `@task` from Prefect if the function involves I/O or needs retry/caching behavior.
-* Skip the decorator if the function is simple and doesn't need task-level durability.
-* Prefect tasks can be nested, so you can structure your tooling as needed.
+Agent tools are automatically wrapped as Prefect tasks, which means they benefit from:
 
-Other than that, any agent and toolset will just work!
+* **Retry logic**: Failed tool calls can be retried automatically
+* **Caching**: Tool results are cached based on their inputs
+* **Observability**: Tool execution is tracked in the Prefect UI
+
+You can customize tool task behavior using `tool_task_config` (applies to all tools) or `tool_task_config_by_name` (per-tool configuration):
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.prefect import PrefectAgent, TaskConfig
+
+agent = Agent('gpt-4o', name='my_agent')
+
+@agent.tool_plain
+def fetch_data(url: str) -> str:
+    # This tool will be wrapped as a Prefect task
+    ...
+
+prefect_agent = PrefectAgent(
+    agent,
+    tool_task_config=TaskConfig(retries=3),  # Default for all tools
+    tool_task_config_by_name={
+        'fetch_data': TaskConfig(timeout_seconds=10.0),  # Specific to fetch_data
+        'simple_tool': None,  # Disable task wrapping for simple_tool
+    },
+)
+```
+
+Set a tool's config to `None` in `tool_task_config_by_name` to disable task wrapping for that specific tool.
 
 ### Agent Run Context and Dependencies
 
@@ -122,12 +148,21 @@ The event stream handler function will receive the agent [run context][pydantic_
 
 You can customize Prefect task behavior, such as retries and timeouts, by passing [`TaskConfig`][pydantic_ai.durable_exec.prefect.TaskConfig] objects to the `PrefectAgent` constructor:
 
-- `mcp_task_config`: The Prefect task config to use for MCP server communication tasks.
-- `model_task_config`: The Prefect task config to use for model request tasks.
+- `mcp_task_config`: Configuration for MCP server communication tasks
+- `model_task_config`: Configuration for model request tasks
+- `tool_task_config`: Default configuration for all tool calls
+- `tool_task_config_by_name`: Per-tool task configuration (overrides `tool_task_config`)
 
-For custom tools, you can annotate them directly with [`@task`](https://docs.prefect.io/3.0/develop/write-tasks) from Prefect as needed. These decorators have no effect outside Prefect flows, so tools remain usable in non-Prefect agents.
+Available `TaskConfig` options:
 
-Example with task configuration:
+- `retries`: Maximum number of retries for the task
+- `retry_delay_seconds`: Delay between retries in seconds (can be a single value or list for exponential backoff)
+- `timeout_seconds`: Maximum time in seconds for the task to complete
+- `cache_policy`: Custom Prefect cache policy for the task
+- `persist_result`: Whether to persist the task result
+- `log_prints`: Whether to log print statements from the task
+
+Example:
 
 ```python {title="prefect_agent_config.py" test="skip"}
 from pydantic_ai import Agent
@@ -142,10 +177,9 @@ agent = Agent(
 prefect_agent = PrefectAgent(
     agent,
     model_task_config=TaskConfig(
-        retries=3,  # Retry up to 3 times
-        retry_delay_seconds=1.0,  # Wait 1 second between retries
-        timeout_seconds=30.0,  # Timeout after 30 seconds
-        persist_result=True,  # Persist task results
+        retries=3,
+        retry_delay_seconds=[1.0, 2.0, 4.0],  # Exponential backoff
+        timeout_seconds=30.0,
     ),
 )
 
@@ -157,63 +191,47 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-## Task Retries
+### Retry Considerations
 
-Prefect provides automatic retry capabilities for tasks that fail. By default, tasks are configured with Prefect's standard retry behavior. You can customize retry policies using [task configuration](#task-configuration).
+Pydantic AI and provider API clients have their own retry logic. When using Prefect, you may want to:
 
-On top of Prefect's retries, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause requests to be retried more often than expected.
+* Disable [HTTP Request Retries](../retries.md) in Pydantic AI
+* Turn off your provider API client's retry logic (e.g., `max_retries=0` on a [custom OpenAI client](../models/openai.md#custom-openai-client))
+* Rely on Prefect's task-level retry configuration for consistency
 
-When using Prefect, consider:
-
-* Disabling [HTTP Request Retries](../retries.md) in Pydantic AI
-* Turning off your provider API client's retry logic (e.g., setting `max_retries=0` on a [custom `OpenAIProvider` API client](../models/openai.md#custom-openai-client))
-* Relying on Prefect's task-level retry configuration for consistency
+This prevents requests from being retried multiple times at different layers.
 
 ## Caching and Idempotency
 
-Prefect 3.0 provides built-in caching and transactional semantics. Tasks with identical inputs will not re-execute if their results are already cached. This makes workflows naturally idempotent and resilient to failures.
+Prefect 3.0 provides built-in caching and transactional semantics. Tasks with identical inputs will not re-execute if their results are already cached, making workflows naturally idempotent and resilient to failures.
 
-### Serializable RunContext
+### How Caching Works
 
-The Prefect integration uses a `SerializableRunContext` wrapper to handle cache key serialization. This wrapper:
+The Prefect integration caches tasks based on:
 
-* **Includes cacheable fields** in the cache key:
-  - `deps`: User-provided dependencies (if serializable)
-  - `prompt`: User prompt string
-  - `tool_call_id`: Tool call identifier
-  - `tool_name`: Tool name
-  - `retry`: Current retry count
-  - `max_retries`: Maximum retry count
-  - `run_step`: Current step in the run
-  - `tool_call_approved`: Approval status
+* **Task source code**: Different versions of the same task won't share cached results
+* **Run ID**: Tasks are scoped to their flow run
+* **Task inputs**: Messages, settings, parameters, tool arguments, and serializable dependencies
 
-* **Excludes non-serializable fields** from the cache key:
-  - `model`: Contains HTTP clients and other non-serializable objects
-  - `usage`: Contains internal state that shouldn't affect caching
-  - `messages`: May contain binary data or non-serializable content
-  - `tracer`: OpenTelemetry tracer object
-  - `retries`: Internal state dict
+The integration automatically handles serialization of complex objects like `RunContext` by extracting only the cacheable fields (prompt, tool information, retry counts, and user dependencies if serializable) while excluding non-serializable objects like HTTP clients and tracers.
 
-The wrapper is transparent - all attribute access is delegated to the wrapped `RunContext`, so it can be used as a drop-in replacement wherever `RunContext` is expected.
+### Customizing Cache Behavior
 
-### Cache Behavior
+You can override caching using the `cache_policy` parameter in [`TaskConfig`][pydantic_ai.durable_exec.prefect.TaskConfig]:
 
-The Prefect integration uses cache policies that match Prefect's `DEFAULT` behavior (`TASK_SOURCE + RUN_ID + Inputs`):
+```python
+from pydantic_ai.durable_exec.prefect import TaskConfig
+from prefect.cache_policies import NONE
 
-* **Model requests**: Cached based on task source, run ID, messages, model settings, and request parameters
-* **Streaming model requests**: Same as above, plus the serializable fields from `RunContext`
-* **MCP tool listing**: Cached based on task source, run ID, and serializable fields from `RunContext`
-* **MCP tool calls**: Cached based on task source, run ID, tool name, tool arguments, and serializable fields from `RunContext`
+prefect_agent = PrefectAgent(
+    agent,
+    model_task_config=TaskConfig(cache_policy=NONE),  # Disable caching
+)
+```
 
-This ensures that:
-- Tasks don't return stale cached results inappropriately (due to including task source and run ID)
-- Non-serializable objects like HTTP clients don't cause serialization errors
-- All relevant inputs are considered for cache invalidation
-- User dependencies are included in cache keys when they're serializable
+See [Prefect's caching documentation](https://docs.prefect.io/3.0/develop/task-caching) for more cache policy options.
 
-You can override caching behavior using the `cache_policy` parameter in [`TaskConfig`][pydantic_ai.durable_exec.prefect.TaskConfig]. See [Prefect's caching documentation](https://docs.prefect.io/3.0/develop/task-caching) for details.
-
-**Note**: If your `deps` type contains non-serializable objects, those will be automatically excluded from the cache key. To ensure your dependencies are included in cache keys, make sure they're serializable using Pydantic's serialization (e.g., use Pydantic models or basic Python types).
+**Note**: For user dependencies to be included in cache keys, they must be serializable (e.g., Pydantic models or basic Python types). Non-serializable dependencies are automatically excluded from cache computation.
 
 ## Observability with Prefect UI
 
