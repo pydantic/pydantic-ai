@@ -670,14 +670,14 @@ The [FastMCP](https://fastmcp.dev) Client can also be used with Pydantic AI with
 To use the `FastMCPToolset`, you will need to install `pydantic-ai-slim[fastmcp]`.
 
 A FastMCP Toolset can be created from:
-- A FastMCP Client: `FastMCPToolset(mcp=Client(...))`
-- A FastMCP Transport: `FastMCPToolset(mcp=StdioTransport(command='uv', args=['run', 'mcp-run-python', 'stdio']))`
-- A FastMCP Server: `FastMCPToolset(mcp=FastMCP('my_server'))`
-- An HTTP URL: `FastMCPToolset(mcp='http://localhost:8000/mcp')`
-- An SSE URL: `FastMCPToolset(mcp='http://localhost:8000/sse')`
-- A Python Script: `FastMCPToolset(mcp='my_server.py')`
-- A Node.js Script: `FastMCPToolset(mcp='my_server.js')`
-- A JSON MCP Configuration: `FastMCPToolset(mcp={'mcpServers': {'my_server': {'command': 'python', 'args': ['-c', 'print("test")']}}})`
+- A FastMCP Client: `FastMCPToolset(client=Client(...))`
+- A FastMCP Transport: `FastMCPToolset(StdioTransport(command='uv', args=['run', 'mcp-run-python', 'stdio']))`
+- A FastMCP Server: `FastMCPToolset(FastMCP('my_server'))`
+- An HTTP URL: `FastMCPToolset('http://localhost:8000/mcp')`
+- An SSE URL: `FastMCPToolset('http://localhost:8000/sse')`
+- A Python Script: `FastMCPToolset('my_server.py')`
+- A Node.js Script: `FastMCPToolset('my_server.js')`
+- A JSON MCP Configuration: `FastMCPToolset({'mcpServers': {'my_server': {'command': 'python', 'args': ['-c', 'print("test")']}}})`
 
 Connecting your agent to an HTTP MCP Server is as simple as:
 
@@ -685,7 +685,7 @@ Connecting your agent to an HTTP MCP Server is as simple as:
 from pydantic_ai import Agent
 from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
-toolset = FastMCPToolset(mcp='http://localhost:8000/mcp')
+toolset = FastMCPToolset('http://localhost:8000/mcp')
 
 agent = Agent('openai:gpt-5', toolsets=[toolset])
 ```
@@ -705,7 +705,7 @@ mcp_config = {
     }
 }
 
-toolset = FastMCPToolset(mcp=mcp_config)
+toolset = FastMCPToolset(mcp_config)
 
 agent = Agent('openai:gpt-5', toolsets=[toolset])
 ```
@@ -723,7 +723,7 @@ fastmcp_server = FastMCP('my_server')
 async def my_tool(a: int, b: int) -> int:
     return a + b
 
-toolset = FastMCPToolset(mcp=fastmcp_server)
+toolset = FastMCPToolset(fastmcp_server)
 
 agent = Agent('openai:gpt-5', toolsets=[toolset])
 ```

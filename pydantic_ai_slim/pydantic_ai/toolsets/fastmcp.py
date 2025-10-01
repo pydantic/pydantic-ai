@@ -5,7 +5,7 @@ from asyncio import Lock
 from contextlib import AsyncExitStack
 from dataclasses import KW_ONLY, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from fastmcp.client.transports import ClientTransport
 from fastmcp.mcp_config import MCPConfig
@@ -58,7 +58,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     See https://gofastmcp.com/clients/transports for a full list of transports available.
     """
 
-    mcp: Client[Any] | ClientTransport | FastMCP | FastMCP1Server | AnyUrl | Path | MCPConfig | dict[str, Any] | str
+    client: Client[Any]
     """The FastMCP transport to use. This can be a local or remote MCP Server configuration, a transport string, or a FastMCP Client."""
 
     _: KW_ONLY
@@ -71,17 +71,69 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
     _id: str | None = field(default=None)
 
-    def __post_init__(self):
+    @overload
+    def __init__(
+        self,
+        *,
+        client: Client[Any],
+        max_retries: int = 2,
+        tool_error_behavior: Literal['model_retry', 'error'] = 'error',
+        id: str | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        transport: ClientTransport
+        | FastMCP
+        | FastMCP1Server
+        | AnyUrl
+        | Path
+        | MCPConfig
+        | dict[str, Any]
+        | str
+        | None = None,
+        *,
+        max_retries: int = 2,
+        tool_error_behavior: Literal['model_retry', 'error'] = 'error',
+        id: str | None = None,
+    ) -> None: ...
+
+    def __init__(
+        self,
+        transport: ClientTransport
+        | FastMCP
+        | FastMCP1Server
+        | AnyUrl
+        | Path
+        | MCPConfig
+        | dict[str, Any]
+        | str
+        | None = None,
+        *,
+        client: Client[Any] | None = None,
+        max_retries: int = 2,
+        tool_error_behavior: Literal['model_retry', 'error'] = 'error',
+        id: str | None = None,
+    ) -> None:
+        if not client and not transport:
+            raise ValueError('Either client or transport must be provided')
+
+        if client and transport:
+            raise ValueError('Either client or transport must be provided, not both')
+
+        if client:
+            self.client = client
+        else:
+            self.client = Client[Any](transport=transport)
+
+        self._id = id
+        self.max_retries = max_retries
+        self.tool_error_behavior = tool_error_behavior
+
         self._enter_lock: Lock = Lock()
         self._running_count: int = 0
         self._exit_stack: AsyncExitStack | None = None
-
-        self._client: Client[Any]
-
-        if isinstance(self.mcp, Client):
-            self._client = self.mcp
-        else:
-            self._client = Client[Any](transport=self.mcp)
 
     @property
     def id(self) -> str | None:
@@ -89,9 +141,9 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
-            if self._running_count == 0 and self._client:
+            if self._running_count == 0 and self.client:
                 self._exit_stack = AsyncExitStack()
-                await self._exit_stack.enter_async_context(self._client)
+                await self._exit_stack.enter_async_context(self.client)
 
             self._running_count += 1
 
@@ -108,7 +160,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         async with self:
-            mcp_tools: list[MCPTool] = await self._client.list_tools()
+            mcp_tools: list[MCPTool] = await self.client.list_tools()
 
             return {
                 tool.name: _convert_mcp_tool_to_toolset_tool(toolset=self, mcp_tool=tool, retries=self.max_retries)
@@ -120,7 +172,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         async with self:
             try:
-                call_tool_result: CallToolResult = await self._client.call_tool(name=name, arguments=tool_args)
+                call_tool_result: CallToolResult = await self.client.call_tool(name=name, arguments=tool_args)
             except ToolError as e:
                 if self.tool_error_behavior == 'model_retry':
                     raise ModelRetry(message=str(e)) from e
@@ -176,4 +228,4 @@ def _map_fastmcp_tool_result(part: ContentBlock) -> FastMCPToolResult:
         return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
 
     msg = f'Unsupported/Unknown content block type: {type(part)}'  # pragma: no cover
-    raise ValueError(msg)  # pragma: no cover
+    raise ValueError(msg)  # pragma: no cover)
