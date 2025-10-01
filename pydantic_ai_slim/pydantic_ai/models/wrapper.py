@@ -49,7 +49,7 @@ class WrapperModel(Model):
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return self.wrapped.prepare_request(model_settings, model_request_parameters)
 

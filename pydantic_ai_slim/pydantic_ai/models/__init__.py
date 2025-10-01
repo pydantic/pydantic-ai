@@ -393,7 +393,7 @@ class Model(ABC):
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         """Prepare request inputs before they are passed to the provider.
 
@@ -404,8 +404,7 @@ class Model(ABC):
         ``self.prepare_request(...)`` at the start of their ``request`` (and related) methods.
         """
         merged_settings = merge_model_settings(self.settings, model_settings)
-        resolved_parameters = model_request_parameters or ModelRequestParameters()
-        customized_parameters = self.customize_request_parameters(resolved_parameters)
+        customized_parameters = self.customize_request_parameters(model_request_parameters)
         return merged_settings, customized_parameters
 
     @property
