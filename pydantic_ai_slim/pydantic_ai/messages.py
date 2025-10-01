@@ -990,8 +990,6 @@ class FilePart:
         """Return `True` if the file content is non-empty."""
         return bool(self.content)
 
-    # TODO (DouweM): OTel
-
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -1179,6 +1177,18 @@ class ModelResponse:
                 body.setdefault('content', []).append(
                     {'kind': kind, **({'text': part.content} if settings.include_content else {})}
                 )
+            elif isinstance(part, FilePart):
+                body.setdefault('content', []).append(
+                    {
+                        'kind': 'binary',
+                        'media_type': part.content.media_type,
+                        **(
+                            {'binary_content': base64.b64encode(part.content.data).decode()}
+                            if settings.include_content and settings.include_binary_content
+                            else {}
+                        ),
+                    }
+                )
 
         if content := body.get('content'):
             text_content = content[0].get('text')
@@ -1204,6 +1214,11 @@ class ModelResponse:
                         **({'content': part.content} if settings.include_content else {}),
                     )
                 )
+            elif isinstance(part, FilePart):
+                converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.content.media_type)
+                if settings.include_content and settings.include_binary_content:
+                    converted_part['content'] = base64.b64encode(part.content.data).decode()
+                parts.append(converted_part)
             elif isinstance(part, BaseToolCallPart):
                 call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
                 if isinstance(part, BuiltinToolCallPart):

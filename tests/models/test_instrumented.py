@@ -18,6 +18,7 @@ from pydantic_ai import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
+    FilePart,
     FinalResultEvent,
     ImageUrl,
     ModelMessage,
@@ -1070,6 +1071,7 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
         ),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])]),
         ModelResponse(parts=[TextPart('text1')]),
+        ModelResponse(parts=[FilePart(content=document_content)]),
     ]
     settings = InstrumentationSettings()
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
@@ -1123,6 +1125,18 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
                 'role': 'assistant',
                 'content': 'text1',
                 'gen_ai.message.index': 6,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'kind': 'binary',
+                        'media_type': 'application/pdf',
+                        'binary_content': IsStr(),
+                    }
+                ],
+                'gen_ai.message.index': 7,
                 'event.name': 'gen_ai.assistant.message',
             },
         ]
@@ -1179,6 +1193,16 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
                 ],
             },
             {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text1'}]},
+            {
+                'role': 'assistant',
+                'parts': [
+                    {
+                        'type': 'binary',
+                        'media_type': 'application/pdf',
+                        'content': IsStr(),
+                    }
+                ],
+            },
         ]
     )
 
@@ -1234,6 +1258,7 @@ def test_messages_without_content(document_content: BinaryContent):
         ModelRequest(parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')]),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])]),
         ModelRequest(parts=[UserPromptPart('simple text prompt')]),
+        ModelResponse(parts=[FilePart(content=document_content)]),
     ]
     settings = InstrumentationSettings(include_content=False)
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
@@ -1301,6 +1326,12 @@ def test_messages_without_content(document_content: BinaryContent):
                 'gen_ai.message.index': 7,
                 'event.name': 'gen_ai.user.message',
             },
+            {
+                'role': 'assistant',
+                'content': [{'kind': 'binary', 'media_type': 'application/pdf'}],
+                'gen_ai.message.index': 8,
+                'event.name': 'gen_ai.assistant.message',
+            },
         ]
     )
     assert settings.messages_to_otel_messages(messages) == snapshot(
@@ -1329,6 +1360,7 @@ def test_messages_without_content(document_content: BinaryContent):
             {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_2', 'name': 'tool'}]},
             {'role': 'user', 'parts': [{'type': 'text'}, {'type': 'binary', 'media_type': 'application/pdf'}]},
             {'role': 'user', 'parts': [{'type': 'text'}]},
+            {'role': 'assistant', 'parts': [{'type': 'binary', 'media_type': 'application/pdf'}]},
         ]
     )
 
