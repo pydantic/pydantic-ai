@@ -20,6 +20,7 @@ import httpx
 from typing_extensions import TypeAliasType, TypedDict
 
 from .. import _utils
+from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
@@ -40,8 +41,7 @@ from ..messages import (
 )
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-from ..profiles._json_schema import JsonSchemaTransformer
-from ..settings import ModelSettings
+from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 
@@ -65,6 +65,8 @@ KnownModelName = TypeAliasType(
         'anthropic:claude-opus-4-20250514',
         'anthropic:claude-sonnet-4-0',
         'anthropic:claude-sonnet-4-20250514',
+        'anthropic:claude-sonnet-4-5',
+        'anthropic:claude-sonnet-4-5-20250929',
         'bedrock:amazon.titan-tg1-large',
         'bedrock:amazon.titan-text-lite-v1',
         'bedrock:amazon.titan-text-express-v1',
@@ -121,23 +123,6 @@ KnownModelName = TypeAliasType(
         'cerebras:qwen-3-32b',
         'cerebras:qwen-3-coder-480b',
         'cerebras:qwen-3-235b-a22b-thinking-2507',
-        'claude-3-5-haiku-20241022',
-        'claude-3-5-haiku-latest',
-        'claude-3-5-sonnet-20240620',
-        'claude-3-5-sonnet-20241022',
-        'claude-3-5-sonnet-latest',
-        'claude-3-7-sonnet-20250219',
-        'claude-3-7-sonnet-latest',
-        'claude-3-haiku-20240307',
-        'claude-3-opus-20240229',
-        'claude-3-opus-latest',
-        'claude-4-opus-20250514',
-        'claude-4-sonnet-20250514',
-        'claude-opus-4-0',
-        'claude-opus-4-1-20250805',
-        'claude-opus-4-20250514',
-        'claude-sonnet-4-0',
-        'claude-sonnet-4-20250514',
         'cohere:c4ai-aya-expanse-32b',
         'cohere:c4ai-aya-expanse-8b',
         'cohere:command',
@@ -163,54 +148,6 @@ KnownModelName = TypeAliasType(
         'google-vertex:gemini-2.5-flash',
         'google-vertex:gemini-2.5-flash-lite',
         'google-vertex:gemini-2.5-pro',
-        'gpt-3.5-turbo',
-        'gpt-3.5-turbo-0125',
-        'gpt-3.5-turbo-0301',
-        'gpt-3.5-turbo-0613',
-        'gpt-3.5-turbo-1106',
-        'gpt-3.5-turbo-16k',
-        'gpt-3.5-turbo-16k-0613',
-        'gpt-4',
-        'gpt-4-0125-preview',
-        'gpt-4-0314',
-        'gpt-4-0613',
-        'gpt-4-1106-preview',
-        'gpt-4-32k',
-        'gpt-4-32k-0314',
-        'gpt-4-32k-0613',
-        'gpt-4-turbo',
-        'gpt-4-turbo-2024-04-09',
-        'gpt-4-turbo-preview',
-        'gpt-4-vision-preview',
-        'gpt-4.1',
-        'gpt-4.1-2025-04-14',
-        'gpt-4.1-mini',
-        'gpt-4.1-mini-2025-04-14',
-        'gpt-4.1-nano',
-        'gpt-4.1-nano-2025-04-14',
-        'gpt-4o',
-        'gpt-4o-2024-05-13',
-        'gpt-4o-2024-08-06',
-        'gpt-4o-2024-11-20',
-        'gpt-4o-audio-preview',
-        'gpt-4o-audio-preview-2024-10-01',
-        'gpt-4o-audio-preview-2024-12-17',
-        'gpt-4o-audio-preview-2025-06-03',
-        'gpt-4o-mini',
-        'gpt-4o-mini-2024-07-18',
-        'gpt-4o-mini-audio-preview',
-        'gpt-4o-mini-audio-preview-2024-12-17',
-        'gpt-4o-mini-search-preview',
-        'gpt-4o-mini-search-preview-2025-03-11',
-        'gpt-4o-search-preview',
-        'gpt-4o-search-preview-2025-03-11',
-        'gpt-5',
-        'gpt-5-2025-08-07',
-        'gpt-5-chat-latest',
-        'gpt-5-mini',
-        'gpt-5-mini-2025-08-07',
-        'gpt-5-nano',
-        'gpt-5-nano-2025-08-07',
         'grok:grok-4',
         'grok:grok-4-0709',
         'grok:grok-3',
@@ -271,22 +208,6 @@ KnownModelName = TypeAliasType(
         'moonshotai:kimi-latest',
         'moonshotai:kimi-thinking-preview',
         'moonshotai:kimi-k2-0711-preview',
-        'o1',
-        'o1-2024-12-17',
-        'o1-mini',
-        'o1-mini-2024-09-12',
-        'o1-preview',
-        'o1-preview-2024-09-12',
-        'o1-pro',
-        'o1-pro-2025-03-19',
-        'o3',
-        'o3-2025-04-16',
-        'o3-deep-research',
-        'o3-deep-research-2025-06-26',
-        'o3-mini',
-        'o3-mini-2025-01-31',
-        'o3-pro',
-        'o3-pro-2025-06-10',
         'openai:chatgpt-4o-latest',
         'openai:codex-mini-latest',
         'openai:gpt-3.5-turbo',
@@ -469,6 +390,23 @@ class Model(ABC):
                 )
 
         return model_request_parameters
+
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        """Prepare request inputs before they are passed to the provider.
+
+        This merges the given ``model_settings`` with the model's own ``settings`` attribute and ensures
+        ``customize_request_parameters`` is applied to the resolved
+        [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters]. Subclasses can override this method if
+        they need to customize the preparation flow further, but most implementations should simply call
+        ``self.prepare_request(...)`` at the start of their ``request`` (and related) methods.
+        """
+        merged_settings = merge_model_settings(self.settings, model_settings)
+        customized_parameters = self.customize_request_parameters(model_request_parameters)
+        return merged_settings, customized_parameters
 
     @property
     @abstractmethod

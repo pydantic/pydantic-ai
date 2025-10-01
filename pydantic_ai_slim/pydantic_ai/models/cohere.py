@@ -166,6 +166,10 @@ class CohereModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}), model_request_parameters)
         model_response = self._process_response(response)
         return model_response

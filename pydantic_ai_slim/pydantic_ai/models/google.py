@@ -227,6 +227,10 @@ class GoogleModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, False, model_settings, model_request_parameters)
         return self._process_response(response)
@@ -238,6 +242,10 @@ class GoogleModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> usage.RequestUsage:
         check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         model_settings = cast(GoogleModelSettings, model_settings or {})
         contents, generation_config = await self._build_content_and_config(
             messages, model_settings, model_request_parameters
@@ -293,6 +301,10 @@ class GoogleModel(Model):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
         yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
@@ -421,8 +433,8 @@ class GoogleModel(Model):
         return contents, config
 
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
-        if not response.candidates or len(response.candidates) != 1:
-            raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')  # pragma: no cover
+        if not response.candidates:
+            raise UnexpectedModelBehavior('Expected at least one candidate in Gemini response')  # pragma: no cover
         candidate = response.candidates[0]
         if candidate.content is None or candidate.content.parts is None:
             if candidate.finish_reason == 'SAFETY':

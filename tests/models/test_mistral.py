@@ -12,9 +12,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
-from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
-from pydantic_ai.messages import (
+from pydantic_ai import (
     BinaryContent,
     DocumentUrl,
     ImageUrl,
@@ -29,6 +27,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.agent import Agent
+from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import

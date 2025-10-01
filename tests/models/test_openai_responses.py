@@ -8,20 +8,15 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
-from pydantic_ai import capture_run_messages
-from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, WebSearchTool
-from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, UnexpectedModelBehavior
-from pydantic_ai.messages import (
+from pydantic_ai import (
     BinaryContent,
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolCallPart,
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     FinalResultEvent,
     Image,
+    ImageGenerationTool,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -35,7 +30,16 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UnexpectedModelBehavior,
     UserPromptPart,
+    capture_run_messages,
+)
+from pydantic_ai.agent import Agent
+from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
+from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
+from pydantic_ai.messages import (
+    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
+    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
@@ -43,7 +47,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsBytes, IsDatetime, IsStr, TestEnv, try_import
-from .mock_openai import MockOpenAIResponses, response_message
+from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
@@ -80,6 +84,40 @@ async def test_openai_responses_model_simple_response(allow_model_requests: None
     agent = Agent(model=model)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
+
+
+async def test_openai_responses_image_detail_vendor_metadata(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    image_url = ImageUrl('https://example.com/image.png', vendor_metadata={'detail': 'high'})
+    binary_image = BinaryContent(b'\x89PNG', media_type='image/png', vendor_metadata={'detail': 'high'})
+
+    result = await agent.run(['Describe these inputs.', image_url, binary_image])
+    assert result.output == 'done'
+
+    response_kwargs = get_mock_responses_kwargs(mock_client)
+    image_parts = [
+        item
+        for message in response_kwargs[0]['input']
+        if message.get('role') == 'user'
+        for item in message['content']
+        if item['type'] == 'input_image'
+    ]
+    assert image_parts
+    assert all(part['detail'] == 'high' for part in image_parts)
 
 
 async def test_openai_responses_model_simple_response_with_tool_call(allow_model_requests: None, openai_api_key: str):

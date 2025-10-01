@@ -116,14 +116,15 @@ import asyncio
 from collections.abc import AsyncIterable
 from datetime import date
 
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     AgentStreamEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartDeltaEvent,
     PartStartEvent,
+    RunContext,
     TextPartDelta,
     ThinkingPartDelta,
     ToolCallPartDelta,
@@ -392,13 +393,14 @@ import asyncio
 from dataclasses import dataclass
 from datetime import date
 
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartDeltaEvent,
     PartStartEvent,
+    RunContext,
     TextPartDelta,
     ThinkingPartDelta,
     ToolCallPartDelta,

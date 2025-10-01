@@ -4,8 +4,8 @@ import warnings
 
 from pydantic_ai.exceptions import UserError
 
+from .._json_schema import JsonSchema, JsonSchemaTransformer
 from . import ModelProfile
-from ._json_schema import JsonSchema, JsonSchemaTransformer
 
 
 def google_model_profile(model_name: str) -> ModelProfile | None:

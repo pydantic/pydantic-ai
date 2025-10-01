@@ -333,6 +333,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         name: str | None = None,
         max_concurrency: int | None = None,
         progress: bool = True,
+        retry_task: RetryConfig | None = None,
+        retry_evaluators: RetryConfig | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -346,12 +348,21 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             max_concurrency: The maximum number of concurrent evaluations of the task to allow.
                 If None, all cases will be evaluated concurrently.
             progress: Whether to show a progress bar for the evaluation. Defaults to True.
+            retry_task: Optional retry configuration for the task execution.
+            retry_evaluators: Optional retry configuration for evaluator execution.
 
         Returns:
             A report containing the results of the evaluation.
         """
         return get_event_loop().run_until_complete(
-            self.evaluate(task, name=name, max_concurrency=max_concurrency, progress=progress)
+            self.evaluate(
+                task,
+                name=name,
+                max_concurrency=max_concurrency,
+                progress=progress,
+                retry_task=retry_task,
+                retry_evaluators=retry_evaluators,
+            )
         )
 
     def add_case(
@@ -886,12 +897,14 @@ async def _run_task(
         #   That way users can customize this logic. We'd default to a function that does the current thing but also
         #   allow `None` to disable it entirely.
         for node in span_tree:
-            if node.attributes.get('gen_ai.operation.name') == 'chat':
-                task_run.increment_metric('requests', 1)
             for k, v in node.attributes.items():
-                if not isinstance(v, int | float):
+                if k == 'gen_ai.operation.name' and v == 'chat':
+                    task_run.increment_metric('requests', 1)
+                elif not isinstance(v, int | float):
                     continue
-                if k.startswith('gen_ai.usage.details.'):
+                elif k == 'operation.cost':
+                    task_run.increment_metric('cost', v)
+                elif k.startswith('gen_ai.usage.details.'):
                     task_run.increment_metric(k.removeprefix('gen_ai.usage.details.'), v)
                 elif k.startswith('gen_ai.usage.'):
                     task_run.increment_metric(k.removeprefix('gen_ai.usage.'), v)

@@ -6,7 +6,14 @@ from typing import Literal
 
 from typing_extensions import TypedDict
 
-__all__ = ('AbstractBuiltinTool', 'WebSearchTool', 'WebSearchUserLocation', 'CodeExecutionTool', 'UrlContextTool')
+__all__ = (
+    'AbstractBuiltinTool',
+    'WebSearchTool',
+    'WebSearchUserLocation',
+    'CodeExecutionTool',
+    'UrlContextTool',
+    'MemoryTool',
+)
 
 
 @dataclass(kw_only=True)
@@ -146,4 +153,16 @@ class ImageGenerationTool(AbstractBuiltinTool):
     # TODO (DouweM): Add parameters from https://platform.openai.com/docs/guides/image-generation#customize-image-output
 
     kind: str = 'image_generation'
+    """The kind of tool."""
+
+
+class MemoryTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to use memory.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    kind: str = 'memory'
     """The kind of tool."""

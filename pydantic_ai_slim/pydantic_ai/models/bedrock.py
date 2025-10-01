@@ -13,10 +13,7 @@ import anyio
 import anyio.to_thread
 from typing_extensions import ParamSpec, assert_never
 
-from pydantic_ai import _utils, usage
-from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
+from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
@@ -25,6 +22,7 @@ from pydantic_ai.messages import (
     FinishReason,
     ImageUrl,
     ModelMessage,
+    ModelProfileSpec,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
@@ -37,9 +35,12 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
+    _utils,
+    usage,
 )
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
-from pydantic_ai.profiles import ModelProfileSpec
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile
 from pydantic_ai.settings import ModelSettings
@@ -263,6 +264,10 @@ class BedrockConverseModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, False, settings, model_request_parameters)
         model_response = await self._process_response(response)
@@ -276,6 +281,10 @@ class BedrockConverseModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, settings, model_request_parameters)
         yield BedrockStreamedResponse(

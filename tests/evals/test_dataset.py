@@ -764,6 +764,7 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
                 'gen_ai.usage.input_tokens': 1,
                 'gen_ai.usage.details.special_tokens': 2,
                 'other_attribute': 3,
+                'operation.cost': 1.23,
             },
         ):
             with logfire.span('some other span'):
@@ -779,7 +780,7 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
                 metadata=TaskMetadata(difficulty='easy', category='general'),
                 expected_output=TaskOutput(answer='4', confidence=1.0),
                 output=TaskOutput(answer='answer to What is 2+2?', confidence=1.0),
-                metrics={'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
+                metrics={'cost': 1.23, 'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
                 attributes={},
                 scores={},
                 labels={},
@@ -795,7 +796,7 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
                 metadata=TaskMetadata(difficulty='medium', category='geography'),
                 expected_output=TaskOutput(answer='Paris', confidence=1.0),
                 output=TaskOutput(answer='answer to What is the capital of France?', confidence=1.0),
-                metrics={'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
+                metrics={'cost': 1.23, 'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
                 attributes={},
                 scores={},
                 labels={},

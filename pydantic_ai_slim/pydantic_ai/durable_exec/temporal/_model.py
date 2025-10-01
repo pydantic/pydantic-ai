@@ -10,13 +10,13 @@ from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
+from pydantic_ai import (
     ModelMessage,
     ModelResponse,
     ModelResponseStreamEvent,
 )
+from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
