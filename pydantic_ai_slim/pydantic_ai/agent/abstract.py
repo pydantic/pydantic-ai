@@ -523,7 +523,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                     messages.append(_messages.ModelRequest(parts))
 
                             yield StreamedRunResult(
-                                list(messages),
+                                messages,
                                 graph_ctx.deps.new_message_index,
                                 stream,
                                 on_complete,
@@ -539,7 +539,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     # if a tool function raised CallDeferred or ApprovalRequired.
                     # In this case there's no response to stream, but we still let the user access the output etc as normal.
                     yield StreamedRunResult(
-                        graph_ctx.state.message_history,
+                        list(graph_ctx.state.message_history),
                         graph_ctx.deps.new_message_index,
                         run_result=agent_run.result,
                     )
