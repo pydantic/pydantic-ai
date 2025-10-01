@@ -645,12 +645,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         agent_name = self.name or 'agent'
-        instrumentation_config = InstrumentationNames.for_version(
+        instrumentation_names = InstrumentationNames.for_version(
             instrumentation_settings.version if instrumentation_settings else DEFAULT_INSTRUMENTATION_VERSION
         )
 
         run_span = tracer.start_span(
-            instrumentation_config.get_agent_run_span_name(agent_name),
+            instrumentation_names.get_agent_run_span_name(agent_name),
             attributes={
                 'model_name': model_used.model_name if model_used else 'no-model',
                 'agent_name': agent_name,

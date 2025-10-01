@@ -96,7 +96,7 @@ async def execute_traced_output_function(
         ToolRetryError: When wrap_validation_errors is True and a ModelRetry is caught
         ModelRetry: When wrap_validation_errors is False and a ModelRetry occurs
     """
-    instrumentation_config = InstrumentationNames.for_version(run_context.instrumentation_version)
+    instrumentation_names = InstrumentationNames.for_version(run_context.instrumentation_version)
     # Set up span attributes
     tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
     attributes = {
@@ -106,7 +106,7 @@ async def execute_traced_output_function(
     if run_context.tool_call_id:
         attributes['gen_ai.tool.call.id'] = run_context.tool_call_id
     if run_context.trace_include_content:
-        attributes[instrumentation_config.tool_arguments_attr] = to_json(args).decode()
+        attributes[instrumentation_names.tool_arguments_attr] = to_json(args).decode()
 
     attributes['logfire.json_schema'] = json.dumps(
         {
@@ -114,8 +114,8 @@ async def execute_traced_output_function(
             'properties': {
                 **(
                     {
-                        instrumentation_config.tool_arguments_attr: {'type': 'object'},
-                        instrumentation_config.tool_result_attr: {'type': 'object'},
+                        instrumentation_names.tool_arguments_attr: {'type': 'object'},
+                        instrumentation_names.tool_result_attr: {'type': 'object'},
                     }
                     if run_context.trace_include_content
                     else {}
@@ -127,7 +127,7 @@ async def execute_traced_output_function(
     )
 
     with run_context.tracer.start_as_current_span(
-        instrumentation_config.get_output_tool_span_name(tool_name), attributes=attributes
+        instrumentation_names.get_output_tool_span_name(tool_name), attributes=attributes
     ) as span:
         try:
             output = await function_schema.call(args, run_context)
@@ -148,7 +148,7 @@ async def execute_traced_output_function(
             from .models.instrumented import InstrumentedModel
 
             span.set_attribute(
-                instrumentation_config.tool_result_attr,
+                instrumentation_names.tool_result_attr,
                 output if isinstance(output, str) else json.dumps(InstrumentedModel.serialize_any(output)),
             )
 
