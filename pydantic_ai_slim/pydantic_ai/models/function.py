@@ -376,9 +376,8 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
                     response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
                 elif isinstance(part, BuiltinToolReturnPart):  # pragma: no cover
                     response_tokens += _estimate_string_tokens(part.model_response_str())
-                elif isinstance(part, FilePart):
-                    # TODO (DouweM): Add token estimation for files.
-                    pass
+                elif isinstance(part, FilePart):  # pragma: no cover
+                    response_tokens += _estimate_string_tokens([part.content])
                 else:
                     assert_never(part)
         else:
