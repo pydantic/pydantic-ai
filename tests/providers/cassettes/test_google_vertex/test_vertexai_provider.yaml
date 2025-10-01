@@ -56,14 +56,14 @@ interactions:
       content-type:
       - application/json
       host:
-      - us-central1-aiplatform.googleapis.com
+      - aiplatform.googleapis.com
     method: POST
     parsed_body:
       contents:
       - parts:
         - text: What is the capital of France?
         role: user
-    uri: https://us-central1-aiplatform.googleapis.com/v1/projects/pydantic-ai/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent
+    uri: https://aiplatform.googleapis.com/v1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.0-flash:generateContent
   response:
     headers:
       alt-svc:

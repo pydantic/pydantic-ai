@@ -470,7 +470,7 @@ async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
         pytest.skip('google is not installed')
 
     project = os.getenv('GOOGLE_PROJECT', 'pydantic-ai')
-    location = os.getenv('GOOGLE_LOCATION', 'us-central1')
+    location = os.getenv('GOOGLE_LOCATION', 'global')
     client = Client(vertexai=True, project=project, location=location)
 
     try:
