@@ -5150,7 +5150,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='_plot')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.png')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=')')),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
                     args="{\"container_id\":\"cntr_68dd936a4cfc81908bdd4f2a2f542b5c0a0e691ad2bfd833\",\"code\":\"import numpy as np\\r\\nimport matplotlib.pyplot as plt\\r\\n\\r\\n# Data\\r\\nx = np.linspace(-5, 5, 1001)\\r\\ny = x**2\\r\\n\\r\\n# Plot\\r\\nfig, ax = plt.subplots(figsize=(6, 4))\\r\\nax.plot(x, y, label='y = x^2', color='#1f77b4')\\r\\nxi = np.arange(-5, 6)\\r\\nyi = xi**2\\r\\nax.scatter(xi, yi, color='#d62728', s=30, zorder=3, label='integer points')\\r\\n\\r\\nax.set_xlabel('x')\\r\\nax.set_ylabel('y')\\r\\nax.set_title('Parabola y = x^2 for x in [-5, 5]')\\r\\nax.grid(True, alpha=0.3)\\r\\nax.set_xlim(-5, 5)\\r\\nax.set_ylim(0, 26)\\r\\nax.legend()\\r\\n\\r\\nplt.tight_layout()\\r\\n\\r\\n# Save image\\r\\nout_path = '/mnt/data/y_eq_x_squared_plot.png'\\r\\nfig.savefig(out_path, dpi=200)\\r\\n\\r\\nout_path\"}",
@@ -5158,7 +5158,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                     provider_name='openai',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
                     content={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
