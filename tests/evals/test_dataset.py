@@ -1496,10 +1496,36 @@ async def test_evaluate_async_logfire(
                     'assertion_pass_rate': 1.0,
                     'logfire.msg_template': 'evaluate {name}',
                     'logfire.msg': 'evaluate mock_async_task',
+                    'experiment.metadata': {
+                        'n_cases': 2,
+                        'averages': {
+                            'name': 'Averages',
+                            'scores': {'confidence': 1.0},
+                            'labels': {},
+                            'metrics': {},
+                            'assertions': 1.0,
+                            'task_duration': 1.0,
+                            'total_duration': 9.0,
+                        },
+                    },
                     'logfire.span_type': 'span',
                     'logfire.json_schema': {
                         'type': 'object',
-                        'properties': {'name': {}, 'n_cases': {}, 'assertion_pass_rate': {}},
+                        'properties': {
+                            'name': {},
+                            'n_cases': {},
+                            'experiment.metadata': {
+                                'type': 'object',
+                                'properties': {
+                                    'averages': {
+                                        'type': 'object',
+                                        'title': 'ReportCaseAggregate',
+                                        'x-python-datatype': 'PydanticModel',
+                                    }
+                                },
+                            },
+                            'assertion_pass_rate': {},
+                        },
                     },
                 },
             ),
