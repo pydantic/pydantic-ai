@@ -53,7 +53,7 @@ typecheck-both: typecheck-pyright typecheck-mypy
 test: ## Run tests and collect coverage data
 	uv run coverage run -m pytest -n auto --dist=loadgroup --durations=20
 	@uv run coverage combine
-	@uv run coverage report
+	@uv run coverage report --fail-under=99.99
 
 .PHONY: test-all-python
 test-all-python: ## Run tests on Python 3.10 to 3.13
