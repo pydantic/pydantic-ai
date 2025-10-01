@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from enum import Enum
 from typing import Any
 
 import pytest
@@ -24,6 +25,16 @@ class ExamplePydanticModel(BaseModel):
     age: int
 
 
+class ExampleEnum(Enum):
+    FOO = 1
+    BAR = 2
+
+
+class ExampleStrEnum(str, Enum):
+    FOO = 'foo'
+    BAR = 'bar'
+
+
 class ExamplePydanticFields(BaseModel):
     name: str = Field(description="The person's name")
     age: int = Field(description='Years', title='Age', default=18)
@@ -43,6 +54,8 @@ class ExamplePydanticFields(BaseModel):
         pytest.param('a string', snapshot('<examples>a string</examples>'), id='string'),
         pytest.param(42, snapshot('<examples>42</examples>'), id='int'),
         pytest.param(None, snapshot('<examples>null</examples>'), id='null'),
+        pytest.param(ExampleEnum.FOO, snapshot('<examples>Examples.FOO</examples>'), id='enum'),
+        pytest.param(ExampleStrEnum.FOO, snapshot('<examples>foo</examples>'), id='str enum'),
         pytest.param(
             ExampleDataclass(name='John', age=42),
             snapshot("""\
