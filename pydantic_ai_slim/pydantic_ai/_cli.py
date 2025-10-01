@@ -228,7 +228,7 @@ async def run_chat(
     prog_name: str,
     config_dir: Path | None = None,
     deps: AgentDepsT = None,
-    message_history: list[ModelMessage] | None = None,
+    message_history: Sequence[ModelMessage] | None = None,
 ) -> int:
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -236,7 +236,7 @@ async def run_chat(
     session: PromptSession[Any] = PromptSession(history=FileHistory(str(prompt_history_path)))
 
     multiline = False
-    messages: list[ModelMessage] = message_history[:] if message_history else []
+    messages: list[ModelMessage] = list(message_history) if message_history else []
 
     while True:
         try:
@@ -272,7 +272,7 @@ async def ask_agent(
     console: Console,
     code_theme: str,
     deps: AgentDepsT = None,
-    messages: list[ModelMessage] | None = None,
+    messages: Sequence[ModelMessage] | None = None,
 ) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
 
