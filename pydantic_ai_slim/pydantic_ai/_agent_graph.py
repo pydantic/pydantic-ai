@@ -543,90 +543,16 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         if self._events_iterator is None:
             # Ensure that the stream is only run once
 
+            output_schema = ctx.deps.output_schema
+
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
-                text = ''
-                tool_calls: list[_messages.ToolCallPart] = []
-                files: list[_messages.FilePart] = []
-                invisible_parts: bool = False
-
-                for part in self.model_response.parts:
-                    if isinstance(part, _messages.TextPart):
-                        text += part.content
-                    elif isinstance(part, _messages.ToolCallPart):
-                        tool_calls.append(part)
-                    elif isinstance(part, _messages.FilePart):
-                        files.append(part)
-                    elif isinstance(part, _messages.BuiltinToolCallPart):
-                        # Text parts before a built-in tool call are essentially thoughts,
-                        # not part of the final result output, so we reset the accumulated text
-                        text = ''
-                        invisible_parts = True
-                        yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
-                    elif isinstance(part, _messages.BuiltinToolReturnPart):
-                        invisible_parts = True
-                        yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
-                    elif isinstance(part, _messages.ThinkingPart):
-                        invisible_parts = True
-                    else:
-                        assert_never(part)
-
-                # At the moment, we prioritize at least executing tool calls if they are present.
-                # In the future, we'd consider making this configurable at the agent or run level.
-                # This accounts for cases like anthropic returns that might contain a text response
-                # and a tool call response, where the text response just indicates the tool call will happen.
-                try:
-                    if tool_calls:
-                        async for event in self._handle_tool_calls(ctx, tool_calls):
-                            yield event
-                        return
-
-                    output_schema = ctx.deps.output_schema
-
-                    if (
-                        files
-                        and output_schema.allows_image
-                        and (
-                            image := next(
-                                (file.content for file in files if isinstance(file.content, _messages.Image)), None
-                            )
-                        )
-                    ):
-                        self._next_node = await self._handle_image_response(ctx, image)
-                        return
-
-                    if text:
-                        if text_processor := output_schema.text_processor:
-                            self._next_node = await self._handle_text_response(ctx, text, text_processor)
-                            return
-
-                        if output_schema.toolset:
-                            m = _messages.RetryPromptPart(
-                                content='Plain text responses are not permitted, please include your response in a tool call',
-                            )
-                            raise ToolRetryError(m)
-
-                        if output_schema.allows_image:
-                            m = _messages.RetryPromptPart(
-                                content='Plain text responses are not permitted, please return an image',
-                            )
-                            raise ToolRetryError(m)
-
-                    if invisible_parts:
-                        # handle responses with only "invisible" thinking or built-in tool parts that don't constitute output.
-                        # this can happen with models that support thinking mode when they don't provide
-                        # actionable output alongside their thinking content. so we tell the model to try again.
-                        # TODO (DouweM): Fix error message as it claims there are no images, which there may -- they may just not be allowed output.
-                        m = _messages.RetryPromptPart(
-                            content="The response didn't contain text, tool calls, or images.",
-                        )
-                        raise ToolRetryError(m)
-
-                    # we got an empty response with no tool calls, text, thinking, or built-in tool calls.
+                if not self.model_response.parts:
+                    # we got an empty response.
                     # this sometimes happens with anthropic (and perhaps other models)
                     # when the model has already returned text along side tool calls
-                    # in this scenario, if text responses are allowed, we return text from the most recent model
-                    # response, if any
                     if text_processor := output_schema.text_processor:
+                        # in this scenario, if text responses are allowed, we return text from the most recent model
+                        # response, if any
                         for message in reversed(ctx.state.message_history):
                             if isinstance(message, _messages.ModelResponse):
                                 text = ''
@@ -647,6 +573,67 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # in the hope the model will return a non-empty response this time.
                     ctx.state.increment_retries(ctx.deps.max_result_retries)
                     self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[]))
+                    return
+
+                text = ''
+                tool_calls: list[_messages.ToolCallPart] = []
+                files: list[_messages.FilePart] = []
+
+                for part in self.model_response.parts:
+                    if isinstance(part, _messages.TextPart):
+                        text += part.content
+                    elif isinstance(part, _messages.ToolCallPart):
+                        tool_calls.append(part)
+                    elif isinstance(part, _messages.FilePart):
+                        files.append(part)
+                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                        # Text parts before a built-in tool call are essentially thoughts,
+                        # not part of the final result output, so we reset the accumulated text
+                        text = ''
+                        yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
+                    elif isinstance(part, _messages.BuiltinToolReturnPart):
+                        yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
+                    elif isinstance(part, _messages.ThinkingPart):
+                        pass
+                    else:
+                        assert_never(part)
+
+                # At the moment, we prioritize at least executing tool calls if they are present.
+                # In the future, we'd consider making this configurable at the agent or run level.
+                # This accounts for cases like anthropic returns that might contain a text response
+                # and a tool call response, where the text response just indicates the tool call will happen.
+                try:
+                    alternatives: list[str] = []
+                    if tool_calls:
+                        async for event in self._handle_tool_calls(ctx, tool_calls):
+                            yield event
+                        return
+                    elif output_schema.toolset:
+                        alternatives.append('include your response in a tool call')
+                    else:
+                        alternatives.append('call a tool')
+
+                    if output_schema.allows_image:
+                        if image := next(
+                            (file.content for file in files if isinstance(file.content, _messages.Image)), None
+                        ):
+                            self._next_node = await self._handle_image_response(ctx, image)
+                            return
+                        alternatives.append('return an image')
+
+                    if text_processor := output_schema.text_processor:
+                        if text:
+                            self._next_node = await self._handle_text_response(ctx, text, text_processor)
+                            return
+                        alternatives.insert(0, 'return text')
+
+                    # handle responses with only parts that don't constitute output.
+                    # This can happen with models that support thinking mode when they don't provide
+                    # actionable output alongside their thinking content. so we tell the model to try again.
+                    m = _messages.RetryPromptPart(
+                        content=f'Please {" or ".join(alternatives)}.',
+                    )
+                    raise ToolRetryError(m)
                 except ToolRetryError as e:
                     ctx.state.increment_retries(ctx.deps.max_result_retries, e)
                     self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))

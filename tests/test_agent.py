@@ -339,7 +339,7 @@ def test_plain_response_then_tuple():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Plain text responses are not permitted, please include your response in a tool call',
+                        content='Please include your response in a tool call.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     )
@@ -349,7 +349,7 @@ def test_plain_response_then_tuple():
                 parts=[
                     ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())
                 ],
-                usage=RequestUsage(input_tokens=74, output_tokens=8),
+                usage=RequestUsage(input_tokens=68, output_tokens=8),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -4744,7 +4744,7 @@ async def test_thinking_only_response_retry():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content="The response didn't contain text, tool calls, or images.",
+                        content='Please return text or call a tool.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -4752,7 +4752,7 @@ async def test_thinking_only_response_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Final answer')],
-                usage=RequestUsage(input_tokens=75, output_tokens=8),
+                usage=RequestUsage(input_tokens=73, output_tokens=8),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),

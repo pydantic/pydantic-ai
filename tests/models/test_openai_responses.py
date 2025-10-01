@@ -3905,7 +3905,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content="The response didn't contain text, tool calls, or images.",
+                        content='Please return text or call a tool.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
