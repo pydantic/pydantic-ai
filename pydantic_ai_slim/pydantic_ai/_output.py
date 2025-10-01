@@ -11,7 +11,7 @@ from pydantic import Json, TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator, to_json
 from typing_extensions import Self, TypedDict, TypeVar, assert_never
 
-from pydantic_ai._instrumentation import InstrumentationConfig
+from pydantic_ai._instrumentation import InstrumentationNames
 
 from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
@@ -96,7 +96,7 @@ async def execute_traced_output_function(
         ToolRetryError: When wrap_validation_errors is True and a ModelRetry is caught
         ModelRetry: When wrap_validation_errors is False and a ModelRetry occurs
     """
-    instrumentation_config = InstrumentationConfig.for_version(run_context.instrumentation_version)
+    instrumentation_config = InstrumentationNames.for_version(run_context.instrumentation_version)
     # Set up span attributes
     tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
     attributes = {

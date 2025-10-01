@@ -11,7 +11,7 @@ DEFAULT_INSTRUMENTATION_VERSION = 2
 
 
 @dataclass(frozen=True)
-class InstrumentationConfig:
+class InstrumentationNames:
     """Configuration for instrumentation span names and attributes based on version."""
 
     # Agent run span configuration

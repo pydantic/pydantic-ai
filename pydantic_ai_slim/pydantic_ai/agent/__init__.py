@@ -14,7 +14,7 @@ from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationConfig
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
 from pydantic_graph import Graph
 
 from .. import (
@@ -645,7 +645,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         agent_name = self.name or 'agent'
-        instrumentation_config = InstrumentationConfig.for_version(
+        instrumentation_config = InstrumentationNames.for_version(
             instrumentation_settings.version if instrumentation_settings else DEFAULT_INSTRUMENTATION_VERSION
         )
 

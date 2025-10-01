@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from typing_extensions import assert_never
 
 from . import messages as _messages
-from ._instrumentation import InstrumentationConfig
+from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
@@ -210,7 +210,7 @@ class ToolManager(Generic[AgentDepsT]):
         usage_limits: UsageLimits | None = None,
     ) -> Any:
         """See <https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/#execute-tool-span>."""
-        instrumentation_config = InstrumentationConfig.for_version(instrumentation_version)
+        instrumentation_config = InstrumentationNames.for_version(instrumentation_version)
 
         span_attributes = {
             'gen_ai.tool.name': call.tool_name,
