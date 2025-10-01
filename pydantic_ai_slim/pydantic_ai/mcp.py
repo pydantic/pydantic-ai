@@ -16,7 +16,6 @@ import anyio
 import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from mcp.types import Implementation
 from pydantic import BaseModel, Discriminator, Field, Tag
 from pydantic_core import CoreSchema, core_schema
 from typing_extensions import Self, assert_never, deprecated
@@ -113,7 +112,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     _client: ClientSession
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
-    _server_info: Implementation
+    _server_info: mcp_types.Implementation
 
     def __init__(
         self,
@@ -180,7 +179,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         return 'Set the `tool_prefix` attribute to avoid name conflicts.'
 
     @property
-    def server_info(self) -> Implementation:
+    def server_info(self) -> mcp_types.Implementation:
         """Access the information send by the MCP server during initialization."""
         if getattr(self, '_server_info', None) is None:
             raise AttributeError(
