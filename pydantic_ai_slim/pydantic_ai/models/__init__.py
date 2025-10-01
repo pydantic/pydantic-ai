@@ -20,6 +20,7 @@ import httpx
 from typing_extensions import TypeAliasType, TypedDict
 
 from .. import _utils
+from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
@@ -41,7 +42,7 @@ from ..messages import (
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..profiles._json_schema import JsonSchemaTransformer
-from ..settings import ModelSettings, merge_model_settings
+from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 

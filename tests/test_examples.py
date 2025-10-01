@@ -498,6 +498,8 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         args={'question': 'the ultimate question of life, the universe, and everything'},
         tool_call_id='pyd_ai_tool_call_id',
     ),
+    'Remember that I live in Mexico City': "Got it! I've recorded that you live in Mexico City. I'll remember this for future reference.",
+    'Where do I live?': 'You live in Mexico City.',
 }
 
 tool_responses: dict[tuple[str, str], str] = {
