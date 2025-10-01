@@ -85,6 +85,7 @@ cli = [
     "prompt-toolkit>=3",
     "argcomplete>=3.5.0",
     "pyperclip>=1.9.0",
+    "textual>=5.3.0",
 ]
 # MCP
 mcp = ["mcp>=1.12.3"]
