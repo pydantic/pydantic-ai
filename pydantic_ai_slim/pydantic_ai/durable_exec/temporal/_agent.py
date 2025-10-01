@@ -17,7 +17,6 @@ from typing_extensions import Never
 
 from pydantic_ai import (
     AbstractToolset,
-    _system_prompt,
     _utils,
     messages as _messages,
     models,

@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable, Callable, Sequence
+from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, replace
 from datetime import timezone
 from typing import Any, Literal, Union
@@ -57,9 +57,6 @@ from pydantic_ai._output import (
     ToolOutputSchema,
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
-from pydantic_ai.messages import (
-    ModelRequestPart,
-)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import StructuredDict, ToolOutput
