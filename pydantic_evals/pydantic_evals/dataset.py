@@ -220,7 +220,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     """
 
     name: str | None = None
-    """Name of the dataset."""
+    """Optional name of the dataset."""
     cases: list[Case[InputsT, OutputT, MetadataT]]
     """List of test cases in the dataset."""
     evaluators: list[Evaluator[InputsT, OutputT, MetadataT]] = []
