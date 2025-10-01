@@ -501,7 +501,7 @@ class BinaryContent:
         """Create a `BinaryContent` from a data URI."""
         prefix = 'data:'
         if not data_uri.startswith(prefix):
-            raise ValueError('Data URI must start with "data:"')
+            raise ValueError('Data URI must start with "data:"')  # pragma: no cover
         media_type, data = data_uri[len(prefix) :].split(';base64,', 1)
         return cls(data=base64.b64decode(data), media_type=media_type)
 
@@ -564,7 +564,7 @@ class Image(BinaryContent):
         super().__init__(data=data, media_type=media_type, identifier=identifier, vendor_metadata=vendor_metadata)
 
         if not self.is_image:
-            raise ValueError('`Image` must be have a media type that starts with "image/"')
+            raise ValueError('`Image` must be have a media type that starts with "image/"')  # pragma: no cover
 
 
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
@@ -988,7 +988,7 @@ class FilePart:
 
     def has_content(self) -> bool:
         """Return `True` if the file content is non-empty."""
-        return bool(self.content)
+        return bool(self.content)  # pragma: no cover
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

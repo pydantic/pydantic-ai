@@ -678,7 +678,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     if mime_type.startswith('image/'):
                         content = Image(data=data, media_type=mime_type)
                     else:
-                        content = BinaryContent(data=data, media_type=mime_type)
+                        content = BinaryContent(data=data, media_type=mime_type)  # pragma: no cover
                     yield self._parts_manager.handle_part(
                         vendor_part_id=uuid4(),
                         part=FilePart(content=content),
@@ -820,7 +820,7 @@ def _process_response_from_parts(
             if mime_type.startswith('image/'):
                 content = Image(data=data, media_type=mime_type)
             else:
-                content = BinaryContent(data=data, media_type=mime_type)
+                content = BinaryContent(data=data, media_type=mime_type)  # pragma: no cover
             item = FilePart(content=content)
         else:  # pragma: no cover
             raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')

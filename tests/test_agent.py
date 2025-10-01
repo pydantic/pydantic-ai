@@ -25,6 +25,7 @@ from pydantic_ai import (
     CombinedToolset,
     DocumentUrl,
     FunctionToolset,
+    Image,
     ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -3929,6 +3930,11 @@ def test_unsupported_output_mode():
     agent = Agent(model, output_type=ToolOutput(Foo))
 
     with pytest.raises(UserError, match='Tool output is not supported by the model.'):
+        agent.run_sync('Hello')
+
+    agent = Agent(model, output_type=Image)
+
+    with pytest.raises(UserError, match='Image output is not supported by the model.'):
         agent.run_sync('Hello')
 
 
