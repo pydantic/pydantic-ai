@@ -101,9 +101,6 @@ class MCPServer(AbstractToolset[Any], ABC):
     max_retries: int
     """The maximum number of times to retry a tool call."""
 
-    server_info: Implementation | None
-    """The information send by the MCP server during initialization."""
-
     elicitation_callback: ElicitationFnT | None = None
     """Callback function to handle elicitation requests from the server."""
 
@@ -116,6 +113,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     _client: ClientSession
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
+    _server_info: Implementation
 
     def __init__(
         self,
@@ -141,7 +139,6 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.allow_sampling = allow_sampling
         self.sampling_model = sampling_model
         self.max_retries = max_retries
-        self.server_info = None
         self.elicitation_callback = elicitation_callback
 
         self._id = id or tool_prefix
@@ -181,6 +178,15 @@ class MCPServer(AbstractToolset[Any], ABC):
     @property
     def tool_name_conflict_hint(self) -> str:
         return 'Set the `tool_prefix` attribute to avoid name conflicts.'
+
+    @property
+    def server_info(self) -> Implementation:
+        """Access the information send by the MCP server during initialization."""
+        if getattr(self, '_server_info', None) is None:
+            raise AttributeError(
+                f'The `{self.__class__.__name__}.server_info` is only instantiated after initialization.'
+            )
+        return self._server_info
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.
@@ -318,7 +324,7 @@ class MCPServer(AbstractToolset[Any], ABC):
 
                     with anyio.fail_after(self.timeout):
                         result = await self._client.initialize()
-                        self.server_info = result.serverInfo
+                        self._server_info = result.serverInfo
                         if log_level := self.log_level:
                             await self._client.set_logging_level(log_level)
 
