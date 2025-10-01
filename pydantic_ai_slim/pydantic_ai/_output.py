@@ -591,35 +591,6 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
         if not profile.supports_tools:
             raise UserError('Output tools are not supported by the model.')
 
-    @property
-    def toolset(self) -> OutputToolset[Any] | None:
-        """Get the toolset for this output schema."""
-        return self._toolset
-
-
-@dataclass(init=False)
-class ToolOrTextOutputSchema(ToolOutputSchema[OutputDataT], PlainTextOutputSchema[OutputDataT]):
-    def __init__(
-        self,
-        processor: PlainTextOutputProcessor[OutputDataT] | None,
-        toolset: OutputToolset[Any] | None,
-        allows_deferred_tools: bool,
-    ):
-        super().__init__(toolset=toolset, allows_deferred_tools=allows_deferred_tools)
-        self.processor = processor
-
-    @property
-    def mode(self) -> OutputMode:
-        return 'tool_or_text'
-
-
-@dataclass
-class OutputObjectDefinition:
-    json_schema: ObjectJsonSchema
-    name: str | None = None
-    description: str | None = None
-    strict: bool | None = None
-
 
 class BaseOutputProcessor(ABC, Generic[OutputDataT]):
     @abstractmethod
