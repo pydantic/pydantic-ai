@@ -1324,7 +1324,9 @@ def test_logfire_output_function_v2_v3(
 
     elif isinstance(instrument, InstrumentationSettings) and instrument.version == 3:
         [output_function_atttributes] = [
-            (attr for attr in summary.attributes.values() if attr.get('gen_ai.tool.name') == 'final_result'),
+            attributes
+            for attributes in summary.attributes.values()
+            if attributes.get('gen_ai.tool.name') == 'final_result'
         ]
         assert summary.traces == snapshot(
             [
