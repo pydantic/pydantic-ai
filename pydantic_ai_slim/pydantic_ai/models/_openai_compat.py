@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any, Literal, overload
+from typing import Any, Literal, cast, overload
 
 from pydantic import ValidationError
 from typing_extensions import assert_never
@@ -27,7 +27,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
 )
 
-from .. import UnexpectedModelBehavior, _utils, usage
+from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
@@ -276,6 +276,18 @@ def process_response(
     """Process a non-streamed chat completion response into a ModelResponse."""
     if not isinstance(response, chat.ChatCompletion):
         raise UnexpectedModelBehavior('Invalid response from OpenAI chat completions endpoint, expected JSON data')
+
+    if hasattr(response, 'error'):
+        error_attr = getattr(response, 'error', None)
+        if error_attr and isinstance(error_attr, dict):
+            error_dict = cast(dict[str, Any], error_attr)
+            error_code = error_dict.get('code')
+            status_code = error_code if isinstance(error_code, int) else 500
+            raise ModelHTTPError(
+                status_code=status_code,
+                model_name=getattr(model, 'model_name', 'unknown'),
+                body={'error': error_dict},
+            )
 
     if response.created:
         timestamp = number_to_datetime(response.created)

@@ -1,13 +1,13 @@
 import json
 import os
 from typing import Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pydantic_core
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelHTTPError
 from pydantic_ai.messages import (
     ImageUrl,
     ModelMessage,
@@ -31,6 +31,7 @@ from .mock_openai import (
 
 with try_import() as imports_successful:
     from openai.types.chat import (
+        ChatCompletion,
         ChatCompletionChunk,
         ChatCompletionMessage,
     )
@@ -93,8 +94,6 @@ pytestmark = [
 def test_openrouter_model_init():
     c = completion_message(ChatCompletionMessage(content='test', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
-
     provider = OpenRouterProvider(openai_client=mock_client)
     model = OpenRouterModel('google/gemini-2.5-flash-lite', provider=provider)
     assert model.model_name == 'google/gemini-2.5-flash-lite'
@@ -418,9 +417,6 @@ async def test_openrouter_with_reasoning_settings(allow_model_requests: None):
 
 async def test_openrouter_model_custom_base_url(allow_model_requests: None):
     """Test OpenRouterModel with provider."""
-    # Test with provider using default base URL
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
-
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('openai/gpt-4o', provider=provider)
     assert model.model_name == 'openai/gpt-4o'
@@ -573,3 +569,68 @@ async def test_openrouter_user_prompt_mixed_content(allow_model_requests: None):
 
     assert result['role'] == 'user'
     assert result['content'] == 'Hello, here is an image:   and some more text.'
+
+
+async def test_openrouter_error_response_with_error_key(allow_model_requests: None):
+    """Test that OpenRouter error responses with 'error' key are properly handled.
+
+    Regression test for issue #2323 where OpenRouter returns HTTP 200 with an error
+    object in the body (e.g., from upstream provider failures like Chutes).
+    """
+    with patch('pydantic_ai.models.openrouter.OpenRouterProvider') as mock_provider_class:
+        mock_provider = MagicMock()
+        mock_provider.client = AsyncMock()
+        mock_provider.model_profile = MagicMock(return_value=MagicMock())
+        mock_provider_class.return_value = mock_provider
+
+        model = OpenRouterModel('deepseek/deepseek-chat-v3-0324:free')
+
+        error_response = ChatCompletion.model_construct(
+            id='error-response',
+            choices=[],
+            created=1234567890,
+            model='deepseek/deepseek-chat-v3-0324:free',
+            object='chat.completion',
+        )
+        setattr(error_response, 'error', {'message': 'Internal Server Error', 'code': 500})
+
+        with patch('pydantic_ai.models.openrouter.completions_create', new_callable=AsyncMock) as mock_create:
+            mock_create.return_value = error_response
+
+            messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
+            model_params = cast(ModelRequestParameters, {})
+
+            with pytest.raises(ModelHTTPError, match='status_code: 500.*Internal Server Error'):
+                await model.request(messages, None, model_params)
+
+
+async def test_openrouter_error_response_with_none_error(allow_model_requests: None):
+    """Test that responses with error=None are handled gracefully."""
+    c = completion_message(ChatCompletionMessage(content='Success', role='assistant'))
+    setattr(c, 'error', None)
+
+    mock_client = MockOpenAI.create_mock(c)
+    model = create_openrouter_model('openai/gpt-4o', mock_client)
+
+    messages: list[ModelMessage] = [ModelRequest([UserPromptPart(content='test')])]
+    model_request_parameters = ModelRequestParameters(function_tools=[], output_tools=[], allow_text_output=True)
+
+    response = await model.request(messages, None, model_request_parameters)
+    assert isinstance(response.parts[0], TextPart)
+    assert response.parts[0].content == 'Success'
+
+
+async def test_openrouter_error_response_with_non_dict_error(allow_model_requests: None):
+    """Test that responses with non-dict error values are handled gracefully."""
+    c = completion_message(ChatCompletionMessage(content='Success', role='assistant'))
+    setattr(c, 'error', 'some error string')
+
+    mock_client = MockOpenAI.create_mock(c)
+    model = create_openrouter_model('openai/gpt-4o', mock_client)
+
+    messages: list[ModelMessage] = [ModelRequest([UserPromptPart(content='test')])]
+    model_request_parameters = ModelRequestParameters(function_tools=[], output_tools=[], allow_text_output=True)
+
+    response = await model.request(messages, None, model_request_parameters)
+    assert isinstance(response.parts[0], TextPart)
+    assert response.parts[0].content == 'Success'
