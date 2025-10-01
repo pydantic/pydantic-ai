@@ -289,7 +289,7 @@ def process_response(
 
     try:
         response = chat.ChatCompletion.model_validate(response.model_dump())
-    except ValidationError as e:  # pragma: no cover
+    except ValidationError as e:
         raise UnexpectedModelBehavior(f'Invalid response from OpenAI chat completions endpoint: {e}') from e
 
     choice = response.choices[0]
