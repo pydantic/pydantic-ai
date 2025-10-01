@@ -40,7 +40,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, UrlContextTool, WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, UrlContextTool, WebSearchTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -2818,7 +2818,8 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
 
 async def test_google_image_or_text_output(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
-    agent = Agent(m, output_type=str | Image)
+    # ImageGenerationTool is listed here to indicate just that it doesn't cause any issues, even though it's not necessary with an image-preview model.
+    agent = Agent(m, output_type=str | Image, builtin_tools=[ImageGenerationTool()])
 
     result = await agent.run('Tell me a two-sentence story about an axolotl, no image please.')
     assert result.output == snapshot(
@@ -2882,4 +2883,15 @@ async def test_google_image_generation_with_tools(allow_model_requests: None, go
         return 'axolotl'  # pragma: no cover
 
     with pytest.raises(UserError, match='Tools are not supported by the model.'):
+        await agent.run('Generate an image of an animal returned by the get_animal tool.')
+
+
+async def test_google_image_generation_tool(allow_model_requests: None, google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()])
+
+    with pytest.raises(
+        UserError,
+        match="`ImageGenerationTool` is not supported by the model. Use an 'image-preview' model instead.",
+    ):
         await agent.run('Generate an image of an animal returned by the get_animal tool.')

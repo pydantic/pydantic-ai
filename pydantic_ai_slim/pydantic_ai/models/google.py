@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from ..builtin_tools import CodeExecutionTool, UrlContextTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, UrlContextTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
@@ -310,6 +310,11 @@ class GoogleModel(Model):
         yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolDict] | None:
+        tools: list[ToolDict] = [
+            ToolDict(function_declarations=[_function_declaration_from_tool(t)])
+            for t in model_request_parameters.tool_defs.values()
+        ]
+
         if model_request_parameters.builtin_tools:
             if model_request_parameters.output_tools:
                 raise UserError(
@@ -318,21 +323,22 @@ class GoogleModel(Model):
             if model_request_parameters.function_tools:
                 raise UserError('Gemini does not support user tools and built-in tools at the same time.')
 
-        tools: list[ToolDict] = [
-            ToolDict(function_declarations=[_function_declaration_from_tool(t)])
-            for t in model_request_parameters.tool_defs.values()
-        ]
-        for tool in model_request_parameters.builtin_tools:
-            if isinstance(tool, WebSearchTool):
-                tools.append(ToolDict(google_search=GoogleSearchDict()))
-            elif isinstance(tool, UrlContextTool):
-                tools.append(ToolDict(url_context=UrlContextDict()))
-            elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
-                tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
-            else:  # pragma: no cover
-                raise UserError(
-                    f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'
-                )
+            for tool in model_request_parameters.builtin_tools:
+                if isinstance(tool, WebSearchTool):
+                    tools.append(ToolDict(google_search=GoogleSearchDict()))
+                elif isinstance(tool, UrlContextTool):
+                    tools.append(ToolDict(url_context=UrlContextDict()))
+                elif isinstance(tool, CodeExecutionTool):
+                    tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
+                elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
+                    if not self.profile.supports_image_output:
+                        raise UserError(
+                            "`ImageGenerationTool` is not supported by the model. Use an 'image-preview' model instead."
+                        )
+                else:  # pragma: no cover
+                    raise UserError(
+                        f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'
+                    )
         return tools or None
 
     def _get_tool_config(
