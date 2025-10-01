@@ -5218,7 +5218,13 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
-                        content={'status': 'completed'},
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1536x1024',
+                            'revised_prompt': 'Ultra-realistic 4K macro photograph of a leucistic axolotl underwater. Pink feathery external gills, wide curious eyes, slight smile. Soft, diffused natural light beams from above with gentle suspended particles, shallow depth of field and creamy bokeh. Smooth pale skin with subtle freckles, delicate toes resting on rounded river pebbles. Background of bluish-green water with aquatic plants and a hint of driftwood, calm and serene atmosphere. Centered composition, head slightly tilted toward the camera, sharp focus on eyes and gills, accurate axolotl anatomy, no extra limbs, no artifacts.',
+                        },
                         tool_call_id='ig_68cdc3ed36dc8191b543d16151961f8e08537600f5445fc6',
                         timestamp=IsDatetime(),
                         provider_name='openai',
@@ -5282,7 +5288,13 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
-                        content={'status': 'completed'},
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1536x1024',
+                            'revised_prompt': IsStr(),
+                        },
                         tool_call_id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
                         timestamp=IsDatetime(),
                         provider_name='openai',
@@ -5368,7 +5380,13 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
-                        content={'status': 'completed'},
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1536',
+                            'revised_prompt': 'High-resolution photorealistic portrait of a leucistic pink axolotl underwater in a clear freshwater aquarium. The axolotl is centered in a 3/4 view, with feathery external gills gently fanned out, smooth pale pink skin with subtle speckling, and glossy dark eyes. Surround it with soft green aquatic plants, a piece of driftwood, and a sandy substrate. Tiny air bubbles drift upward. Lighting is soft and diffused with a gentle rim light highlighting the gill filaments; shallow depth of field with creamy bokeh. Ultra-detailed texture, natural color grading, 8k, crisp yet serene composition.',
+                        },
                         tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
                         timestamp=IsDatetime(),
                         provider_name='openai',
@@ -5434,7 +5452,13 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                 index=3,
                 part=BuiltinToolReturnPart(
                     tool_name='image_generation',
-                    content={'status': 'completed'},
+                    content={
+                        'status': 'completed',
+                        'background': 'opaque',
+                        'quality': 'high',
+                        'size': '1024x1536',
+                        'revised_prompt': 'High-resolution photorealistic portrait of a leucistic pink axolotl underwater in a clear freshwater aquarium. The axolotl is centered in a 3/4 view, with feathery external gills gently fanned out, smooth pale pink skin with subtle speckling, and glossy dark eyes. Surround it with soft green aquatic plants, a piece of driftwood, and a sandy substrate. Tiny air bubbles drift upward. Lighting is soft and diffused with a gentle rim light highlighting the gill filaments; shallow depth of field with creamy bokeh. Ultra-detailed texture, natural color grading, 8k, crisp yet serene composition.',
+                    },
                     tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
                     timestamp=IsDatetime(),
                     provider_name='openai',
@@ -5450,7 +5474,13 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='image_generation',
-                    content={'status': 'completed'},
+                    content={
+                        'status': 'completed',
+                        'background': 'opaque',
+                        'quality': 'high',
+                        'size': '1024x1536',
+                        'revised_prompt': 'High-resolution photorealistic portrait of a leucistic pink axolotl underwater in a clear freshwater aquarium. The axolotl is centered in a 3/4 view, with feathery external gills gently fanned out, smooth pale pink skin with subtle speckling, and glossy dark eyes. Surround it with soft green aquatic plants, a piece of driftwood, and a sandy substrate. Tiny air bubbles drift upward. Lighting is soft and diffused with a gentle rim light highlighting the gill filaments; shallow depth of field with creamy bokeh. Ultra-detailed texture, natural color grading, 8k, crisp yet serene composition.',
+                    },
                     tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
                     timestamp=IsDatetime(),
                     provider_name='openai',
@@ -6010,6 +6040,77 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0b6169df6e16e9690068dd80d64aec81919c65f238307673bb',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_image_generation_jpeg(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, builtin_tools=[ImageGenerationTool(output_format='jpeg')], output_type=Image)
+
+    result = await agent.run('Generate an image of axolotl.')
+
+    assert result.output == snapshot(
+        Image(
+            data=IsBytes(),
+            media_type='image/jpeg',
+            identifier='df8cd2',
+        )
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of axolotl.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_08acbdf1ae54befc0068dd9cee0698819791dc1b2461291dbe',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_08acbdf1ae54befc0068dd9d0347bc8197ad70005495e64e62',
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=Image(
+                            data=IsBytes(),
+                            media_type='image/jpeg',
+                            identifier='df8cd2',
+                        ),
+                        id='ig_08acbdf1ae54befc0068dd9d0347bc8197ad70005495e64e62',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1536x1024',
+                            'revised_prompt': 'Photorealistic close-up of a pink leucistic axolotl underwater in a clear freshwater aquarium. Focus on its feathery external gills, soft smiling face, bead-like black eyes, and tiny forelimbs resting on smooth river stones. Soft diffused lighting with gentle rim light highlighting the translucent gill filaments. Shallow depth of field with creamy bokeh; a few subtle suspended particles in the water for realism. Background of natural aquatic plants in soft green-blue hues, slightly out of focus. Fine skin texture with subtle speckles, moist sheen. Ultra detailed, high resolution, 35mm macro look, no text, no watermark.',
+                        },
+                        tool_call_id='ig_08acbdf1ae54befc0068dd9d0347bc8197ad70005495e64e62',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(content='', id='msg_08acbdf1ae54befc0068dd9d468248819786f55b61db3a9a60'),
+                ],
+                usage=RequestUsage(input_tokens=1889, output_tokens=1434, details={'reasoning_tokens': 1280}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_08acbdf1ae54befc0068dd9ced226c8197a2e974b29c565407',
                 finish_reason='stop',
             ),
         ]

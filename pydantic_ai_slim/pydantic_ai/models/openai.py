@@ -932,7 +932,7 @@ class OpenAIResponsesModel(Model):
         response = await self._responses_create(
             messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
-        return self._process_response(response)
+        return self._process_response(response, model_request_parameters)
 
     @asynccontextmanager
     async def request_stream(
@@ -953,7 +953,9 @@ class OpenAIResponsesModel(Model):
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
 
-    def _process_response(self, response: responses.Response) -> ModelResponse:  # noqa: C901
+    def _process_response(  # noqa: C901
+        self, response: responses.Response, model_request_parameters: ModelRequestParameters
+    ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = number_to_datetime(response.created_at)
         items: list[ModelResponsePart] = []
@@ -1216,7 +1218,19 @@ class OpenAIResponsesModel(Model):
                 tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                 has_image_generating_tool = True
-                tools.append({'type': 'image_generation'})
+                tools.append(
+                    responses.tool_param.ImageGeneration(
+                        type='image_generation',
+                        background=tool.background,
+                        input_fidelity=tool.input_fidelity,
+                        moderation=tool.moderation,
+                        output_compression=tool.output_compression,
+                        output_format=tool.output_format or 'png',
+                        partial_images=tool.partial_images,
+                        quality=tool.quality,
+                        size=tool.size,
+                    )
+                )
             else:
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIResponsesModel`. If it should be, please file an issue.'
@@ -1847,10 +1861,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseImageGenCallPartialImageEvent):
+                # Not present on the type, but present on the actual object.
+                # See https://github.com/openai/openai-python/issues/2649
+                output_format = getattr(chunk, 'output_format', 'png')
                 file_part = FilePart(
                     content=Image(
                         data=base64.b64decode(chunk.partial_image_b64),
-                        media_type='image/png',
+                        media_type=f'image/{output_format}',
                     ),
                     id=chunk.item_id,
                 )
@@ -2022,31 +2039,34 @@ def _map_web_search_tool_call(
 def _map_image_generation_tool_call(
     item: responses.response_output_item.ImageGenerationCall, provider_name: str
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart, FilePart | None]:
-    status = item.status
+    result = {
+        'status': item.status,
+    }
+
+    # Not present on the type, but present on the actual object.
+    # See https://github.com/openai/openai-python/issues/2649
+    if background := getattr(item, 'background', None):
+        result['background'] = background
+    if quality := getattr(item, 'quality', None):
+        result['quality'] = quality
+    if size := getattr(item, 'size', None):
+        result['size'] = size
+    if revised_prompt := getattr(item, 'revised_prompt', None):
+        result['revised_prompt'] = revised_prompt
+    output_format = getattr(item, 'output_format', 'png')
+
     file_part: FilePart | None = None
     if item.result:
-        # TODO (DouweM): Include additional attributes not currently on types
-        # background: opaque
-        # id: ig_68cdb23d333c8195b4447241a396de6e068fb3b2873504d1
-        # output_format: png
-        # quality: high
-        # revised_prompt: Photorealistic image of a cute axolotl (Ambystoma mexicanum) underwater. Pale pink body with soft
-        #   freckling, smooth skin, small dark bead-like eyes, and vivid feathery external gills in rosy red. The axolotl faces
-        #   the viewer with a gentle, curious expression, slightly hovering above smooth river stones. Clear, shallow freshwater
-        #   scene with soft green aquatic plants (anubias, java fern) in the background, faint sunlit caustic patterns on the
-        #   sand and stones. Soft diffused lighting, shallow depth of field, crisp detail on the face and gills, subtle rim
-        #   light outlining the body. Clean composition, natural color palette, high resolution, 3:2 aspect ratio.
-        # size: 1024x1536
         file_part = FilePart(
             content=Image(
                 data=base64.b64decode(item.result),
-                media_type='image/png',
+                media_type=f'image/{output_format}',
             ),
             id=item.id,
         )
 
         # For some reason, the streaming API leaves `status` as `generating` even though generation has completed.
-        status = 'completed'
+        result['status'] = 'completed'
 
     return (
         BuiltinToolCallPart(
@@ -2057,9 +2077,7 @@ def _map_image_generation_tool_call(
         BuiltinToolReturnPart(
             tool_name=ImageGenerationTool.kind,
             tool_call_id=item.id,
-            content={
-                'status': status,
-            },
+            content=result,
             provider_name=provider_name,
         ),
         file_part,
