@@ -354,8 +354,12 @@ class InstrumentedModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        with self._instrument(messages, model_settings, model_request_parameters) as finish:
-            response = await super().request(messages, model_settings, model_request_parameters)
+        prepared_settings, prepared_parameters = self.wrapped.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
+        with self._instrument(messages, prepared_settings, prepared_parameters) as finish:
+            response = await self.wrapped.request(messages, model_settings, model_request_parameters)
             finish(response)
             return response
 
@@ -367,10 +371,14 @@ class InstrumentedModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
-        with self._instrument(messages, model_settings, model_request_parameters) as finish:
+        prepared_settings, prepared_parameters = self.wrapped.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
+        with self._instrument(messages, prepared_settings, prepared_parameters) as finish:
             response_stream: StreamedResponse | None = None
             try:
-                async with super().request_stream(
+                async with self.wrapped.request_stream(
                     messages, model_settings, model_request_parameters, run_context
                 ) as response_stream:
                     yield response_stream

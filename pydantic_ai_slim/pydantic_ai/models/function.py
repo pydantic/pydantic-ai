@@ -125,6 +125,10 @@ class FunctionModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         agent_info = AgentInfo(
             function_tools=model_request_parameters.function_tools,
             allow_text_output=model_request_parameters.allow_text_output,
@@ -154,6 +158,10 @@ class FunctionModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         agent_info = AgentInfo(
             function_tools=model_request_parameters.function_tools,
             allow_text_output=model_request_parameters.allow_text_output,
