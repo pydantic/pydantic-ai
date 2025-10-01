@@ -46,7 +46,7 @@ interactions:
         - text: Generate an image of an axolotl.
         role: user
       generationConfig: {}
-    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai-dev/locations/global/publishers/google/models/gemini-2.5-flash-image-preview:generateContent
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.5-flash-image-preview:generateContent
   response:
     headers:
       alt-svc:

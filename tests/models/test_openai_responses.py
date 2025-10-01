@@ -5536,7 +5536,13 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
-                        content={'status': 'completed'},
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': IsStr(),
+                        },
                         tool_call_id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
                         timestamp=IsDatetime(),
                         provider_name='openai',
@@ -5585,7 +5591,13 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
-                        content={'status': 'completed'},
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': 'Ultra-detailed photorealistic image of a pink leucistic axolotl underwater in a crystal-clear freshwater aquarium, gently hovering above dark volcanic sand. The axolotl has coral-pink featherlike external gills with delicate filaments, a subtle smiling mouth, and glossy black eyes. Its translucent, slightly speckled skin shows a hint of iridescence. Soft dappled caustic light ripples across its back from the water surface. Surroundings include lush green aquatic plants (anubias, java fern) and smooth river stones. Fine particulate suspended in the water for realism. Shot at eye level with a 50mm macro feel, shallow depth of field and creamy bokeh background. Natural color grading, crisp details, high resolution.',
+                        },
                         tool_call_id='ig_68cdec701280819fab216c216ff58efe079003437d26d0c0',
                         timestamp=IsDatetime(),
                         provider_name='openai',
@@ -5666,7 +5678,13 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
-                        content={'status': 'completed'},
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': 'Photorealistic high-resolution image of a pink axolotl (Ambystoma mexicanum) in a clear freshwater aquarium. The axolotl is centered, facing slightly toward the camera, feathery external gills fanned out, small smile, speckled skin texture, and delicate toes. Natural soft diffused lighting from above with gentle water caustics on a light sand substrate. Background features softly blurred aquatic plants (anacharis) and smooth river stones with subtle bokeh. Water appears crystal clear with a few tiny suspended particles visible. Shallow depth of field, macro 50mm look, 4K detail, vibrant yet natural colors.',
+                        },
                         tool_call_id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
                         timestamp=IsDatetime(),
                         provider_name='openai',
@@ -5685,7 +5703,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 parts=[
                     RetryPromptPart(
                         content='Please include your response in a tool call.',
-                        tool_call_id='pyd_ai_3b0916e0f74147af8f8593315296a84d',
+                        tool_call_id='pyd_ai_58f23423817147bf9277561ccc1864d5',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -5769,7 +5787,13 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
-                        content={'status': 'completed'},
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': 'Ultra-detailed photorealistic close-up of a pink leucistic axolotl swimming in a clear freshwater aquarium. Feathery external gills fanned out, tiny smile, speckled golden-black eyes, and smooth, slightly translucent skin with subtle freckles. Soft diffused lighting with gentle surface ripples and suspended water particles. Aquatic plants like java moss and anubias in the background, natural stones and fine sand substrate. Shallow depth of field, macro lens look, crisp focus on the face and gills, 8k resolution, high dynamic range, natural color grading.',
+                        },
                         tool_call_id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
                         timestamp=IsDatetime(),
                         provider_name='openai',
@@ -5841,7 +5865,13 @@ Don't include any text or Markdown fencing before or after.\
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
-                        content={'status': 'completed'},
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': 'Photorealistic close-up of a pink leucistic axolotl (Ambystoma mexicanum) in a crystal-clear freshwater aquarium. Details: feathery red external gills, smooth speckled skin, small black eyes, endearing "smile." Composition: subject centered at a slight angle, shallow depth of field, soft rim lighting, gentle caustics on fine sand substrate, lush green aquatic plants (Anubias, Java moss) in the background, tiny air bubbles, clean glass. Aesthetic: 4K, high dynamic range, professional macro wildlife photography, natural colors, no text or watermark.',
+                        },
                         tool_call_id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
                         timestamp=IsDatetime(),
                         provider_name='openai',
@@ -5938,7 +5968,13 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
-                        content={'status': 'completed'},
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': 'Create a high-resolution, photorealistic image of an axolotl swimming in clear freshwater with soft natural lighting, visible external gills, speckled pink-white skin, and gentle ripples, shot at eye level.',
+                        },
                         tool_call_id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
                         timestamp=IsDatetime(),
                         provider_name='openai',
@@ -6003,7 +6039,13 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
-                        content={'status': 'completed'},
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': 'A lifelike underwater photograph of a leucistic pink axolotl gliding through a freshwater tank, surrounded by bright green aquatic plants and smooth river stones. Shafts of sunlight filter through the water, tiny bubbles, shallow depth of field, highly detailed skin texture and feathery external gills, natural colors, ultra high resolution.',
+                        },
                         tool_call_id='ig_0b6169df6e16e9690068dd80f7b070819189831dcc01b98a2a',
                         timestamp=IsDatetime(),
                         provider_name='openai',
@@ -6023,7 +6065,13 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
-                        content={'status': 'completed'},
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1536x1024',
+                            'revised_prompt': IsStr(),
+                        },
                         tool_call_id='ig_0b6169df6e16e9690068dd8125f4448191bac6818b54114209',
                         timestamp=IsDatetime(),
                         provider_name='openai',

@@ -763,7 +763,7 @@ class OpenAIChatModel(Model):
             else:
                 assert_never(part)
 
-    async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
+    async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:  # noqa: C901
         content: str | list[ChatCompletionContentPartParam]
         if isinstance(part.content, str):
             content = part.content
@@ -778,13 +778,23 @@ class OpenAIChatModel(Model):
                         image_url['detail'] = metadata.get('detail', 'auto')
                     content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
-                    base64_encoded = base64.b64encode(item.data).decode('utf-8')
-                    if item.is_image:
+                    if self._is_text_like_media_type(item.media_type):
+                        # Inline text-like binary content as a text block
+                        content.append(
+                            self._inline_text_file_part(
+                                item.data.decode('utf-8'),
+                                media_type=item.media_type,
+                                identifier=item.identifier,
+                            )
+                        )
+                    elif item.is_image:
                         image_url = ImageURL(url=item.data_uri)
+                        if metadata := item.vendor_metadata:
+                            image_url['detail'] = metadata.get('detail', 'auto')
                         content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     elif item.is_audio:
                         assert item.format in ('wav', 'mp3')
-                        audio = InputAudio(data=base64_encoded, format=item.format)
+                        audio = InputAudio(data=base64.b64encode(item.data).decode('utf-8'), format=item.format)
                         content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                     elif item.is_document:
                         content.append(
