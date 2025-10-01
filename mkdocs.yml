@@ -34,6 +34,7 @@ nav:
           - models/groq.md
           - models/mistral.md
           - models/huggingface.md
+          - models/openrouter.md
       - Tools & Toolsets:
           - tools.md
           - tools-advanced.md
@@ -123,6 +124,7 @@ nav:
           - api/models/huggingface.md
           - api/models/instrumented.md
           - api/models/mistral.md
+          - api/models/openrouter.md
           - api/models/test.md
           - api/models/function.md
           - api/models/fallback.md
