@@ -141,6 +141,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.allow_sampling = allow_sampling
         self.sampling_model = sampling_model
         self.max_retries = max_retries
+        self.server_info = None
         self.elicitation_callback = elicitation_callback
 
         self._id = id or tool_prefix
