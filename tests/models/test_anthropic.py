@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import timezone
@@ -14,21 +15,19 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelHTTPError, ModelRetry
-from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     BinaryContent,
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolCallPart,
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
     DocumentUrl,
     FinalResultEvent,
     ImageUrl,
+    ModelHTTPError,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelRetry,
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
@@ -42,6 +41,12 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.builtin_tools import CodeExecutionTool, MemoryTool, WebSearchTool
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import (
+    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
+    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+)
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
@@ -53,12 +58,19 @@ from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic
+    from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
         BetaContentBlock,
         BetaInputJSONDelta,
+        BetaMemoryTool20250818CreateCommand,
+        BetaMemoryTool20250818DeleteCommand,
+        BetaMemoryTool20250818InsertCommand,
+        BetaMemoryTool20250818RenameCommand,
+        BetaMemoryTool20250818StrReplaceCommand,
+        BetaMemoryTool20250818ViewCommand,
         BetaMessage,
         BetaMessageDeltaUsage,
         BetaRawContentBlockDeltaEvent,
@@ -4182,6 +4194,29 @@ async def test_anthropic_native_output(allow_model_requests: None, anthropic_api
         await agent.run('What is the largest city in the user country?')
 
 
+async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel(
+        'claude-sonnet-4-0',
+        provider=AnthropicProvider(api_key=anthropic_api_key),
+        settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000}),
+    )
+
+    agent = Agent(m, output_type=int)
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Anthropic does not support thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+        ),
+    ):
+        await agent.run('What is 3 + 3?')
+
+    agent = Agent(m, output_type=PromptedOutput(int))
+
+    result = await agent.run('What is 3 + 3?')
+    assert result.output == snapshot(6)
+
+
 async def test_anthropic_tool_with_thinking(allow_model_requests: None, anthropic_api_key: str):
     """When using thinking with tool calls in Anthropic, we need to send the thinking part back to the provider.
 
@@ -5030,3 +5065,50 @@ Based on yesterday's date (September 16, 2025), Asian markets rose higher as Fed
     assert await result.get_output() == snapshot(
         "Here's one significant historical event that occurred on September 19th: New Zealand made history by becoming the first self-governing nation to grant women the right to vote in national elections. It would take 27 more years before American women gained the same right."
     )
+
+
+async def test_anthropic_memory_tool(allow_model_requests: None, anthropic_api_key: str):
+    anthropic_model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(api_key=anthropic_api_key),
+        settings=AnthropicModelSettings(extra_headers={'anthropic-beta': 'context-1m-2025-08-07'}),
+    )
+    agent = Agent(anthropic_model, builtin_tools=[MemoryTool()])
+
+    with pytest.raises(UserError, match="Built-in `MemoryTool` requires a 'memory' tool to be defined."):
+        await agent.run('Where do I live?')
+
+    class FakeMemoryTool(BetaAbstractMemoryTool):
+        def view(self, command: BetaMemoryTool20250818ViewCommand) -> str:
+            return 'The user lives in Mexico City.'
+
+        def create(self, command: BetaMemoryTool20250818CreateCommand) -> str:
+            return f'File created successfully at {command.path}'  # pragma: no cover
+
+        def str_replace(self, command: BetaMemoryTool20250818StrReplaceCommand) -> str:
+            return f'File {command.path} has been edited'  # pragma: no cover
+
+        def insert(self, command: BetaMemoryTool20250818InsertCommand) -> str:
+            return f'Text inserted at line {command.insert_line} in {command.path}'  # pragma: no cover
+
+        def delete(self, command: BetaMemoryTool20250818DeleteCommand) -> str:
+            return f'File deleted: {command.path}'  # pragma: no cover
+
+        def rename(self, command: BetaMemoryTool20250818RenameCommand) -> str:
+            return f'Renamed {command.old_path} to {command.new_path}'  # pragma: no cover
+
+        def clear_all_memory(self) -> str:
+            return 'All memory cleared'  # pragma: no cover
+
+    fake_memory = FakeMemoryTool()
+
+    @agent.tool_plain
+    def memory(**command: Any) -> Any:
+        return fake_memory.call(command)
+
+    result = await agent.run('Where do I live?')
+    assert result.output == snapshot("""\
+
+
+According to my memory, you live in **Mexico City**.\
+""")

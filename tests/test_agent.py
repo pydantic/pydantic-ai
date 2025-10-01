@@ -15,7 +15,37 @@ from pydantic import BaseModel, TypeAdapter, field_validator
 from pydantic_core import to_json
 from typing_extensions import Self
 
-from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
+from pydantic_ai import (
+    AbstractToolset,
+    Agent,
+    AgentStreamEvent,
+    AudioUrl,
+    BinaryContent,
+    CombinedToolset,
+    DocumentUrl,
+    FunctionToolset,
+    ImageUrl,
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelProfile,
+    ModelRequest,
+    ModelResponse,
+    ModelResponsePart,
+    ModelRetry,
+    PrefixedToolset,
+    RetryPromptPart,
+    RunContext,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+    UnexpectedModelBehavior,
+    UserError,
+    UserPromptPart,
+    VideoUrl,
+    capture_run_messages,
+)
 from pydantic_ai._output import (
     NativeOutput,
     NativeOutputSchema,
@@ -26,36 +56,11 @@ from pydantic_ai._output import (
     ToolOutputSchema,
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
-from pydantic_ai.messages import (
-    AgentStreamEvent,
-    AudioUrl,
-    BinaryContent,
-    DocumentUrl,
-    ImageUrl,
-    ModelMessage,
-    ModelMessagesTypeAdapter,
-    ModelRequest,
-    ModelResponse,
-    ModelResponsePart,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ToolCallPart,
-    ToolReturn,
-    ToolReturnPart,
-    UserPromptPart,
-    VideoUrl,
-)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import StructuredDict, ToolOutput
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
-from pydantic_ai.toolsets.abstract import AbstractToolset
-from pydantic_ai.toolsets.combined import CombinedToolset
-from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.toolsets.prefixed import PrefixedToolset
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsNow, IsStr, TestEnv
@@ -1391,6 +1396,109 @@ def test_output_type_structured_dict():
             ),
         ]
     )
+
+
+def test_output_type_structured_dict_nested():
+    """Test StructuredDict with nested JSON schemas using $ref - Issue #2466."""
+    # Schema with nested $ref that pydantic's generator can't resolve
+    CarDict = StructuredDict(
+        {
+            '$defs': {
+                'Tire': {
+                    'type': 'object',
+                    'properties': {'brand': {'type': 'string'}, 'size': {'type': 'integer'}},
+                    'required': ['brand', 'size'],
+                }
+            },
+            'type': 'object',
+            'properties': {
+                'make': {'type': 'string'},
+                'model': {'type': 'string'},
+                'tires': {'type': 'array', 'items': {'$ref': '#/$defs/Tire'}},
+            },
+            'required': ['make', 'model', 'tires'],
+        },
+        name='Car',
+        description='A car with tires',
+    )
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        # Verify the output tool schema has been properly transformed
+        # The $refs should be inlined by InlineDefsJsonSchemaTransformer
+        output_tool = info.output_tools[0]
+        schema = output_tool.parameters_json_schema
+        assert schema is not None
+
+        assert schema == snapshot(
+            {
+                'properties': {
+                    'make': {'type': 'string'},
+                    'model': {'type': 'string'},
+                    'tires': {
+                        'items': {
+                            'properties': {'brand': {'type': 'string'}, 'size': {'type': 'integer'}},
+                            'required': ['brand', 'size'],
+                            'type': 'object',
+                        },
+                        'type': 'array',
+                    },
+                },
+                'required': ['make', 'model', 'tires'],
+                'title': 'Car',
+                'type': 'object',
+            }
+        )
+
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    output_tool.name, {'make': 'Toyota', 'model': 'Camry', 'tires': [{'brand': 'Michelin', 'size': 17}]}
+                )
+            ]
+        )
+
+    agent = Agent(FunctionModel(call_tool), output_type=CarDict)
+
+    result = agent.run_sync('Generate a car')
+
+    assert result.output == snapshot({'make': 'Toyota', 'model': 'Camry', 'tires': [{'brand': 'Michelin', 'size': 17}]})
+
+
+def test_structured_dict_recursive_refs():
+    class Node(BaseModel):
+        nodes: list['Node'] | dict[str, 'Node']
+
+    schema = Node.model_json_schema()
+    assert schema == snapshot(
+        {
+            '$defs': {
+                'Node': {
+                    'properties': {
+                        'nodes': {
+                            'anyOf': [
+                                {'items': {'$ref': '#/$defs/Node'}, 'type': 'array'},
+                                {'additionalProperties': {'$ref': '#/$defs/Node'}, 'type': 'object'},
+                            ],
+                            'title': 'Nodes',
+                        }
+                    },
+                    'required': ['nodes'],
+                    'title': 'Node',
+                    'type': 'object',
+                }
+            },
+            '$ref': '#/$defs/Node',
+        }
+    )
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            '`StructuredDict` does not currently support recursive `$ref`s and `$defs`. See https://github.com/pydantic/pydantic/issues/12145 for more information.'
+        ),
+    ):
+        StructuredDict(schema)
 
 
 def test_default_structured_output_mode():
@@ -4586,7 +4694,7 @@ async def test_wrapper_agent():
 
 async def test_thinking_only_response_retry():
     """Test that thinking-only responses trigger a retry mechanism."""
-    from pydantic_ai.messages import ThinkingPart
+    from pydantic_ai import ThinkingPart
     from pydantic_ai.models.function import FunctionModel
 
     call_count = 0

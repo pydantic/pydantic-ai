@@ -11,8 +11,7 @@ from dirty_equals import IsJson
 from inline_snapshot import snapshot
 from pydantic_core import to_json
 
-from pydantic_ai import Agent, ModelHTTPError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai import Agent, ModelHTTPError, ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.settings import ModelSettings
@@ -170,6 +169,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'attributes': {
                     'model_name': 'fallback:function:failure_response:,function:success_response:',
                     'agent_name': 'agent',
+                    'gen_ai.agent.name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'gen_ai.usage.input_tokens': 51,
@@ -269,6 +269,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                 'attributes': {
                     'model_name': 'fallback:function::failure_response_stream,function::success_response_stream',
                     'agent_name': 'agent',
+                    'gen_ai.agent.name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'gen_ai.usage.input_tokens': 50,
@@ -376,6 +377,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'attributes': {
                     'model_name': 'fallback:function:failure_response:,function:failure_response:',
                     'agent_name': 'agent',
+                    'gen_ai.agent.name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'pydantic_ai.all_messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]}],

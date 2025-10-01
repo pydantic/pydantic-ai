@@ -14,6 +14,7 @@ from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
 from pydantic_graph import Graph
 
 from .. import (
@@ -644,11 +645,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         agent_name = self.name or 'agent'
+        instrumentation_names = InstrumentationNames.for_version(
+            instrumentation_settings.version if instrumentation_settings else DEFAULT_INSTRUMENTATION_VERSION
+        )
+
         run_span = tracer.start_span(
-            'agent run',
+            instrumentation_names.get_agent_run_span_name(agent_name),
             attributes={
                 'model_name': model_used.model_name if model_used else 'no-model',
                 'agent_name': agent_name,
+                'gen_ai.agent.name': agent_name,
                 'logfire.msg': f'{agent_name} run',
             },
         )
@@ -1206,8 +1212,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         Example:
         ```python
-        from pydantic_ai import Agent, RunContext
-        from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+        from pydantic_ai import AbstractToolset, Agent, FunctionToolset, RunContext
 
         agent = Agent('test', deps_type=str)
 

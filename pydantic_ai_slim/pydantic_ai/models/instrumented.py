@@ -21,6 +21,8 @@ from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provide
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+
 from .. import _otel_messages
 from .._run_context import RunContext
 from ..messages import (
@@ -90,7 +92,7 @@ class InstrumentationSettings:
     event_mode: Literal['attributes', 'logs'] = 'attributes'
     include_binary_content: bool = True
     include_content: bool = True
-    version: Literal[1, 2] = 1
+    version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION
 
     def __init__(
         self,
@@ -99,7 +101,7 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
-        version: Literal[1, 2] = 2,
+        version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION,
         event_mode: Literal['attributes', 'logs'] = 'attributes',
         event_logger_provider: EventLoggerProvider | None = None,
     ):
