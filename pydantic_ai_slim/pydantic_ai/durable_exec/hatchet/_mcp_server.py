@@ -87,9 +87,7 @@ class HatchetMCPServer(HatchetWrapperToolset[AgentDepsT], ABC):
             input: GetToolsInput[AgentDepsT],
             _ctx: Context,
         ) -> dict[str, ToolDefinition]:
-            run_context = self.run_context_type.deserialize_run_context(
-                input.serialized_run_context, deps=input.deps, hatchet_context=_ctx
-            )
+            run_context = self.run_context_type.deserialize_run_context(input.serialized_run_context, deps=input.deps)
 
             # ToolsetTool is not serializable as it holds a SchemaValidator (which is also the same for every MCP tool so unnecessary to pass along the wire every time),
             # so we just return the ToolDefinitions and wrap them in ToolsetTool outside of the activity.
@@ -120,9 +118,7 @@ class HatchetMCPServer(HatchetWrapperToolset[AgentDepsT], ABC):
             input: CallToolInput[AgentDepsT],
             _ctx: Context,
         ) -> CallToolOutput[AgentDepsT]:
-            run_context = self.run_context_type.deserialize_run_context(
-                input.serialized_run_context, deps=input.deps, hatchet_context=_ctx
-            )
+            run_context = self.run_context_type.deserialize_run_context(input.serialized_run_context, deps=input.deps)
             tool = self.tool_for_tool_def(input.tool_def)
 
             result = await super(HatchetMCPServer, self).call_tool(input.name, input.tool_args, run_context, tool)

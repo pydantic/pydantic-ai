@@ -118,7 +118,8 @@ class HatchetModel(WrapperModel):
             assert self.event_stream_handler
 
             run_context = self.run_context_type.deserialize_run_context(
-                input.serialized_run_context, deps=input.serialized_run_context, hatchet_context=ctx
+                input.serialized_run_context,
+                deps=input.serialized_run_context,
             )
 
             async with self.wrapped.request_stream(

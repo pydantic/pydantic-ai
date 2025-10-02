@@ -11,7 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from typing_extensions import Never
 
 from pydantic_ai import _utils, messages as _messages, models, usage as _usage
-from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, RunOutputDataT, WrapperAgent
+from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
+from pydantic_ai.agent.abstract import Instructions, RunOutputDataT
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import Model
@@ -652,6 +653,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent dependencies, model, toolsets, or tools.
 
@@ -663,6 +665,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
+            instructions: The instructions to use instead of the instructions registered with the agent.
         """
         with super().override(deps=deps, model=model, toolsets=toolsets, tools=tools):
             yield
