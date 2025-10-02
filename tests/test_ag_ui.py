@@ -27,6 +27,7 @@ from pydantic_ai import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -1635,7 +1636,7 @@ async def test_messages_to_ag_ui() -> None:
 
 
 async def test_messages_to_ag_ui_retry_prompt() -> None:
-    """Test conversion including RetryPromptPart and empty ModelResponse."""
+    """Test conversion including RetryPromptPart, ThinkingPart, and empty ModelResponse."""
     messages = [
         ModelRequest(
             parts=[
@@ -1643,20 +1644,28 @@ async def test_messages_to_ag_ui_retry_prompt() -> None:
                 RetryPromptPart(content='Please provide more details'),
             ]
         ),
-        ModelResponse(parts=[]),  # Empty response - no text or tool calls
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Let me think...'),  # Should be skipped
+            ]
+        ),  # Should not create any message (only ThinkingPart)
         ModelRequest(
             parts=[
                 UserPromptPart(content='Follow-up question'),
             ]
         ),
         ModelResponse(
-            parts=[TextPart(content='Final answer')],
+            parts=[
+                ThinkingPart(content='Thinking more...'),  # Should be skipped
+                TextPart(content='Final answer'),
+            ],
         ),
     ]
 
     result = messages_to_ag_ui(messages)
 
     # Should have: UserMessage, SystemMessage (from RetryPromptPart), UserMessage, AssistantMessage
+    # ThinkingPart should be skipped, empty ModelResponse should create no message
     assert len(result) == 4
 
     assert isinstance(result[0], UserMessage)
