@@ -178,7 +178,7 @@ async def test_graph_with_dependencies():
 
 async def test_empty_graph():
     """Test that a minimal graph can be built and run."""
-    g = GraphBuilder(output_type=int)
+    g = GraphBuilder(input_type=int, output_type=int)
 
     g.add(g.edge_from(g.start_node).to(g.end_node))
 
@@ -208,7 +208,7 @@ async def test_graph_name_inference():
 
 async def test_explicit_graph_name():
     """Test setting an explicit graph name."""
-    g = GraphBuilder(name='ExplicitName', output_type=int)
+    g = GraphBuilder(name='ExplicitName', input_type=int, output_type=int)
 
     g.add(g.edge_from(g.start_node).to(g.end_node))
 

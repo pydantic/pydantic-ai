@@ -20,7 +20,7 @@ from pydantic_graph import _utils, exceptions
 from pydantic_graph.beta.decision import Decision, DecisionBranch, DecisionBranchBuilder
 from pydantic_graph.beta.graph import Graph
 from pydantic_graph.beta.id_types import ForkId, JoinId, NodeId
-from pydantic_graph.beta.join import Join, Reducer
+from pydantic_graph.beta.join import Join, JoinNode, Reducer
 from pydantic_graph.beta.node import (
     EndNode,
     Fork,
@@ -650,10 +650,21 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
                 )
                 if step is None:
                     raise exceptions.GraphSetupError(
-                        f'Node {node} return type hint includes a `StepNode` without a `Step` annotations. '
+                        f'Node {node} return type hint includes a `StepNode` without a `Step` annotation. '
                         'When returning `my_step.as_node()`, use `Annotated[StepNode[StateT, DepsT], my_step]` as the return type hint.'
                     )
                 destinations.append(step)
+            elif return_type_origin is JoinNode:
+                join = cast(
+                    Join[StateT, DepsT, Any, Any] | None,
+                    next((a for a in annotations if isinstance(a, Join)), None),  # pyright: ignore[reportUnknownArgumentType]
+                )
+                if join is None:
+                    raise exceptions.GraphSetupError(
+                        f'Node {node} return type hint includes a `JoinNode` without a `Join` annotation. '
+                        'When returning `my_join.as_node()`, use `Annotated[JoinNode[StateT, DepsT], my_join]` as the return type hint.'
+                    )
+                destinations.append(join)
             elif inspect.isclass(return_type_origin) and issubclass(return_type_origin, BaseNode):
                 destinations.append(NodeStep(return_type))
 

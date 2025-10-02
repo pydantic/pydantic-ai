@@ -22,7 +22,7 @@ from pydantic_graph import exceptions
 from pydantic_graph._utils import AbstractSpan, get_traceparent, logfire_span
 from pydantic_graph.beta.decision import Decision
 from pydantic_graph.beta.id_types import ForkStack, ForkStackItem, GraphRunId, JoinId, NodeId, NodeRunId, TaskId
-from pydantic_graph.beta.join import Join, Reducer
+from pydantic_graph.beta.join import Join, JoinNode, Reducer
 from pydantic_graph.beta.node import (
     EndNode,
     Fork,
@@ -441,7 +441,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             return self._next.value
         return None
 
-    async def _iter_graph(
+    async def _iter_graph(  # noqa C901
         self,
     ) -> AsyncGenerator[
         EndMarker[OutputT] | JoinItem | Sequence[GraphTask], EndMarker[OutputT] | JoinItem | Sequence[GraphTask]
@@ -574,7 +574,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                 step_context = StepContext[StateT, DepsT, Any](state, deps, inputs)
                 output = await node.call(step_context)
             if isinstance(node, NodeStep):
-                return self._handle_node(node, output, fork_stack)
+                return self._handle_node(output, fork_stack)
             else:
                 return self._handle_edges(node, output, fork_stack)
         elif isinstance(node, Join):
@@ -613,12 +613,13 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
 
     def _handle_node(
         self,
-        node_step: NodeStep[StateT, DepsT],
         next_node: BaseNode[StateT, DepsT, Any] | End[Any],
         fork_stack: ForkStack,
-    ) -> Sequence[GraphTask] | EndMarker[OutputT]:
+    ) -> Sequence[GraphTask] | JoinItem | EndMarker[OutputT]:
         if isinstance(next_node, StepNode):
             return [GraphTask(next_node.step.id, next_node.inputs, fork_stack)]
+        elif isinstance(next_node, JoinNode):
+            return JoinItem(next_node.join.id, next_node.inputs, fork_stack)
         elif isinstance(next_node, BaseNode):
             node_step = NodeStep(next_node.__class__)
             return [GraphTask(node_step.id, next_node, fork_stack)]
@@ -687,7 +688,10 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
 
     def _handle_edges(self, node: AnyNode, inputs: Any, fork_stack: ForkStack) -> Sequence[GraphTask]:
         edges = self.graph.edges_by_source.get(node.id, [])
-        assert len(edges) == 1 or isinstance(node, Fork)  # this should have already been ensured during graph building
+        assert len(edges) == 1 or isinstance(node, Fork), (
+            edges,
+            node.id,
+        )  # this should have already been ensured during graph building
 
         new_tasks: list[GraphTask] = []
         for path in edges:

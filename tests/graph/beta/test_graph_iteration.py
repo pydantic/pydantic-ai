@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 
 from pydantic_graph.beta import GraphBuilder, StepContext
 from pydantic_graph.beta.graph import EndMarker, GraphTask, JoinItem
+from pydantic_graph.beta.id_types import NodeId
 
 pytestmark = pytest.mark.anyio
 
@@ -39,14 +41,15 @@ async def test_iter_basic():
     graph = g.build()
     state = IterState()
 
-    events = []
+    events: list[Any] = []
     async with graph.iter(state=state) as run:
         async for event in run:
             events.append(event)
 
     assert len(events) > 0
-    assert isinstance(events[-1], EndMarker)
-    assert events[-1].value == 2
+    last_event = events[-1]
+    assert isinstance(last_event, EndMarker)
+    assert last_event.value == 2  # pyright: ignore[reportUnknownMemberType]
 
 
 async def test_iter_with_next():
@@ -99,7 +102,7 @@ async def test_iter_inspect_tasks():
     graph = g.build()
     state = IterState()
 
-    task_nodes = []
+    task_nodes: list[NodeId] = []
     async with graph.iter(state=state) as run:
         async for event in run:
             if isinstance(event, list):
@@ -276,7 +279,7 @@ async def test_iter_early_termination():
 
     async with graph.iter(state=state) as run:
         event_count = 0
-        async for event in run:
+        async for _ in run:
             event_count += 1
             if event_count >= 2:
                 break  # Early termination
@@ -308,9 +311,9 @@ async def test_iter_state_inspection():
     graph = g.build()
     state = IterState()
 
-    state_snapshots = []
+    state_snapshots: list[Any] = []
     async with graph.iter(state=state) as run:
-        async for event in run:
+        async for _ in run:
             # Take a snapshot of the state after each event
             state_snapshots.append(state.counter)
 

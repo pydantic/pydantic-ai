@@ -2,43 +2,21 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Annotated
+from dataclasses import dataclass, field
+from typing import Annotated, Any
 
 import pytest
 
 from pydantic_graph import BaseNode, End, GraphRunContext
 from pydantic_graph.beta import GraphBuilder, StepContext, StepNode
+from pydantic_graph.beta.join import JoinNode
 
 pytestmark = pytest.mark.anyio
 
 
 @dataclass
 class IntegrationState:
-    log: list[str] = None  # type: ignore
-
-    def __post_init__(self):
-        if self.log is None:
-            self.log = []
-
-
-# V1 style nodes
-@dataclass
-class V1StartNode(BaseNode[IntegrationState, None, str]):
-    value: int
-
-    async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> V1MiddleNode:
-        ctx.state.log.append(f'V1StartNode: {self.value}')
-        return V1MiddleNode(self.value * 2)
-
-
-@dataclass
-class V1MiddleNode(BaseNode[IntegrationState, None, str]):
-    value: int
-
-    async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[str]:
-        ctx.state.log.append(f'V1MiddleNode: {self.value}')
-        return End(f'Result: {self.value}')
+    log: list[str] = field(default_factory=list)
 
 
 async def test_v1_nodes_in_v2_graph():
@@ -46,20 +24,37 @@ async def test_v1_nodes_in_v2_graph():
     g = GraphBuilder(state_type=IntegrationState, input_type=int, output_type=str)
 
     @g.step
-    async def prepare_input(ctx: StepContext[IntegrationState, None, int]) -> int:
+    async def prepare_input(ctx: StepContext[IntegrationState, None, int]) -> V1StartNode:
         ctx.state.log.append('V2Step: prepare')
-        return ctx.inputs + 1
+        return V1StartNode(ctx.inputs + 1)
 
     @g.step
     async def process_result(ctx: StepContext[IntegrationState, None, str]) -> str:
         ctx.state.log.append('V2Step: process')
         return ctx.inputs.upper()
 
+    @dataclass
+    class V1StartNode(BaseNode[IntegrationState, None, str]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> V1MiddleNode:
+            ctx.state.log.append(f'V1StartNode: {self.value}')
+            return V1MiddleNode(self.value * 2)
+
+    @dataclass
+    class V1MiddleNode(BaseNode[IntegrationState, None, str]):
+        value: int
+
+        async def run(
+            self, ctx: GraphRunContext[IntegrationState, None]
+        ) -> Annotated[StepNode[IntegrationState, None], process_result]:
+            ctx.state.log.append(f'V1MiddleNode: {self.value}')
+            return process_result.as_node(f'Result: {self.value}')
+
     g.add(
         g.node(V1StartNode),
         g.node(V1MiddleNode),
         g.edge_from(g.start_node).to(prepare_input),
-        g.edge_from(prepare_input).to(V1StartNode),
         g.edge_from(process_result).to(g.end_node),
     )
 
@@ -74,13 +69,30 @@ async def test_v2_step_to_v1_node():
     """Test transitioning from a v2 step to a v1 node using StepNode."""
     g = GraphBuilder(state_type=IntegrationState, output_type=str)
 
+    # V1 style nodes
+    @dataclass
+    class V1StartNode(BaseNode[IntegrationState, None, str]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> V1MiddleNode:
+            ctx.state.log.append(f'V1StartNode: {self.value}')
+            return V1MiddleNode(self.value * 2)
+
+    @dataclass
+    class V1MiddleNode(BaseNode[IntegrationState, None, str]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[str]:
+            ctx.state.log.append(f'V1MiddleNode: {self.value}')
+            return End(f'Result: {self.value}')
+
     @g.step
     async def v2_step(
         ctx: StepContext[IntegrationState, None, None],
-    ) -> Annotated[StepNode[IntegrationState, None], V1StartNode]:  # type: ignore
+    ) -> V1StartNode:
         ctx.state.log.append('V2Step')
         # Return a StepNode to transition to a v1 node
-        return V1StartNode(10).as_node()  # type: ignore
+        return V1StartNode(10)
 
     g.add(
         g.node(V1StartNode),
@@ -132,16 +144,20 @@ async def test_v1_node_returning_v1_node():
 
 async def test_mixed_v1_v2_with_broadcast():
     """Test broadcasting with mixed v1 and v2 nodes."""
+    g = GraphBuilder(state_type=IntegrationState, output_type=list[int])
+    from pydantic_graph.beta import ListReducer
+
+    collect = g.join(ListReducer[int])
 
     @dataclass
-    class ProcessNode(BaseNode[IntegrationState, None, int]):
+    class ProcessNode(BaseNode[IntegrationState, None, Any]):
         value: int
 
-        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[int]:
+        async def run(
+            self, ctx: GraphRunContext[IntegrationState, None]
+        ) -> Annotated[JoinNode[IntegrationState, None], collect]:
             ctx.state.log.append(f'ProcessNode: {self.value}')
-            return End(self.value * 2)
-
-    g = GraphBuilder(state_type=IntegrationState, output_type=list[int])
+            return collect.as_node(self.value * 2)
 
     @g.step
     async def generate_values(ctx: StepContext[IntegrationState, None, None]) -> list[int]:
@@ -151,15 +167,16 @@ async def test_mixed_v1_v2_with_broadcast():
     async def create_node(ctx: StepContext[IntegrationState, None, int]) -> ProcessNode:
         return ProcessNode(ctx.inputs)
 
-    from pydantic_graph.beta import ListReducer
-
-    collect = g.join(ListReducer[int])
+    @g.step
+    async def auxiliary_node(ctx: StepContext[IntegrationState, None, int]) -> int:
+        """This auxiliary node is used to feed the output of a V1-style node into a join"""
+        return ctx.inputs
 
     g.add(
         g.node(ProcessNode),
         g.edge_from(g.start_node).to(generate_values),
         g.edge_from(generate_values).spread().to(create_node),
-        g.edge_from(create_node).to(collect),
+        g.edge_from(auxiliary_node).to(collect),
         g.edge_from(collect).to(g.end_node),
     )
 
@@ -187,7 +204,7 @@ async def test_v1_node_type_hints_inferred():
             ctx.state.log.append('MiddleNode')
             return End('normal exit')
 
-    g = GraphBuilder(state_type=IntegrationState, input_type=None, output_type=str)
+    g = GraphBuilder(state_type=IntegrationState, input_type=StartNode, output_type=str)
 
     g.add(
         g.node(StartNode),
@@ -197,7 +214,7 @@ async def test_v1_node_type_hints_inferred():
 
     graph = g.build()
     state = IntegrationState()
-    result = await graph.run(state=state)
+    result = await graph.run(state=state, inputs=StartNode())
     assert result == 'normal exit'
     assert state.log == ['StartNode', 'MiddleNode']
 

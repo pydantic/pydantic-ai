@@ -132,15 +132,15 @@ async def test_label_on_decision_branch():
     g = GraphBuilder(state_type=LabelState, output_type=str)
 
     @g.step
-    async def choose(ctx: StepContext[LabelState, None, None]) -> Literal['a', 'b']:
+    async def choose(ctx: StepContext[LabelState, None, object]) -> Literal['a', 'b']:
         return 'a'
 
     @g.step
-    async def path_a(ctx: StepContext[LabelState, None, None]) -> str:
+    async def path_a(ctx: StepContext[LabelState, None, object]) -> str:
         return 'A'
 
     @g.step
-    async def path_b(ctx: StepContext[LabelState, None, None]) -> str:
+    async def path_b(ctx: StepContext[LabelState, None, object]) -> str:
         return 'B'
 
     g.add(

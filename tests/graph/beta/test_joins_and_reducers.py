@@ -18,7 +18,7 @@ class SimpleState:
 
 async def test_null_reducer():
     """Test NullReducer that discards all inputs."""
-    g = GraphBuilder(state_type=SimpleState, output_type=None)
+    g = GraphBuilder(state_type=SimpleState)
 
     @g.step
     async def source(ctx: StepContext[SimpleState, None, None]) -> list[int]:

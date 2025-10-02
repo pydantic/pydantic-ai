@@ -76,6 +76,7 @@ class StepContext(Generic[StateT, DepsT, InputT]):
 
 
 if not TYPE_CHECKING:
+    # TODO: Try dropping inputs from StepContext, it would make for fewer generic params, could help
     StepContext = dataclass(StepContext)
 
 
@@ -185,6 +186,14 @@ class Step(Generic[StateT, DepsT, InputT, OutputT]):
             A [`StepNode`][pydantic_graph.v2.step.StepNode] with this step and the bound inputs
         """
         return StepNode(self, inputs)
+
+    def __repr__(self):
+        """Return a string representation of the step context.
+
+        Returns:
+            A string showing the class name and inputs
+        """
+        return f'Step(id={self.id!r}, call={self._call!r}, user_label={self.user_label!r})'
 
 
 @dataclass

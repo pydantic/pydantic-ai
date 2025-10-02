@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 import pytest
 
@@ -30,7 +31,7 @@ async def test_graph_with_no_steps():
 
 async def test_step_returning_none():
     """Test steps that return None."""
-    g = GraphBuilder(state_type=EdgeCaseState, output_type=None)
+    g = GraphBuilder(state_type=EdgeCaseState)
 
     @g.step
     async def do_nothing(ctx: StepContext[EdgeCaseState, None, None]) -> None:
@@ -176,7 +177,7 @@ async def test_long_sequential_chain():
     """Test a long chain of sequential steps."""
     g = GraphBuilder(state_type=EdgeCaseState, output_type=int)
 
-    steps = []
+    steps: list[Any] = []
     for i in range(10):
 
         @g.step(node_id=f'step_{i}')
@@ -223,7 +224,7 @@ async def test_join_with_single_input():
 
 async def test_null_reducer_with_no_inputs():
     """Test NullReducer behavior with spread that produces no items."""
-    g = GraphBuilder(state_type=EdgeCaseState, output_type=None)
+    g = GraphBuilder(state_type=EdgeCaseState)
 
     @g.step
     async def empty_list(ctx: StepContext[EdgeCaseState, None, None]) -> list[int]:
@@ -315,11 +316,7 @@ async def test_state_with_mutable_collections():
 
     @dataclass
     class MutableState:
-        items: list[int] = None  # type: ignore
-
-        def __post_init__(self):
-            if self.items is None:
-                self.items = []
+        items: list[int] = field(default_factory=list)
 
     g = GraphBuilder(state_type=MutableState, output_type=list[int])
 

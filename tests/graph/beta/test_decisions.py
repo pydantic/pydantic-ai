@@ -27,12 +27,12 @@ async def test_simple_decision_literal():
         return 'left'
 
     @g.step
-    async def left_path(ctx: StepContext[DecisionState, None, None]) -> str:
+    async def left_path(ctx: StepContext[DecisionState, None, object]) -> str:
         ctx.state.path_taken = 'left'
         return 'Went left'
 
     @g.step
-    async def right_path(ctx: StepContext[DecisionState, None, None]) -> str:
+    async def right_path(ctx: StepContext[DecisionState, None, object]) -> str:
         ctx.state.path_taken = 'right'
         return 'Went right'
 
@@ -258,11 +258,11 @@ async def test_decision_with_label():
         return 'a'
 
     @g.step
-    async def path_a(ctx: StepContext[DecisionState, None, None]) -> str:
+    async def path_a(ctx: StepContext[DecisionState, None, object]) -> str:
         return 'Path A'
 
     @g.step
-    async def path_b(ctx: StepContext[DecisionState, None, None]) -> str:
+    async def path_b(ctx: StepContext[DecisionState, None, object]) -> str:
         return 'Path B'
 
     g.add(
@@ -285,15 +285,15 @@ async def test_decision_with_spread():
     g = GraphBuilder(state_type=DecisionState, output_type=int)
 
     @g.step
-    async def get_type(ctx: StepContext[DecisionState, None, None]) -> Literal['list', 'single']:
+    async def get_type(ctx: StepContext[DecisionState, None, object]) -> Literal['list', 'single']:
         return 'list'
 
     @g.step
-    async def make_list(ctx: StepContext[DecisionState, None, None]) -> list[int]:
+    async def make_list(ctx: StepContext[DecisionState, None, object]) -> list[int]:
         return [1, 2, 3]
 
     @g.step
-    async def make_single(ctx: StepContext[DecisionState, None, None]) -> int:
+    async def make_single(ctx: StepContext[DecisionState, None, object]) -> int:
         return 10
 
     @g.step
@@ -302,7 +302,7 @@ async def test_decision_with_spread():
         return ctx.inputs
 
     @g.step
-    async def get_value(ctx: StepContext[DecisionState, None, None]) -> int:
+    async def get_value(ctx: StepContext[DecisionState, None, object]) -> int:
         return ctx.state.value
 
     g.add(
@@ -321,4 +321,5 @@ async def test_decision_with_spread():
     graph = g.build()
     state = DecisionState()
     result = await graph.run(state=state)
+    assert result == 6
     assert state.value == 6  # 1 + 2 + 3

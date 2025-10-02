@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import Generic
+from typing import Any, Generic, overload
 
 from typing_extensions import TypeVar
 
+from pydantic_graph import BaseNode, End, GraphRunContext
 from pydantic_graph.beta.id_types import ForkId, JoinId
 from pydantic_graph.beta.step import StepContext
 
@@ -259,3 +260,53 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
             RuntimeError: Always raised as this method should never be called
         """
         raise RuntimeError('This method should never be called, it is just defined for typing purposes.')
+
+    @overload
+    def as_node(self, inputs: None = None) -> JoinNode[StateT, DepsT]: ...
+
+    @overload
+    def as_node(self, inputs: InputT) -> JoinNode[StateT, DepsT]: ...
+
+    def as_node(self, inputs: InputT | None = None) -> JoinNode[StateT, DepsT]:
+        """Create a step node with bound inputs.
+
+        Args:
+            inputs: The input data to bind to this step, or None
+
+        Returns:
+            A [`StepNode`][pydantic_graph.v2.step.StepNode] with this step and the bound inputs
+        """
+        return JoinNode(self, inputs)
+
+
+@dataclass
+class JoinNode(BaseNode[StateT, DepsT, Any]):
+    """A base node that represents a join item with bound inputs.
+
+    JoinNode bridges between the v1 and v2 graph execution systems by wrapping
+    a [`Join`][pydantic_graph.v2.step.Join] with bound inputs in a BaseNode interface.
+    It is not meant to be run directly but rather used to indicate transitions
+    to v2-style steps.
+    """
+
+    join: Join[StateT, DepsT, Any, Any]
+    """The step to execute."""
+
+    inputs: Any
+    """The inputs bound to this step."""
+
+    async def run(self, ctx: GraphRunContext[StateT, DepsT]) -> BaseNode[StateT, DepsT, Any] | End[Any]:
+        """Attempt to run the join node.
+
+        Args:
+            ctx: The graph execution context
+
+        Returns:
+            The result of step execution
+
+        Raises:
+            NotImplementedError: Always raised as StepNode is not meant to be run directly
+        """
+        raise NotImplementedError(
+            '`JoinNode` is not meant to be run directly, it is meant to be used in `BaseNode` subclasses to indicate a transition to v2-style steps.'
+        )
