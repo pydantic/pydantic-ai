@@ -74,6 +74,7 @@ with contextlib.suppress(ImportError):
         OnCompleteFunc,
         StateDeps,
         _messages_from_ag_ui,  # type: ignore[reportPrivateUsage]
+        messages_to_ag_ui,
         run_ag_ui,
     )
 
@@ -1520,6 +1521,116 @@ async def test_messages_from_ag_ui() -> None:
             ),
         ]
     )
+
+
+async def test_messages_to_ag_ui() -> None:
+    messages = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(
+                    content='System message',
+                ),
+                SystemPromptPart(
+                    content='Developer message',
+                ),
+                UserPromptPart(
+                    content='User message',
+                ),
+                UserPromptPart(
+                    content='User message',
+                ),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args='{"query": "Hello, world!"}',
+                    tool_call_id='search_1',
+                    provider_name='function',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content='{"results": [{"title": "Hello, world!", "url": "https://en.wikipedia.org/wiki/Hello,_world!"}]}',
+                    tool_call_id='search_1',
+                    provider_name='function',
+                ),
+                TextPart(content='Assistant message'),
+                ToolCallPart(tool_name='tool_call_1', args='{}', tool_call_id='tool_call_1'),
+                ToolCallPart(tool_name='tool_call_2', args='{}', tool_call_id='tool_call_2'),
+            ],
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='tool_call_1',
+                    content='Tool message',
+                    tool_call_id='tool_call_1',
+                ),
+                ToolReturnPart(
+                    tool_name='tool_call_2',
+                    content='Tool message',
+                    tool_call_id='tool_call_2',
+                ),
+                UserPromptPart(
+                    content='User message',
+                ),
+            ]
+        ),
+        ModelResponse(
+            parts=[TextPart(content='Assistant message')],
+        ),
+    ]
+
+    result = messages_to_ag_ui(messages)
+
+    # Check structure and count
+    assert len(result) == 10
+    # Check message types and content
+    assert isinstance(result[0], SystemMessage)
+    assert result[0].content == 'System message'
+
+    assert isinstance(result[1], SystemMessage)
+    assert result[1].content == 'Developer message'
+
+    assert isinstance(result[2], UserMessage)
+    assert result[2].content == 'User message'
+
+    assert isinstance(result[3], UserMessage)
+    assert result[3].content == 'User message'
+
+    # Check Assistant message with tool calls
+    assert isinstance(result[4], AssistantMessage)
+    assert result[4].content == 'Assistant message'
+    assert result[4].tool_calls is not None  # type: ignore[union-attr]
+    assert len(result[4].tool_calls) == 3  # type: ignore[arg-type,union-attr]
+    assert result[4].tool_calls[0].id == 'pyd_ai_builtin|function|search_1'  # type: ignore[union-attr,index]
+    assert result[4].tool_calls[0].function.name == 'web_search'  # type: ignore[union-attr,index]
+    assert result[4].tool_calls[1].id == 'tool_call_1'  # type: ignore[union-attr,index]
+    assert result[4].tool_calls[2].id == 'tool_call_2'  # type: ignore[union-attr,index]
+
+    # Check builtin tool return
+    assert isinstance(result[5], ToolMessage)
+    assert result[5].tool_call_id == 'pyd_ai_builtin|function|search_1'  # type: ignore[union-attr]
+    assert result[5].content is not None
+    assert '{"results":' in result[5].content
+
+    # Check regular tool returns
+    assert isinstance(result[6], ToolMessage)
+    assert result[6].tool_call_id == 'tool_call_1'  # type: ignore[union-attr]
+    assert result[6].content is not None
+    assert result[6].content == 'Tool message'
+
+    assert isinstance(result[7], ToolMessage)
+    assert result[7].tool_call_id == 'tool_call_2'  # type: ignore[union-attr]
+    assert result[7].content == 'Tool message'
+
+    # Check final user and assistant messages
+    assert isinstance(result[8], UserMessage)
+    assert result[8].content == 'User message'
+
+    assert isinstance(result[9], AssistantMessage)
+    assert result[9].content == 'Assistant message'
 
 
 async def test_builtin_tool_call() -> None:
