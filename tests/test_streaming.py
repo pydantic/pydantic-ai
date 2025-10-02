@@ -141,6 +141,21 @@ async def test_streamed_structured_response():
         response = await result.get_output()
         assert response == snapshot(('a', 'a'))
         assert result.is_complete
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={'response': ['a', 'a']},
+                    tool_call_id='pyd_ai_tool_call_id__final_result',
+                )
+            ],
+            usage=RequestUsage(input_tokens=50),
+            model_name='test',
+            timestamp=IsDatetime(),
+            provider_name='test',
+        )
+    )
 
 
 async def test_structured_response_iter():
@@ -869,6 +884,15 @@ async def test_custom_output_type_default_str() -> None:
     async with agent.run_stream('test') as result:
         response = await result.get_output()
         assert response == snapshot('success (no tool calls)')
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='success (no tool calls)')],
+            usage=RequestUsage(input_tokens=51, output_tokens=4),
+            model_name='test',
+            timestamp=IsDatetime(),
+            provider_name='test',
+        )
+    )
 
     async with agent.run_stream('test', output_type=OutputType) as result:
         response = await result.get_output()

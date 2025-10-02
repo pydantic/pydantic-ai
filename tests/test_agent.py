@@ -79,6 +79,14 @@ def test_result_tuple():
 
     result = agent.run_sync('Hello')
     assert result.output == ('foo', 'bar')
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())],
+            usage=RequestUsage(input_tokens=51, output_tokens=7),
+            model_name='function:return_tuple:',
+            timestamp=IsDatetime(),
+        )
+    )
 
 
 class Person(BaseModel):
@@ -395,6 +403,14 @@ def test_output_tool_return_content_str_return():
 
     result = agent.run_sync('Hello')
     assert result.output == 'success (no tool calls)'
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='success (no tool calls)')],
+            usage=RequestUsage(input_tokens=51, output_tokens=4),
+            model_name='test',
+            timestamp=IsDatetime(),
+        )
+    )
 
     msg = re.escape('Cannot set output tool return content when the return type is `str`.')
     with pytest.raises(ValueError, match=msg):

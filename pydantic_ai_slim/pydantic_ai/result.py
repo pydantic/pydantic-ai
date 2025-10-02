@@ -407,7 +407,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         elif self._stream_response is not None:
             async for output in self._stream_response.stream_output(debounce_by=debounce_by):
                 yield output
-            await self._marked_completed(self._stream_response.get())
+            await self._marked_completed(self.response)
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
@@ -435,7 +435,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         elif self._stream_response is not None:
             async for text in self._stream_response.stream_text(delta=delta, debounce_by=debounce_by):
                 yield text
-            await self._marked_completed(self._stream_response.get())
+            await self._marked_completed(self.response)
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
@@ -460,15 +460,14 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             An async iterable of the structured response message and whether that is the last message.
         """
         if self._run_result is not None:
-            model_response = cast(_messages.ModelResponse, self.all_messages()[-1])
-            yield model_response, True
+            yield self.response, True
             await self._marked_completed()
         elif self._stream_response is not None:
             # if the message currently has any parts with content, yield before streaming
             async for msg in self._stream_response.stream_responses(debounce_by=debounce_by):
                 yield msg, False
 
-            msg = self._stream_response.get()
+            msg = self.response
             yield msg, True
 
             await self._marked_completed(msg)
@@ -483,8 +482,18 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             return output
         elif self._stream_response is not None:
             output = await self._stream_response.get_output()
-            await self._marked_completed(self._stream_response.get())
+            await self._marked_completed(self.response)
             return output
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
+
+    @property
+    def response(self) -> _messages.ModelResponse:
+        """Return the last response from the message history."""
+        if self._run_result is not None:
+            return self._run_result.response
+        elif self._stream_response is not None:
+            return self._stream_response.get()
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 

@@ -8,6 +8,8 @@ from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     ImageUrl,
@@ -17,12 +19,14 @@ from pydantic_ai import (
     ModelResponse,
     RequestUsage,
     TextPart,
+    ThinkingPart,
     ThinkingPartDelta,
+    ToolCallPart,
     UserPromptPart,
     VideoUrl,
 )
 
-from .conftest import IsNow, IsStr
+from .conftest import IsDatetime, IsNow, IsStr
 
 
 def test_image_url():
@@ -460,3 +464,52 @@ def test_file_part_serialization_roundtrip():
     )
     deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
     assert deserialized == messages
+
+
+def test_model_response_convenience_methods():
+    response = ModelResponse(parts=[])
+    assert response.text == snapshot(None)
+    assert response.thinking == snapshot(None)
+    assert response.files == snapshot([])
+    assert response.tool_calls == snapshot([])
+    assert response.builtin_tool_calls == snapshot([])
+
+    response = ModelResponse(
+        parts=[
+            ThinkingPart(content="Let's generate an image"),
+            ThinkingPart(content="And then, call the 'hello_world' tool"),
+            TextPart(content="I'm going to"),
+            TextPart(content=' generate an image'),
+            BuiltinToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
+            FilePart(content=BinaryImage(data=b'fake', media_type='image/jpeg')),
+            BuiltinToolReturnPart(tool_name='image_generation', content={}, tool_call_id='123'),
+            TextPart(content="I'm going to call"),
+            TextPart(content=" the 'hello_world' tool"),
+            ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123'),
+        ]
+    )
+    assert response.text == snapshot("""\
+I'm going to generate an image
+
+I'm going to call the 'hello_world' tool\
+""")
+    assert response.thinking == snapshot("""\
+Let's generate an image
+
+And then, call the 'hello_world' tool\
+""")
+    assert response.files == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
+    assert response.tool_calls == snapshot([ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123')])
+    assert response.builtin_tool_calls == snapshot(
+        [
+            (
+                BuiltinToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
+                BuiltinToolReturnPart(
+                    tool_name='image_generation',
+                    content={},
+                    tool_call_id='123',
+                    timestamp=IsDatetime(),
+                ),
+            )
+        ]
+    )
