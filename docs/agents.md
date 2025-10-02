@@ -630,12 +630,14 @@ try:
     agent.run_sync('Please call the tool twice', usage_limits=UsageLimits(tool_calls_limit=1))
 except UsageLimitExceeded as e:
     print(e)
-    #> The next tool call would exceed the tool_calls_limit of 1 (tool_calls=1)
+    """
+    With the next tool call(s), the projected amount of tool calls (2) would exceed the limit of 1.
+    """
 ```
 
 !!! note
     - Usage limits are especially relevant if you've registered many tools. Use `request_limit` to bound the number of model turns, and `tool_calls_limit` to cap the number of successful tool executions within a run.
-    - These limits are enforced at the final stage before the LLM is called. If your limits are stricter than your retry settings, the usage limit will be reached before all retries are attempted.
+    - The `tool_calls_limit` is checked before executing tool calls. If the projected total would exceed the limit, no tools from that batch are executed.
 
 #### Model (Run) Settings
 

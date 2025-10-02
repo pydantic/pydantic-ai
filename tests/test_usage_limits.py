@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     RunContext,
@@ -22,6 +23,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -254,7 +256,10 @@ async def test_tool_call_limit() -> None:
         return f'{x}-apple'
 
     with pytest.raises(
-        UsageLimitExceeded, match=re.escape('The next tool call would exceed the tool_calls_limit of 0 (tool_calls=0)')
+        UsageLimitExceeded,
+        match=re.escape(
+            'With the next tool call(s), the projected amount of tool calls (1) would exceed the limit of 0.'
+        ),
     ):
         await test_agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=0))
 
@@ -330,7 +335,7 @@ async def test_parallel_tool_calls_limit_enforced():
         model_call_count += 1
 
         if model_call_count == 1:
-            # First response: 5 parallel tool calls
+            # First response: 5 parallel tool calls (within limit)
             return ModelResponse(
                 parts=[
                     ToolCallPart('tool_a', {}, 'call_1'),
@@ -342,7 +347,7 @@ async def test_parallel_tool_calls_limit_enforced():
             )
         else:
             assert model_call_count == 2
-            # Second response: 3 parallel tool calls (should exceed limit)
+            # Second response: 3 parallel tool calls (would exceed limit of 6)
             return ModelResponse(
                 parts=[
                     ToolCallPart('tool_c', {}, 'call_6'),
@@ -372,12 +377,14 @@ async def test_parallel_tool_calls_limit_enforced():
         executed_tools.append('c')
         return 'result c'
 
-    # Run with tool call limit of 6; expecting an error once the limit is reached
+    # Run with tool call limit of 6; expecting an error when trying to execute 3 more tools
     with pytest.raises(
         UsageLimitExceeded,
-        match=r'The next tool call would exceed the tool_calls_limit of 6 \(tool_calls=(6)\)',
+        match=re.escape(
+            'With the next tool call(s), the projected amount of tool calls (8) would exceed the limit of 6.'
+        ),
     ):
         await agent.run('Use tools', usage_limits=UsageLimits(tool_calls_limit=6))
 
-    # Only 6 tool calls should have actually executed
-    assert len(executed_tools) == 6
+    # Only the first batch of 5 tools should have executed
+    assert len(executed_tools) == 5

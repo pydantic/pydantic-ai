@@ -861,27 +861,22 @@ async def process_tool_calls(  # noqa: C901
         output_final_result.append(final_result)
 
 
-def _enforce_tool_call_limits(
+def _check_tool_call_limits(
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
     usage_limits: _usage.UsageLimits | None,
-) -> tuple[list[_messages.ToolCallPart], int]:
-    """Enforce tool call limits and return limited calls and extra count."""
+) -> None:
+    """Check if executing the tool calls would exceed the limit."""
     if usage_limits is None or usage_limits.tool_calls_limit is None:
-        return tool_calls, 0
+        return
 
     current_tool_calls = tool_manager.ctx.usage.tool_calls if tool_manager.ctx is not None else 0
-    remaining_allowed = usage_limits.tool_calls_limit - current_tool_calls
+    projected_tool_calls = current_tool_calls + len(tool_calls)
 
-    if remaining_allowed <= 0:
-        usage_limits.check_before_tool_call(tool_manager.ctx.usage if tool_manager.ctx else _usage.RunUsage())
-
-    if remaining_allowed < len(tool_calls):
-        limited_tool_calls = tool_calls[: max(0, remaining_allowed)]
-        extra_calls_count = len(tool_calls) - len(limited_tool_calls)
-        return limited_tool_calls, extra_calls_count
-
-    return tool_calls, 0
+    if projected_tool_calls > usage_limits.tool_calls_limit:
+        projected_usage = deepcopy(tool_manager.ctx.usage) if tool_manager.ctx else _usage.RunUsage()
+        projected_usage.tool_calls = projected_tool_calls
+        usage_limits.check_before_tool_call(projected_usage)
 
 
 async def _call_tools(
@@ -896,6 +891,8 @@ async def _call_tools(
     tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
     user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
+
+    _check_tool_call_limits(tool_manager, tool_calls, usage_limits)
 
     for call in tool_calls:
         yield _messages.FunctionToolCallEvent(call)
@@ -930,8 +927,6 @@ async def _call_tools(
 
                 return _messages.FunctionToolResultEvent(tool_part)
 
-        executed_calls: list[_messages.ToolCallPart] = tool_calls
-
         if tool_manager.should_call_sequentially(tool_calls):
             for index, call in enumerate(tool_calls):
                 if event := await handle_call_or_result(
@@ -941,14 +936,12 @@ async def _call_tools(
                     yield event
 
         else:
-            executed_calls, extra_calls_count = _enforce_tool_call_limits(tool_manager, tool_calls, usage_limits)
-
             tasks = [
                 asyncio.create_task(
                     _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), usage_limits),
                     name=call.tool_name,
                 )
-                for call in executed_calls
+                for call in tool_calls
             ]
 
             pending = tasks
@@ -959,17 +952,13 @@ async def _call_tools(
                     if event := await handle_call_or_result(coro_or_task=task, index=index):
                         yield event
 
-            # If there were extra calls beyond the allowed limit, raise now
-            if extra_calls_count and usage_limits is not None:
-                usage_limits.check_before_tool_call(tool_manager.ctx.usage if tool_manager.ctx else _usage.RunUsage())
-
     # We append the results at the end, rather than as they are received, to retain a consistent ordering
     # This is mostly just to simplify testing
     output_parts.extend([tool_parts_by_index[k] for k in sorted(tool_parts_by_index)])
     output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
     for k in sorted(deferred_calls_by_index):
-        output_deferred_calls[deferred_calls_by_index[k]].append(executed_calls[k])
+        output_deferred_calls[deferred_calls_by_index[k]].append(tool_calls[k])
 
 
 async def _call_tool(
