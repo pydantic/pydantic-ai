@@ -14,13 +14,14 @@ from typing import Any, cast
 
 from typing_inspection.introspection import get_literal_values
 
-from . import __version__
-from ._run_context import AgentDepsT
-from .agent import AbstractAgent, Agent
-from .exceptions import UserError
-from .messages import ModelMessage, TextPart
-from .models import KnownModelName, infer_model
-from .output import OutputDataT
+from .. import __version__
+from .._run_context import AgentDepsT
+from ..agent import AbstractAgent, Agent
+from ..exceptions import UserError
+from ..messages import ModelMessage, TextPart
+from ..models import KnownModelName, infer_model
+from ..output import OutputDataT
+from .tui import CLAIApp
 
 try:
     import argcomplete
@@ -102,7 +103,7 @@ def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
     sys.exit(cli(prog_name=prog_name))
 
 
-def cli(  # noqa: C901
+def cli(
     args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', default_model: str = 'openai:gpt-4.1'
 ) -> int:
     """Run the CLI and return the exit code for the process."""
@@ -149,18 +150,19 @@ Special prompts:
         default='dark',
     )
     parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
+    parser.add_argument('--tui', action='store_true', help='Launch clai as a TUI application.')
     parser.add_argument('--version', action='store_true', help='Show version and exit')
 
     argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
 
     console = Console()
-    name_version = f'[green]{prog_name} - Pydantic AI CLI v{__version__}[/green]'
+    name_version = f'{prog_name} - Pydantic AI CLI v{__version__}'
     if args.version:
-        console.print(name_version, highlight=False)
+        console.print(wrap_color(name_version, 'green'), highlight=False)
         return 0
     if args.list_models:
-        console.print(f'{name_version}\n\n[green]Available models:[/green]')
+        console.print(wrap_color(f'{name_version}\n\nAvailable models:', 'green'))
         for model in qualified_model_names:
             console.print(f'  {model}', highlight=False)
         return 0
@@ -185,19 +187,22 @@ Special prompts:
         try:
             agent.model = infer_model(args.model or default_model)
         except UserError as e:
-            console.print(f'Error initializing [magenta]{args.model}[/magenta]:\n[red]{e}[/red]')
+            console.print(f'Error initializing {wrap_color(args.model, "magenta")}:\n{wrap_color(e, "red")}')
             return 1
 
     model_name = agent.model if isinstance(agent.model, str) else f'{agent.model.system}:{agent.model.model_name}'
-    if args.agent and model_arg_set:
-        console.print(
-            f'{name_version} using custom agent [magenta]{args.agent}[/magenta] with [magenta]{model_name}[/magenta]',
-            highlight=False,
+
+    if args.tui:
+        app = CLAIApp(
+            agent,
+            PYDANTIC_AI_HOME / PROMPT_HISTORY_FILENAME,
+            prompt=args.prompt,
+            title=title(name_version, args.agent, model_name, tui=args.tui),
         )
-    elif args.agent:
-        console.print(f'{name_version} using custom agent [magenta]{args.agent}[/magenta]', highlight=False)
-    else:
-        console.print(f'{name_version} with [magenta]{model_name}[/magenta]', highlight=False)
+        app.run()
+        return 0
+
+    console.print(title(name_version, args.agent, model_name, tui=args.tui), highlight=False)
 
     stream = not args.no_stream
     if args.code_theme == 'light':
@@ -366,3 +371,24 @@ def handle_slash_command(
     else:
         console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
     return None, multiline
+
+
+def wrap_color(obj: Any, color: str) -> str:
+    return f'[{color}]{obj}[/{color}]'
+
+
+def title(name_version: str, agent: str | None = None, model: str | None = None, tui: bool = False) -> str:
+    if tui:
+        if agent and model:
+            return f'{name_version} using custom agent **{agent}** with `{model}`'
+        elif agent:
+            return f'{name_version} using custom agent **{agent}**'
+        else:
+            return f'{name_version} with `{model}`'
+    else:
+        if agent and model:
+            return f'{wrap_color(name_version, "green")} using custom agent {wrap_color(agent, "magenta")} with {wrap_color(model, "magenta")}'
+        elif agent:
+            return f'{wrap_color(name_version, "green")} using custom agent {wrap_color(agent, "magenta")}'
+        else:
+            return f'{wrap_color(name_version, "green")} with {wrap_color(model, "magenta")}'

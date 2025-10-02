@@ -1,0 +1,77 @@
+Conversation {
+    height: auto;
+    max-height: 1fr;
+
+    #contents {
+        layout: stream;
+        height: 1fr;
+    }
+
+    #contents > * {
+        margin-bottom: 1;
+    }
+
+    Prompt {
+        height: auto;
+        padding: 0 0 0 1;
+        #prompt {
+            padding-left: 0;
+            color: $text-primary;
+            text-style: bold;
+        }
+        Input {
+            background: transparent;
+            padding: 0 1;
+            border: none;
+            height: 1;
+        }
+        TextArea {
+            background: transparent;
+            height: auto;
+            min-height: 3;
+        }
+    }
+
+    UserText {
+        background: black 10%;
+        padding: 1 0;
+        border-left: wide $success;
+        #prompt {
+            color: $text-muted;
+        }
+        #message {
+            color: $text-muted;
+            padding: 0 1;
+        }
+    }
+
+    Response {
+        padding: 0 1 0 1;
+        & > MarkdownBlock {
+            padding: 0;
+            &:last-child {
+                margin-bottom:0;
+            }
+        }
+    }
+
+    ErrorMessage {
+        background: $error 10%;
+        color: $text-error;
+    }
+}
+
+Footer {
+    background: black 10%;
+    .footer-key--key {
+        color: $text;
+        background: transparent;
+        text-style: bold;
+        padding: 0 1;
+    }
+    .footer-key--description {
+        padding: 0 1 0 0;
+        color: $text-muted;
+        background: $footer-description-background;
+    }
+}
