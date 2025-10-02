@@ -5,7 +5,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any, cast, overload
 
 from prefect import flow, get_run_logger, task
 from prefect.context import FlowRunContext
@@ -23,7 +23,8 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
-from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, RunOutputDataT, WrapperAgent
+from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
+from pydantic_ai.agent.abstract import RunOutputDataT
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -196,7 +197,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         contextvars_state = {}
         for key, value in list(wrapped_state.items()):
             if isinstance(value, ContextVar):
-                contextvars_state[key] = self._serialize_contextvar(value)
+                contextvars_state[key] = self._serialize_contextvar(cast(ContextVar[Any], value))
                 wrapped_state.pop(key)
 
         return {'state': wrapped_state, 'contextvars': contextvars_state}
@@ -213,7 +214,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         # Reconstruct output schema if output_type was present
         if '_output_type_original' in wrapped_state:
             from pydantic_ai import _output
-            from pydantic_ai.agent import _AgentFunctionToolset
+            from pydantic_ai.agent import _AgentFunctionToolset  # type: ignore[attr-defined]
 
             output_type = wrapped_state.pop('_output_type_original')
             # Get the default output mode from the model
@@ -629,20 +630,22 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             try:
                 with self._prefect_overrides():
                     # Using `run_coro_as_sync` from Prefect with async `run` to avoid event loop conflicts.
-                    result = run_coro_as_sync(super(PrefectAgent, self).run(
-                        user_prompt,
-                        output_type=output_type,
-                        message_history=message_history,
-                        deferred_tool_results=deferred_tool_results,
-                        model=model,
-                        deps=deps,
-                        model_settings=model_settings,
-                        usage_limits=usage_limits,
-                        usage=usage,
-                        infer_name=infer_name,
-                        toolsets=toolsets,
-                        event_stream_handler=event_stream_handler,
-                    ))
+                    result = run_coro_as_sync(
+                        super(PrefectAgent, self).run(
+                            user_prompt,
+                            output_type=output_type,
+                            message_history=message_history,
+                            deferred_tool_results=deferred_tool_results,
+                            model=model,
+                            deps=deps,
+                            model_settings=model_settings,
+                            usage_limits=usage_limits,
+                            usage=usage,
+                            infer_name=infer_name,
+                            toolsets=toolsets,
+                            event_stream_handler=event_stream_handler,
+                        )
+                    )
                     logger.info(
                         f'Sync agent run completed. Requests: {result.usage().requests}, Tool calls: {result.usage().tool_calls}'
                     )
@@ -973,6 +976,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         ```
 
         Args:
+            name: Name for the created deployment.
             interval: Schedule interval in seconds, or as a timedelta.
             cron: Cron schedule string (e.g., '0 9 * * *' for daily at 9am).
             rrule: iCalendar RRule schedule string.
@@ -1003,7 +1007,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         )
 
         @flow(name=f'run-{slugify(self._name)}')
-        async def served_run(user_prompt: str):
+        async def served_run(user_prompt: str, *, deps: AgentDepsT | None = None):
             logger = get_run_logger()
             prompt_str = str(user_prompt)
             logger.info(f'Starting agent run with prompt: {prompt_str}')
@@ -1014,6 +1018,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 try:
                     result = await super(WrapperAgent, self).run(
                         user_prompt,
+                        deps=deps,  # type: ignore[arg-type]
                     )
                     logger.info(
                         f'Agent run completed. Requests: {result.usage().requests}, Tool calls: {result.usage().tool_calls}'
@@ -1051,9 +1056,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 f' "{served_run.name}/{deployment_name}" -p user_prompt="your prompt"\n[/]'
             )
             if prefect_ui_url := get_current_settings().ui_url:
-                help_message_bottom += (
-                    f'\nYou can also trigger your deployments via the Prefect UI: [blue]{prefect_ui_url}/deployments[/]\n'
-                )
+                help_message_bottom += f'\nYou can also trigger your deployments via the Prefect UI: [blue]{prefect_ui_url}/deployments[/]\n'
 
             console = Console()
             console.print(Group(help_message_top, help_message_bottom), soft_wrap=True)

@@ -85,6 +85,7 @@ class PrefectModel(WrapperModel):
         # Get model name for task description
         model_name = getattr(self.wrapped, 'model_name', 'unknown')
 
+        @task(name=f'Model Request: {model_name}', **self.task_config)
         async def wrapped_request(
             messages: list[ModelMessage],
             model_settings: ModelSettings | None,
@@ -96,11 +97,7 @@ class PrefectModel(WrapperModel):
             logger.info(f'Model request completed. Tokens: {response.usage.total_tokens}')
             return response
 
-        return await task(
-            wrapped_request,
-            name=f'Model Request: {model_name}',
-            **self.task_config,
-        )(messages, model_settings, model_request_parameters)
+        return await wrapped_request(messages, model_settings, model_request_parameters)
 
     @asynccontextmanager
     async def request_stream(

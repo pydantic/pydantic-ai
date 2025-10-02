@@ -36,5 +36,9 @@ class TaskConfig(TypedDict, total=False):
 
 
 default_task_config = TaskConfig(
-    retries=0, retry_delay_seconds=1.0, persist_result=True, log_prints=False, cache_policy=DEFAULT_PYDANTIC_AI_CACHE_POLICY
+    retries=0,
+    retry_delay_seconds=1.0,
+    persist_result=True,
+    log_prints=False,
+    cache_policy=DEFAULT_PYDANTIC_AI_CACHE_POLICY,
 )

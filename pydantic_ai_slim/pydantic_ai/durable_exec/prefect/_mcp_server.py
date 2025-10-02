@@ -72,7 +72,7 @@ class PrefectMCPServer(WrapperToolset[AgentDepsT], ABC):
 
             # Unwrap to get the original RunContext
             # Note: We don't include 'tool' parameter as it contains non-serializable objects
-            unwrapped_ctx = serializable_ctx.unwrap()
+            unwrapped_ctx: RunContext[AgentDepsT] = serializable_ctx.unwrap()
             result = await super(PrefectMCPServer, self).call_tool(tool_name, args, unwrapped_ctx, tool)
             logger.info(f'MCP tool call completed: {tool_name}')
             return result

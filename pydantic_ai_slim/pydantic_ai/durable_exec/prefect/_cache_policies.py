@@ -1,24 +1,38 @@
 from dataclasses import fields, is_dataclass
-from typing import Any
+from typing import Any, TypeGuard
 
 from prefect.cache_policies import INPUTS, RUN_ID, TASK_SOURCE, CachePolicy
 from prefect.context import TaskRunContext
 
 
-def _strip_timestamps(obj: Any) -> Any:
+def _is_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
+    return isinstance(obj, dict)
+
+
+def _is_list(obj: Any) -> TypeGuard[list[Any]]:
+    return isinstance(obj, list)
+
+
+def _is_tuple(obj: Any) -> TypeGuard[tuple[Any, ...]]:
+    return isinstance(obj, tuple)
+
+
+def _strip_timestamps(
+    obj: Any | dict[str, Any] | list[Any] | tuple[Any, ...],
+) -> Any:
     """Recursively convert dataclasses to dicts, excluding timestamp fields."""
     if is_dataclass(obj) and not isinstance(obj, type):
-        result = {}
+        result: dict[str, Any] = {}
         for f in fields(obj):
             if f.name != 'timestamp':
                 value = getattr(obj, f.name)
                 result[f.name] = _strip_timestamps(value)
         return result
-    elif isinstance(obj, dict):
+    elif _is_dict(obj):
         return {k: _strip_timestamps(v) for k, v in obj.items() if k != 'timestamp'}
-    elif isinstance(obj, list):
+    elif _is_list(obj):
         return [_strip_timestamps(item) for item in obj]
-    elif isinstance(obj, tuple):
+    elif _is_tuple(obj):
         return tuple(_strip_timestamps(item) for item in obj)
     return obj
 

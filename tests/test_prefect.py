@@ -494,7 +494,7 @@ async def test_prefect_agent_serialization(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv('OPENAI_API_KEY', 'mock-api-key')
 
     # Test serialization
-    pickled = cloudpickle.dumps(simple_prefect_agent)
+    pickled = cloudpickle.dumps(simple_prefect_agent)  # pyright: ignore[reportUnknownMemberType] missing type stubs
     assert len(pickled) > 0
 
     # Test deserialization

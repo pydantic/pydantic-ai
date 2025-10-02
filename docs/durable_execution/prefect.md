@@ -32,7 +32,7 @@ Prefect uses client-side task orchestration by default, with optional server con
 |                                                      |
 +------------------------------------------------------+
                         |
-                        v 
+                        v
 +------------------------------------------------------+
 |                  Prefect Server/Cloud                |
 |      (Monitoring, Scheduling, Orchestration)         |

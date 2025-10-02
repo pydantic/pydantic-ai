@@ -75,7 +75,7 @@ class PrefectFunctionToolset(WrapperToolset[AgentDepsT]):
             logger.info(f'Calling tool: {tool_name}')
 
             # Unwrap to get the original RunContext
-            unwrapped_ctx = serializable_ctx.unwrap()
+            unwrapped_ctx: RunContext[AgentDepsT] = serializable_ctx.unwrap()
 
             # Get the tool (need to fetch it again inside the task)
             try:
