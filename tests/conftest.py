@@ -23,8 +23,7 @@ from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
-from pydantic_ai import Agent
-from pydantic_ai.messages import BinaryContent
+from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.models import Model, cached_async_http_client
 
 __all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'IsInstance', 'TestEnv', 'ClientWithHandler', 'try_import'
@@ -337,6 +336,13 @@ def video_content(assets_path: Path) -> BinaryContent:
 def document_content(assets_path: Path) -> BinaryContent:
     pdf_bytes = assets_path.joinpath('dummy.pdf').read_bytes()
     return BinaryContent(data=pdf_bytes, media_type='application/pdf')
+
+
+@pytest.fixture(scope='session')
+def text_document_content(assets_path: Path) -> BinaryContent:
+    content = assets_path.joinpath('dummy.txt').read_text()
+    bin_content = BinaryContent(data=content.encode(), media_type='text/plain')
+    return bin_content
 
 
 @pytest.fixture(scope='session')

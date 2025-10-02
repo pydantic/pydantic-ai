@@ -11,7 +11,6 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelHTTPError
-from ..settings import merge_model_settings
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 if TYPE_CHECKING:
@@ -78,10 +77,8 @@ class FallbackModel(Model):
         exceptions: list[Exception] = []
 
         for model in self.models:
-            customized_model_request_parameters = model.customize_request_parameters(model_request_parameters)
-            merged_settings = merge_model_settings(model.settings, model_settings)
             try:
-                response = await model.request(messages, merged_settings, customized_model_request_parameters)
+                response = await model.request(messages, model_settings, model_request_parameters)
             except Exception as exc:
                 if self._fallback_on(exc):
                     exceptions.append(exc)
@@ -105,14 +102,10 @@ class FallbackModel(Model):
         exceptions: list[Exception] = []
 
         for model in self.models:
-            customized_model_request_parameters = model.customize_request_parameters(model_request_parameters)
-            merged_settings = merge_model_settings(model.settings, model_settings)
             async with AsyncExitStack() as stack:
                 try:
                     response = await stack.enter_async_context(
-                        model.request_stream(
-                            messages, merged_settings, customized_model_request_parameters, run_context
-                        )
+                        model.request_stream(messages, model_settings, model_request_parameters, run_context)
                     )
                 except Exception as exc:
                     if self._fallback_on(exc):

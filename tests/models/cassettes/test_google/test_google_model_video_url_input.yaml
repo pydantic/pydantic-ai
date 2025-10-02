@@ -27,23 +27,24 @@ interactions:
         gist.github.com/assets-cdn/worker/; connect-src ''self'' uploads.github.com www.githubstatus.com collector.github.com
         raw.githubusercontent.com api.github.com github-cloud.s3.amazonaws.com github-production-repository-file-5c1aeb.s3.amazonaws.com
         github-production-upload-manifest-file-7fdce7.s3.amazonaws.com github-production-user-asset-6210df.s3.amazonaws.com
-        *.rel.tunnels.api.visualstudio.com wss://*.rel.tunnels.api.visualstudio.com objects-origin.githubusercontent.com copilot-proxy.githubusercontent.com
-        proxy.individual.githubcopilot.com proxy.business.githubcopilot.com proxy.enterprise.githubcopilot.com *.actions.githubusercontent.com
-        wss://*.actions.githubusercontent.com productionresultssa0.blob.core.windows.net/ productionresultssa1.blob.core.windows.net/
-        productionresultssa2.blob.core.windows.net/ productionresultssa3.blob.core.windows.net/ productionresultssa4.blob.core.windows.net/
-        productionresultssa5.blob.core.windows.net/ productionresultssa6.blob.core.windows.net/ productionresultssa7.blob.core.windows.net/
-        productionresultssa8.blob.core.windows.net/ productionresultssa9.blob.core.windows.net/ productionresultssa10.blob.core.windows.net/
-        productionresultssa11.blob.core.windows.net/ productionresultssa12.blob.core.windows.net/ productionresultssa13.blob.core.windows.net/
-        productionresultssa14.blob.core.windows.net/ productionresultssa15.blob.core.windows.net/ productionresultssa16.blob.core.windows.net/
-        productionresultssa17.blob.core.windows.net/ productionresultssa18.blob.core.windows.net/ productionresultssa19.blob.core.windows.net/
-        github-production-repository-image-32fea6.s3.amazonaws.com github-production-release-asset-2e65be.s3.amazonaws.com
-        insights.github.com wss://alive.github.com api.githubcopilot.com api.individual.githubcopilot.com api.business.githubcopilot.com
-        api.enterprise.githubcopilot.com; font-src github.githubassets.com; form-action ''self'' github.com gist.github.com
-        copilot-workspace.githubnext.com objects-origin.githubusercontent.com; frame-ancestors ''none''; frame-src viewscreen.githubusercontent.com
-        notebooks.githubusercontent.com; img-src ''self'' data: blob: github.githubassets.com media.githubusercontent.com
-        camo.githubusercontent.com identicons.github.com avatars.githubusercontent.com private-avatars.githubusercontent.com
-        github-cloud.s3.amazonaws.com objects.githubusercontent.com release-assets.githubusercontent.com secured-user-images.githubusercontent.com/
-        user-images.githubusercontent.com/ private-user-images.githubusercontent.com opengraph.githubassets.com copilotprodattachments.blob.core.windows.net/github-production-copilot-attachments/
+        *.rel.tunnels.api.visualstudio.com wss://*.rel.tunnels.api.visualstudio.com github.githubassets.com objects-origin.githubusercontent.com
+        copilot-proxy.githubusercontent.com proxy.individual.githubcopilot.com proxy.business.githubcopilot.com proxy.enterprise.githubcopilot.com
+        *.actions.githubusercontent.com wss://*.actions.githubusercontent.com productionresultssa0.blob.core.windows.net/
+        productionresultssa1.blob.core.windows.net/ productionresultssa2.blob.core.windows.net/ productionresultssa3.blob.core.windows.net/
+        productionresultssa4.blob.core.windows.net/ productionresultssa5.blob.core.windows.net/ productionresultssa6.blob.core.windows.net/
+        productionresultssa7.blob.core.windows.net/ productionresultssa8.blob.core.windows.net/ productionresultssa9.blob.core.windows.net/
+        productionresultssa10.blob.core.windows.net/ productionresultssa11.blob.core.windows.net/ productionresultssa12.blob.core.windows.net/
+        productionresultssa13.blob.core.windows.net/ productionresultssa14.blob.core.windows.net/ productionresultssa15.blob.core.windows.net/
+        productionresultssa16.blob.core.windows.net/ productionresultssa17.blob.core.windows.net/ productionresultssa18.blob.core.windows.net/
+        productionresultssa19.blob.core.windows.net/ github-production-repository-image-32fea6.s3.amazonaws.com github-production-release-asset-2e65be.s3.amazonaws.com
+        insights.github.com wss://alive.github.com wss://alive-staging.github.com api.githubcopilot.com api.individual.githubcopilot.com
+        api.business.githubcopilot.com api.enterprise.githubcopilot.com; font-src github.githubassets.com; form-action ''self''
+        github.com gist.github.com copilot-workspace.githubnext.com objects-origin.githubusercontent.com; frame-ancestors
+        ''none''; frame-src viewscreen.githubusercontent.com notebooks.githubusercontent.com; img-src ''self'' data: blob:
+        github.githubassets.com media.githubusercontent.com camo.githubusercontent.com identicons.github.com avatars.githubusercontent.com
+        private-avatars.githubusercontent.com github-cloud.s3.amazonaws.com objects.githubusercontent.com release-assets.githubusercontent.com
+        secured-user-images.githubusercontent.com/ user-images.githubusercontent.com/ private-user-images.githubusercontent.com
+        opengraph.githubassets.com marketplace-screenshots.githubusercontent.com/ copilotprodattachments.blob.core.windows.net/github-production-copilot-attachments/
         github-production-user-asset-6210df.s3.amazonaws.com customer-stories-feed.github.com spotlights-feed.github.com objects-origin.githubusercontent.com
         *.githubusercontent.com; manifest-src ''self''; media-src github.com user-images.githubusercontent.com/ secured-user-images.githubusercontent.com/
         private-user-images.githubusercontent.com github-production-user-asset-6210df.s3.amazonaws.com gist.github.com; script-src
@@ -11091,7 +11092,7 @@ interactions:
       etag:
       - W/"0e8fc2491b5d905053d769cebf41efa65670fdce574bc3d0a132431e025608d7"
       expires:
-      - Fri, 27 Jun 2025 08:53:30 GMT
+      - Fri, 19 Sep 2025 16:47:21 GMT
       source-age:
       - '0'
       strict-transport-security:
@@ -11135,11 +11136,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1068'
+      - '1381'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1439
+      - gfet4t7; dur=2356
       transfer-encoding:
       - chunked
       vary:
@@ -11148,33 +11149,32 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.7620539724090953
+      - avgLogprobs: -0.8202069508943627
         content:
           parts:
-          - text: |-
-              Okay, based on the image, here's what I can infer:
-
-              *   **A camera monitor is mounted on top of a camera.**
-              *   **The monitor's screen is on, displaying a view of the rocky mountains.**
-              *   **This setting suggests a professional video shoot.**
-
-              If you'd like a more detailed explanation, please provide additional information about the video.
+          - text: "Certainly! Based on the image you sent, it appears to be a setup for filming or photography. \n\nHere's
+              what I can observe:\n\n*   **Camera Monitor:** There is a monitor mounted on a tripod, displaying a shot of
+              a canyon or mountain landscape.\n*   **Camera/Recording Device:** Below the monitor, there is a camera or some
+              other kind of recording device.\n*   **Landscape Backdrop:** In the background, there is a similar-looking landscape
+              to what's being displayed on the screen.\n\nIn summary, it looks like the image shows a camera setup, perhaps
+              in the process of filming, with a monitor to review the footage."
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: 31peaJ-RIOrIx_APoM6e2A4
+      responseId: 7ofNaJWHAbCtmtkPkoSwwQU
       usageMetadata:
-        candidatesTokenCount: 81
+        candidatesTokenCount: 139
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 81
-        promptTokenCount: 270
+          tokenCount: 139
+        promptTokenCount: 268
         promptTokensDetails:
+        - modality: VIDEO
+          tokenCount: 258
         - modality: TEXT
           tokenCount: 10
-        - modality: VIDEO
-          tokenCount: 260
-        totalTokenCount: 351
+        - modality: AUDIO
+        totalTokenCount: 407
     status:
       code: 200
       message: OK

@@ -10,4 +10,6 @@ def harmony_model_profile(model_name: str) -> ModelProfile | None:
     See <https://cookbook.openai.com/articles/openai-harmony> for more details.
     """
     profile = openai_model_profile(model_name)
-    return OpenAIModelProfile(openai_supports_tool_choice_required=False).update(profile)
+    return OpenAIModelProfile(
+        openai_supports_tool_choice_required=False, ignore_streamed_leading_whitespace=True
+    ).update(profile)

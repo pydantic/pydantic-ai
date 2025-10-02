@@ -16,6 +16,7 @@ from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
@@ -187,9 +188,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 messages = ctx_messages.messages
                 ctx_messages.used = True
 
-        message_history = _clean_message_history(ctx.state.message_history)
-        # Add message history to the `capture_run_messages` list, which will be empty at this point
-        messages.extend(message_history)
+        # Replace the `capture_run_messages` list with the message history
+        messages[:] = _clean_message_history(ctx.state.message_history)
         # Use the `capture_run_messages` list as the message history so that new messages are added to it
         ctx.state.message_history = messages
         ctx.deps.new_message_index = len(messages)
@@ -456,7 +456,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
-        message_history = await _process_message_history(ctx.state, ctx.deps.history_processors, run_context)
+        original_history = ctx.state.message_history[:]
+        message_history = await _process_message_history(original_history, ctx.deps.history_processors, run_context)
+        # Never merge the new `ModelRequest` with the one preceding it, to keep `new_messages()` from accidentally including part of the existing message history
+        message_history = [*_clean_message_history(message_history[:-1]), message_history[-1]]
+        # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
+        ctx.state.message_history[:] = message_history
+        # Update the new message index to ensure `result.new_messages()` returns the correct messages
+        ctx.deps.new_message_index -= len(original_history) - len(message_history)
+
+        # Do one more cleaning pass to merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
+        # but don't store it in the message history on state.
+        # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
         message_history = _clean_message_history(message_history)
 
         model_request_parameters = await _prepare_request_parameters(ctx)
@@ -535,23 +546,26 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             # Ensure that the stream is only run once
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
-                texts: list[str] = []
+                text = ''
                 tool_calls: list[_messages.ToolCallPart] = []
-                thinking_parts: list[_messages.ThinkingPart] = []
+                invisible_parts: bool = False
 
                 for part in self.model_response.parts:
                     if isinstance(part, _messages.TextPart):
-                        # ignore empty content for text parts, see #437
-                        if part.content:
-                            texts.append(part.content)
+                        text += part.content
                     elif isinstance(part, _messages.ToolCallPart):
                         tool_calls.append(part)
                     elif isinstance(part, _messages.BuiltinToolCallPart):
-                        yield _messages.BuiltinToolCallEvent(part)
+                        # Text parts before a built-in tool call are essentially thoughts,
+                        # not part of the final result output, so we reset the accumulated text
+                        text = ''
+                        invisible_parts = True
+                        yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.BuiltinToolReturnPart):
-                        yield _messages.BuiltinToolResultEvent(part)
+                        invisible_parts = True
+                        yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.ThinkingPart):
-                        thinking_parts.append(part)
+                        invisible_parts = True
                     else:
                         assert_never(part)
 
@@ -559,36 +573,51 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 # In the future, we'd consider making this configurable at the agent or run level.
                 # This accounts for cases like anthropic returns that might contain a text response
                 # and a tool call response, where the text response just indicates the tool call will happen.
-                if tool_calls:
-                    async for event in self._handle_tool_calls(ctx, tool_calls):
-                        yield event
-                elif texts:
-                    # No events are emitted during the handling of text responses, so we don't need to yield anything
-                    self._next_node = await self._handle_text_response(ctx, texts)
-                elif thinking_parts:
-                    # handle thinking-only responses (responses that contain only ThinkingPart instances)
-                    # this can happen with models that support thinking mode when they don't provide
-                    # actionable output alongside their thinking content.
-                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
-                        _messages.ModelRequest(
-                            parts=[_messages.RetryPromptPart('Responses without text or tool calls are not permitted.')]
+                try:
+                    if tool_calls:
+                        async for event in self._handle_tool_calls(ctx, tool_calls):
+                            yield event
+                    elif text:
+                        # No events are emitted during the handling of text responses, so we don't need to yield anything
+                        self._next_node = await self._handle_text_response(ctx, text)
+                    elif invisible_parts:
+                        # handle responses with only thinking or built-in tool parts.
+                        # this can happen with models that support thinking mode when they don't provide
+                        # actionable output alongside their thinking content. so we tell the model to try again.
+                        m = _messages.RetryPromptPart(
+                            content='Responses without text or tool calls are not permitted.',
                         )
-                    )
-                else:
-                    # we got an empty response with no tool calls, text, or thinking
-                    # this sometimes happens with anthropic (and perhaps other models)
-                    # when the model has already returned text along side tool calls
-                    # in this scenario, if text responses are allowed, we return text from the most recent model
-                    # response, if any
-                    if isinstance(ctx.deps.output_schema, _output.TextOutputSchema):
-                        for message in reversed(ctx.state.message_history):
-                            if isinstance(message, _messages.ModelResponse):
-                                last_texts = [p.content for p in message.parts if isinstance(p, _messages.TextPart)]
-                                if last_texts:
-                                    self._next_node = await self._handle_text_response(ctx, last_texts)
-                                    return
+                        raise ToolRetryError(m)
+                    else:
+                        # we got an empty response with no tool calls, text, thinking, or built-in tool calls.
+                        # this sometimes happens with anthropic (and perhaps other models)
+                        # when the model has already returned text along side tool calls
+                        # in this scenario, if text responses are allowed, we return text from the most recent model
+                        # response, if any
+                        if isinstance(ctx.deps.output_schema, _output.TextOutputSchema):
+                            for message in reversed(ctx.state.message_history):
+                                if isinstance(message, _messages.ModelResponse):
+                                    text = ''
+                                    for part in message.parts:
+                                        if isinstance(part, _messages.TextPart):
+                                            text += part.content
+                                        elif isinstance(part, _messages.BuiltinToolCallPart):
+                                            # Text parts before a built-in tool call are essentially thoughts,
+                                            # not part of the final result output, so we reset the accumulated text
+                                            text = ''  # pragma: no cover
+                                    if text:
+                                        self._next_node = await self._handle_text_response(ctx, text)
+                                        return
 
-                    raise exceptions.UnexpectedModelBehavior('Received empty model response')
+                        # Go back to the model request node with an empty request, which means we'll essentially
+                        # resubmit the most recent request that resulted in an empty response,
+                        # as the empty response and request will not create any items in the API payload,
+                        # in the hope the model will return a non-empty response this time.
+                        ctx.state.increment_retries(ctx.deps.max_result_retries)
+                        self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[]))
+                except ToolRetryError as e:
+                    ctx.state.increment_retries(ctx.deps.max_result_retries, e)
+                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
             self._events_iterator = _run_stream()
 
@@ -645,28 +674,22 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     async def _handle_text_response(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        texts: list[str],
+        text: str,
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         output_schema = ctx.deps.output_schema
+        run_context = build_run_context(ctx)
 
-        text = '\n\n'.join(texts)
-        try:
-            run_context = build_run_context(ctx)
-            if isinstance(output_schema, _output.TextOutputSchema):
-                result_data = await output_schema.process(text, run_context)
-            else:
-                m = _messages.RetryPromptPart(
-                    content='Plain text responses are not permitted, please include your response in a tool call',
-                )
-                raise ToolRetryError(m)
-
-            for validator in ctx.deps.output_validators:
-                result_data = await validator.validate(result_data, run_context)
-        except ToolRetryError as e:
-            ctx.state.increment_retries(ctx.deps.max_result_retries, e)
-            return ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
+        if isinstance(output_schema, _output.TextOutputSchema):
+            result_data = await output_schema.process(text, run_context)
         else:
-            return self._handle_final_result(ctx, result.FinalResult(result_data), [])
+            m = _messages.RetryPromptPart(
+                content='Plain text responses are not permitted, please include your response in a tool call',
+            )
+            raise ToolRetryError(m)
+
+        for validator in ctx.deps.output_validators:
+            result_data = await validator.validate(result_data, run_context)
+        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
 
     __repr__ = dataclasses_no_defaults_repr
 
@@ -682,6 +705,9 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         tracer=ctx.deps.tracer,
         trace_include_content=ctx.deps.instrumentation_settings is not None
         and ctx.deps.instrumentation_settings.include_content,
+        instrumentation_version=ctx.deps.instrumentation_settings.version
+        if ctx.deps.instrumentation_settings
+        else DEFAULT_INSTRUMENTATION_VERSION,
         run_step=ctx.state.run_step,
         tool_call_approved=ctx.state.run_step == 0,
     )
@@ -1087,12 +1113,11 @@ def build_agent_graph(
 
 
 async def _process_message_history(
-    state: GraphAgentState,
+    messages: list[_messages.ModelMessage],
     processors: Sequence[HistoryProcessor[DepsT]],
     run_context: RunContext[DepsT],
 ) -> list[_messages.ModelMessage]:
     """Process message history through a sequence of processors."""
-    messages = state.message_history
     for processor in processors:
         takes_ctx = is_takes_ctx(processor)
 
@@ -1110,8 +1135,12 @@ async def _process_message_history(
                 sync_processor = cast(_HistoryProcessorSync, processor)
                 messages = await run_in_executor(sync_processor, messages)
 
-    # Replaces the message history in the state with the processed messages
-    state.message_history = messages
+    if len(messages) == 0:
+        raise exceptions.UserError('Processed history cannot be empty.')
+
+    if not isinstance(messages[-1], _messages.ModelRequest):
+        raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
+
     return messages
 
 

@@ -98,6 +98,7 @@ class _DatasetModel(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forb
 
     # $schema is included to avoid validation fails from the `$schema` key, see `_add_json_schema` below for context
     json_schema_path: str | None = Field(default=None, alias='$schema')
+    name: str | None = None
     cases: list[_CaseModel[InputsT, OutputT, MetadataT]]
     evaluators: list[EvaluatorSpec] = Field(default_factory=list)
 
@@ -218,6 +219,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     ```
     """
 
+    name: str | None = None
+    """Optional name of the dataset."""
     cases: list[Case[InputsT, OutputT, MetadataT]]
     """List of test cases in the dataset."""
     evaluators: list[Evaluator[InputsT, OutputT, MetadataT]] = []
@@ -226,12 +229,14 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     def __init__(
         self,
         *,
+        name: str | None = None,
         cases: Sequence[Case[InputsT, OutputT, MetadataT]],
         evaluators: Sequence[Evaluator[InputsT, OutputT, MetadataT]] = (),
     ):
         """Initialize a new dataset with test cases and optional evaluators.
 
         Args:
+            name: Optional name for the dataset.
             cases: Sequence of test cases to include in the dataset.
             evaluators: Optional sequence of evaluators to apply to all cases in the dataset.
         """
@@ -244,10 +249,12 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             case_names.add(case.name)
 
         super().__init__(
+            name=name,
             cases=cases,
             evaluators=list(evaluators),
         )
 
+    # TODO in v2: Make everything not required keyword-only
     async def evaluate(
         self,
         task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
@@ -256,6 +263,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         progress: bool = True,
         retry_task: RetryConfig | None = None,
         retry_evaluators: RetryConfig | None = None,
+        *,
+        task_name: str | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -265,28 +274,38 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         Args:
             task: The task to evaluate. This should be a callable that takes the inputs of the case
                 and returns the output.
-            name: The name of the task being evaluated, this is used to identify the task in the report.
-                If omitted, the name of the task function will be used.
+            name: The name of the experiment being run, this is used to identify the experiment in the report.
+                If omitted, the task_name will be used; if that is not specified, the name of the task function is used.
             max_concurrency: The maximum number of concurrent evaluations of the task to allow.
                 If None, all cases will be evaluated concurrently.
             progress: Whether to show a progress bar for the evaluation. Defaults to `True`.
             retry_task: Optional retry configuration for the task execution.
             retry_evaluators: Optional retry configuration for evaluator execution.
+            task_name: Optional override to the name of the task being executed, otherwise the name of the task
+                function will be used.
 
         Returns:
             A report containing the results of the evaluation.
         """
-        name = name or get_unwrapped_function_name(task)
+        task_name = task_name or get_unwrapped_function_name(task)
+        name = name or task_name
         total_cases = len(self.cases)
         progress_bar = Progress() if progress else None
 
         limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else AsyncExitStack()
 
         with (
-            logfire_span('evaluate {name}', name=name, n_cases=len(self.cases)) as eval_span,
+            logfire_span(
+                'evaluate {name}',
+                name=name,
+                task_name=task_name,
+                dataset_name=self.name,
+                n_cases=len(self.cases),
+                **{'gen_ai.operation.name': 'experiment'},  # pyright: ignore[reportArgumentType]
+            ) as eval_span,
             progress_bar or nullcontext(),
         ):
-            task_id = progress_bar.add_task(f'Evaluating {name}', total=total_cases) if progress_bar else None
+            task_id = progress_bar.add_task(f'Evaluating {task_name}', total=total_cases) if progress_bar else None
 
             async def _handle_case(case: Case[InputsT, OutputT, MetadataT], report_case_name: str):
                 async with limiter:
@@ -333,6 +352,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         name: str | None = None,
         max_concurrency: int | None = None,
         progress: bool = True,
+        retry_task: RetryConfig | None = None,
+        retry_evaluators: RetryConfig | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -346,12 +367,21 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             max_concurrency: The maximum number of concurrent evaluations of the task to allow.
                 If None, all cases will be evaluated concurrently.
             progress: Whether to show a progress bar for the evaluation. Defaults to True.
+            retry_task: Optional retry configuration for the task execution.
+            retry_evaluators: Optional retry configuration for evaluator execution.
 
         Returns:
             A report containing the results of the evaluation.
         """
         return get_event_loop().run_until_complete(
-            self.evaluate(task, name=name, max_concurrency=max_concurrency, progress=progress)
+            self.evaluate(
+                task,
+                task_name=name,
+                max_concurrency=max_concurrency,
+                progress=progress,
+                retry_task=retry_task,
+                retry_evaluators=retry_evaluators,
+            )
         )
 
     def add_case(
@@ -463,7 +493,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         raw = Path(path).read_text()
         try:
-            return cls.from_text(raw, fmt=fmt, custom_evaluator_types=custom_evaluator_types)
+            return cls.from_text(raw, fmt=fmt, custom_evaluator_types=custom_evaluator_types, default_name=path.stem)
         except ValidationError as e:  # pragma: no cover
             raise ValueError(f'{path} contains data that does not match the schema for {cls.__name__}:\n{e}.') from e
 
@@ -473,6 +503,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         contents: str,
         fmt: Literal['yaml', 'json'] = 'yaml',
         custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        *,
+        default_name: str | None = None,
     ) -> Self:
         """Load a dataset from a string.
 
@@ -481,6 +513,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             fmt: Format of the content. Must be either 'yaml' or 'json'.
             custom_evaluator_types: Custom evaluator classes to use when deserializing the dataset.
                 These are additional evaluators beyond the default ones.
+            default_name: Default name of the dataset, to be used if not specified in the serialized contents.
 
         Returns:
             A new Dataset instance parsed from the string.
@@ -490,17 +523,19 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """
         if fmt == 'yaml':
             loaded = yaml.safe_load(contents)
-            return cls.from_dict(loaded, custom_evaluator_types)
+            return cls.from_dict(loaded, custom_evaluator_types, default_name=default_name)
         else:
             dataset_model_type = cls._serialization_type()
             dataset_model = dataset_model_type.model_validate_json(contents)
-            return cls._from_dataset_model(dataset_model, custom_evaluator_types)
+            return cls._from_dataset_model(dataset_model, custom_evaluator_types, default_name)
 
     @classmethod
     def from_dict(
         cls,
         data: dict[str, Any],
         custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        *,
+        default_name: str | None = None,
     ) -> Self:
         """Load a dataset from a dictionary.
 
@@ -508,6 +543,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             data: Dictionary representation of the dataset.
             custom_evaluator_types: Custom evaluator classes to use when deserializing the dataset.
                 These are additional evaluators beyond the default ones.
+            default_name: Default name of the dataset, to be used if not specified in the data.
 
         Returns:
             A new Dataset instance created from the dictionary.
@@ -517,19 +553,21 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """
         dataset_model_type = cls._serialization_type()
         dataset_model = dataset_model_type.model_validate(data)
-        return cls._from_dataset_model(dataset_model, custom_evaluator_types)
+        return cls._from_dataset_model(dataset_model, custom_evaluator_types, default_name)
 
     @classmethod
     def _from_dataset_model(
         cls,
         dataset_model: _DatasetModel[InputsT, OutputT, MetadataT],
         custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
+        default_name: str | None = None,
     ) -> Self:
         """Create a Dataset from a _DatasetModel.
 
         Args:
             dataset_model: The _DatasetModel to convert.
             custom_evaluator_types: Custom evaluator classes to register for deserialization.
+            default_name: Default name of the dataset, to be used if the value is `None` in the provided model.
 
         Returns:
             A new Dataset instance created from the _DatasetModel.
@@ -566,7 +604,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             cases.append(row)
         if errors:
             raise ExceptionGroup(f'{len(errors)} error(s) loading evaluators from registry', errors[:3])
-        result = cls(cases=cases)
+        result = cls(name=dataset_model.name, cases=cases)
+        if result.name is None:
+            result.name = default_name
         result.evaluators = dataset_evaluators
         return result
 
@@ -886,12 +926,14 @@ async def _run_task(
         #   That way users can customize this logic. We'd default to a function that does the current thing but also
         #   allow `None` to disable it entirely.
         for node in span_tree:
-            if node.attributes.get('gen_ai.operation.name') == 'chat':
-                task_run.increment_metric('requests', 1)
             for k, v in node.attributes.items():
-                if not isinstance(v, int | float):
+                if k == 'gen_ai.operation.name' and v == 'chat':
+                    task_run.increment_metric('requests', 1)
+                elif not isinstance(v, int | float):
                     continue
-                if k.startswith('gen_ai.usage.details.'):
+                elif k == 'operation.cost':
+                    task_run.increment_metric('cost', v)
+                elif k.startswith('gen_ai.usage.details.'):
                     task_run.increment_metric(k.removeprefix('gen_ai.usage.details.'), v)
                 elif k.startswith('gen_ai.usage.'):
                     task_run.increment_metric(k.removeprefix('gen_ai.usage.'), v)

@@ -39,13 +39,14 @@ def modify_response(response: dict[str, Any], filter_headers: list[str]) -> dict
 
 @pytest.fixture(scope='module')
 def vcr_config():  # pragma: lax no cover
-    if not os.getenv('CI'):
-        return {
-            'record_mode': 'rewrite',
-            'filter_headers': ['accept-encoding'],
-            'before_record_response': partial(modify_response, filter_headers=['cache-control', 'connection']),
-        }
-    return {'record_mode': 'none'}
+    if os.getenv('CI') or not os.getenv('CEREBRAS_API_KEY'):
+        return {'record_mode': 'none'}
+
+    return {
+        'record_mode': 'rewrite',
+        'filter_headers': ['accept-encoding'],
+        'before_record_response': partial(modify_response, filter_headers=['cache-control', 'connection']),
+    }
 
 
 def test_known_model_names():  # pragma: lax no cover
@@ -57,9 +58,7 @@ def test_known_model_names():  # pragma: lax no cover
             else:
                 yield from get_model_names(arg)
 
-    anthropic_names = [f'anthropic:{n}' for n in get_model_names(AnthropicModelName)] + [
-        n for n in get_model_names(AnthropicModelName) if n.startswith('claude')
-    ]
+    anthropic_names = [f'anthropic:{n}' for n in get_model_names(AnthropicModelName)]
     cohere_names = [f'cohere:{n}' for n in get_model_names(CohereModelName)]
     google_names = [f'google-gla:{n}' for n in get_model_names(GeminiModelName)] + [
         f'google-vertex:{n}' for n in get_model_names(GeminiModelName)
@@ -68,9 +67,7 @@ def test_known_model_names():  # pragma: lax no cover
     groq_names = [f'groq:{n}' for n in get_model_names(GroqModelName)]
     moonshotai_names = [f'moonshotai:{n}' for n in get_model_names(MoonshotAIModelName)]
     mistral_names = [f'mistral:{n}' for n in get_model_names(MistralModelName)]
-    openai_names = [f'openai:{n}' for n in get_model_names(OpenAIModelName)] + [
-        n for n in get_model_names(OpenAIModelName) if n.startswith('o1') or n.startswith('gpt') or n.startswith('o3')
-    ]
+    openai_names = [f'openai:{n}' for n in get_model_names(OpenAIModelName)]
     bedrock_names = [f'bedrock:{n}' for n in get_model_names(BedrockModelName)]
     deepseek_names = ['deepseek:deepseek-chat', 'deepseek:deepseek-reasoner']
     huggingface_names = [f'huggingface:{n}' for n in get_model_names(HuggingFaceModelName)]
@@ -128,7 +125,6 @@ class CerebrasModel(TypedDict):
 
 
 def get_cerebras_model_names():  # pragma: lax no cover
-    # Coverage seems to be misbehaving..?
     api_key = os.getenv('CEREBRAS_API_KEY', 'testing')
 
     response = httpx.get(

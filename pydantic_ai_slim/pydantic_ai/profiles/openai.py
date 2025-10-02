@@ -6,8 +6,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from .._json_schema import JsonSchema, JsonSchemaTransformer
 from . import ModelProfile
-from ._json_schema import JsonSchema, JsonSchemaTransformer
 
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 

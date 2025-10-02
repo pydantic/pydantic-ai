@@ -108,6 +108,36 @@ agent = Agent(model)
 ...
 ```
 
+#### Customizing Model
+
+You can access models from the [Model Garden](https://cloud.google.com/model-garden?hl=en) that support the generateContent API and are available under your GCP project, including but not limited to Gemini, using one of the following `model_name` patterns:
+
+- `{model_id}` for Gemini models
+- `{publisher}/{model_id}`
+- `publishers/{publisher}/models/{model_id}`
+- `projects/{project}/locations/{location}/publishers/{publisher}/models/{model_id}`
+
+```python {test="skip"}
+from google.oauth2 import service_account
+
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.providers.google import GoogleProvider
+
+credentials = service_account.Credentials.from_service_account_file(
+    'path/to/service-account.json',
+    scopes=['https://www.googleapis.com/auth/cloud-platform'],
+)
+provider = GoogleProvider(
+    credentials=credentials,
+    project='your-gcp-project-id',
+    location='us-central1',  # the region where the model is available
+)
+model = GoogleModel('meta/llama-3.3-70b-instruct-maas', provider=provider)
+agent = Agent(model)
+...
+```
+
 ## Provider Argument
 
 You can supply a custom `GoogleProvider` instance using the `provider` argument to configure advanced client options, such as setting a custom `base_url`.

@@ -6,7 +6,14 @@ from typing import Literal
 
 from typing_extensions import TypedDict
 
-__all__ = ('AbstractBuiltinTool', 'WebSearchTool', 'WebSearchUserLocation', 'CodeExecutionTool', 'UrlContextTool')
+__all__ = (
+    'AbstractBuiltinTool',
+    'WebSearchTool',
+    'WebSearchUserLocation',
+    'CodeExecutionTool',
+    'UrlContextTool',
+    'MemoryTool',
+)
 
 
 @dataclass(kw_only=True)
@@ -17,6 +24,9 @@ class AbstractBuiltinTool(ABC):
 
     The builtin tools are passed to the model as part of the `ModelRequestParameters`.
     """
+
+    kind: str = 'unknown_builtin_tool'
+    """Built-in tool identifier, this should be available on all built-in tools as a discriminator."""
 
 
 @dataclass(kw_only=True)
@@ -80,6 +90,9 @@ class WebSearchTool(AbstractBuiltinTool):
     * Anthropic
     """
 
+    kind: str = 'web_search'
+    """The kind of tool."""
+
 
 class WebSearchUserLocation(TypedDict, total=False):
     """Allows you to localize search results based on a user's location.
@@ -113,6 +126,9 @@ class CodeExecutionTool(AbstractBuiltinTool):
     * Google
     """
 
+    kind: str = 'code_execution'
+    """The kind of tool."""
+
 
 class UrlContextTool(AbstractBuiltinTool):
     """Allows your agent to access contents from URLs.
@@ -121,3 +137,18 @@ class UrlContextTool(AbstractBuiltinTool):
 
     * Google
     """
+
+    kind: str = 'url_context'
+    """The kind of tool."""
+
+
+class MemoryTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to use memory.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    kind: str = 'memory'
+    """The kind of tool."""
