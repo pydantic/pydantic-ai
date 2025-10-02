@@ -922,7 +922,7 @@ async def test_iter_stream_output():
         return re.sub('cat sat', 'bat sat', data)
 
     run: AgentRun
-    stream: AgentStream
+    stream: AgentStream | None = None
     messages: list[str] = []
 
     stream_usage: RunUsage | None = None
