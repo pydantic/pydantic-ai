@@ -1151,10 +1151,12 @@ class ModelResponse:
         last_part: ModelResponsePart | None = None
         for part in self.parts:
             if isinstance(part, TextPart):
-                if not isinstance(last_part, TextPart):
-                    texts.append(part.content)
-                else:
+                # Adjacent text parts should be joined together, but if there are parts in between
+                # (like built-in tool calls) they should have newlines between them
+                if isinstance(last_part, TextPart):
                     texts[-1] += part.content
+                else:
+                    texts.append(part.content)
             last_part = part
         if not texts:
             return None
@@ -1180,20 +1182,24 @@ class ModelResponse:
         return [part for part in self.parts if isinstance(part, ToolCallPart)]
 
     @property
-    def builtin_tool_calls(self) -> list[tuple[BuiltinToolCallPart, BuiltinToolReturnPart | None]]:
+    def builtin_tool_calls(self) -> list[tuple[BuiltinToolCallPart, BuiltinToolReturnPart]]:
         """Get the builtin tool calls in the response."""
         calls = [part for part in self.parts if isinstance(part, BuiltinToolCallPart)]
         if not calls:
             return []
         returns_by_id = {part.tool_call_id: part for part in self.parts if isinstance(part, BuiltinToolReturnPart)}
-        return [(call_part, returns_by_id.get(call_part.tool_call_id)) for call_part in calls]
+        return [
+            (call_part, returns_by_id[call_part.tool_call_id])
+            for call_part in calls
+            if call_part.tool_call_id in returns_by_id
+        ]
 
     @deprecated('`price` is deprecated, use `cost` instead')
     def price(self) -> genai_types.PriceCalculation:  # pragma: no cover
         return self.cost()
 
     def cost(self) -> genai_types.PriceCalculation:
-        """Calculate the cost in the usage.
+        """Calculate the cost of the usage.
 
         Uses [`genai-prices`](https://github.com/pydantic/genai-prices).
         """

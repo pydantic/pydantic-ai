@@ -873,7 +873,7 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
             isinstance(new_part, FilePart) and params.allow_image_output and isinstance(new_part.content, BinaryImage)
         ):
             return FinalResultEvent(tool_name=None, tool_call_id=None)
-        if isinstance(new_part, ToolCallPart) and (tool_def := params.tool_defs.get(new_part.tool_name)):
+        elif isinstance(new_part, ToolCallPart) and (tool_def := params.tool_defs.get(new_part.tool_name)):
             if tool_def.kind == 'output':
                 return FinalResultEvent(tool_name=new_part.tool_name, tool_call_id=new_part.tool_call_id)
             elif tool_def.defer:

@@ -1246,7 +1246,7 @@ class OpenAIResponsesModel(Model):
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIResponsesModel`. If it should be, please file an issue.'
                 )
 
-        if not has_image_generating_tool and model_request_parameters.allow_image_output:
+        if model_request_parameters.allow_image_output and not has_image_generating_tool:
             tools.append({'type': 'image_generation'})
         return tools
 
