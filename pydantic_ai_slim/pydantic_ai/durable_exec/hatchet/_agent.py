@@ -177,9 +177,9 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         @hatchet.task(
             name=f'{self._name}.event_stream_handler',
-            input_validator=EventStreamHandlerInput,
+            input_validator=EventStreamHandlerInput[AgentDepsT],
         )
-        async def event_stream_handler_task(input: EventStreamHandlerInput, ctx: Context) -> None:
+        async def event_stream_handler_task(input: EventStreamHandlerInput[AgentDepsT], ctx: Context) -> None:
             # We can never get here without an `event_stream_handler`, as `HatchetAgent.run_stream` and `HatchetAgent.iter` raise an error saying to use `HatchetAgent.run` instead,
             # and that only ends up calling `event_stream_handler` if it is set.
             assert self.event_stream_handler is not None
