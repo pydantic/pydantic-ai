@@ -507,7 +507,7 @@ class BinaryContent:
                 vendor_metadata=bc.vendor_metadata,
             )
         else:
-            return bc
+            return bc  # pragma: no cover
 
     @classmethod
     def from_data_uri(cls, data_uri: str) -> Self:

@@ -352,7 +352,7 @@ class AgentRunResult(Generic[OutputDataT]):
         for message in reversed(self.all_messages()):
             if isinstance(message, _messages.ModelResponse):
                 return message
-        raise ValueError('No response found in the message history')
+        raise ValueError('No response found in the message history')  # pragma: no cover
 
     # TODO (v2): Make this a property
     def usage(self) -> _usage.RunUsage:
