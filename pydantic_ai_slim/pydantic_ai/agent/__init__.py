@@ -14,6 +14,8 @@ from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
+
 from .. import (
     _agent_graph,
     _output,
@@ -62,7 +64,7 @@ from ..toolsets._dynamic import (
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
-from .abstract import AbstractAgent, EventStreamHandler, RunOutputDataT
+from .abstract import AbstractAgent, EventStreamHandler, Instructions, RunOutputDataT
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
@@ -133,8 +135,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _output_schema: _output.BaseOutputSchema[OutputDataT] = dataclasses.field(repr=False)
     _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = dataclasses.field(repr=False)
-    _instructions: str | None = dataclasses.field(repr=False)
-    _instructions_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
+    _instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompts: tuple[str, ...] = dataclasses.field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
@@ -160,10 +161,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: OutputSpec[OutputDataT] = str,
-        instructions: str
-        | _system_prompt.SystemPromptFunc[AgentDepsT]
-        | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
-        | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -189,10 +187,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: OutputSpec[OutputDataT] = str,
-        instructions: str
-        | _system_prompt.SystemPromptFunc[AgentDepsT]
-        | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
-        | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -216,10 +211,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: OutputSpec[OutputDataT] = str,
-        instructions: str
-        | _system_prompt.SystemPromptFunc[AgentDepsT]
-        | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
-        | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -318,16 +310,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_schema = _output.OutputSchema[OutputDataT].build(output_type, default_mode=default_output_mode)
         self._output_validators = []
 
-        self._instructions = ''
-        self._instructions_functions = []
-        if isinstance(instructions, str | Callable):
-            instructions = [instructions]
-        for instruction in instructions or []:
-            if isinstance(instruction, str):
-                self._instructions += instruction + '\n'
-            else:
-                self._instructions_functions.append(_system_prompt.SystemPromptRunner(instruction))
-        self._instructions = self._instructions.strip() or None
+        self._instructions = self._normalize_instructions(instructions)
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -367,6 +350,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_tools: ContextVar[
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
+        self._override_instructions: ContextVar[
+            _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
+        ] = ContextVar('_override_instructions', default=None)
 
         self._enter_lock = Lock()
         self._entered_count = 0
@@ -587,10 +573,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings = merge_model_settings(merged_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
 
+        instructions_literal, instructions_functions = self._get_instructions()
+
         async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
             parts = [
-                self._instructions,
-                *[await func.run(run_context) for func in self._instructions_functions],
+                instructions_literal,
+                *[await func.run(run_context) for func in instructions_functions],
             ]
 
             model_profile = model_used.profile
@@ -628,22 +616,28 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
         )
+
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
             deferred_tool_results=deferred_tool_results,
-            instructions=self._instructions,
-            instructions_functions=self._instructions_functions,
+            instructions=instructions_literal,
+            instructions_functions=instructions_functions,
             system_prompts=self._system_prompts,
             system_prompt_functions=self._system_prompt_functions,
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
         )
 
         agent_name = self.name or 'agent'
+        instrumentation_names = InstrumentationNames.for_version(
+            instrumentation_settings.version if instrumentation_settings else DEFAULT_INSTRUMENTATION_VERSION
+        )
+
         run_span = tracer.start_span(
-            'agent run',
+            instrumentation_names.get_agent_run_span_name(agent_name),
             attributes={
                 'model_name': model_used.model_name if model_used else 'no-model',
                 'agent_name': agent_name,
+                'gen_ai.agent.name': agent_name,
                 'logfire.msg': f'{agent_name} run',
             },
         )
@@ -679,6 +673,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _run_span_end_attributes(
         self, state: _agent_graph.GraphAgentState, usage: _usage.RunUsage, settings: InstrumentationSettings
     ):
+        literal_instructions, _ = self._get_instructions()
+
         if settings.version == 1:
             attrs = {
                 'all_messages_events': json.dumps(
@@ -691,7 +687,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             attrs = {
                 'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(state.message_history)),
-                **settings.system_instructions_attributes(self._instructions),
+                **settings.system_instructions_attributes(literal_instructions),
             }
 
         return {
@@ -716,8 +712,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
-        """Context manager to temporarily override agent dependencies, model, toolsets, or tools.
+        """Context manager to temporarily override agent dependencies, model, toolsets, tools, or instructions.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
@@ -727,6 +724,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
+            instructions: The instructions to use instead of the instructions registered with the agent.
         """
         if _utils.is_set(deps):
             deps_token = self._override_deps.set(_utils.Some(deps))
@@ -748,6 +746,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             tools_token = None
 
+        if _utils.is_set(instructions):
+            normalized_instructions = self._normalize_instructions(instructions)
+            instructions_token = self._override_instructions.set(_utils.Some(normalized_instructions))
+        else:
+            instructions_token = None
+
         try:
             yield
         finally:
@@ -759,6 +763,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_toolsets.reset(toolsets_token)
             if tools_token is not None:
                 self._override_tools.reset(tools_token)
+            if instructions_token is not None:
+                self._override_instructions.reset(instructions_token)
 
     @overload
     def instructions(
@@ -819,12 +825,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             def decorator(
                 func_: _system_prompt.SystemPromptFunc[AgentDepsT],
             ) -> _system_prompt.SystemPromptFunc[AgentDepsT]:
-                self._instructions_functions.append(_system_prompt.SystemPromptRunner(func_))
+                self._instructions.append(func_)
                 return func_
 
             return decorator
         else:
-            self._instructions_functions.append(_system_prompt.SystemPromptRunner(func))
+            self._instructions.append(func)
             return func
 
     @overload
@@ -1201,8 +1207,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         Example:
         ```python
-        from pydantic_ai import Agent, RunContext
-        from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+        from pydantic_ai import AbstractToolset, Agent, FunctionToolset, RunContext
 
         agent = Agent('test', deps_type=str)
 
@@ -1265,6 +1270,34 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return some_deps.value
         else:
             return deps
+
+    def _normalize_instructions(
+        self,
+        instructions: Instructions[AgentDepsT],
+    ) -> list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]:
+        if instructions is None:
+            return []
+        if isinstance(instructions, str) or callable(instructions):
+            return [instructions]
+        return list(instructions)
+
+    def _get_instructions(
+        self,
+    ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
+        override_instructions = self._override_instructions.get()
+        instructions = override_instructions.value if override_instructions else self._instructions
+
+        literal_parts: list[str] = []
+        functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
+
+        for instruction in instructions:
+            if isinstance(instruction, str):
+                literal_parts.append(instruction)
+            else:
+                functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](instruction))
+
+        literal = '\n'.join(literal_parts).strip() or None
+        return literal, functions
 
     def _get_toolset(
         self,

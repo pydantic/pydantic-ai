@@ -59,7 +59,8 @@ async def generate_dataset(
     """
     output_schema = dataset_type.model_json_schema_with_evaluators(custom_evaluator_types)
 
-    # TODO(DavidM): Update this once we add better response_format and/or ResultTool support to Pydantic AI
+    # TODO: Use `output_type=StructuredDict(output_schema)` (and `from_dict` below) once https://github.com/pydantic/pydantic/issues/12145
+    # is fixed and `StructuredDict` no longer needs to use `InlineDefsJsonSchemaTransformer`.
     agent = Agent(
         model,
         system_prompt=(
