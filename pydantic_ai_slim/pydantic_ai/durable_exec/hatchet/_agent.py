@@ -197,6 +197,36 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self.hatchet_wrapped_event_stream_handler = event_stream_handler_task
 
     @property
+    def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+        handler = self._event_stream_handler or super().event_stream_handler
+        print('Getting event_stream_handler', handler, self._hatchet.is_in_task_run)
+        if handler is None:
+            return None
+        elif self._hatchet.is_in_task_run:
+            return self._call_event_stream_handler_task
+        else:
+            return handler
+
+    async def _call_event_stream_handler_task(
+        self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent]
+    ) -> None:
+        serialized_run_context = self.run_context_type.serialize_run_context(ctx)
+        async for event in stream:
+            await self.hatchet_wrapped_event_stream_handler.aio_run(
+                input=EventStreamHandlerInput[AgentDepsT](
+                    event=event,
+                    serialized_run_context=serialized_run_context,
+                    deps=ctx.deps,
+                ),
+                options=TriggerWorkflowOptions(
+                    additional_metadata={
+                        'hatchet__agent_name': self._name,
+                        'hatchet__agent_run_id': str(uuid4()),
+                    }
+                ),
+            )
+
+    @property
     def name(self) -> str | None:
         return self._name
 
@@ -643,13 +673,6 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        if self._hatchet.is_in_task_run:
-            raise UserError(
-                '`agent.iter()` cannot currently be used inside a Hatchet workflow. '
-                'Set an `event_stream_handler` on the agent and use `agent.run()` instead. '
-                'Please file an issue if this is not sufficient for your use case.'
-            )
-
         async with super().iter(
             user_prompt=user_prompt,
             output_type=output_type,
