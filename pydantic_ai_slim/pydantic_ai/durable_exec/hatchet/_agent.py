@@ -5,7 +5,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, context
 from typing import Any, Generic, overload
 from uuid import uuid4
 
-from hatchet_sdk import Context, DurableContext, Hatchet, TriggerWorkflowOptions
+from hatchet_sdk import DurableContext, Hatchet, TriggerWorkflowOptions
 from hatchet_sdk.runnables.workflow import BaseWorkflow
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from typing_extensions import Never
