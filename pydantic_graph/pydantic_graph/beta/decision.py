@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import Never, Self, TypeVar
 
-from pydantic_graph.beta.id_types import ForkId, NodeId
+from pydantic_graph.beta.id_types import ForkId, JoinId, NodeId
 from pydantic_graph.beta.paths import Path, PathBuilder
 from pydantic_graph.beta.step import StepFunction
 from pydantic_graph.beta.util import TypeOrTypeExpression
@@ -213,17 +213,27 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
 
     def spread(
         self: DecisionBranchBuilder[StateT, DepsT, Iterable[T], SourceT, HandledT],
+        *,
+        fork_id: ForkId | None = None,
+        downstream_join_id: JoinId | None = None,
     ) -> DecisionBranchBuilder[StateT, DepsT, T, SourceT, HandledT]:
         """Spread the branch's output.
 
         To do this, the current output must be iterable, and any subsequent steps in the path being built for this
         branch will be applied to each item of the current output in parallel.
 
+        Args:
+            fork_id: Optional ID for the fork, defaults to a generated value
+            downstream_join_id: Optional ID of a downstream join node which is involved when spreading empty iterables
+
         Returns:
             A new DecisionBranchBuilder where spreading is performed prior to generating the final output.
         """
         return DecisionBranchBuilder(
-            decision=self.decision, source=self.source, matches=self.matches, path_builder=self.path_builder.spread()
+            decision=self.decision,
+            source=self.source,
+            matches=self.matches,
+            path_builder=self.path_builder.spread(fork_id=fork_id, downstream_join_id=downstream_join_id),
         )
 
     def label(self, label: str) -> DecisionBranchBuilder[StateT, DepsT, OutputT, SourceT, HandledT]:

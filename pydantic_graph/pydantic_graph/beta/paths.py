@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Generic, get_origin, overload
 from typing_extensions import Self, TypeAliasType, TypeVar
 
 from pydantic_graph import BaseNode
-from pydantic_graph.beta.id_types import ForkId, NodeId
+from pydantic_graph.beta.id_types import ForkId, JoinId, NodeId
 from pydantic_graph.beta.step import NodeStep, StepFunction
 
 StateT = TypeVar('StateT', infer_variance=True)
@@ -49,6 +49,8 @@ class SpreadMarker:
 
     fork_id: ForkId
     """Unique identifier for the fork created by this spread operation."""
+    downstream_join_id: JoinId | None
+    """Optional identifier of a downstream join node that should be jumped to if spreading an empty iterable."""
 
 
 @dataclass
@@ -207,7 +209,10 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
         return PathBuilder[StateT, DepsT, Any](working_items=[*self.working_items, next_item])
 
     def spread(
-        self: PathBuilder[StateT, DepsT, Iterable[Any]], *, fork_id: str | None = None
+        self: PathBuilder[StateT, DepsT, Iterable[Any]],
+        *,
+        fork_id: ForkId | None = None,
+        downstream_join_id: JoinId | None = None,
     ) -> PathBuilder[StateT, DepsT, Any]:
         """Spread iterable data across parallel execution paths.
 
@@ -216,11 +221,14 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
 
         Args:
             fork_id: Optional ID for the fork, defaults to a generated value
+            downstream_join_id: Optional ID of a downstream join node which is involved when spreading empty iterables
 
         Returns:
             A new PathBuilder that operates on individual items from the iterable
         """
-        next_item = SpreadMarker(fork_id=ForkId(NodeId(fork_id or 'spread_' + secrets.token_hex(8))))
+        next_item = SpreadMarker(
+            fork_id=NodeId(fork_id or 'spread_' + secrets.token_hex(8)), downstream_join_id=downstream_join_id
+        )
         return PathBuilder[StateT, DepsT, Any](working_items=[*self.working_items, next_item])
 
     def label(self, label: str, /) -> PathBuilder[StateT, DepsT, OutputT]:
@@ -358,17 +366,24 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
             )
 
     def spread(
-        self: EdgePathBuilder[StateT, DepsT, Iterable[Any]], fork_id: str | None = None
+        self: EdgePathBuilder[StateT, DepsT, Iterable[Any]],
+        *,
+        fork_id: ForkId | None = None,
+        downstream_join_id: JoinId | None = None,
     ) -> EdgePathBuilder[StateT, DepsT, Any]:
         """Spread iterable data across parallel execution paths.
 
         Args:
             fork_id: Optional ID for the fork, defaults to a generated value
+            downstream_join_id: Optional ID of a downstream join node which is involved when spreading empty iterables
 
         Returns:
             A new EdgePathBuilder that operates on individual items from the iterable
         """
-        return EdgePathBuilder(sources=self.sources, path_builder=self.path_builder.spread(fork_id=fork_id))
+        return EdgePathBuilder(
+            sources=self.sources,
+            path_builder=self.path_builder.spread(fork_id=fork_id, downstream_join_id=downstream_join_id),
+        )
 
     def transform(self, func: StepFunction[StateT, DepsT, OutputT, Any], /) -> EdgePathBuilder[StateT, DepsT, Any]:
         """Add a transformation step to the edge path.

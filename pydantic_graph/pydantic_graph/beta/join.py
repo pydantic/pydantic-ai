@@ -25,7 +25,7 @@ K = TypeVar('K', infer_variance=True)
 V = TypeVar('V', infer_variance=True)
 
 
-@dataclass(init=False)
+@dataclass(kw_only=True)
 class Reducer(ABC, Generic[StateT, DepsT, InputT, OutputT]):
     """An abstract base class for reducing data from parallel execution paths.
 
@@ -39,14 +39,6 @@ class Reducer(ABC, Generic[StateT, DepsT, InputT, OutputT]):
         InputT: The type of input data to reduce
         OutputT: The type of the final output after reduction
     """
-
-    def __init__(self, ctx: StepContext[StateT, DepsT, InputT]) -> None:
-        """Initialize the reducer with the first input context.
-
-        Args:
-            ctx: The step context containing the initial input data
-        """
-        self.reduce(ctx)
 
     def reduce(self, ctx: StepContext[StateT, DepsT, InputT]) -> None:
         """Accumulate input data from a step context into the reducer's internal state.
@@ -77,7 +69,7 @@ class Reducer(ABC, Generic[StateT, DepsT, InputT, OutputT]):
         raise NotImplementedError('Finalize method must be implemented in subclasses.')
 
 
-@dataclass(init=False)
+@dataclass(kw_only=True)
 class NullReducer(Reducer[object, object, object, None]):
     """A reducer that discards all input data and returns None.
 
@@ -98,7 +90,7 @@ class NullReducer(Reducer[object, object, object, None]):
         return None
 
 
-@dataclass(init=False)
+@dataclass(kw_only=True)
 class ListReducer(Reducer[object, object, T, list[T]], Generic[T]):
     """A reducer that collects all input values into a list.
 
@@ -132,7 +124,7 @@ class ListReducer(Reducer[object, object, T, list[T]], Generic[T]):
         return self.items
 
 
-@dataclass(init=False)
+@dataclass(kw_only=True)
 class DictReducer(Reducer[object, object, dict[K, V], dict[K, V]], Generic[K, V]):
     """A reducer that merges dictionary inputs into a single dictionary.
 
@@ -165,6 +157,37 @@ class DictReducer(Reducer[object, object, dict[K, V], dict[K, V]], Generic[K, V]
             A dictionary containing all merged key-value pairs
         """
         return self.data
+
+
+@dataclass(kw_only=True)
+class EarlyStoppingReducer(Reducer[object, object, T, T | None], Generic[T]):
+    """A reducer that returns the first encountered value and cancels all other tasks started by its parent fork.
+
+    Type Parameters:
+        T: The type of elements in the resulting list
+    """
+
+    result: T | None = None
+
+    def reduce(self, ctx: StepContext[object, object, T]) -> None:
+        """Append the input value to the list of items.
+
+        Args:
+            ctx: The step context containing the input value to append
+        """
+        self.result = ctx.inputs
+        raise StopIteration
+
+    def finalize(self, ctx: StepContext[object, object, None]) -> T | None:
+        """Return the accumulated list of items.
+
+        Args:
+            ctx: The step context for finalization
+
+        Returns:
+            A list containing all accumulated input values in order
+        """
+        return self.result
 
 
 class Join(Generic[StateT, DepsT, InputT, OutputT]):
@@ -202,7 +225,7 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
 
         # self._type_adapter: TypeAdapter[Any] = TypeAdapter(reducer_type)  # needs to be annotated this way for variance
 
-    def create_reducer(self, ctx: StepContext[StateT, DepsT, InputT]) -> Reducer[StateT, DepsT, InputT, OutputT]:
+    def create_reducer(self) -> Reducer[StateT, DepsT, InputT, OutputT]:
         """Create a reducer instance for this join operation.
 
         Args:
@@ -211,7 +234,7 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
         Returns:
             A new reducer instance initialized with the provided context
         """
-        return self._reducer_type(ctx)
+        return self._reducer_type()
 
     # TODO(P3): If we want the ability to snapshot graph-run state, we'll need a way to
     #  serialize/deserialize the associated reducers, something like this:

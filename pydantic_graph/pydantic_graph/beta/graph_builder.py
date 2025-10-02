@@ -414,6 +414,8 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         *,
         pre_spread_label: str | None = None,
         post_spread_label: str | None = None,
+        fork_id: ForkId | None = None,
+        downstream_join_id: JoinId | None = None,
     ) -> None:
         """Add an edge that spreads iterable data across parallel paths.
 
@@ -422,11 +424,14 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             spread_to: The destination node that receives individual items
             pre_spread_label: Optional label before the spread operation
             post_spread_label: Optional label after the spread operation
+            fork_id: Optional ID for the fork node produced for this spread operation
+            downstream_join_id: Optional ID of a join node that will always be downstream of this spread.
+                Specifying this ensures correct handling if you try to spread an empty iterable.
         """
         builder = self.edge_from(source)
         if pre_spread_label is not None:
             builder = builder.label(pre_spread_label)
-        builder = builder.spread()
+        builder = builder.spread(fork_id=fork_id, downstream_join_id=downstream_join_id)
         if post_spread_label is not None:
             builder = builder.label(post_spread_label)
         self.add(builder.to(spread_to))

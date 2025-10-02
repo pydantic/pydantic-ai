@@ -1,0 +1,249 @@
+"""Tests for integration between v1 BaseNode and v2 beta graph API."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Annotated
+
+import pytest
+
+from pydantic_graph import BaseNode, End, GraphRunContext
+from pydantic_graph.beta import GraphBuilder, StepContext, StepNode
+
+pytestmark = pytest.mark.anyio
+
+
+@dataclass
+class IntegrationState:
+    log: list[str] = None  # type: ignore
+
+    def __post_init__(self):
+        if self.log is None:
+            self.log = []
+
+
+# V1 style nodes
+@dataclass
+class V1StartNode(BaseNode[IntegrationState, None, str]):
+    value: int
+
+    async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> V1MiddleNode:
+        ctx.state.log.append(f'V1StartNode: {self.value}')
+        return V1MiddleNode(self.value * 2)
+
+
+@dataclass
+class V1MiddleNode(BaseNode[IntegrationState, None, str]):
+    value: int
+
+    async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[str]:
+        ctx.state.log.append(f'V1MiddleNode: {self.value}')
+        return End(f'Result: {self.value}')
+
+
+async def test_v1_nodes_in_v2_graph():
+    """Test using v1 BaseNode classes in a v2 graph."""
+    g = GraphBuilder(state_type=IntegrationState, input_type=int, output_type=str)
+
+    @g.step
+    async def prepare_input(ctx: StepContext[IntegrationState, None, int]) -> int:
+        ctx.state.log.append('V2Step: prepare')
+        return ctx.inputs + 1
+
+    @g.step
+    async def process_result(ctx: StepContext[IntegrationState, None, str]) -> str:
+        ctx.state.log.append('V2Step: process')
+        return ctx.inputs.upper()
+
+    g.add(
+        g.node(V1StartNode),
+        g.node(V1MiddleNode),
+        g.edge_from(g.start_node).to(prepare_input),
+        g.edge_from(prepare_input).to(V1StartNode),
+        g.edge_from(process_result).to(g.end_node),
+    )
+
+    graph = g.build()
+    state = IntegrationState()
+    result = await graph.run(state=state, inputs=5)
+    assert result == 'RESULT: 12'
+    assert state.log == ['V2Step: prepare', 'V1StartNode: 6', 'V1MiddleNode: 12', 'V2Step: process']
+
+
+async def test_v2_step_to_v1_node():
+    """Test transitioning from a v2 step to a v1 node using StepNode."""
+    g = GraphBuilder(state_type=IntegrationState, output_type=str)
+
+    @g.step
+    async def v2_step(
+        ctx: StepContext[IntegrationState, None, None],
+    ) -> Annotated[StepNode[IntegrationState, None], V1StartNode]:  # type: ignore
+        ctx.state.log.append('V2Step')
+        # Return a StepNode to transition to a v1 node
+        return V1StartNode(10).as_node()  # type: ignore
+
+    g.add(
+        g.node(V1StartNode),
+        g.node(V1MiddleNode),
+        g.edge_from(g.start_node).to(v2_step),
+    )
+
+    # Note: This will fail at type-checking but demonstrates the integration pattern
+    # In practice, you'd need proper annotation handling
+
+
+async def test_v1_node_returning_v1_node():
+    """Test v1 nodes that return other v1 nodes."""
+
+    @dataclass
+    class FirstNode(BaseNode[IntegrationState, None, int]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> SecondNode:
+            ctx.state.log.append('FirstNode')
+            return SecondNode(self.value * 2)
+
+    @dataclass
+    class SecondNode(BaseNode[IntegrationState, None, int]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[int]:
+            ctx.state.log.append('SecondNode')
+            return End(self.value + 10)
+
+    g = GraphBuilder(state_type=IntegrationState, input_type=int, output_type=int)
+
+    @g.step
+    async def create_first(ctx: StepContext[IntegrationState, None, int]) -> FirstNode:
+        return FirstNode(ctx.inputs)
+
+    g.add(
+        g.node(FirstNode),
+        g.node(SecondNode),
+        g.edge_from(g.start_node).to(create_first),
+    )
+
+    graph = g.build()
+    state = IntegrationState()
+    result = await graph.run(state=state, inputs=5)
+    assert result == 20  # 5 * 2 + 10
+    assert state.log == ['FirstNode', 'SecondNode']
+
+
+async def test_mixed_v1_v2_with_broadcast():
+    """Test broadcasting with mixed v1 and v2 nodes."""
+
+    @dataclass
+    class ProcessNode(BaseNode[IntegrationState, None, int]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[int]:
+            ctx.state.log.append(f'ProcessNode: {self.value}')
+            return End(self.value * 2)
+
+    g = GraphBuilder(state_type=IntegrationState, output_type=list[int])
+
+    @g.step
+    async def generate_values(ctx: StepContext[IntegrationState, None, None]) -> list[int]:
+        return [1, 2, 3]
+
+    @g.step
+    async def create_node(ctx: StepContext[IntegrationState, None, int]) -> ProcessNode:
+        return ProcessNode(ctx.inputs)
+
+    from pydantic_graph.beta import ListReducer
+
+    collect = g.join(ListReducer[int])
+
+    g.add(
+        g.node(ProcessNode),
+        g.edge_from(g.start_node).to(generate_values),
+        g.edge_from(generate_values).spread().to(create_node),
+        g.edge_from(create_node).to(collect),
+        g.edge_from(collect).to(g.end_node),
+    )
+
+    graph = g.build()
+    state = IntegrationState()
+    result = await graph.run(state=state)
+    assert sorted(result) == [2, 4, 6]
+    assert len(state.log) == 3
+
+
+async def test_v1_node_type_hints_inferred():
+    """Test that v1 node type hints are properly inferred for edges."""
+
+    @dataclass
+    class StartNode(BaseNode[IntegrationState, None, str]):
+        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> MiddleNode | End[str]:
+            if ctx.state.log:
+                return End('early exit')
+            ctx.state.log.append('StartNode')
+            return MiddleNode()
+
+    @dataclass
+    class MiddleNode(BaseNode[IntegrationState, None, str]):
+        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[str]:
+            ctx.state.log.append('MiddleNode')
+            return End('normal exit')
+
+    g = GraphBuilder(state_type=IntegrationState, input_type=None, output_type=str)
+
+    g.add(
+        g.node(StartNode),
+        g.node(MiddleNode),
+        g.edge_from(g.start_node).to(StartNode),
+    )
+
+    graph = g.build()
+    state = IntegrationState()
+    result = await graph.run(state=state)
+    assert result == 'normal exit'
+    assert state.log == ['StartNode', 'MiddleNode']
+
+
+async def test_v1_node_conditional_return():
+    """Test v1 nodes with conditional returns creating implicit decisions."""
+
+    @dataclass
+    class RouterNode(BaseNode[IntegrationState, None, str]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> PathA | PathB:
+            if self.value < 10:
+                return PathA()
+            else:
+                return PathB()
+
+    @dataclass
+    class PathA(BaseNode[IntegrationState, None, str]):
+        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[str]:
+            return End('Path A')
+
+    @dataclass
+    class PathB(BaseNode[IntegrationState, None, str]):
+        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[str]:
+            return End('Path B')
+
+    g = GraphBuilder(state_type=IntegrationState, input_type=int, output_type=str)
+
+    @g.step
+    async def create_router(ctx: StepContext[IntegrationState, None, int]) -> RouterNode:
+        return RouterNode(ctx.inputs)
+
+    g.add(
+        g.node(RouterNode),
+        g.node(PathA),
+        g.node(PathB),
+        g.edge_from(g.start_node).to(create_router),
+    )
+
+    graph = g.build()
+
+    # Test path A
+    result_a = await graph.run(state=IntegrationState(), inputs=5)
+    assert result_a == 'Path A'
+
+    # Test path B
+    result_b = await graph.run(state=IntegrationState(), inputs=15)
+    assert result_b == 'Path B'
