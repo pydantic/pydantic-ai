@@ -1177,6 +1177,11 @@ class ModelResponse:
         return [part.content for part in self.parts if isinstance(part, FilePart)]
 
     @property
+    def images(self) -> list[BinaryImage]:
+        """Get the images in the response."""
+        return [file for file in self.files if isinstance(file, BinaryImage)]
+
+    @property
     def tool_calls(self) -> list[ToolCallPart]:
         """Get the tool calls in the response."""
         return [part for part in self.parts if isinstance(part, ToolCallPart)]

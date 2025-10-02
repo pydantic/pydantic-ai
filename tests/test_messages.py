@@ -471,6 +471,7 @@ def test_model_response_convenience_methods():
     assert response.text == snapshot(None)
     assert response.thinking == snapshot(None)
     assert response.files == snapshot([])
+    assert response.images == snapshot([])
     assert response.tool_calls == snapshot([])
     assert response.builtin_tool_calls == snapshot([])
 
@@ -499,6 +500,7 @@ Let's generate an image
 And then, call the 'hello_world' tool\
 """)
     assert response.files == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
+    assert response.images == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
     assert response.tool_calls == snapshot([ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123')])
     assert response.builtin_tool_calls == snapshot(
         [
