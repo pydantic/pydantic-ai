@@ -1990,7 +1990,7 @@ class ImageAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> Image:
         result = await image_temporal_agent.run(prompt)
-        return result.output
+        return result.output  # pragma: no cover
 
 
 async def test_image_agent(allow_model_requests: None, client: Client):
