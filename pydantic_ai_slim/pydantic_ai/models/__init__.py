@@ -27,11 +27,11 @@ from .._run_context import RunContext
 from ..builtin_tools import AbstractBuiltinTool
 from ..exceptions import UserError
 from ..messages import (
+    BinaryImage,
     FilePart,
     FileUrl,
     FinalResultEvent,
     FinishReason,
-    Image,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -869,7 +869,7 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
     if isinstance(e, PartStartEvent):
         new_part = e.part
         if (isinstance(new_part, TextPart) and params.allow_text_output) or (
-            isinstance(new_part, FilePart) and params.allow_image_output and isinstance(new_part.content, Image)
+            isinstance(new_part, FilePart) and params.allow_image_output and isinstance(new_part.content, BinaryImage)
         ):
             return FinalResultEvent(tool_name=None, tool_call_id=None)
         if isinstance(new_part, ToolCallPart) and (tool_def := params.tool_defs.get(new_part.tool_name)):

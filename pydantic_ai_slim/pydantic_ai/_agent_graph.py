@@ -615,7 +615,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                     if output_schema.allows_image:
                         if image := next(
-                            (file.content for file in files if isinstance(file.content, _messages.Image)), None
+                            (file.content for file in files if isinstance(file.content, _messages.BinaryImage)), None
                         ):
                             self._next_node = await self._handle_image_response(ctx, image)
                             return
@@ -693,7 +693,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     async def _handle_image_response(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        image: _messages.Image,
+        image: _messages.BinaryImage,
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         result_data = cast(NodeRunEndT, image)
         return self._handle_final_result(ctx, result.FinalResult(result_data), [])

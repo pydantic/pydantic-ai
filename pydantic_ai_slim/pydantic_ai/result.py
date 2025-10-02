@@ -165,7 +165,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 (
                     part.content
                     for part in message.parts
-                    if isinstance(part, _messages.FilePart) and isinstance(part.content, _messages.Image)
+                    if isinstance(part, _messages.FilePart) and isinstance(part.content, _messages.BinaryImage)
                 ),
                 None,
             )

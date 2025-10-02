@@ -496,6 +496,19 @@ class BinaryContent:
         self.vendor_metadata = vendor_metadata
         self.kind = kind
 
+    @staticmethod
+    def narrow_type(bc: BinaryContent) -> BinaryContent | BinaryImage:
+        """Narrow the type of the `BinaryContent` to `BinaryImage` if it's an image."""
+        if bc.is_image:
+            return BinaryImage(
+                data=bc.data,
+                media_type=bc.media_type,
+                identifier=bc.identifier,
+                vendor_metadata=bc.vendor_metadata,
+            )
+        else:
+            return bc
+
     @classmethod
     def from_data_uri(cls, data_uri: str) -> Self:
         """Create a `BinaryContent` from a data URI."""
@@ -548,7 +561,7 @@ class BinaryContent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-class Image(BinaryContent):
+class BinaryImage(BinaryContent):
     """Binary content that's guaranteed to be an image."""
 
     def __init__(
@@ -558,13 +571,12 @@ class Image(BinaryContent):
         media_type: str,
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
-        # TODO (DouweM): Should an `Image` survive a serialization roundtrip, or is it OK if it becomes a `BinaryContent`? Probably give these classes a common abstract ancestor.
         kind: Literal['binary'] = 'binary',
     ):
         super().__init__(data=data, media_type=media_type, identifier=identifier, vendor_metadata=vendor_metadata)
 
         if not self.is_image:
-            raise ValueError('`Image` must be have a media type that starts with "image/"')  # pragma: no cover
+            raise ValueError('`BinaryImage` must be have a media type that starts with "image/"')  # pragma: no cover
 
 
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
@@ -971,7 +983,7 @@ class ThinkingPart:
 class FilePart:
     """A file response from a model."""
 
-    content: BinaryContent
+    content: Annotated[BinaryContent, pydantic.AfterValidator(lambda bc: BinaryImage.narrow_type(bc))]
     """The file content of the response."""
 
     _: KW_ONLY

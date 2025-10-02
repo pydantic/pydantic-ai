@@ -14,6 +14,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     AudioUrl,
     BinaryContent,
+    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
@@ -21,7 +22,6 @@ from pydantic_ai import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    Image,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -2591,13 +2591,13 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
 
 async def test_google_image_generation(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
-    agent = Agent(m, output_type=Image)
+    agent = Agent(m, output_type=BinaryImage)
 
     result = await agent.run('Generate an image of an axolotl.')
     messages = result.all_messages()
 
     assert result.output == snapshot(
-        Image(
+        BinaryImage(
             data=IsBytes(),
             media_type='image/png',
             identifier='8a7952',
@@ -2617,7 +2617,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                 parts=[
                     TextPart(content="Here's an image of an axolotl for you! "),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier='8a7952',
@@ -2641,7 +2641,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
 
     result = await agent.run('Now give it a sombrero.', message_history=messages)
     assert result.output == snapshot(
-        Image(
+        BinaryImage(
             data=IsBytes(),
             media_type='image/png',
             identifier='7d173c',
@@ -2661,7 +2661,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                 parts=[
                     TextPart(content="Certainly! Here's your axolotl with a sombrero: "),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier='7d173c',
@@ -2686,11 +2686,11 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
 
 async def test_google_image_generation_stream(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
-    agent = Agent(m, output_type=Image)
+    agent = Agent(m, output_type=BinaryImage)
 
     async with agent.run_stream('Generate an image of an axolotl') as result:
         assert await result.get_output() == snapshot(
-            Image(
+            BinaryImage(
                 data=IsBytes(),
                 media_type='image/png',
                 identifier='9ff9cc',
@@ -2707,7 +2707,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
 
     assert agent_run.result is not None
     assert agent_run.result.output == snapshot(
-        Image(
+        BinaryImage(
             data=IsBytes(),
             media_type='image/png',
             identifier='2af2a7',
@@ -2727,7 +2727,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                 parts=[
                     TextPart(content='Here you go! '),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier='2af2a7',
@@ -2755,7 +2755,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
             PartStartEvent(
                 index=1,
                 part=FilePart(
-                    content=Image(
+                    content=BinaryImage(
                         data=IsBytes(),
                         media_type='image/png',
                         identifier='2af2a7',
@@ -2793,7 +2793,7 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
                         content='Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip who loved to explore. One day, while venturing further than usual, Pip discovered a shimmering, ancient coin that granted wishes! '
                     ),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier=IsStr(),
@@ -2819,7 +2819,7 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
 async def test_google_image_or_text_output(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
     # ImageGenerationTool is listed here to indicate just that it doesn't cause any issues, even though it's not necessary with an image-preview model.
-    agent = Agent(m, output_type=str | Image, builtin_tools=[ImageGenerationTool()])
+    agent = Agent(m, output_type=str | BinaryImage, builtin_tools=[ImageGenerationTool()])
 
     result = await agent.run('Tell me a two-sentence story about an axolotl, no image please.')
     assert result.output == snapshot(
@@ -2828,7 +2828,7 @@ async def test_google_image_or_text_output(allow_model_requests: None, google_pr
 
     result = await agent.run('Generate an image of an axolotl.')
     assert result.output == snapshot(
-        Image(
+        BinaryImage(
             data=IsBytes(),
             media_type='image/png',
             identifier='f82faf',
@@ -2876,7 +2876,7 @@ async def test_google_image_generation_with_prompted_output(
 
 async def test_google_image_generation_with_tools(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
-    agent = Agent(model=model, output_type=Image)
+    agent = Agent(model=model, output_type=BinaryImage)
 
     @agent.tool_plain
     async def get_animal() -> str:
@@ -2900,11 +2900,11 @@ async def test_google_image_generation_tool(allow_model_requests: None, google_p
 async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash-image-preview', provider=vertex_provider)
 
-    agent = Agent(model, output_type=Image)
+    agent = Agent(model, output_type=BinaryImage)
 
     result = await agent.run('Generate an image of an axolotl.')
     assert result.output == snapshot(
-        Image(
+        BinaryImage(
             data=IsBytes(),
             media_type='image/png',
             identifier='f3edd8',

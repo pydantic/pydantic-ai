@@ -272,9 +272,9 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
             if len(outputs) == 0:
                 raise UserError('At least one output type must be provided other than `DeferredToolRequests`.')
 
-        allows_image = _messages.Image in outputs
+        allows_image = _messages.BinaryImage in outputs
         if allows_image:
-            outputs = [output for output in outputs if output is not _messages.Image]
+            outputs = [output for output in outputs if output is not _messages.BinaryImage]
 
         if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):
             if len(outputs) > 1:

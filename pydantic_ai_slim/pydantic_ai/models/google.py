@@ -22,7 +22,6 @@ from ..messages import (
     FilePart,
     FileUrl,
     FinishReason,
-    Image,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -675,13 +674,10 @@ class GeminiStreamedResponse(StreamedResponse):
                     data = part.inline_data.data
                     mime_type = part.inline_data.mime_type
                     assert data and mime_type, 'Inline data must have data and mime type'
-                    if mime_type.startswith('image/'):
-                        content = Image(data=data, media_type=mime_type)
-                    else:
-                        content = BinaryContent(data=data, media_type=mime_type)  # pragma: no cover
+                    content = BinaryContent(data=data, media_type=mime_type)
                     yield self._parts_manager.handle_part(
                         vendor_part_id=uuid4(),
-                        part=FilePart(content=content),
+                        part=FilePart(content=BinaryContent.narrow_type(content)),
                     )
                 elif part.executable_code is not None:
                     code_execution_tool_call_id = _utils.generate_tool_call_id()
@@ -817,11 +813,8 @@ def _process_response_from_parts(
             data = inline_data.data
             mime_type = inline_data.mime_type
             assert data and mime_type, 'Inline data must have data and mime type'
-            if mime_type.startswith('image/'):
-                content = Image(data=data, media_type=mime_type)
-            else:
-                content = BinaryContent(data=data, media_type=mime_type)  # pragma: no cover
-            item = FilePart(content=content)
+            content = BinaryContent(data=data, media_type=mime_type)
+            item = FilePart(content=BinaryContent.narrow_type(content))
         else:  # pragma: no cover
             raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
 

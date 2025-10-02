@@ -22,12 +22,12 @@ from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
+    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     FinishReason,
-    Image,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -1874,7 +1874,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 # See https://github.com/openai/openai-python/issues/2649
                 output_format = getattr(chunk, 'output_format', 'png')
                 file_part = FilePart(
-                    content=Image(
+                    content=BinaryImage(
                         data=base64.b64decode(chunk.partial_image_b64),
                         media_type=f'image/{output_format}',
                     ),
@@ -1983,7 +1983,7 @@ def _map_code_interpreter_tool_call(
             if isinstance(output, responses.response_code_interpreter_tool_call.OutputImage):
                 file_parts.append(
                     FilePart(
-                        content=Image.from_data_uri(output.url),
+                        content=BinaryImage.from_data_uri(output.url),
                         id=item.id,
                     )
                 )
@@ -2069,7 +2069,7 @@ def _map_image_generation_tool_call(
     file_part: FilePart | None = None
     if item.result:
         file_part = FilePart(
-            content=Image(
+            content=BinaryImage(
                 data=base64.b64decode(item.result),
                 media_type=f'image/{output_format}',
             ),

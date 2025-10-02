@@ -7,8 +7,11 @@ from inline_snapshot import snapshot
 from pydantic_ai import (
     AudioUrl,
     BinaryContent,
+    BinaryImage,
     DocumentUrl,
+    FilePart,
     ImageUrl,
+    ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
@@ -410,3 +413,50 @@ def test_pre_usage_refactor_messages_deserializable():
             ),
         ]
     )
+
+
+def test_file_part_serialization_roundtrip():
+    # Verify that a serialized BinaryImage doesn't come back as a BinaryContent.
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[FilePart(content=BinaryImage(data=b'fake', media_type='image/jpeg'))])
+    ]
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    assert serialized == snapshot(
+        [
+            {
+                'parts': [
+                    {
+                        'content': {
+                            'data': 'ZmFrZQ==',
+                            'media_type': 'image/jpeg',
+                            'identifier': 'c053ec',
+                            'vendor_metadata': None,
+                            'kind': 'binary',
+                        },
+                        'id': None,
+                        'provider_name': None,
+                        'part_kind': 'file',
+                    }
+                ],
+                'usage': {
+                    'input_tokens': 0,
+                    'cache_write_tokens': 0,
+                    'cache_read_tokens': 0,
+                    'output_tokens': 0,
+                    'input_audio_tokens': 0,
+                    'cache_audio_read_tokens': 0,
+                    'output_audio_tokens': 0,
+                    'details': {},
+                },
+                'model_name': None,
+                'timestamp': '2025-10-02T20:29:44.866064Z',
+                'kind': 'response',
+                'provider_name': None,
+                'provider_details': None,
+                'provider_response_id': None,
+                'finish_reason': None,
+            }
+        ]
+    )
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+    assert deserialized == messages

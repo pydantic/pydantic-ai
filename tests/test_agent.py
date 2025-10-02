@@ -22,10 +22,10 @@ from pydantic_ai import (
     AgentStreamEvent,
     AudioUrl,
     BinaryContent,
+    BinaryImage,
     CombinedToolset,
     DocumentUrl,
     FunctionToolset,
-    Image,
     ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -3932,7 +3932,7 @@ def test_unsupported_output_mode():
     with pytest.raises(UserError, match='Tool output is not supported by the model.'):
         agent.run_sync('Hello')
 
-    agent = Agent(model, output_type=Image)
+    agent = Agent(model, output_type=BinaryImage)
 
     with pytest.raises(UserError, match='Image output is not supported by the model.'):
         agent.run_sync('Hello')

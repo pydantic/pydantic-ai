@@ -15,12 +15,12 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    BinaryImage,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     FunctionToolset,
-    Image,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -1979,7 +1979,7 @@ async def test_custom_model_settings(allow_model_requests: None, client: Client)
         assert output == snapshot("{'max_tokens': 123, 'custom_setting': 'custom_value'}")
 
 
-image_agent = Agent(model, name='image_agent', output_type=Image)
+image_agent = Agent(model, name='image_agent', output_type=BinaryImage)
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
 image_temporal_agent = TemporalAgent(image_agent, activity_config=BASE_ACTIVITY_CONFIG)
@@ -1988,7 +1988,7 @@ image_temporal_agent = TemporalAgent(image_agent, activity_config=BASE_ACTIVITY_
 @workflow.defn
 class ImageAgentWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> Image:
+    async def run(self, prompt: str) -> BinaryImage:
         result = await image_temporal_agent.run(prompt)
         return result.output  # pragma: no cover
 

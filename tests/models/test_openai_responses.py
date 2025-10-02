@@ -10,12 +10,12 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     BinaryContent,
+    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     FinalResultEvent,
-    Image,
     ImageGenerationTool,
     ImageUrl,
     ModelRequest,
@@ -3453,11 +3453,11 @@ async def test_openai_responses_code_execution_return_image(allow_model_requests
         settings=OpenAIResponsesModelSettings(openai_include_code_execution_outputs=True),
     )
 
-    agent = Agent(model=model, builtin_tools=[CodeExecutionTool()], output_type=Image)
+    agent = Agent(model=model, builtin_tools=[CodeExecutionTool()], output_type=BinaryImage)
 
     result = await agent.run('Create a chart of y=x^2 for x=-5 to 5')
     assert result.output == snapshot(
-        Image(
+        BinaryImage(
             data=IsBytes(),
             media_type='image/png',
             identifier='653a61',
@@ -3515,7 +3515,7 @@ plt.show()\r
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier='653a61',
@@ -3549,7 +3549,7 @@ plt.show()\r
 
     result = await agent.run('Style it more futuristically.', message_history=messages)
     assert result.output == snapshot(
-        Image(
+        BinaryImage(
             data=IsBytes(),
             media_type='image/png',
             identifier='81863d',
@@ -3655,7 +3655,7 @@ out_path\
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier='81863d',
@@ -3710,7 +3710,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
         settings=OpenAIResponsesModelSettings(openai_include_code_execution_outputs=True),
     )
 
-    agent = Agent(model=model, builtin_tools=[CodeExecutionTool()], output_type=Image)
+    agent = Agent(model=model, builtin_tools=[CodeExecutionTool()], output_type=BinaryImage)
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='Create a chart of y=x^2 for x=-5 to 5') as agent_run:
@@ -3722,7 +3722,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
 
     assert agent_run.result is not None
     assert agent_run.result.output == snapshot(
-        Image(
+        BinaryImage(
             data=IsBytes(),
             media_type='image/png',
             identifier='df0d78',
@@ -3753,7 +3753,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier='df0d78',
@@ -5089,7 +5089,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             PartStartEvent(
                 index=2,
                 part=FilePart(
-                    content=Image(
+                    content=BinaryImage(
                         data=IsBytes(),
                         media_type='image/png',
                         identifier='df0d78',
@@ -5173,13 +5173,13 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
 
 async def test_openai_responses_image_generation(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, output_type=Image)
+    agent = Agent(model=model, output_type=BinaryImage)
 
     result = await agent.run('Generate an image of an axolotl.')
     messages = result.all_messages()
 
     assert result.output == snapshot(
-        Image(
+        BinaryImage(
             data=IsBytes(),
             media_type='image/png',
             identifier='68b13f',
@@ -5209,7 +5209,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier='68b13f',
@@ -5249,7 +5249,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
 
     result = await agent.run('Now give it a sombrero.', message_history=messages)
     assert result.output == snapshot(
-        Image(
+        BinaryImage(
             data=IsBytes(),
             media_type='image/png',
             identifier='2b4fea',
@@ -5279,7 +5279,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier='2b4fea',
@@ -5320,11 +5320,11 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
 
 async def test_openai_responses_image_generation_stream(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model, output_type=Image)
+    agent = Agent(model, output_type=BinaryImage)
 
     async with agent.run_stream('Generate an image of an axolotl') as result:
         assert await result.get_output() == snapshot(
-            Image(
+            BinaryImage(
                 data=IsBytes(),
                 media_type='image/png',
                 identifier='be46a2',
@@ -5341,7 +5341,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
 
     assert agent_run.result is not None
     assert agent_run.result.output == snapshot(
-        Image(
+        BinaryImage(
             data=IsBytes(),
             media_type='image/png',
             identifier='69eaa4',
@@ -5371,7 +5371,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier='69eaa4',
@@ -5428,7 +5428,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
             PartStartEvent(
                 index=2,
                 part=FilePart(
-                    content=Image(
+                    content=BinaryImage(
                         data=IsBytes(),
                         media_type='image/png',
                         identifier='69eaa4',
@@ -5440,7 +5440,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
             PartStartEvent(
                 index=2,
                 part=FilePart(
-                    content=Image(
+                    content=BinaryImage(
                         data=IsBytes(),
                         media_type='image/png',
                         identifier='69eaa4',
@@ -5527,7 +5527,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier='c51b7b',
@@ -5582,7 +5582,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier='c9d559',
@@ -5620,14 +5620,14 @@ async def test_openai_responses_image_generation_tool_without_image_output(
 
 async def test_openai_responses_image_or_text_output(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, output_type=str | Image)
+    agent = Agent(model=model, output_type=str | BinaryImage)
 
     result = await agent.run('Tell me a two-sentence story about an axolotl.')
     assert result.output == snapshot(IsStr())
 
     result = await agent.run('Generate an image of an axolotl.')
     assert result.output == snapshot(
-        Image(
+        BinaryImage(
             data=IsBytes(),
             media_type='image/png',
             identifier='f77253',
@@ -5669,7 +5669,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier='918a98',
@@ -5778,7 +5778,7 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier='4ed317',
@@ -5856,7 +5856,7 @@ Don't include any text or Markdown fencing before or after.\
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier='958792',
@@ -5895,7 +5895,7 @@ Don't include any text or Markdown fencing before or after.\
 
 async def test_openai_responses_image_generation_with_tools(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, output_type=Image)
+    agent = Agent(model=model, output_type=BinaryImage)
 
     @agent.tool_plain
     async def get_animal() -> str:
@@ -5903,7 +5903,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
 
     result = await agent.run('Generate an image of the animal returned by the get_animal tool.')
     assert result.output == snapshot(
-        Image(
+        BinaryImage(
             data=IsBytes(),
             media_type='image/png',
             identifier='160d47',
@@ -5959,7 +5959,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier='160d47',
@@ -5995,12 +5995,12 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
 
 async def test_openai_responses_multiple_images(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, output_type=Image)
+    agent = Agent(model=model, output_type=BinaryImage)
 
     result = await agent.run('Generate two separate images of axolotls.')
     # The first image is used as output
     assert result.output == snapshot(
-        Image(
+        BinaryImage(
             data=IsBytes(),
             media_type='image/png',
             identifier='2a8c51',
@@ -6030,7 +6030,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier='2a8c51',
@@ -6056,7 +6056,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
                             identifier='dd7c41',
@@ -6096,12 +6096,12 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
 
 async def test_openai_responses_image_generation_jpeg(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, builtin_tools=[ImageGenerationTool(output_format='jpeg')], output_type=Image)
+    agent = Agent(model=model, builtin_tools=[ImageGenerationTool(output_format='jpeg')], output_type=BinaryImage)
 
     result = await agent.run('Generate an image of axolotl.')
 
     assert result.output == snapshot(
-        Image(
+        BinaryImage(
             data=IsBytes(),
             media_type='image/jpeg',
             identifier='df8cd2',
@@ -6131,7 +6131,7 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=Image(
+                        content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/jpeg',
                             identifier='df8cd2',
