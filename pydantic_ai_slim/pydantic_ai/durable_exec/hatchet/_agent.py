@@ -5,7 +5,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, context
 from typing import Any, Generic, overload
 from uuid import uuid4
 
-from hatchet_sdk import DurableContext, Hatchet, TriggerWorkflowOptions
+from hatchet_sdk import Context, DurableContext, Hatchet, TriggerWorkflowOptions
 from hatchet_sdk.runnables.workflow import BaseWorkflow
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from typing_extensions import Never
@@ -47,6 +47,12 @@ class RunAgentInput(BaseModel, Generic[RunOutputDataT, AgentDepsT]):
     infer_name: bool = True
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None
     deprecated_kwargs: dict[str, Any] = Field(default_factory=dict)
+
+
+class EventStreamHandlerInput(BaseModel, Generic[AgentDepsT]):
+    event: _messages.AgentStreamEvent
+    serialized_run_context: Any
+    deps: AgentDepsT
 
 
 class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
@@ -168,6 +174,27 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             )
 
         self.hatchet_wrapped_run_stream_workflow = wrapped_run_stream_workflow
+
+        @hatchet.task(
+            name=f'{self._name}.event_stream_handler',
+            input_validator=EventStreamHandlerInput,
+        )
+        async def event_stream_handler_task(input: EventStreamHandlerInput, ctx: Context) -> None:
+            # We can never get here without an `event_stream_handler`, as `HatchetAgent.run_stream` and `HatchetAgent.iter` raise an error saying to use `HatchetAgent.run` instead,
+            # and that only ends up calling `event_stream_handler` if it is set.
+            assert self.event_stream_handler is not None
+
+            run_context = self.run_context_type.deserialize_run_context(
+                input.serialized_run_context,
+                deps=input.deps,
+            )
+
+            async def streamed_response():
+                yield input.event
+
+            await self.event_stream_handler(run_context, streamed_response())
+
+        self.hatchet_wrapped_event_stream_handler = event_stream_handler_task
 
     @property
     def name(self) -> str | None:
@@ -471,38 +498,22 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 'Please file an issue if this is not sufficient for your use case.'
             )
 
-        # Execute the streaming via Hatchet workflow
-        agent_run_id = uuid4()
-
-        ref = await self.hatchet_wrapped_run_stream_workflow.aio_run_no_wait(
-            RunAgentInput[RunOutputDataT, AgentDepsT](
-                user_prompt=user_prompt,
-                output_type=output_type,
-                message_history=message_history,
-                deferred_tool_results=deferred_tool_results,
-                model=model,
-                deps=deps,
-                model_settings=model_settings,
-                usage_limits=usage_limits,
-                usage=usage,
-                infer_name=infer_name,
-                toolsets=toolsets,
-                deprecated_kwargs=_deprecated_kwargs,
-            ),
-            options=TriggerWorkflowOptions(
-                additional_metadata={
-                    'hatchet__agent_name': self._name,
-                    'hatchet__agent_run_id': str(agent_run_id),
-                    'hatchet__stream_mode': True,
-                }
-            ),
-        )
-
-        async for x in self._hatchet.runs.subscribe_to_stream(ref.workflow_run_id):
-            adapter = TypeAdapter[AgentStreamEvent](AgentStreamEvent)
-            parsed = adapter.validate_json(x)
-
-            yield parsed
+        async with super().run_stream(
+            user_prompt,
+            output_type=output_type,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+            model=model,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            event_stream_handler=event_stream_handler,
+            **_deprecated_kwargs,
+        ) as result:
+            yield result
 
     @overload
     def iter(
