@@ -9,7 +9,6 @@ from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from prefect.types.entrypoint import EntrypointType
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -36,6 +35,7 @@ from pydantic_ai.usage import RequestUsage
 try:
     from prefect import flow, task
     from prefect.testing.utilities import prefect_test_harness
+    from prefect.types.entrypoint import EntrypointType
 
     from pydantic_ai.durable_exec.prefect import (
         DEFAULT_PYDANTIC_AI_CACHE_POLICY,
