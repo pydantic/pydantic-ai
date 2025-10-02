@@ -10,7 +10,7 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, U
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._run_context import SerializableRunContext
-from ._types import TaskConfig
+from ._types import TaskConfig, default_task_config
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -29,7 +29,7 @@ class PrefectFunctionToolset(WrapperToolset[AgentDepsT]):
         tool_task_config: dict[str, TaskConfig | None],
     ):
         super().__init__(wrapped)
-        self._task_config = task_config or {}
+        self._task_config = default_task_config | (task_config or {})
         self._tool_task_config = tool_task_config or {}
 
     def visit_and_replace(
@@ -51,7 +51,7 @@ class PrefectFunctionToolset(WrapperToolset[AgentDepsT]):
             return await super().call_tool(name, tool_args, ctx, tool)
 
         # Check if this specific tool has custom config or is disabled
-        tool_specific_config = self._tool_task_config.get(name, {})
+        tool_specific_config = self._tool_task_config.get(name, default_task_config)
         if tool_specific_config is None:
             # None means this tool should not be wrapped as a task
             return await super().call_tool(name, tool_args, ctx, tool)
@@ -88,9 +88,7 @@ class PrefectFunctionToolset(WrapperToolset[AgentDepsT]):
                 ) from e
 
             # Call the tool
-            result = await super(PrefectFunctionToolset, self).call_tool(
-                tool_name, args, unwrapped_ctx, tool_instance
-            )
+            result = await super(PrefectFunctionToolset, self).call_tool(tool_name, args, unwrapped_ctx, tool_instance)
             logger.info(f'Tool call completed: {tool_name}')
             return result
 

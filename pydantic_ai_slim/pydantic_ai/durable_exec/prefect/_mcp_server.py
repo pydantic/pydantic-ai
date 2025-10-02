@@ -11,7 +11,7 @@ from pydantic_ai import AbstractToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._run_context import SerializableRunContext
-from ._types import TaskConfig
+from ._types import TaskConfig, default_task_config
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPServer, ToolResult
@@ -27,7 +27,7 @@ class PrefectMCPServer(WrapperToolset[AgentDepsT], ABC):
         task_config: TaskConfig,
     ):
         super().__init__(wrapped)
-        self._task_config = task_config or {}
+        self._task_config = default_task_config | (task_config or {})
         self._mcp_id = wrapped.id
 
     @property
@@ -35,12 +35,11 @@ class PrefectMCPServer(WrapperToolset[AgentDepsT], ABC):
         return self.wrapped.id
 
     async def __aenter__(self) -> Self:
-        # The wrapped MCPServer enters itself around listing and calling tools
-        # so we don't need to enter it here (nor could we because we're not inside a Prefect task).
+        await self.wrapped.__aenter__()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        return None
+        return await self.wrapped.__aexit__(*args)
 
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]

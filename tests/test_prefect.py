@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import contextmanager
-from typing import Any
+from dataclasses import dataclass
 
 import pytest
 from pydantic import BaseModel
@@ -14,15 +14,12 @@ from pydantic_ai import (
     RunContext,
 )
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.usage import RequestUsage
-
-from .conftest import IsDatetime, IsStr
 
 try:
     from prefect import flow, task
     from prefect.testing.utilities import prefect_test_harness
 
-    from pydantic_ai.durable_exec.prefect import PrefectAgent, PrefectMCPServer, PrefectModel
+    from pydantic_ai.durable_exec.prefect import PrefectAgent
 except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
 
@@ -47,7 +44,7 @@ except ImportError:  # pragma: lax no cover
 from inline_snapshot import snapshot
 
 from pydantic_ai import ExternalToolset, FunctionToolset
-from pydantic_ai.tools import DeferredToolResults, ToolDefinition
+from pydantic_ai.tools import ToolDefinition
 
 pytestmark = [
     pytest.mark.anyio,
@@ -152,9 +149,6 @@ def get_weather(args: WeatherArgs) -> str:
         return 'sunny'
     else:
         return 'unknown'  # pragma: no cover
-
-
-from dataclasses import dataclass
 
 
 @dataclass

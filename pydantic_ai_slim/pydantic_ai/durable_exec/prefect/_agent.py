@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import inspect
-from asyncio import Lock
 from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from datetime import timedelta
-from typing import Any, overload
+from typing import TYPE_CHECKING, Any, overload
 
 from prefect import flow, get_run_logger, task
 from prefect.context import FlowRunContext
 from prefect.runner import Runner
+from prefect.settings import get_current_settings
 from prefect.types.entrypoint import EntrypointType
+from prefect.utilities.slugify import slugify
 from typing_extensions import Never
 
 from pydantic_ai import (
@@ -36,7 +37,7 @@ from pydantic_ai.tools import (
 )
 
 from ._model import PrefectModel
-from ._types import TaskConfig
+from ._types import TaskConfig, default_task_config
 
 
 class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
@@ -74,9 +75,9 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             )
 
         # Merge the config with the default Prefect config
-        self._mcp_task_config = mcp_task_config or {}
-        self._model_task_config = model_task_config or {}
-        self._tool_task_config = tool_task_config or {}
+        self._mcp_task_config = default_task_config | (mcp_task_config or {})
+        self._model_task_config = default_task_config | (model_task_config or {})
+        self._tool_task_config = default_task_config | (tool_task_config or {})
         self._tool_task_config_by_name = tool_task_config_by_name or {}
 
         if not isinstance(wrapped.model, Model):
@@ -91,36 +92,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         )
         self._model = prefect_model
 
-        def prefectify_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            # Replace MCPServer with PrefectMCPServer
-            try:
-                from pydantic_ai.mcp import MCPServer
-
-                from ._mcp_server import PrefectMCPServer
-            except ImportError:
-                pass
-            else:
-                if isinstance(toolset, MCPServer):
-                    return PrefectMCPServer(
-                        wrapped=toolset,
-                        task_config=self._mcp_task_config,
-                    )
-
-            # Replace FunctionToolset with PrefectFunctionToolset
-            from pydantic_ai import FunctionToolset
-
-            from ._function_toolset import PrefectFunctionToolset
-
-            if isinstance(toolset, FunctionToolset):
-                return PrefectFunctionToolset(
-                    wrapped=toolset,
-                    task_config=self._tool_task_config,
-                    tool_task_config=self._tool_task_config_by_name,
-                )
-
-            return toolset
-
-        prefect_toolsets = [toolset.visit_and_replace(prefectify_toolset) for toolset in wrapped.toolsets]
+        prefect_toolsets = [toolset.visit_and_replace(self._prefectify_toolset) for toolset in wrapped.toolsets]
         self._toolsets = prefect_toolsets
 
         # Context variable to track when we're inside this agent's Prefect flow
@@ -128,60 +100,181 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             f'_in_prefect_agent_flow_{self._name}', default=False
         )
 
+    @staticmethod
+    def _extract_model_name(model: Any) -> str | None:
+        """Extract a model name string from a model object."""
+        if hasattr(model, 'wrapped'):
+            # Handle wrapped models like PrefectModel
+            return PrefectAgent._extract_model_name(model.wrapped)
+        elif hasattr(model, 'model_name'):
+            return f'{model.system}:{model.model_name}'
+        return None
+
+    @staticmethod
+    def _serialize_contextvar(cv: ContextVar[Any]) -> dict[str, Any]:
+        """Serialize a ContextVar to a dictionary."""
+        cv_info: dict[str, Any] = {
+            'name': cv.name if hasattr(cv, 'name') else 'unknown',
+        }
+        try:
+            current_value = cv.get()
+            cv_info['has_value'] = True
+            cv_info['value'] = current_value
+        except LookupError:
+            cv_info['has_value'] = False
+        return cv_info
+
+    @staticmethod
+    def _deserialize_contextvar(cv_info: dict[str, Any], default: Any = None) -> ContextVar[Any]:
+        """Deserialize a ContextVar from a dictionary."""
+        new_cv = ContextVar(cv_info['name'], default=default)
+        if cv_info.get('has_value', False):
+            new_cv.set(cv_info['value'])
+        return new_cv
+
+    def _prefectify_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        """Convert a toolset to its Prefect equivalent."""
+        # Replace MCPServer with PrefectMCPServer
+        try:
+            from pydantic_ai.mcp import MCPServer
+
+            from ._mcp_server import PrefectMCPServer
+        except ImportError:
+            pass
+        else:
+            if isinstance(toolset, MCPServer):
+                return PrefectMCPServer(
+                    wrapped=toolset,
+                    task_config=self._mcp_task_config,
+                )
+
+        # Replace FunctionToolset with PrefectFunctionToolset
+        from pydantic_ai import FunctionToolset
+
+        from ._function_toolset import PrefectFunctionToolset
+
+        if isinstance(toolset, FunctionToolset):
+            return PrefectFunctionToolset(
+                wrapped=toolset,
+                task_config=self._tool_task_config,
+                tool_task_config=self._tool_task_config_by_name,
+            )
+
+        return toolset
+
+    def _serialize_wrapped_agent_state(self, wrapped_state: dict[str, Any]) -> dict[str, Any]:
+        """Serialize the wrapped agent's state, handling non-serializable fields."""
+        from contextvars import ContextVar
+
+        # Handle _output_type - store it as the class itself, not the schema
+        if '_output_type' in wrapped_state:
+            output_type = wrapped_state['_output_type']
+            # Store the output_type for later reconstruction
+            wrapped_state['_output_type_original'] = output_type
+            # Remove all the derived output fields that will be regenerated
+            wrapped_state.pop('_output_schema', None)
+            wrapped_state.pop('_output_validators', None)
+            wrapped_state.pop('_output_toolset', None)
+
+            # Also need to remove _function_toolset as it contains a reference to output_schema
+            # We'll store only its configuration for reconstruction
+            if '_function_toolset' in wrapped_state:
+                function_toolset = wrapped_state['_function_toolset']
+                wrapped_state['_function_toolset_tools'] = list(function_toolset.tools.values())
+                wrapped_state['_function_toolset_max_retries'] = function_toolset.max_retries
+                wrapped_state.pop('_function_toolset')
+
+        # Handle the wrapped agent's model - store its name for reconstruction
+        if '_model' in wrapped_state:
+            model_string = self._extract_model_name(wrapped_state['_model'])
+            if model_string:
+                wrapped_state['_model_string'] = model_string
+                wrapped_state.pop('_model')
+
+        # Handle ContextVars - store their names and current values
+        contextvars_state = {}
+        for key, value in list(wrapped_state.items()):
+            if isinstance(value, ContextVar):
+                contextvars_state[key] = self._serialize_contextvar(value)
+                wrapped_state.pop(key)
+
+        return {'state': wrapped_state, 'contextvars': contextvars_state}
+
+    def _deserialize_wrapped_agent_state(
+        self, wrapped_state: dict[str, Any], contextvars_state: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Deserialize the wrapped agent's state, reconstructing non-serializable fields."""
+        # Reconstruct the model from the model string if present
+        if '_model_string' in wrapped_state:
+            model_string = wrapped_state.pop('_model_string')
+            wrapped_state['_model'] = models.infer_model(model_string)
+
+        # Reconstruct output schema if output_type was present
+        if '_output_type_original' in wrapped_state:
+            from pydantic_ai import _output
+            from pydantic_ai.agent import _AgentFunctionToolset
+
+            output_type = wrapped_state.pop('_output_type_original')
+            # Get the default output mode from the model
+            default_output_mode = (
+                wrapped_state['_model'].profile.default_structured_output_mode
+                if '_model' in wrapped_state and isinstance(wrapped_state['_model'], models.Model)
+                else None
+            )
+            # Rebuild the output schema
+            wrapped_state['_output_schema'] = _output.OutputSchema[object].build(
+                output_type, default_mode=default_output_mode
+            )
+            wrapped_state['_output_validators'] = []
+            wrapped_state['_output_toolset'] = wrapped_state['_output_schema'].toolset
+            if wrapped_state['_output_toolset']:
+                wrapped_state['_output_toolset'].max_retries = wrapped_state.get('_max_result_retries', 1)
+
+            # Reconstruct _function_toolset if it was removed
+            if '_function_toolset_tools' in wrapped_state:
+                tools = wrapped_state.pop('_function_toolset_tools')
+                max_retries = wrapped_state.pop('_function_toolset_max_retries')
+                # Create new _AgentFunctionToolset with reconstructed output_schema
+                wrapped_state['_function_toolset'] = _AgentFunctionToolset(
+                    tools=[],  # Start with empty, we'll add tools directly
+                    max_retries=max_retries,
+                    output_schema=wrapped_state['_output_schema'],
+                )
+                # Add the tool definitions back
+                for tool in tools:
+                    wrapped_state['_function_toolset'].tools[tool.name] = tool
+
+        # Recreate ContextVars with default=None (as they are in Agent.__init__)
+        for key, cv_info in contextvars_state.items():
+            wrapped_state[key] = self._deserialize_contextvar(cv_info, default=None)
+
+        return wrapped_state
+
     def __getstate__(self) -> dict[str, Any]:
         """Prepare the PrefectAgent for serialization with cloudpickle.
 
         This method is called during pickling to customize what gets serialized.
-        We need to handle the wrapped agent's non-serializable fields (Lock, AsyncExitStack, ContextVars)
+        We need to handle the wrapped agent's non-serializable fields (ContextVars)
         and the model (which contains HTTP clients).
         """
-        from contextvars import ContextVar
-
         # Create a shallow copy of our state
         state = self.__dict__.copy()
+
+        # Handle PrefectAgent's own ContextVar
+        if '_in_prefect_agent_flow' in state:
+            cv = state.pop('_in_prefect_agent_flow')
+            cv_info = self._serialize_contextvar(cv)
+            state['_in_prefect_agent_flow_has_value'] = cv_info['has_value']
+            if cv_info['has_value']:
+                state['_in_prefect_agent_flow_value'] = cv_info['value']
 
         # Remove _toolsets - these contain references to output schemas that can't be pickled
         # They will be reconstructed in __setstate__ from the wrapped agent's toolsets
         state.pop('_toolsets', None)
 
-        # Handle the PrefectAgent's own ContextVar
-        if '_in_prefect_agent_flow' in state:
-            cv = state['_in_prefect_agent_flow']
-            # Store its current value if any
-            try:
-                current_value = cv.get()
-                state['_in_prefect_agent_flow_value'] = current_value
-                state['_in_prefect_agent_flow_has_value'] = True
-            except LookupError:
-                state['_in_prefect_agent_flow_has_value'] = False
-            # Remove the ContextVar itself
-            state.pop('_in_prefect_agent_flow')
-
-        # Helper function to extract model name from a model
-        def extract_model_name(model: Any) -> str | None:
-            if hasattr(model, 'wrapped'):
-                # Handle wrapped models like PrefectModel
-                return extract_model_name(model.wrapped)
-            elif hasattr(model, 'model_name'):
-                # Store the model name based on the model class
-                model_class_name = model.__class__.__name__
-                # Map model class names to provider prefixes
-                provider_map = {
-                    'AnthropicModel': 'anthropic',
-                    'OpenAIModel': 'openai',
-                    'GoogleModel': 'google',
-                    'GroqModel': 'groq',
-                    'MistralModel': 'mistral',
-                    'CohereModel': 'cohere',
-                    'BedrockModel': 'bedrock',
-                }
-                provider = provider_map.get(model_class_name, 'unknown')
-                return f'{provider}:{model.model_name}'
-            return None
-
         # Handle PrefectAgent's own _model field (which is a PrefectModel)
         if '_model' in state:
-            model_string = extract_model_name(state['_model'])
+            model_string = self._extract_model_name(state['_model'])
             if model_string:
                 state['_model_string'] = model_string
                 state['_prefect_model_config'] = {
@@ -192,68 +285,12 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         # Handle the wrapped agent's non-serializable fields
         if hasattr(self.wrapped, '__dict__'):
-            # Create a copy of the wrapped agent's state
             wrapped_state = self.wrapped.__dict__.copy()
-
-            # Remove non-serializable fields
-            wrapped_state.pop('_enter_lock', None)
-            wrapped_state.pop('_exit_stack', None)
-
-            # Handle _output_type - store it as the class itself, not the schema
-            if '_output_type' in wrapped_state:
-                output_type = wrapped_state['_output_type']
-                # Store the output_type for later reconstruction
-                wrapped_state['_output_type_original'] = output_type
-                # Remove all the derived output fields that will be regenerated
-                wrapped_state.pop('_output_schema', None)
-                wrapped_state.pop('_output_validators', None)
-                wrapped_state.pop('_output_toolset', None)
-
-                # Also need to remove _function_toolset as it contains a reference to output_schema
-                # We'll store only its configuration for reconstruction
-                if '_function_toolset' in wrapped_state:
-                    function_toolset = wrapped_state['_function_toolset']
-                    # Store only the tool list (which should be serializable Tool objects)
-                    # Note: we can't serialize the _AgentFunctionToolset itself because
-                    # it has a reference to output_schema
-                    wrapped_state['_function_toolset_tools'] = list(function_toolset.tools.values())
-                    wrapped_state['_function_toolset_max_retries'] = function_toolset.max_retries
-                    wrapped_state['_function_toolset_docstring_format'] = function_toolset.docstring_format
-                    wrapped_state['_function_toolset_require_parameter_descriptions'] = function_toolset.require_parameter_descriptions
-                    wrapped_state['_function_toolset_schema_generator'] = function_toolset.schema_generator
-                    wrapped_state['_function_toolset_id'] = function_toolset._id
-                    wrapped_state.pop('_function_toolset')
-
-            # Handle the wrapped agent's model - store its name for reconstruction
-            if '_model' in wrapped_state:
-                model_string = extract_model_name(wrapped_state['_model'])
-                if model_string:
-                    wrapped_state['_model_string'] = model_string
-                    wrapped_state.pop('_model')
-
-            # Handle ContextVars - store their names and current values
-            # Note: ContextVars in Agent are all created with default=None
-            contextvars_state = {}
-            for key, value in list(wrapped_state.items()):
-                if isinstance(value, ContextVar):
-                    # Store the ContextVar's name and current value (if any)
-                    cv_info = {
-                        'name': value.name if hasattr(value, 'name') else key,
-                    }
-                    # Try to get the current value in this context
-                    try:
-                        current_value = value.get()
-                        cv_info['has_value'] = True
-                        cv_info['value'] = current_value
-                    except LookupError:
-                        # No value set in current context
-                        cv_info['has_value'] = False
-                    contextvars_state[key] = cv_info
-                    wrapped_state.pop(key)
+            serialized = self._serialize_wrapped_agent_state(wrapped_state)
 
             # Store the modified wrapped agent state
-            state['_wrapped_state'] = wrapped_state
-            state['_wrapped_contextvars'] = contextvars_state
+            state['_wrapped_state'] = serialized['state']
+            state['_wrapped_contextvars'] = serialized['contextvars']
             state['_wrapped_class'] = self.wrapped.__class__
             # Remove the original wrapped agent from state
             state.pop('wrapped', None)
@@ -266,20 +303,14 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         This method is called during unpickling to restore the agent state.
         We reconstruct the wrapped agent and reinitialize its non-serializable fields.
         """
-        from contextvars import ContextVar
-
         # Recreate the PrefectAgent's own ContextVar and restore its value if it had one
         agent_name = state.get('_name', 'unknown')
-        new_cv = ContextVar(f'_in_prefect_agent_flow_{agent_name}', default=False)
-
-        # Restore the value if it existed
-        if state.pop('_in_prefect_agent_flow_has_value', False):
-            cv_value = state.pop('_in_prefect_agent_flow_value', False)
-            new_cv.set(cv_value)
-        else:
-            state.pop('_in_prefect_agent_flow_value', None)  # Clean up if present
-
-        state['_in_prefect_agent_flow'] = new_cv
+        cv_info = {
+            'name': f'_in_prefect_agent_flow_{agent_name}',
+            'has_value': state.pop('_in_prefect_agent_flow_has_value', False),
+            'value': state.pop('_in_prefect_agent_flow_value', False),
+        }
+        state['_in_prefect_agent_flow'] = self._deserialize_contextvar(cv_info, default=False)
 
         # Reconstruct PrefectAgent's own _model field if needed
         if '_model_string' in state:
@@ -305,65 +336,9 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             # Reconstruct the wrapped agent
             wrapped = object.__new__(wrapped_class)
 
-            # Reconstruct the model from the model string if present
-            if '_model_string' in wrapped_state:
-                model_string = wrapped_state.pop('_model_string')
-                wrapped_state['_model'] = models.infer_model(model_string)
-
-            # Reconstruct output schema if output_type was present
-            if '_output_type_original' in wrapped_state:
-                from pydantic_ai import _output
-                from pydantic_ai.agent import _AgentFunctionToolset
-
-                output_type = wrapped_state.pop('_output_type_original')
-                # Get the default output mode from the model
-                default_output_mode = (
-                    wrapped_state['_model'].profile.default_structured_output_mode
-                    if '_model' in wrapped_state and isinstance(wrapped_state['_model'], models.Model)
-                    else None
-                )
-                # Rebuild the output schema
-                wrapped_state['_output_schema'] = _output.OutputSchema[object].build(
-                    output_type, default_mode=default_output_mode
-                )
-                wrapped_state['_output_validators'] = []
-                wrapped_state['_output_toolset'] = wrapped_state['_output_schema'].toolset
-                if wrapped_state['_output_toolset']:
-                    wrapped_state['_output_toolset'].max_retries = wrapped_state.get('_max_result_retries', 1)
-
-                # Reconstruct _function_toolset if it was removed
-                if '_function_toolset_tools' in wrapped_state:
-                    tools = wrapped_state.pop('_function_toolset_tools')
-                    max_retries = wrapped_state.pop('_function_toolset_max_retries')
-                    # Create new _AgentFunctionToolset with reconstructed output_schema
-                    wrapped_state['_function_toolset'] = _AgentFunctionToolset(
-                        tools=[],  # Start with empty, we'll add tools directly
-                        max_retries=max_retries,
-                        output_schema=wrapped_state['_output_schema'],
-                    )
-                    # Add the tool definitions back
-                    for tool in tools:
-                        wrapped_state['_function_toolset'].tools[tool.name] = tool
-
+            # Deserialize the wrapped agent's state
+            wrapped_state = self._deserialize_wrapped_agent_state(wrapped_state, contextvars_state)
             wrapped.__dict__.update(wrapped_state)
-
-            # Reinitialize non-serializable fields with default values
-            wrapped._enter_lock = Lock()
-            wrapped._entered_count = 0
-            wrapped._exit_stack = None
-
-            # Recreate ContextVars with default=None (as they are in Agent.__init__)
-            # and restore their values if they had one
-            for key, cv_info in contextvars_state.items():
-                cv_name = cv_info['name']
-                # All Agent ContextVars have default=None
-                new_cv = ContextVar(cv_name, default=None)
-
-                # If the ContextVar had a value in the serialization context, restore it
-                if cv_info.get('has_value', False):
-                    new_cv.set(cv_info['value'])
-
-                setattr(wrapped, key, new_cv)
 
             # Add the reconstructed wrapped agent back to state
             state['wrapped'] = wrapped
@@ -373,20 +348,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         # Reconstruct _toolsets from the wrapped agent if it exists
         if hasattr(self, 'wrapped'):
-            from pydantic_ai import FunctionToolset
-
-            from ._function_toolset import PrefectFunctionToolset
-
-            def prefectify_toolset(toolset: Any) -> Any:
-                if isinstance(toolset, FunctionToolset):
-                    return PrefectFunctionToolset(
-                        wrapped=toolset,
-                        task_config=self._tool_task_config,
-                        tool_task_config=self._tool_task_config_by_name,
-                    )
-                return toolset
-
-            self._toolsets = [toolset.visit_and_replace(prefectify_toolset) for toolset in self.wrapped.toolsets]
+            self._toolsets = [toolset.visit_and_replace(self._prefectify_toolset) for toolset in self.wrapped.toolsets]
 
     @property
     def name(self) -> str | None:
@@ -983,6 +945,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     async def serve(
         self,
+        name: str | None = None,
         interval: int | float | timedelta | None = None,
         cron: str | None = None,
         rrule: str | None = None,
@@ -1038,6 +1001,9 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             None. This method blocks indefinitely until interrupted.
         """
+        if TYPE_CHECKING:
+            assert self._name is not None
+
         # Serve the flow with the provided configuration
         runner = Runner(
             name=f'{self._name} Runner',
@@ -1046,8 +1012,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             pause_on_shutdown=pause_on_shutdown,
         )
 
-        @flow(name=f'{self._name} Agent')
-        async def served_run_flow(user_prompt: str):
+        @flow(name=f'run-{slugify(self._name)}')
+        async def served_run(user_prompt: str):
             logger = get_run_logger()
             prompt_str = str(user_prompt)
             logger.info(f'Starting agent run with prompt: {prompt_str}')
@@ -1066,9 +1032,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     self._in_prefect_agent_flow.reset(token)
                 logger.info('Result: %s', result.output)
 
+        deployment_name = name or served_run.name
         maybe_coro = runner.add_flow(
-            served_run_flow,
-            name=f'{self._name} Agent',
+            served_run,
+            name=deployment_name,
             interval=interval,
             cron=cron,
             rrule=rrule,
@@ -1083,5 +1050,21 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         )
         if inspect.isawaitable(maybe_coro):
             await maybe_coro
+
+        from rich.console import Console, Group
+
+        help_message_top = '[green]Your agent is ready for requests!\n[/]'
+
+        help_message_bottom = (
+            '\nTo start an agent run, run:\n[blue]\n\t$ prefect deployment run'
+            f' "{served_run.name}/{deployment_name}" -p user_prompt="your prompt"\n[/]'
+        )
+        if prefect_ui_url := get_current_settings().ui_url:
+            help_message_bottom += (
+                f'\nYou can also trigger your deployments via the Prefect UI: [blue]{prefect_ui_url}/deployments[/]\n'
+            )
+
+        console = Console()
+        console.print(Group(help_message_top, help_message_bottom), soft_wrap=True)
 
         await runner.start(webserver=webserver)

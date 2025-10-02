@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, SkipValidation, model_serializer
 
-if TYPE_CHECKING:
-    from pydantic_ai.tools import AgentDepsT, RunContext
-else:
-    from pydantic_ai.tools import AgentDepsT
-    RunContext = Any
+from pydantic_ai.tools import AgentDepsT, RunContext
 
 
 class SerializableRunContext(BaseModel):
@@ -37,7 +33,7 @@ class SerializableRunContext(BaseModel):
         """
         return cls(wrapped=ctx)
 
-    def unwrap(self) -> Any:  # type: ignore[return]
+    def unwrap(self) -> RunContext[AgentDepsT]:
         """Unwrap to get the original RunContext.
 
         Returns:

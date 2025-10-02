@@ -21,7 +21,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
 from ._run_context import SerializableRunContext
-from ._types import TaskConfig
+from ._types import TaskConfig, default_task_config
 
 
 class PrefectStreamedResponse(StreamedResponse):
@@ -72,7 +72,7 @@ class PrefectModel(WrapperModel):
         event_stream_handler: EventStreamHandler[Any] | None = None,
     ):
         super().__init__(model)
-        self.task_config = task_config
+        self.task_config = default_task_config | (task_config or {})
         self.event_stream_handler = event_stream_handler
 
     async def request(
