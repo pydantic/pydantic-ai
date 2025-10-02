@@ -22,7 +22,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 
-from .conftest import IsNow
+from .conftest import IsNow, IsStr
 
 
 def test_image_url():
@@ -449,7 +449,7 @@ def test_file_part_serialization_roundtrip():
                     'details': {},
                 },
                 'model_name': None,
-                'timestamp': '2025-10-02T20:29:44.866064Z',
+                'timestamp': IsStr(),
                 'kind': 'response',
                 'provider_name': None,
                 'provider_details': None,
