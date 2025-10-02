@@ -105,10 +105,17 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     text = await validator.validate(text, self._run_ctx)  # pragma: no cover
                 yield text
 
+    # TODO (v2): Drop in favor of `response` property
     def get(self) -> _messages.ModelResponse:
         """Get the current state of the response."""
         return self._raw_stream_response.get()
 
+    @property
+    def response(self) -> _messages.ModelResponse:
+        """Get the current state of the response."""
+        return self.get()
+
+    # TODO (v2): Make this a property
     def usage(self) -> RunUsage:
         """Return the usage of the whole run.
 
@@ -117,6 +124,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         """
         return self._initial_run_ctx_usage + self._raw_stream_response.usage()
 
+    # TODO (v2): Make this a property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._raw_stream_response.timestamp
@@ -489,7 +497,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     @property
     def response(self) -> _messages.ModelResponse:
-        """Return the last response from the message history."""
+        """Return the current state of the response."""
         if self._run_result is not None:
             return self._run_result.response
         elif self._stream_response is not None:
@@ -497,6 +505,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
+    # TODO (v2): Make this a property
     def usage(self) -> RunUsage:
         """Return the usage of the whole run.
 
@@ -510,6 +519,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
+    # TODO (v2): Make this a property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         if self._run_result is not None:

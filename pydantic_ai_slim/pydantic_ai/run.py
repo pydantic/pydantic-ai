@@ -227,6 +227,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         assert isinstance(next_node, End), f'Unexpected node type: {type(next_node)}'
         return next_node
 
+    # TODO (v2): Make this a property
     def usage(self) -> _usage.RunUsage:
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
         return self._graph_run.state.usage
@@ -353,10 +354,12 @@ class AgentRunResult(Generic[OutputDataT]):
                 return message
         raise ValueError('No response found in the message history')
 
+    # TODO (v2): Make this a property
     def usage(self) -> _usage.RunUsage:
         """Return the usage of the whole run."""
         return self._state.usage
 
+    # TODO (v2): Make this a property
     def timestamp(self) -> datetime:
         """Return the timestamp of last response."""
         return self.response.timestamp

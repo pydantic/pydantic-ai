@@ -933,6 +933,16 @@ async def test_iter_stream_output():
                     async for chunk in stream.stream_output(debounce_by=None):
                         messages.append(chunk)
                 stream_usage = deepcopy(stream.usage())
+    assert stream is not None
+    assert stream.response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='The cat sat on the mat.')],
+            usage=RequestUsage(input_tokens=51, output_tokens=7),
+            model_name='test',
+            timestamp=IsDatetime(),
+            provider_name='test',
+        )
+    )
     assert run.next_node == End(data=FinalResult(output='The bat sat on the mat.', tool_name=None, tool_call_id=None))
     assert run.usage() == stream_usage == RunUsage(requests=1, input_tokens=51, output_tokens=7)
 

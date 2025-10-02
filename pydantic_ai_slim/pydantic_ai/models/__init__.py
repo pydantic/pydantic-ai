@@ -560,6 +560,7 @@ class StreamedResponse(ABC):
             finish_reason=self.finish_reason,
         )
 
+    # TODO (v2): Make this a property
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self._usage
