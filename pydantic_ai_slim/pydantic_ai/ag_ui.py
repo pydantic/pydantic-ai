@@ -760,7 +760,7 @@ def _convert_response_parts(parts: Sequence[ModelResponsePart]) -> tuple[list[Me
 def messages_to_ag_ui(messages: list[ModelMessage]) -> list[Message]:
     """Convert Pydantic AI messages to AG-UI message format.
 
-    This is the reverse of `_messages_from_ag_ui` found in pydantic_ai.ag_ui.
+    This is the reverse of `_messages_from_ag_ui`
 
     Args:
         messages: List of Pydantic AI ModelMessage objects (ModelRequest or ModelResponse)
