@@ -5377,3 +5377,137 @@ def test_override_with_dynamic_prompts():
     sys_texts = [p.content for p in req.parts if isinstance(p, SystemPromptPart)]
     # The dynamic system prompt should still be present since overrides target instructions only
     assert dynamic_value in sys_texts
+
+
+def test_continue_conversation_that_ended_in_output_tool_call(allow_model_requests: None):
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(p, ToolReturnPart) and p.tool_name == 'roll_dice' for p in messages[-1].parts):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'dice_roll': 4},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')]
+        )
+
+    class Result(BaseModel):
+        dice_roll: int
+
+    agent = Agent(FunctionModel(llm), output_type=Result)
+
+    @agent.tool_plain
+    def roll_dice() -> int:
+        return 4
+
+    result = agent.run_sync('Roll me a dice.')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Roll me a dice.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')],
+                usage=RequestUsage(input_tokens=55, output_tokens=2),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='roll_dice',
+                        content=4,
+                        tool_call_id='pyd_ai_tool_call_id__roll_dice',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'dice_roll': 4},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=56, output_tokens=6),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+    result = agent.run_sync('Roll me a dice again.', message_history=messages)
+    new_messages = result.new_messages()
+    assert new_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Roll me a dice again.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')],
+                usage=RequestUsage(input_tokens=66, output_tokens=8),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='roll_dice',
+                        content=4,
+                        tool_call_id='pyd_ai_tool_call_id__roll_dice',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'dice_roll': 4},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=67, output_tokens=12),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+    assert not any(isinstance(p, ToolReturnPart) and p.tool_name == 'final_result' for p in new_messages[0].parts)
