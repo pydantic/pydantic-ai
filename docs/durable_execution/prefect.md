@@ -32,7 +32,7 @@ Prefect uses client-side task orchestration by default, with optional server con
 |                                                      |
 +------------------------------------------------------+
                         |
-                        v (optional)
+                        v 
 +------------------------------------------------------+
 |                  Prefect Server/Cloud                |
 |      (Monitoring, Scheduling, Orchestration)         |
@@ -139,9 +139,14 @@ Prefect persists task results using [Pydantic's serialization](https://docs.pyda
 
 ### Streaming
 
-Because Prefect tasks consume their entire execution before returning results, [`Agent.run_stream()`][pydantic_ai.Agent.run_stream] is not supported when running inside of a Prefect flow.
+When running inside a Prefect flow, [`Agent.run_stream()`][pydantic_ai.Agent.run_stream] works but doesn't provide real-time streaming because Prefect tasks consume their entire execution before returning results. The method will execute fully and return the complete result at once.
 
-Instead, you can implement streaming by setting an [`event_stream_handler`][pydantic_ai.agent.EventStreamHandler] on the `Agent` or `PrefectAgent` instance and using [`PrefectAgent.run()`][pydantic_ai.durable_exec.prefect.PrefectAgent.run].
+For real-time streaming behavior inside Prefect flows, you can set an [`event_stream_handler`][pydantic_ai.agent.EventStreamHandler] on the `Agent` or `PrefectAgent` instance and use [`PrefectAgent.run()`][pydantic_ai.durable_exec.prefect.PrefectAgent.run].
+
+**Note**: Event stream handlers behave differently when running inside a Prefect flow versus outside:
+- **Outside a flow**: The handler receives events as they stream from the model
+- **Inside a flow**: Each event is wrapped as a Prefect task for durability, which may affect timing but ensures reliability
+
 The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agents.md#streaming-all-events).
 
 ## Task Configuration
@@ -155,12 +160,13 @@ You can customize Prefect task behavior, such as retries and timeouts, by passin
 
 Available `TaskConfig` options:
 
-- `retries`: Maximum number of retries for the task
-- `retry_delay_seconds`: Delay between retries in seconds (can be a single value or list for exponential backoff)
+- `retries`: Maximum number of retries for the task (default: `0`)
+- `retry_delay_seconds`: Delay between retries in seconds (can be a single value or list for exponential backoff, default: `1.0`)
 - `timeout_seconds`: Maximum time in seconds for the task to complete
 - `cache_policy`: Custom Prefect cache policy for the task
 - `persist_result`: Whether to persist the task result
-- `log_prints`: Whether to log print statements from the task
+- `result_storage`: Prefect result storage for the task (e.g., `'s3-bucket/my-storage'` or a `WritableFileSystem` block)
+- `log_prints`: Whether to log print statements from the task (default: `False`)
 
 Example:
 
@@ -205,35 +211,11 @@ This prevents requests from being retried multiple times at different layers.
 
 Prefect 3.0 provides built-in caching and transactional semantics. Tasks with identical inputs will not re-execute if their results are already cached, making workflows naturally idempotent and resilient to failures.
 
-### How Caching Works
-
-The Prefect integration caches tasks based on:
-
-* **Task source code**: Different versions of the same task won't share cached results
-* **Run ID**: Tasks are scoped to their flow run
 * **Task inputs**: Messages, settings, parameters, tool arguments, and serializable dependencies
-
-The integration automatically handles serialization of complex objects like `RunContext` by extracting only the cacheable fields (prompt, tool information, retry counts, and user dependencies if serializable) while excluding non-serializable objects like HTTP clients and tracers.
-
-### Customizing Cache Behavior
-
-You can override caching using the `cache_policy` parameter in [`TaskConfig`][pydantic_ai.durable_exec.prefect.TaskConfig]:
-
-```python
-from pydantic_ai.durable_exec.prefect import TaskConfig
-from prefect.cache_policies import NONE
-
-prefect_agent = PrefectAgent(
-    agent,
-    model_task_config=TaskConfig(cache_policy=NONE),  # Disable caching
-)
-```
-
-See [Prefect's caching documentation](https://docs.prefect.io/3.0/develop/task-caching) for more cache policy options.
 
 **Note**: For user dependencies to be included in cache keys, they must be serializable (e.g., Pydantic models or basic Python types). Non-serializable dependencies are automatically excluded from cache computation.
 
-## Observability with Prefect UI
+## Observability with Prefect and Logfire
 
 Prefect provides a built-in UI for monitoring flow runs, task executions, and failures. You can:
 
@@ -247,7 +229,7 @@ To access the Prefect UI, you can either:
 1. Use [Prefect Cloud](https://www.prefect.io/cloud) (managed service)
 2. Run a local [Prefect server](https://docs.prefect.io/v3/manage/self-host) with `prefect server start`
 
-Pydantic AI also integrates with [Pydantic Logfire](../logfire.md) for detailed observability. When using both Prefect and Logfire, you'll get complementary views:
+You can also use [Pydantic Logfire](../logfire.md) for detailed observability. When using both Prefect and Logfire, you'll get complementary views:
 
 * **Prefect**: Workflow-level orchestration, task status, and retry history
 * **Logfire**: Fine-grained tracing of agent runs, model requests, and tool invocations
@@ -284,15 +266,5 @@ This method accepts scheduling options:
 - **`cron`**: Cron schedule string (e.g., `'0 9 * * *'` for daily at 9am)
 - **`interval`**: Schedule interval in seconds or as a timedelta
 - **`rrule`**: iCalendar RRule schedule string
-- **`triggers`**: Event-based triggers for the deployment
-
-And deployment configuration:
-
-- **`name`**: Deployment name (defaults to agent name)
-- **`parameters`**: Default parameters for agent runs (e.g., `user_prompt`, `deps`)
-- **`tags`**: Tags for filtering and organization
-- **`version`**: Version identifier for tracking changes
-- **`limit`**: Maximum number of concurrent runs
-- **`paused`**: Start with the schedule paused
 
 For more advanced deployment patterns, see the [Prefect deployment documentation](https://docs.prefect.io/v3/deploy/infrastructure-examples/docker).
