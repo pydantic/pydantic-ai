@@ -166,12 +166,16 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     deferred_tool_results: DeferredToolResults | None = None
 
     instructions: str | None = None
-    instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(default_factory=list)
+    instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
+        default_factory=list[_system_prompt.SystemPromptRunner[DepsT]]
+    )
 
     system_prompts: tuple[str, ...] = dataclasses.field(default_factory=tuple)
-    system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(default_factory=list)
+    system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
+        default_factory=list[_system_prompt.SystemPromptRunner[DepsT]]
+    )
     system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
-        default_factory=dict
+        default_factory=dict[str, _system_prompt.SystemPromptRunner[DepsT]]
     )
 
     async def run(  # noqa: C901
@@ -927,6 +931,14 @@ async def _call_tools(
 
             pending = tasks
             while pending:
+                pending = cast(
+                    list[
+                        Task[
+                            tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
+                        ]
+                    ],
+                    pending,
+                )
                 done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                 for task in done:
                     index = tasks.index(task)
@@ -1123,8 +1135,7 @@ async def _process_message_history(
             if takes_ctx:
                 messages = await processor(run_context, messages)
             else:
-                async_processor = cast(_HistoryProcessorAsync, processor)
-                messages = await async_processor(messages)
+                messages = await processor(messages)
         else:
             if takes_ctx:
                 sync_processor_with_ctx = cast(_HistoryProcessorSyncWithCtx[DepsT], processor)

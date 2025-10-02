@@ -1376,7 +1376,7 @@ class OpenAIResponsesModel(Model):
                                 item.tool_name == CodeExecutionTool.kind
                                 and code_interpreter_item is not None
                                 and isinstance(item.content, dict)
-                                and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
+                                and (content := cast(dict[str, Any], item.content))
                                 and (status := content.get('status'))
                             ):
                                 code_interpreter_item['outputs'] = content.get('outputs')
@@ -1385,7 +1385,7 @@ class OpenAIResponsesModel(Model):
                                 item.tool_name == WebSearchTool.kind
                                 and web_search_item is not None
                                 and isinstance(item.content, dict)  # pyright: ignore[reportUnknownMemberType]
-                                and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
+                                and (content := cast(dict[str, Any], item.content))
                                 and (status := content.get('status'))
                             ):  # pragma: no branch
                                 web_search_item['status'] = status

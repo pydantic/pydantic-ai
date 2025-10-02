@@ -739,7 +739,7 @@ class _RequestStreamContext:
     message_id: str = ''
     part_end: BaseEvent | None = None
     thinking: bool = False
-    builtin_tool_call_ids: dict[str, str] = field(default_factory=dict)
+    builtin_tool_call_ids: dict[str, str] = field(default_factory=dict[str, str])
 
     def new_message_id(self) -> str:
         """Generate a new message ID for the request stream.

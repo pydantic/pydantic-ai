@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from opentelemetry.trace import get_current_span
 
@@ -47,6 +47,7 @@ class FallbackModel(Model):
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
 
         if isinstance(fallback_on, tuple):
+            fallback_on = cast(tuple[type[Exception], ...], fallback_on)
             self._fallback_on = _default_fallback_condition_factory(fallback_on)
         else:
             self._fallback_on = fallback_on

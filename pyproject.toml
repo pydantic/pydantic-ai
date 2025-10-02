@@ -105,7 +105,7 @@ dev = [
     "genai-prices>=0.0.28",
     "mcp-run-python>=0.0.20",
 ]
-lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
+lint = ["mypy>=1.11.2", "pyright>=1.1.405", "ruff>=0.13.2"]
 docs = [
     "pydantic-ai[a2a]",
     "black>=24.10.0",

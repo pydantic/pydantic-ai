@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, over
 import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
-from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
+from opentelemetry._events import Event
 from typing_extensions import deprecated
 
 from . import _otel_messages, _utils

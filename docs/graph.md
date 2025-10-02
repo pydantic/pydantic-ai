@@ -379,7 +379,7 @@ class Email:
 @dataclass
 class State:
     user: User
-    write_agent_messages: list[ModelMessage] = field(default_factory=list)
+    write_agent_messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
 
 
 email_writer_agent = Agent(
@@ -669,8 +669,8 @@ ask_agent = Agent('openai:gpt-4o', output_type=str, instrument=True)
 @dataclass
 class QuestionState:
     question: str | None = None
-    ask_agent_messages: list[ModelMessage] = field(default_factory=list)
-    evaluate_agent_messages: list[ModelMessage] = field(default_factory=list)
+    ask_agent_messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    evaluate_agent_messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
 
 
 @dataclass
@@ -912,8 +912,8 @@ ask_agent = Agent('openai:gpt-4o', output_type=str, instrument=True)
 @dataclass
 class QuestionState:
     question: str | None = None
-    ask_agent_messages: list[ModelMessage] = field(default_factory=list)
-    evaluate_agent_messages: list[ModelMessage] = field(default_factory=list)
+    ask_agent_messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    evaluate_agent_messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
 
 
 @dataclass

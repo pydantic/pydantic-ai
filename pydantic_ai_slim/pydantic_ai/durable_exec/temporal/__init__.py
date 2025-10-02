@@ -4,7 +4,7 @@ import warnings
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 from pydantic.errors import PydanticUserError
 from temporalio.client import ClientConfig, Plugin as ClientPlugin, WorkflowHistory
@@ -117,7 +117,7 @@ class AgentPlugin(WorkerPlugin):
         self.next_worker_plugin = next
 
     def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
-        activities: Sequence[Callable[..., Any]] = config.get('activities', [])  # pyright: ignore[reportUnknownMemberType]
+        activities = cast(Sequence[Callable[..., Any]], config.get('activities', []))  # pyright: ignore[reportUnknownMemberType]
         # Activities are checked for name conflicts by Temporal.
         config['activities'] = [*activities, *self.agent.temporal_activities]
         return self.next_worker_plugin.configure_worker(config)

@@ -143,9 +143,9 @@ class DeferredToolRequests:
     See [deferred tools docs](../deferred-tools.md#deferred-tools) for more information.
     """
 
-    calls: list[ToolCallPart] = field(default_factory=list)
+    calls: list[ToolCallPart] = field(default_factory=list[ToolCallPart])
     """Tool calls that require external execution."""
-    approvals: list[ToolCallPart] = field(default_factory=list)
+    approvals: list[ToolCallPart] = field(default_factory=list[ToolCallPart])
     """Tool calls that require human-in-the-loop approval."""
 
 
@@ -207,9 +207,11 @@ class DeferredToolResults:
     See [deferred tools docs](../deferred-tools.md#deferred-tools) for more information.
     """
 
-    calls: dict[str, DeferredToolCallResult | Any] = field(default_factory=dict)
+    calls: dict[str, DeferredToolCallResult | Any] = field(default_factory=dict[str, DeferredToolCallResult | Any])
     """Map of tool call IDs to results for tool calls that required external execution."""
-    approvals: dict[str, bool | DeferredToolApprovalResult] = field(default_factory=dict)
+    approvals: dict[str, bool | DeferredToolApprovalResult] = field(
+        default_factory=dict[str, bool | DeferredToolApprovalResult]
+    )
     """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
 
 

@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import cast
 
 import datasets
 import duckdb
@@ -9,7 +10,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 
 @dataclass
 class AnalystAgentDeps:
-    output: dict[str, pd.DataFrame] = field(default_factory=dict)
+    output: dict[str, pd.DataFrame] = field(default_factory=dict[str, pd.DataFrame])
 
     def store(self, value: pd.DataFrame) -> str:
         """Store the output in deps and return the reference such as Out[1] to be used by the LLM."""
@@ -47,7 +48,7 @@ def load_dataset(
     """
     # begin load data from hf
     builder = datasets.load_dataset_builder(path)  # pyright: ignore[reportUnknownMemberType]
-    splits: dict[str, datasets.SplitInfo] = builder.info.splits or {}  # pyright: ignore[reportUnknownMemberType]
+    splits = cast(dict[str, datasets.SplitInfo], builder.info.splits or {})  # pyright: ignore[reportUnknownMemberType]
     if split not in splits:
         raise ModelRetry(
             f'{split} is not valid for dataset {path}. Valid splits are {",".join(splits.keys())}'
