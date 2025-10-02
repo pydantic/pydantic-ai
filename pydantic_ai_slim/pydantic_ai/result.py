@@ -148,11 +148,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         if self._output_schema.toolset and output_tool_name is not None:
             tool_call = next(
-                (
-                    part
-                    for part in message.parts
-                    if isinstance(part, _messages.ToolCallPart) and part.tool_name == output_tool_name
-                ),
+                (part for part in message.tool_calls if part.tool_name == output_tool_name),
                 None,
             )
             if tool_call is None:
@@ -162,7 +158,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             return await self._tool_manager.handle_call(
                 tool_call, allow_partial=allow_partial, wrap_validation_errors=False
             )
-        elif deferred_tool_requests := _get_deferred_tool_requests(message.parts, self._tool_manager):
+        elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
             if not self._output_schema.allows_deferred_tools:
                 raise exceptions.UserError(
                     'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
@@ -170,11 +166,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             return cast(OutputDataT, deferred_tool_requests)
         elif self._output_schema.allows_image and (
             image := next(
-                (
-                    part.content
-                    for part in message.parts
-                    if isinstance(part, _messages.FilePart) and isinstance(part.content, _messages.BinaryImage)
-                ),
+                (file for file in message.files if isinstance(file, _messages.BinaryImage)),
                 None,
             )
         ):
@@ -588,20 +580,19 @@ def _get_usage_checking_stream_response(
 
 
 def _get_deferred_tool_requests(
-    parts: Iterable[_messages.ModelResponsePart], tool_manager: ToolManager[AgentDepsT]
+    tool_calls: Iterable[_messages.ToolCallPart], tool_manager: ToolManager[AgentDepsT]
 ) -> DeferredToolRequests | None:
-    """Get the deferred tool requests from the model response parts."""
+    """Get the deferred tool requests from the model response tool calls."""
     approvals: list[_messages.ToolCallPart] = []
     calls: list[_messages.ToolCallPart] = []
 
-    for part in parts:
-        if isinstance(part, _messages.ToolCallPart):
-            tool_def = tool_manager.get_tool_def(part.tool_name)
-            if tool_def is not None:  # pragma: no branch
-                if tool_def.kind == 'unapproved':
-                    approvals.append(part)
-                elif tool_def.kind == 'external':
-                    calls.append(part)
+    for tool_call in tool_calls:
+        tool_def = tool_manager.get_tool_def(tool_call.tool_name)
+        if tool_def is not None:  # pragma: no branch
+            if tool_def.kind == 'unapproved':
+                approvals.append(tool_call)
+            elif tool_def.kind == 'external':
+                calls.append(tool_call)
 
     if not calls and not approvals:
         return None

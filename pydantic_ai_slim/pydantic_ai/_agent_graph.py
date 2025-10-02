@@ -222,7 +222,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 if self.user_prompt is None:
                     # Skip ModelRequestNode and go directly to CallToolsNode
                     return CallToolsNode[DepsT, NodeRunEndT](last_message)
-                elif any(isinstance(part, _messages.ToolCallPart) for part in last_message.parts):
+                elif last_message.tool_calls:
                     raise exceptions.UserError(
                         'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
                     )
@@ -272,7 +272,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             raise exceptions.UserError(
                 'Tool call results were provided, but the message history does not contain a `ModelResponse`.'
             )
-        if not any(isinstance(part, _messages.ToolCallPart) for part in last_model_response.parts):
+        if not last_model_response.tool_calls:
             raise exceptions.UserError(
                 'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
             )
@@ -577,7 +577,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                 text = ''
                 tool_calls: list[_messages.ToolCallPart] = []
-                files: list[_messages.FilePart] = []
+                files: list[_messages.BinaryContent] = []
 
                 for part in self.model_response.parts:
                     if isinstance(part, _messages.TextPart):
@@ -585,7 +585,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.ToolCallPart):
                         tool_calls.append(part)
                     elif isinstance(part, _messages.FilePart):
-                        files.append(part)
+                        files.append(part.content)
                     elif isinstance(part, _messages.BuiltinToolCallPart):
                         # Text parts before a built-in tool call are essentially thoughts,
                         # not part of the final result output, so we reset the accumulated text
@@ -614,9 +614,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         alternatives.append('call a tool')
 
                     if output_schema.allows_image:
-                        if image := next(
-                            (file.content for file in files if isinstance(file.content, _messages.BinaryImage)), None
-                        ):
+                        if image := next((file for file in files if isinstance(file, _messages.BinaryImage)), None):
                             self._next_node = await self._handle_image_response(ctx, image)
                             return
                         alternatives.append('return an image')
