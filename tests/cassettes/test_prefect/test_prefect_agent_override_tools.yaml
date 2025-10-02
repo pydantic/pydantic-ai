@@ -11,6 +11,9 @@ interactions:
       - '105'
       content-type:
       - application/json
+      cookie:
+      - __cf_bm=EGlv.LzYbJ3w9GCuZFkTZc6oq0QWEOM0NG7aMJPGjvk-1759436802-1.0.1.1-6oxojh3oohGyLcgU4JW0tlAp58gjOtU_gxXDExM6TYMtkY__jPait0ymNkQmMfL4if.C.4i5xBwDmMoWScw7U9pDwoE_d_f999NvYqOWu0k;
+        _cfuvid=X9yhA1__xIYNmD8jrktglFeG98OLAwcfPSs_ukpzW4c-1759436802603-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -36,7 +39,7 @@ interactions:
       openai-organization:
       - user-xgcwoiiqpw3hpu7oxktn2g9g
       openai-processing-ms:
-      - '412'
+      - '293'
       openai-project:
       - proj_nKlzMl1B51a3SCL1Rndf7JTx
       openai-version:
@@ -55,8 +58,8 @@ interactions:
           content: The capital of Mexico is Mexico City.
           refusal: null
           role: assistant
-      created: 1759436802
-      id: chatcmpl-CMKAsCLvDAxfgEbsZ8xiTlz1DVVo4
+      created: 1759436823
+      id: chatcmpl-CMKBDe7wumQqGYu6O0VVOb27WBBA2
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default

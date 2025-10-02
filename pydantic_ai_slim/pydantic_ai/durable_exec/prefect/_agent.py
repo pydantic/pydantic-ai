@@ -12,6 +12,7 @@ from prefect.context import FlowRunContext
 from prefect.runner import Runner
 from prefect.settings import get_current_settings
 from prefect.types.entrypoint import EntrypointType
+from prefect.utilities.asyncutils import run_coro_as_sync
 from prefect.utilities.slugify import slugify
 from typing_extensions import Never
 
@@ -627,7 +628,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             token = self._in_prefect_agent_flow.set(True)
             try:
                 with self._prefect_overrides():
-                    result = super(PrefectAgent, self).run_sync(
+                    # Using `run_coro_as_sync` from Prefect with async `run` to avoid event loop conflicts.
+                    result = run_coro_as_sync(super(PrefectAgent, self).run(
                         user_prompt,
                         output_type=output_type,
                         message_history=message_history,
@@ -640,7 +642,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                         infer_name=infer_name,
                         toolsets=toolsets,
                         event_stream_handler=event_stream_handler,
-                    )
+                    ))
                     logger.info(
                         f'Sync agent run completed. Requests: {result.usage().requests}, Tool calls: {result.usage().tool_calls}'
                     )
@@ -736,13 +738,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        if FlowRunContext.get() is not None:
-            raise UserError(
-                '`agent.run_stream()` cannot currently be used inside a Prefect flow. '
-                'Set an `event_stream_handler` on the agent and use `agent.run()` instead. '
-                'Please file an issue if this is not sufficient for your use case.'
-            )
-
         async with super().run_stream(
             user_prompt,
             output_type=output_type,
@@ -888,18 +883,13 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        if self._in_prefect_agent_flow.get():
-            iter_func = super().iter
-        else:
-            iter_func = flow(super().iter, name=f'{self._name} Iter')
-
         if model is not None and not isinstance(model, PrefectModel):
             raise UserError(
                 'Non-Prefect model cannot be set at agent run time inside a Prefect flow, it must be set at agent creation time.'
             )
 
         with self._prefect_overrides():
-            async with iter_func(
+            async with super().iter(
                 user_prompt=user_prompt,
                 output_type=output_type,
                 message_history=message_history,
@@ -1051,20 +1041,21 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         if inspect.isawaitable(maybe_coro):
             await maybe_coro
 
-        from rich.console import Console, Group
+        if print_starting_message:
+            from rich.console import Console, Group
 
-        help_message_top = '[green]Your agent is ready for requests!\n[/]'
+            help_message_top = '[green]Your agent is ready for requests!\n[/]'
 
-        help_message_bottom = (
-            '\nTo start an agent run, run:\n[blue]\n\t$ prefect deployment run'
-            f' "{served_run.name}/{deployment_name}" -p user_prompt="your prompt"\n[/]'
-        )
-        if prefect_ui_url := get_current_settings().ui_url:
-            help_message_bottom += (
-                f'\nYou can also trigger your deployments via the Prefect UI: [blue]{prefect_ui_url}/deployments[/]\n'
+            help_message_bottom = (
+                '\nTo start an agent run, run:\n[blue]\n\t$ prefect deployment run'
+                f' "{served_run.name}/{deployment_name}" -p user_prompt="your prompt"\n[/]'
             )
+            if prefect_ui_url := get_current_settings().ui_url:
+                help_message_bottom += (
+                    f'\nYou can also trigger your deployments via the Prefect UI: [blue]{prefect_ui_url}/deployments[/]\n'
+                )
 
-        console = Console()
-        console.print(Group(help_message_top, help_message_bottom), soft_wrap=True)
+            console = Console()
+            console.print(Group(help_message_top, help_message_bottom), soft_wrap=True)
 
-        await runner.start(webserver=webserver)
+        await runner.start()

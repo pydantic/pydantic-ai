@@ -3,23 +3,48 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Literal
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from prefect.types.entrypoint import EntrypointType
 from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    ExternalToolset,
+    FunctionToolset,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ModelSettings,
     RunContext,
+    TextPart,
+    UserPromptPart,
 )
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.usage import RequestUsage
 
 try:
     from prefect import flow, task
     from prefect.testing.utilities import prefect_test_harness
 
-    from pydantic_ai.durable_exec.prefect import PrefectAgent
+    from pydantic_ai.durable_exec.prefect import (
+        DEFAULT_PYDANTIC_AI_CACHE_POLICY,
+        InputsWithoutTimestamps,
+        PrefectAgent,
+        PrefectFunctionToolset,
+        PrefectMCPServer,
+        PrefectModel,
+    )
 except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
 
@@ -34,7 +59,6 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
-
 try:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -43,12 +67,11 @@ except ImportError:  # pragma: lax no cover
 
 from inline_snapshot import snapshot
 
-from pydantic_ai import ExternalToolset, FunctionToolset
-from pydantic_ai.tools import ToolDefinition
-
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
+    pytest.mark.xdist_group(name='prefect'),
+    pytest.mark.filterwarnings('ignore:Found propagated trace context.*:RuntimeWarning'),
 ]
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
@@ -73,7 +96,9 @@ def setup_logfire_instrumentation() -> Iterator[None]:
 
     # Filter out the propagated trace context warning from logfire
     # This warning is expected when using Prefect with logfire
-    warnings.filterwarnings('ignore', message='Found propagated trace context.*', category=RuntimeWarning)
+    warnings.filterwarnings(
+        'ignore', message='Found propagated trace context.*', category=RuntimeWarning, module='logfire.*'
+    )
 
     yield
 
@@ -107,7 +132,7 @@ simple_agent = Agent(model, name='simple_agent')
 simple_prefect_agent = PrefectAgent(simple_agent)
 
 
-async def test_simple_agent_run_in_flow(allow_model_requests: None, openai_api_key: str) -> None:
+async def test_simple_agent_run_in_flow(allow_model_requests: None) -> None:
     """Test that a simple agent can run in a Prefect flow."""
 
     @flow(name='test_simple_agent_run_in_flow')
@@ -162,6 +187,13 @@ class Response:
     answers: list[Answer]
 
 
+@dataclass
+class BasicSpan:
+    content: str
+    children: list[BasicSpan] = field(default_factory=list)
+    parent_id: int | None = field(repr=False, compare=False, default=None)
+
+
 complex_agent = Agent(
     model,
     deps_type=Deps,
@@ -184,7 +216,6 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
 
     @flow(name='test_complex_agent_run_in_flow')
     async def run_complex_agent() -> Response:
-        # PrefectAgent already wraps the `run` function as a Prefect flow, so we can just call it directly.
         result = await complex_prefect_agent.run(
             'Tell me: the capital of the country; the weather there; the product name', deps=Deps(country='Mexico')
         )
@@ -196,39 +227,635 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
             answers=[
                 Answer(label='Capital of the country', answer='Mexico City'),
                 Answer(label='Weather in the capital', answer='Sunny'),
-                Answer(label='Product Name', answer='Pydantic AI'),
+                Answer(label='Product name', answer='Pydantic AI'),
+            ]
+        )
+    )
+
+    # Verify logfire instrumentation
+    exporter = capfire.exporter
+    spans = exporter.exported_spans_as_dict()
+    assert len(spans) > 0, 'No spans were exported'
+
+
+async def test_multiple_agents(allow_model_requests: None) -> None:
+    """Test that multiple agents can run in a Prefect flow."""
+
+    @flow(name='test_multiple_agents')
+    async def run_multiple_agents() -> tuple[str, Response]:
+        result1 = await simple_prefect_agent.run('What is the capital of Mexico?')
+        result2 = await complex_prefect_agent.run(
+            'Tell me: the capital of the country; the weather there; the product name', deps=Deps(country='Mexico')
+        )
+        return result1.output, result2.output
+
+    output1, output2 = await run_multiple_agents()
+    assert output1 == snapshot('The capital of Mexico is Mexico City.')
+    assert output2 == snapshot(
+        Response(
+            answers=[
+                Answer(label='Capital of the Country', answer='The capital of Mexico is Mexico City.'),
+                Answer(label='Weather in the Capital', answer='The weather in Mexico City is currently sunny.'),
+                Answer(label='Product Name', answer='The product name is Pydantic AI.'),
             ]
         )
     )
 
 
-async def test_agent_requires_name(allow_model_requests: None) -> None:
+async def test_agent_requires_name() -> None:
     """Test that PrefectAgent requires a name."""
     agent_without_name = Agent(model)
 
-    with pytest.raises(Exception) as exc_info:
+    with pytest.raises(UserError) as exc_info:
         PrefectAgent(agent_without_name)
 
     assert 'unique' in str(exc_info.value).lower() and 'name' in str(exc_info.value).lower()
 
 
-async def test_agent_requires_model_at_creation(allow_model_requests: None) -> None:
+async def test_agent_requires_model_at_creation() -> None:
     """Test that PrefectAgent requires model to be set at creation time."""
-    agent_without_model = Agent(None, name='test_agent')
+    agent_without_model = Agent(name='test_agent')
 
-    with pytest.raises(Exception) as exc_info:
+    with pytest.raises(UserError) as exc_info:
         PrefectAgent(agent_without_model)
 
     assert 'model' in str(exc_info.value).lower()
 
 
-async def test_run_sync_in_flow(allow_model_requests: None, openai_api_key: str) -> None:
-    """Test that run_sync works in a Prefect flow."""
+async def test_toolset_without_id():
+    """Test that agents can be created with toolsets without IDs."""
+    # This is allowed in Prefect
+    PrefectAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
+
+
+async def test_prefect_agent():
+    """Test that PrefectAgent properly wraps model and toolsets."""
+    assert isinstance(complex_prefect_agent.model, PrefectModel)
+    assert complex_prefect_agent.model.wrapped == complex_agent.model
+
+    # Prefect wraps MCP servers and function toolsets
+    toolsets = complex_prefect_agent.toolsets
+    # Note: toolsets include the output toolset which is not wrapped
+    assert len(toolsets) >= 4
+
+    # Find the wrapped toolsets (skip the internal output toolset)
+    prefect_function_toolsets = [ts for ts in toolsets if isinstance(ts, PrefectFunctionToolset)]
+    prefect_mcp_toolsets = [ts for ts in toolsets if isinstance(ts, PrefectMCPServer)]
+    external_toolsets = [ts for ts in toolsets if isinstance(ts, ExternalToolset)]
+
+    # Verify we have the expected wrapped toolsets
+    assert len(prefect_function_toolsets) >= 2  # agent tools + country toolset
+    assert len(prefect_mcp_toolsets) == 1  # mcp toolset
+    assert len(external_toolsets) == 1  # external toolset
+
+    # Verify MCP server is wrapped
+    mcp_toolset = prefect_mcp_toolsets[0]
+    assert mcp_toolset.id == 'mcp'
+    # The wrapped toolset is the MCPServerStdio instance from the complex_agent
+    # complex_agent.toolsets[0] is FunctionToolset for get_country
+    # complex_agent.toolsets[1] is MCPServerStdio for mcp
+    assert isinstance(mcp_toolset.wrapped, MCPServerStdio)
+
+    # Verify external toolset is NOT wrapped (passed through)
+    external_toolset = external_toolsets[0]
+    assert external_toolset.id == 'external'
+
+
+async def test_prefect_agent_run(allow_model_requests: None) -> None:
+    """Test that agent.run() works (auto-wrapped as flow)."""
+    result = await simple_prefect_agent.run('What is the capital of Mexico?')
+    assert result.output == snapshot('The capital of Mexico is Mexico City.')
+
+
+def test_prefect_agent_run_sync(allow_model_requests: None):
+    """Test that agent.run_sync() works."""
+    result = simple_prefect_agent.run_sync('What is the capital of Mexico?')
+    assert result.output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_prefect_agent_run_stream(allow_model_requests: None):
+    """Test that agent.run_stream() works outside of flows."""
+    async with simple_prefect_agent.run_stream('What is the capital of Mexico?') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
+            [
+                'The',
+                'The capital',
+                'The capital of',
+                'The capital of Mexico',
+                'The capital of Mexico is',
+                'The capital of Mexico is Mexico',
+                'The capital of Mexico is Mexico City',
+                'The capital of Mexico is Mexico City.',
+            ]
+        )
+
+
+async def test_prefect_agent_iter(allow_model_requests: None):
+    """Test that agent.iter() works."""
+    outputs: list[str] = []
+    async with simple_prefect_agent.iter('What is the capital of Mexico?') as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for chunk in stream.stream_text(debounce_by=None):
+                        outputs.append(chunk)
+    assert outputs == snapshot(
+        [
+            'The',
+            'The capital',
+            'The capital of',
+            'The capital of Mexico',
+            'The capital of Mexico is',
+            'The capital of Mexico is Mexico',
+            'The capital of Mexico is Mexico City',
+            'The capital of Mexico is Mexico City.',
+        ]
+    )
+
+
+def test_run_sync_in_flow(allow_model_requests: None) -> None:
+    """Test that run_sync works inside a Prefect flow."""
 
     @flow(name='test_run_sync_in_flow')
     def run_simple_agent_sync() -> str:
-        result = simple_prefect_agent.run_sync('What is the capital of France?')
+        result = simple_prefect_agent.run_sync('What is the capital of Mexico?')
         return result.output
 
     output = run_simple_agent_sync()
-    assert output == snapshot('The capital of France is Paris.')
+    assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_run_stream_in_flow(allow_model_requests: None) -> None:
+    """Test that run_stream errors when used inside a Prefect flow."""
+
+    @flow(name='test_run_stream_in_flow')
+    async def run_stream_workflow():
+        async with simple_prefect_agent.run_stream('What is the capital of Mexico?') as result:
+            return await result.get_output()
+
+    outputs = await run_stream_workflow()
+    assert outputs == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_iter_in_flow(allow_model_requests: None) -> None:
+    """Test that iter works inside a Prefect flow."""
+
+    @flow(name='test_iter_in_flow')
+    async def run_iter_workflow():
+        outputs: list[str] = []
+        async with simple_prefect_agent.iter('What is the capital of Mexico?') as run:
+            async for node in run:
+                if Agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        async for chunk in stream.stream_text(debounce_by=None):
+                            outputs.append(chunk)
+        return outputs
+
+    outputs = await run_iter_workflow()
+    # If called in a workflow, the output is a single concatenated string.
+    assert outputs == snapshot(
+        [
+            'The capital of Mexico is Mexico City.',
+        ]
+    )
+
+
+async def test_prefect_agent_run_with_model(allow_model_requests: None) -> None:
+    """Test that passing model at runtime errors appropriately."""
+    with flow_raises(
+        UserError,
+        snapshot(
+            'Non-Prefect model cannot be set at agent run time inside a Prefect flow, it must be set at agent creation time.'
+        ),
+    ):
+        await simple_prefect_agent.run('What is the capital of Mexico?', model=model)
+
+
+async def test_prefect_agent_override_model() -> None:
+    """Test that overriding model in a flow context errors."""
+
+    @flow(name='test_override_model')
+    async def override_model_flow():
+        with simple_prefect_agent.override(model=model):
+            pass
+
+    with flow_raises(
+        UserError,
+        snapshot(
+            'Non-Prefect model cannot be contextually overridden inside a Prefect flow, it must be set at agent creation time.'
+        ),
+    ):
+        await override_model_flow()
+
+
+async def test_prefect_agent_override_toolsets(allow_model_requests: None) -> None:
+    """Test that overriding toolsets works."""
+
+    @flow(name='test_override_toolsets')
+    async def override_toolsets_flow():
+        with simple_prefect_agent.override(toolsets=[FunctionToolset()]):
+            result = await simple_prefect_agent.run('What is the capital of Mexico?')
+            return result.output
+
+    output = await override_toolsets_flow()
+    assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_prefect_agent_override_tools(allow_model_requests: None) -> None:
+    """Test that overriding tools works."""
+
+    @flow(name='test_override_tools')
+    async def override_tools_flow():
+        with simple_prefect_agent.override(tools=[get_weather]):
+            result = await simple_prefect_agent.run('What is the capital of Mexico?')
+            return result.output
+
+    output = await override_tools_flow()
+    assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_prefect_agent_override_deps(allow_model_requests: None) -> None:
+    """Test that overriding deps works."""
+
+    @flow(name='test_override_deps')
+    async def override_deps_flow():
+        with simple_prefect_agent.override(deps=None):
+            result = await simple_prefect_agent.run('What is the capital of Mexico?')
+            return result.output
+
+    output = await override_deps_flow()
+    assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_prefect_agent_serialization(monkeypatch: pytest.MonkeyPatch):
+    """Test that PrefectAgent can be serialized with cloudpickle. Agents must be serializable for PrefectAgent.serve()."""
+    import cloudpickle
+
+    monkeypatch.setenv('OPENAI_API_KEY', 'mock-api-key')
+
+    # Test serialization
+    pickled = cloudpickle.dumps(simple_prefect_agent)
+    assert len(pickled) > 0
+
+    # Test deserialization
+    unpickled = cloudpickle.loads(pickled)
+    assert unpickled.name == simple_prefect_agent.name
+    assert isinstance(unpickled.model, PrefectModel)
+
+
+# Test human-in-the-loop with HITL tool
+hitl_agent = Agent(
+    model,
+    name='hitl_agent',
+    output_type=[str, DeferredToolRequests],
+    instructions='Just call tools without asking for confirmation.',
+)
+
+
+@task(name='create_file')
+@hitl_agent.tool
+def create_file(ctx: RunContext[None], path: str) -> None:
+    raise CallDeferred
+
+
+@task(name='delete_file')
+@hitl_agent.tool
+def delete_file(ctx: RunContext[None], path: str) -> bool:
+    if not ctx.tool_call_approved:
+        raise ApprovalRequired
+    return True
+
+
+hitl_prefect_agent = PrefectAgent(hitl_agent)
+
+
+async def test_prefect_agent_with_hitl_tool(allow_model_requests: None) -> None:
+    """Test human-in-the-loop with deferred tool calls and approvals."""
+    # Use TestModel to avoid real API calls
+
+    @flow(name='test_hitl_tool')
+    async def hitl_main_loop(prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
+        deferred_tool_results: DeferredToolResults | None = None
+
+        result = await hitl_prefect_agent.run(message_history=messages, deferred_tool_results=deferred_tool_results)
+        messages = result.all_messages()
+
+        if isinstance(result.output, DeferredToolRequests):
+            # Handle deferred requests
+            results = DeferredToolResults()
+            for tool_call in result.output.approvals:
+                results.approvals[tool_call.tool_call_id] = True
+            for tool_call in result.output.calls:
+                results.calls[tool_call.tool_call_id] = 'Success'
+
+            # Second run with results
+            result = await hitl_prefect_agent.run(message_history=messages, deferred_tool_results=results)
+
+        return result
+
+    result = await hitl_main_loop('Delete the file `.env` and create `test.txt`')
+    assert isinstance(result.output, str)
+    assert 'deleted' in result.output.lower() or 'created' in result.output.lower()
+
+
+def test_prefect_agent_with_hitl_tool_sync(allow_model_requests: None) -> None:
+    """Test human-in-the-loop with sync version."""
+
+    @flow(name='test_hitl_tool_sync')
+    def hitl_main_loop_sync(prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
+        deferred_tool_results: DeferredToolResults | None = None
+
+        result = hitl_prefect_agent.run_sync(message_history=messages, deferred_tool_results=deferred_tool_results)
+        messages = result.all_messages()
+
+        if isinstance(result.output, DeferredToolRequests):
+            results = DeferredToolResults()
+            for tool_call in result.output.approvals:
+                results.approvals[tool_call.tool_call_id] = True
+            for tool_call in result.output.calls:
+                results.calls[tool_call.tool_call_id] = 'Success'
+
+            result = hitl_prefect_agent.run_sync(message_history=messages, deferred_tool_results=results)
+
+        return result
+
+    result = hitl_main_loop_sync('Delete the file `.env` and create `test.txt`')
+    assert isinstance(result.output, str)
+
+
+# Test model retry
+model_retry_agent = Agent(model, name='model_retry_agent')
+
+
+@task(name='get_weather_in_city')
+@model_retry_agent.tool_plain
+def get_weather_in_city(city: str) -> str:
+    if city != 'Mexico City':
+        raise ModelRetry('Did you mean Mexico City?')
+    return 'sunny'
+
+
+model_retry_prefect_agent = PrefectAgent(model_retry_agent)
+
+
+async def test_prefect_agent_with_model_retry(allow_model_requests: None) -> None:
+    """Test that ModelRetry works correctly."""
+    result = await model_retry_prefect_agent.run('What is the weather in CDMX?')
+    assert 'sunny' in result.output.lower() or 'mexico city' in result.output.lower()
+
+
+# Test dynamic toolsets
+@dataclass
+class ToggleableDeps:
+    active: Literal['weather', 'datetime']
+
+    def toggle(self):
+        if self.active == 'weather':
+            self.active = 'datetime'
+        else:
+            self.active = 'weather'
+
+
+@task(name='temperature_celsius')
+def temperature_celsius(city: str) -> float:
+    return 21.0
+
+
+@task(name='temperature_fahrenheit')
+def temperature_fahrenheit(city: str) -> float:
+    return 69.8
+
+
+@task(name='conditions')
+def conditions(city: str) -> str:
+    # Simplified version without RunContext
+    return "It's raining"
+
+
+weather_toolset = FunctionToolset(tools=[temperature_celsius, temperature_fahrenheit, conditions])
+
+datetime_toolset = FunctionToolset()
+
+
+@task(name='now')
+def now_func() -> datetime:
+    return datetime.now()
+
+
+datetime_toolset.add_function(now_func, name='now')
+
+test_model = TestModel()
+dynamic_agent = Agent(name='dynamic_agent', model=test_model, deps_type=ToggleableDeps)
+
+
+@dynamic_agent.toolset  # type: ignore
+def toggleable_toolset(ctx: RunContext[ToggleableDeps]) -> FunctionToolset[None]:
+    if ctx.deps.active == 'weather':
+        return weather_toolset
+    else:
+        return datetime_toolset
+
+
+@dynamic_agent.tool
+def toggle(ctx: RunContext[ToggleableDeps]):
+    ctx.deps.toggle()
+
+
+dynamic_prefect_agent = PrefectAgent(dynamic_agent)
+
+
+def test_dynamic_toolset():
+    """Test that dynamic toolsets work correctly."""
+    weather_deps = ToggleableDeps('weather')
+
+    result = dynamic_prefect_agent.run_sync('Toggle the toolset', deps=weather_deps)
+    assert isinstance(result.output, str)
+
+    result = dynamic_prefect_agent.run_sync('Toggle the toolset', deps=weather_deps)
+    assert isinstance(result.output, str)
+
+
+# Test cache policies
+async def test_cache_policy_default():
+    """Test that the default cache policy is set correctly."""
+    assert DEFAULT_PYDANTIC_AI_CACHE_POLICY is not None
+    # It's a CompoundCachePolicy instance with policies attribute
+    assert hasattr(DEFAULT_PYDANTIC_AI_CACHE_POLICY, 'policies')
+
+
+async def test_cache_policy_custom():
+    """
+    Test that custom cache policy InputsWithoutTimestamps works.
+    Timestamps must be excluded from computed cache keys to avoid
+    duplicate calls when runs are restarted.
+    """
+    cache_policy = InputsWithoutTimestamps()
+
+    # Create two sets of messages with same content but different timestamps
+    time1 = datetime.now()
+    time2 = time1 + timedelta(minutes=5)
+
+    # First set of messages
+    messages1 = [
+        ModelRequest(parts=[UserPromptPart(content='What is the capital of France?', timestamp=time1)]),
+        ModelResponse(
+            parts=[TextPart(content='The capital of France is Paris.')],
+            usage=RequestUsage(input_tokens=10, output_tokens=10),
+            model_name='test-model',
+            timestamp=time1,
+        ),
+    ]
+
+    # Second set of messages - same content, different timestamps
+    messages2 = [
+        ModelRequest(parts=[UserPromptPart(content='What is the capital of France?', timestamp=time2)]),
+        ModelResponse(
+            parts=[TextPart(content='The capital of France is Paris.')],
+            usage=RequestUsage(input_tokens=10, output_tokens=10),
+            model_name='test-model',
+            timestamp=time2,
+        ),
+    ]
+
+    # Create a mock task context - we need this for the cache policy
+    from unittest.mock import MagicMock
+
+    mock_task_ctx = MagicMock()
+
+    # Compute hashes using the cache policy
+    hash1 = cache_policy.compute_key(
+        task_ctx=mock_task_ctx,
+        inputs={'messages': messages1},
+        flow_parameters={},
+    )
+
+    hash2 = cache_policy.compute_key(
+        task_ctx=mock_task_ctx,
+        inputs={'messages': messages2},
+        flow_parameters={},
+    )
+
+    # The hashes should be the same since timestamps are excluded
+    assert hash1 == hash2
+
+    # Also test that different content produces different hashes
+    messages3 = [
+        ModelRequest(parts=[UserPromptPart(content='What is the capital of Spain?', timestamp=time1)]),
+        ModelResponse(
+            parts=[TextPart(content='The capital of Spain is Madrid.')],
+            usage=RequestUsage(input_tokens=10, output_tokens=10),
+            model_name='test-model',
+            timestamp=time1,
+        ),
+    ]
+
+    hash3 = cache_policy.compute_key(
+        task_ctx=mock_task_ctx,
+        inputs={'messages': messages3},
+        flow_parameters={},
+    )
+
+    # This hash should be different from the others
+    assert hash3 != hash1
+
+
+# Test serve method
+@patch('pydantic_ai.durable_exec.prefect._agent.Runner')
+async def test_serve(mock_runner_class: MagicMock) -> None:
+    """Test that serve() creates a deployment with basic config."""
+    mock_runner = MagicMock()
+    mock_runner.add_flow = MagicMock(return_value=None)
+    mock_runner.start = AsyncMock()
+    mock_runner_class.return_value = mock_runner
+
+    await simple_prefect_agent.serve(
+        name='test-deployment',
+        cron='0 9 * * *',
+        parameters={'user_prompt': 'default prompt'},
+        tags=['test', 'foo'],
+        description='Test deployment',
+        paused=False,
+        webserver=True,
+        pause_on_shutdown=False,
+        limit=10,
+    )
+
+    # Verify Runner was started
+    assert mock_runner_class.call_args[1] == snapshot(
+        {
+            'name': 'simple_agent Runner',
+            'limit': 10,
+            'webserver': True,
+            'pause_on_shutdown': False,
+        }
+    )
+    mock_runner.start.assert_called_once()
+    assert mock_runner.add_flow.call_args[1] == snapshot(
+        {
+            'name': 'test-deployment',
+            'interval': None,
+            'cron': '0 9 * * *',
+            'rrule': None,
+            'parameters': {'user_prompt': 'default prompt'},
+            'triggers': None,
+            'tags': ['test', 'foo'],
+            'description': 'Test deployment',
+            'paused': False,
+            'version': None,
+            'enforce_parameter_schema': True,
+            'entrypoint_type': EntrypointType.MODULE_PATH,
+        }
+    )
+
+
+@patch('pydantic_ai.durable_exec.prefect._agent.Runner')
+async def test_serve_with_schedule_interval(mock_runner_class: MagicMock) -> None:
+    """Test that serve() works with interval schedule."""
+    mock_runner = MagicMock()
+    mock_runner.add_flow = MagicMock(return_value=None)
+    mock_runner.start = AsyncMock()
+    mock_runner_class.return_value = mock_runner
+
+    await simple_prefect_agent.serve(name='interval-deployment', interval=60)
+
+    # Verify add_flow was called with interval
+    mock_runner.add_flow.assert_called_once()
+    assert mock_runner.add_flow.call_args[1]['interval'] == 60
+
+
+@patch('pydantic_ai.durable_exec.prefect._agent.Runner')
+async def test_serve_with_parameters(mock_runner_class: MagicMock) -> None:
+    """Test that serve() accepts default parameters."""
+    mock_runner = MagicMock()
+    mock_runner.add_flow = MagicMock(return_value=None)
+    mock_runner.start = AsyncMock()
+    mock_runner_class.return_value = mock_runner
+
+    await simple_prefect_agent.serve(name='params-deployment', parameters={'user_prompt': 'default prompt'})
+
+    # Verify add_flow was called with parameters
+    mock_runner.add_flow.assert_called_once()
+
+
+# Test custom model settings
+class CustomModelSettings(ModelSettings, total=False):
+    custom_setting: str
+
+
+def return_settings(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(str(agent_info.model_settings))])
+
+
+model_settings = CustomModelSettings(max_tokens=123, custom_setting='custom_value')
+function_model = FunctionModel(return_settings, settings=model_settings)
+
+settings_agent = Agent(function_model, name='settings_agent')
+settings_prefect_agent = PrefectAgent(settings_agent)
+
+
+async def test_custom_model_settings(allow_model_requests: None):
+    """Test that custom model settings are passed through correctly."""
+    result = await settings_prefect_agent.run('Give me those settings')
+    assert result.output == snapshot("{'max_tokens': 123, 'custom_setting': 'custom_value'}")
