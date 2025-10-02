@@ -22,7 +22,8 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
-from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, RunOutputDataT, WrapperAgent
+from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
+from pydantic_ai.agent.abstract import Instructions, RunOutputDataT
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -748,8 +749,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
-        """Context manager to temporarily override agent dependencies, model, toolsets, or tools.
+        """Context manager to temporarily override agent dependencies, model, toolsets, tools, or instructions.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
@@ -759,6 +761,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
+            instructions: The instructions to use instead of the instructions registered with the agent.
         """
         if workflow.in_workflow():
             if _utils.is_set(model):
@@ -774,5 +777,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'Tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
                 )
 
-        with super().override(deps=deps, model=model, toolsets=toolsets, tools=tools):
+        with super().override(
+            deps=deps,
+            model=model,
+            toolsets=toolsets,
+            tools=tools,
+            instructions=instructions,
+        ):
             yield

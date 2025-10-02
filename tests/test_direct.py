@@ -7,8 +7,16 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import (
-    Agent,
+from pydantic_ai import Agent
+from pydantic_ai.direct import (
+    StreamedResponseSync,
+    _prepare_model,  # pyright: ignore[reportPrivateUsage]
+    model_request,
+    model_request_stream,
+    model_request_stream_sync,
+    model_request_sync,
+)
+from pydantic_ai.messages import (
     FinalResultEvent,
     ModelMessage,
     ModelRequest,
@@ -18,14 +26,6 @@ from pydantic_ai import (
     TextPart,
     TextPartDelta,
     ToolCallPart,
-)
-from pydantic_ai.direct import (
-    StreamedResponseSync,
-    _prepare_model,  # pyright: ignore[reportPrivateUsage]
-    model_request,
-    model_request_stream,
-    model_request_stream_sync,
-    model_request_sync,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentedModel

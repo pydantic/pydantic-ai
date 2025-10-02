@@ -9,7 +9,7 @@ from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
 from typing_extensions import TypeAliasType, TypeVar, deprecated
 
-from . import _utils
+from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
 from .messages import ToolCallPart
 from .tools import DeferredToolRequests, ObjectJsonSchema, RunContext, ToolDefinition
@@ -316,6 +316,10 @@ def StructuredDict(
     # See https://github.com/pydantic/pydantic/issues/12145
     if '$defs' in json_schema:
         json_schema = InlineDefsJsonSchemaTransformer(json_schema).walk()
+        if '$defs' in json_schema:
+            raise exceptions.UserError(
+                '`StructuredDict` does not currently support recursive `$ref`s and `$defs`. See https://github.com/pydantic/pydantic/issues/12145 for more information.'
+            )
 
     if name:
         json_schema['title'] = name

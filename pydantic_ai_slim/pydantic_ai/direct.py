@@ -81,7 +81,7 @@ async def model_request(
     return await model_instance.request(
         messages,
         model_settings,
-        model_instance.customize_request_parameters(model_request_parameters or models.ModelRequestParameters()),
+        model_request_parameters or models.ModelRequestParameters(),
     )
 
 
@@ -193,7 +193,7 @@ def model_request_stream(
     return model_instance.request_stream(
         messages,
         model_settings,
-        model_instance.customize_request_parameters(model_request_parameters or models.ModelRequestParameters()),
+        model_request_parameters or models.ModelRequestParameters(),
     )
 
 

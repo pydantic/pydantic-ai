@@ -1487,3 +1487,13 @@ def test_load_mcp_servers(tmp_path: Path):
 
     with pytest.raises(FileNotFoundError):
         load_mcp_servers(tmp_path / 'does_not_exist.json')
+
+
+async def test_server_info(mcp_server: MCPServerStdio) -> None:
+    with pytest.raises(
+        AttributeError, match='The `MCPServerStdio.server_info` is only instantiated after initialization.'
+    ):
+        mcp_server.server_info
+    async with mcp_server:
+        assert mcp_server.server_info is not None
+        assert mcp_server.server_info.name == 'Pydantic AI MCP Server'
