@@ -1532,7 +1532,6 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
-            print(chunk)
             self._usage += _map_usage(chunk)
 
             if chunk.id:  # pragma: no branch
