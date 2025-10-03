@@ -230,7 +230,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         # Build the run context after `ctx.deps.prompt` has been updated
         run_context = build_run_context(ctx)
 
-        parts: list[_messages.ModelRequestPart] = []
         if messages:
             await self._reevaluate_dynamic_prompts(messages, run_context)
 
@@ -840,6 +839,7 @@ async def process_tool_calls(  # noqa: C901
             tool_calls=calls_to_run,
             tool_call_results=calls_to_run_results,
             tracer=ctx.deps.tracer,
+            usage=ctx.state.usage,
             usage_limits=ctx.deps.usage_limits,
             output_parts=output_parts,
             output_deferred_calls=deferred_calls,
@@ -886,13 +886,19 @@ async def _call_tools(
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult],
     tracer: Tracer,
-    usage_limits: _usage.UsageLimits | None,
+    usage: _usage.RunUsage,
+    usage_limits: _usage.UsageLimits,
     output_parts: list[_messages.ModelRequestPart],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
     tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
     user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
+
+    if usage_limits.tool_calls_limit is not None:
+        projected_usage = deepcopy(usage)
+        projected_usage.tool_calls += len(tool_calls)
+        usage_limits.check_before_tool_call(projected_usage)
 
     for call in tool_calls:
         yield _messages.FunctionToolCallEvent(call)
@@ -936,7 +942,7 @@ async def _call_tools(
         if tool_manager.should_call_sequentially(tool_calls):
             for index, call in enumerate(tool_calls):
                 if event := await handle_call_or_result(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), usage_limits),
+                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
                     index,
                 ):
                     yield event
@@ -944,7 +950,7 @@ async def _call_tools(
         else:
             tasks = [
                 asyncio.create_task(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), usage_limits),
+                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
                     name=call.tool_name,
                 )
                 for call in tool_calls
@@ -971,15 +977,14 @@ async def _call_tool(
     tool_manager: ToolManager[DepsT],
     tool_call: _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
-    usage_limits: _usage.UsageLimits | None,
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
     try:
         if tool_call_result is None:
-            tool_result = await tool_manager.handle_call(tool_call, usage_limits=usage_limits)
+            tool_result = await tool_manager.handle_call(tool_call)
         elif isinstance(tool_call_result, ToolApproved):
             if tool_call_result.override_args is not None:
                 tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
-            tool_result = await tool_manager.handle_call(tool_call, usage_limits=usage_limits)
+            tool_result = await tool_manager.handle_call(tool_call)
         elif isinstance(tool_call_result, ToolDenied):
             return _messages.ToolReturnPart(
                 tool_name=tool_call.tool_name,
