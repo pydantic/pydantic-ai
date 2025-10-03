@@ -16,21 +16,21 @@ from pydantic_graph.beta import GraphBuilder, StepContext
 class MyState:
     counter: int = 0
 
+g = GraphBuilder(state_type=MyState, output_type=int)
+
+@g.step
+async def increment(ctx: StepContext[MyState, None, None]) -> int:
+    ctx.state.counter += 1
+    return ctx.state.counter
+
+g.add(
+    g.edge_from(g.start_node).to(increment),
+    g.edge_from(increment).to(g.end_node),
+)
+
+graph = g.build()
 
 async def main():
-    g = GraphBuilder(state_type=MyState, output_type=int)
-
-    @g.step
-    async def increment(ctx: StepContext[MyState, None, None]) -> int:
-        ctx.state.counter += 1
-        return ctx.state.counter
-
-    g.add(
-        g.edge_from(g.start_node).to(increment),
-        g.edge_from(increment).to(g.end_node),
-    )
-
-    graph = g.build()
     state = MyState()
     result = await graph.run(state=state)
     print(result)
@@ -195,7 +195,10 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 By default, step node IDs are inferred from the function name. You can override this:
 
 ```python {title="custom_id.py" requires="basic_step.py"}
+from pydantic_graph.beta import StepContext
+
 from basic_step import MyState, g
+
 
 @g.step(node_id='my_custom_id')
 async def my_step(ctx: StepContext[MyState, None, None]) -> int:
@@ -209,7 +212,10 @@ async def my_step(ctx: StepContext[MyState, None, None]) -> int:
 Labels provide documentation for diagram generation:
 
 ```python {title="labels.py" requires="basic_step.py"}
+from pydantic_graph.beta import StepContext
+
 from basic_step import MyState, g
+
 
 @g.step(label='Increment the counter')
 async def increment(ctx: StepContext[MyState, None, None]) -> int:
@@ -330,6 +336,17 @@ The beta graph API provides strong type checking through generics. Type paramete
 - Input/output types match across edges
 
 ```python
+from dataclasses import dataclass
+
+from pydantic_graph.beta import GraphBuilder, StepContext
+
+
+@dataclass
+class MyState:
+    pass
+
+g = GraphBuilder(state_type=MyState, output_type=str)
+
 # Type checker will catch mismatches
 @g.step
 async def expects_int(ctx: StepContext[MyState, None, int]) -> str:

@@ -25,28 +25,29 @@ class SimpleState:
     pass
 
 
+g = GraphBuilder(state_type=SimpleState, output_type=list[int])
+
+@g.step
+async def generate_numbers(ctx: StepContext[SimpleState, None, None]) -> list[int]:
+    return [1, 2, 3, 4, 5]
+
+@g.step
+async def square(ctx: StepContext[SimpleState, None, int]) -> int:
+    return ctx.inputs * ctx.inputs
+
+# Create a join to collect all squared values
+collect = g.join(ListReducer[int])
+
+g.add(
+    g.edge_from(g.start_node).to(generate_numbers),
+    g.edge_from(generate_numbers).map().to(square),
+    g.edge_from(square).to(collect),
+    g.edge_from(collect).to(g.end_node),
+)
+
+graph = g.build()
+
 async def main():
-    g = GraphBuilder(state_type=SimpleState, output_type=list[int])
-
-    @g.step
-    async def generate_numbers(ctx: StepContext[SimpleState, None, None]) -> list[int]:
-        return [1, 2, 3, 4, 5]
-
-    @g.step
-    async def square(ctx: StepContext[SimpleState, None, int]) -> int:
-        return ctx.inputs * ctx.inputs
-
-    # Create a join to collect all squared values
-    collect = g.join(ListReducer[int])
-
-    g.add(
-        g.edge_from(g.start_node).to(generate_numbers),
-        g.edge_from(generate_numbers).map().to(square),
-        g.edge_from(square).to(collect),
-        g.edge_from(collect).to(g.end_node),
-    )
-
-    graph = g.build()
     result = await graph.run(state=SimpleState())
     print(sorted(result))
     #> [1, 4, 9, 16, 25]
@@ -139,7 +140,7 @@ async def main():
     graph = g.build()
     result = await graph.run(state=SimpleState())
     print(result)
-    #> {'apple': 5, 'banana': 6, 'cherry': 6}
+    #> {'cherry': 6, 'banana': 6, 'apple': 5}
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
@@ -410,7 +411,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 Like steps, joins can have custom IDs:
 
 ```python {title="join_custom_id.py" requires="basic_join.py"}
-from basic_join import g, ListReducer
+from basic_join import ListReducer, g
 
 my_join = g.join(ListReducer[int], node_id='my_custom_join_id')
 ```
