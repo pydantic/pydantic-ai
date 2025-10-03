@@ -418,6 +418,9 @@ class MCPServer(AbstractToolset[Any], ABC):
         else:
             assert_never(resource)
 
+    def __eq__(self, value: object, /) -> bool:
+        return isinstance(value, MCPServer) and self.id == value.id and self.tool_prefix == value.tool_prefix
+
 
 class MCPServerStdio(MCPServer):
     """Runs an MCP server in a subprocess and communicates with it over stdin/stdout.
@@ -572,10 +575,10 @@ class MCPServerStdio(MCPServer):
         return f'{self.__class__.__name__}({", ".join(repr_args)})'
 
     def __eq__(self, value: object, /) -> bool:
-        if not isinstance(value, MCPServerStdio):
-            return False  # pragma: no cover
         return (
-            self.command == value.command
+            super().__eq__(value)
+            and isinstance(value, MCPServerStdio)
+            and self.command == value.command
             and self.args == value.args
             and self.env == value.env
             and self.cwd == value.cwd
@@ -813,9 +816,7 @@ class MCPServerSSE(_MCPServerHTTP):
         return sse_client  # pragma: no cover
 
     def __eq__(self, value: object, /) -> bool:
-        if not isinstance(value, MCPServerSSE):
-            return False  # pragma: no cover
-        return self.url == value.url
+        return super().__eq__(value) and isinstance(value, MCPServerSSE) and self.url == value.url
 
 
 @deprecated('The `MCPServerHTTP` class is deprecated, use `MCPServerSSE` instead.')
@@ -889,9 +890,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
         return streamablehttp_client  # pragma: no cover
 
     def __eq__(self, value: object, /) -> bool:
-        if not isinstance(value, MCPServerStreamableHTTP):
-            return False  # pragma: no cover
-        return self.url == value.url
+        return super().__eq__(value) and isinstance(value, MCPServerStreamableHTTP) and self.url == value.url
 
 
 ToolResult = (
