@@ -242,7 +242,7 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
     # def deserialize_reducer(self, serialized: bytes) -> Reducer[InputT, OutputT]:
     #     return self._type_adapter.validate_json(serialized)
 
-    def _force_covariant(self, inputs: InputT) -> OutputT:
+    def _force_covariant(self, inputs: InputT) -> OutputT:  # pragma: no cover
         """Force covariant typing for generic parameters.
 
         This method exists solely for typing purposes and should never be called.

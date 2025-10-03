@@ -38,9 +38,9 @@ from pydantic_graph.beta.paths import (
     DestinationMarker,
     EdgePath,
     EdgePathBuilder,
+    MapMarker,
     Path,
     PathBuilder,
-    SpreadMarker,
 )
 from pydantic_graph.beta.step import NodeStep, Step, StepFunction, StepNode
 from pydantic_graph.beta.util import TypeOrTypeExpression, get_callable_name, unpack_type_expression
@@ -362,7 +362,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
                     self._insert_node(new_node)
                     for path in item.paths:
                         _handle_path(Path(items=[*path.items]))
-                elif isinstance(item, SpreadMarker):
+                elif isinstance(item, MapMarker):
                     new_node = Fork[Any, Any](id=item.fork_id, is_map=True)
                     self._insert_node(new_node)
                 elif isinstance(item, DestinationMarker):
@@ -376,6 +376,9 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             for destination_node in edge.destinations:
                 destinations.append(destination_node)
                 self._insert_node(destination_node)
+                if isinstance(destination_node, Decision):
+                    for branch in destination_node.branches:
+                        _handle_path(branch.path)
 
             _handle_path(edge.path)
 
@@ -570,6 +573,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             self._decision_index += 1
         return node_id
 
+    # TODO(P1): Need to use or remove this..
     def _get_new_broadcast_id(self, from_: str | None = None) -> str:
         """Generate a unique ID for a new broadcast fork.
 
@@ -590,6 +594,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             index += 1
         return node_id
 
+    # TODO(P1): Need to use or remove this..
     def _get_new_map_id(self, from_: str | None = None, to: str | None = None) -> str:
         """Generate a unique ID for a new map fork.
 
@@ -758,7 +763,7 @@ def _normalize_forks(
     while paths_to_handle:
         path = paths_to_handle.pop()
         for item in path.items:
-            if isinstance(item, SpreadMarker):
+            if isinstance(item, MapMarker):
                 assert item.fork_id in new_nodes
                 new_edges[item.fork_id] = [path.next_path]
             if isinstance(item, BroadcastMarker):
@@ -811,7 +816,7 @@ def _collect_dominating_forks(
                 last_source_id: The current source node ID
             """
             for item in path.items:
-                if isinstance(item, SpreadMarker):
+                if isinstance(item, MapMarker):
                     fork_ids.add(item.fork_id)
                     edges[last_source_id].append(item.fork_id)
                     last_source_id = item.fork_id

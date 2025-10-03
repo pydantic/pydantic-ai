@@ -7,7 +7,7 @@ from typing import Literal
 
 import pytest
 
-from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph.beta import GraphBuilder, Reducer, StepContext, TypeExpression
 
 pytestmark = pytest.mark.anyio
 
@@ -323,3 +323,162 @@ async def test_decision_with_map():
     result = await graph.run(state=state)
     assert result == 6
     assert state.value == 6  # 1 + 2 + 3
+
+
+async def test_decision_branch_last_fork_id_none():
+    """Test DecisionBranchBuilder.last_fork_id when there are no forks."""
+    from pydantic_graph.beta.decision import Decision, DecisionBranchBuilder
+    from pydantic_graph.beta.id_types import NodeID
+    from pydantic_graph.beta.paths import PathBuilder
+
+    decision = Decision[DecisionState, None, int](id=NodeID('test'), branches=[], note=None)
+    path_builder = PathBuilder[DecisionState, None, int](working_items=[])
+    branch_builder = DecisionBranchBuilder(decision=decision, source=int, matches=None, path_builder=path_builder)
+
+    assert branch_builder.last_fork_id is None
+
+
+async def test_decision_branch_last_fork_id_with_map():
+    """Test DecisionBranchBuilder.last_fork_id after a map operation."""
+    g = GraphBuilder(state_type=DecisionState, output_type=int)
+
+    @g.step
+    async def return_list(ctx: StepContext[DecisionState, None, None]) -> list[int]:
+        return [1, 2, 3]
+
+    @g.step
+    async def process_item(ctx: StepContext[DecisionState, None, int]) -> int:
+        return ctx.inputs * 2
+
+    class SumReducer(Reducer[object, object, float, float]):
+        """A reducer that sums values."""
+
+        value: float = 0.0
+
+        def reduce(self, ctx: StepContext[object, object, float]) -> None:
+            self.value += ctx.inputs
+
+        def finalize(self, ctx: StepContext[object, object, None]) -> float:
+            return self.value
+
+    sum_results = g.join(SumReducer)
+
+    # Use decision with map to test last_fork_id
+    g.add(
+        g.edge_from(g.start_node).to(return_list),
+        g.edge_from(return_list).to(
+            g.decision().branch(
+                g.match(
+                    TypeExpression[list[int]],
+                    matches=lambda x: isinstance(x, list) and all(isinstance(y, int) for y in x),
+                )
+                .map()
+                .to(process_item)
+            )
+        ),
+        g.edge_from(process_item).to(sum_results),
+        g.edge_from(sum_results).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=DecisionState())
+    assert result == 12  # (1+2+3) * 2
+
+
+async def test_decision_branch_transform():
+    """Test DecisionBranchBuilder.transform method."""
+    g = GraphBuilder(state_type=DecisionState, output_type=str)
+
+    @g.step
+    async def get_value(ctx: StepContext[DecisionState, None, None]) -> int:
+        return 10
+
+    @g.step
+    async def format_result(ctx: StepContext[DecisionState, None, str]) -> str:
+        return f'Result: {ctx.inputs}'
+
+    async def double_value(ctx: StepContext[DecisionState, None, int], value: int) -> str:
+        return str(value * 2)
+
+    g.add(
+        g.edge_from(g.start_node).to(get_value),
+        g.edge_from(get_value).to(g.decision().branch(g.match(int).transform(double_value).to(format_result))),
+        g.edge_from(format_result).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=DecisionState())
+    assert result == 'Result: 20'
+
+
+async def test_decision_branch_label():
+    """Test DecisionBranchBuilder.label method."""
+    g = GraphBuilder(state_type=DecisionState, output_type=str)
+
+    @g.step
+    async def get_value(ctx: StepContext[DecisionState, None, None]) -> Literal['a', 'b']:
+        return 'a'
+
+    @g.step
+    async def handle_a(ctx: StepContext[DecisionState, None, object]) -> str:
+        return 'Got A'
+
+    @g.step
+    async def handle_b(ctx: StepContext[DecisionState, None, object]) -> str:
+        return 'Got B'
+
+    g.add(
+        g.edge_from(g.start_node).to(get_value),
+        g.edge_from(get_value).to(
+            g.decision()
+            .branch(g.match(TypeExpression[Literal['a']]).label('path A').to(handle_a))
+            .branch(g.match(TypeExpression[Literal['b']]).label('path B').to(handle_b))
+        ),
+        g.edge_from(handle_a, handle_b).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=DecisionState())
+    assert result == 'Got A'
+
+
+async def test_decision_branch_fork():
+    """Test DecisionBranchBuilder.fork method."""
+    g = GraphBuilder(state_type=DecisionState, output_type=str)
+
+    @g.step
+    async def choose_option(ctx: StepContext[DecisionState, None, None]) -> Literal['fork']:
+        return 'fork'
+
+    @g.step
+    async def path_1(ctx: StepContext[DecisionState, None, object]) -> str:
+        return 'Path 1'
+
+    @g.step
+    async def path_2(ctx: StepContext[DecisionState, None, object]) -> str:
+        return 'Path 2'
+
+    @g.step
+    async def combine(ctx: StepContext[DecisionState, None, list[str]]) -> str:
+        return ', '.join(ctx.inputs)
+
+    g.add(
+        g.edge_from(g.start_node).to(choose_option),
+        g.edge_from(choose_option).to(
+            g.decision().branch(
+                g.match(TypeExpression[Literal['fork']]).fork(
+                    lambda b: [
+                        b.decision.branch(g.match(TypeExpression[Literal['fork']]).to(path_1)),
+                        b.decision.branch(g.match(TypeExpression[Literal['fork']]).to(path_2)),
+                    ]
+                )
+            )
+        ),
+        g.edge_from(path_1, path_2).join().to(combine),
+        g.edge_from(combine).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=DecisionState())
+    assert 'Path 1' in result
+    assert 'Path 2' in result

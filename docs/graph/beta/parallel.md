@@ -114,7 +114,7 @@ The convenience method [`add_mapping_edge()`][pydantic_graph.beta.graph_builder.
 ```python {title="mapping_convenience.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext, Reducer
 
 
 @dataclass

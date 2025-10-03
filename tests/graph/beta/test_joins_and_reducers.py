@@ -287,3 +287,36 @@ async def test_dict_reducer_with_overlapping_keys():
     # One of the values should win (1, 2, or 3)
     assert 'key' in result
     assert result['key'] in [1, 2, 3]
+
+
+async def test_latest_reducer():
+    """Test LatestReducer that only keeps the last value."""
+    from pydantic_graph.beta.join import LatestReducer
+
+    g = GraphBuilder(state_type=SimpleState, output_type=int)
+
+    @g.step
+    async def generate_numbers(ctx: StepContext[SimpleState, None, None]) -> list[int]:
+        return [1, 2, 3, 4, 5]
+
+    @g.step
+    async def process_number(ctx: StepContext[SimpleState, None, int]) -> int:
+        return ctx.inputs * 10
+
+    @g.step
+    async def get_latest(ctx: StepContext[SimpleState, None, int]) -> int:
+        return ctx.inputs
+
+    g.add(
+        g.edge_from(g.start_node).to(generate_numbers),
+        g.edge_from(generate_numbers).map().to(process_number),
+        g.edge_from(process_number).join(LatestReducer[int]).to(get_latest),
+        g.edge_from(get_latest).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=SimpleState())
+
+    # LatestReducer should keep only the last value processed
+    # Due to concurrent execution, we can't be sure which is last, but it should be one of the processed values
+    assert result in [10, 20, 30, 40, 50]

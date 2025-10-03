@@ -40,7 +40,7 @@ class TransformMarker:
 
 
 @dataclass
-class SpreadMarker:
+class MapMarker:
     """A marker indicating that iterable data should be map across parallel paths.
 
     Spread markers take iterable input and create parallel execution paths
@@ -92,7 +92,7 @@ class DestinationMarker:
     """The unique identifier of the destination node."""
 
 
-PathItem = TypeAliasType('PathItem', TransformMarker | SpreadMarker | BroadcastMarker | LabelMarker | DestinationMarker)
+PathItem = TypeAliasType('PathItem', TransformMarker | MapMarker | BroadcastMarker | LabelMarker | DestinationMarker)
 """Type alias for any item that can appear in a path sequence."""
 
 
@@ -108,14 +108,14 @@ class Path:
     """The sequence of path items that define this path."""
 
     @property
-    def last_fork(self) -> BroadcastMarker | SpreadMarker | None:
+    def last_fork(self) -> BroadcastMarker | MapMarker | None:
         """Get the most recent fork or map marker in this path.
 
         Returns:
-            The last BroadcastMarker or SpreadMarker in the path, or None if no forks exist
+            The last BroadcastMarker or MapMarker in the path, or None if no forks exist
         """
         for item in reversed(self.items):
-            if isinstance(item, BroadcastMarker | SpreadMarker):
+            if isinstance(item, BroadcastMarker | MapMarker):
                 return item
         return None
 
@@ -146,14 +146,14 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
     """The accumulated sequence of path items being built."""
 
     @property
-    def last_fork(self) -> BroadcastMarker | SpreadMarker | None:
+    def last_fork(self) -> BroadcastMarker | MapMarker | None:
         """Get the most recent fork or map marker in the working path.
 
         Returns:
-            The last BroadcastMarker or SpreadMarker in the working items, or None if no forks exist
+            The last BroadcastMarker or MapMarker in the working items, or None if no forks exist
         """
         for item in reversed(self.working_items):
-            if isinstance(item, BroadcastMarker | SpreadMarker):
+            if isinstance(item, BroadcastMarker | MapMarker):
                 return item
         return None
 
@@ -226,7 +226,7 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
         Returns:
             A new PathBuilder that operates on individual items from the iterable
         """
-        next_item = SpreadMarker(
+        next_item = MapMarker(
             fork_id=NodeID(fork_id or 'map_' + secrets.token_hex(8)), downstream_join_id=downstream_join_id
         )
         return PathBuilder[StateT, DepsT, Any](working_items=[*self.working_items, next_item])

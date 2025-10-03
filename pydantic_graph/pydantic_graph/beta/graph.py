@@ -34,8 +34,8 @@ from pydantic_graph.beta.paths import (
     BroadcastMarker,
     DestinationMarker,
     LabelMarker,
+    MapMarker,
     Path,
-    SpreadMarker,
     TransformMarker,
 )
 from pydantic_graph.beta.step import NodeStep, Step, StepContext, StepNode
@@ -654,7 +654,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         item = path.items[0]
         if isinstance(item, DestinationMarker):
             return [GraphTask(item.destination_id, inputs, fork_stack)]
-        elif isinstance(item, SpreadMarker):
+        elif isinstance(item, MapMarker):
             # Eagerly raise a clear error if the input value is not iterable as expected
             try:
                 iter(inputs)

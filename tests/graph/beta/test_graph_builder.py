@@ -246,3 +246,55 @@ async def test_state_mutation():
     assert result == 'counter=10'
     assert state.counter == 10
     assert state.result == 'counter=10'
+
+
+async def test_join_decorator_usage():
+    """Test using join as a decorator."""
+    from pydantic_graph.beta import Reducer
+    from pydantic_graph.beta.graph_builder import join
+
+    @join(node_id='my_join')
+    class MyReducer(Reducer[SimpleState, None, int, list[int]]):
+        def initialize(self):
+            return []
+
+        def reduce(self, current: list[int], item: int) -> list[int]:
+            return current + [item]
+
+    assert MyReducer.id.value == 'my_join'
+
+
+async def test_graph_builder_join_method_with_decorator():
+    """Test GraphBuilder.join method when used as a decorator."""
+    g = GraphBuilder(state_type=SimpleState, output_type=list[int])
+
+    @g.step
+    async def generate_items(ctx: StepContext[SimpleState, None, None]) -> list[int]:
+        return [1, 2, 3]
+
+    @g.step
+    async def double_item(ctx: StepContext[SimpleState, None, int]) -> int:
+        return ctx.inputs * 2
+
+    @g.join(node_id='my_custom_join')
+    class SumReducer(g.Reducer[int, list[int]]):
+        def initialize(self):
+            return []
+
+        def reduce(self, current: list[int], item: int) -> list[int]:
+            return current + [item]
+
+    @g.step
+    async def format_result(ctx: StepContext[SimpleState, None, list[int]]) -> list[int]:
+        return sorted(ctx.inputs)
+
+    g.add(
+        g.edge_from(g.start_node).to(generate_items),
+        g.edge_from(generate_items).map().to(double_item),
+        g.edge_from(double_item).join(SumReducer).to(format_result),
+        g.edge_from(format_result).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=SimpleState())
+    assert result == [2, 4, 6]

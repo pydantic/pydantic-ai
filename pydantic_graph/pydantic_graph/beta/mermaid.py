@@ -11,7 +11,7 @@ from pydantic_graph.beta.graph import Graph
 from pydantic_graph.beta.id_types import NodeID
 from pydantic_graph.beta.join import Join
 from pydantic_graph.beta.node import EndNode, Fork, StartNode
-from pydantic_graph.beta.paths import BroadcastMarker, DestinationMarker, LabelMarker, Path, SpreadMarker
+from pydantic_graph.beta.paths import BroadcastMarker, DestinationMarker, LabelMarker, MapMarker, Path
 from pydantic_graph.beta.step import NodeStep, Step
 
 DEFAULT_HIGHLIGHT_CSS = 'fill:#fdff32'
@@ -57,7 +57,7 @@ def build_mermaid_graph(graph: Graph[Any, Any, Any, Any]) -> MermaidGraph:  # no
     def _collect_edges(path: Path, last_source_id: NodeID) -> None:
         working_label: str | None = None
         for item in path.items:
-            if isinstance(item, SpreadMarker):
+            if isinstance(item, MapMarker):
                 edges_by_source[last_source_id].append(MermaidEdge(last_source_id, item.fork_id, working_label))
                 return  # map markers correspond to nodes already in the graph; downstream gets handled separately
             elif isinstance(item, BroadcastMarker):

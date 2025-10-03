@@ -65,7 +65,7 @@ class Decision(Generic[StateT, DepsT, HandledT]):
         """
         return Decision(id=self.id, branches=self.branches + [branch], note=self.note)
 
-    def _force_handled_contravariant(self, inputs: HandledT) -> Never:
+    def _force_handled_contravariant(self, inputs: HandledT) -> Never:  # pragma: no cover
         """Forces this type to be contravariant in the HandledT type variable.
 
         This is an implementation detail of how we can type-check that all possible input types have

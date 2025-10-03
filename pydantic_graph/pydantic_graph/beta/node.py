@@ -44,7 +44,7 @@ class EndNode(Generic[InputT]):
     id = NodeID('__end__')
     """Fixed identifier for the end node."""
 
-    def _force_variance(self, inputs: InputT) -> None:
+    def _force_variance(self, inputs: InputT) -> None:  # pragma: no cover
         """Force type variance for proper generic typing.
 
         This method exists solely for type checking purposes and should never be called.
@@ -56,9 +56,6 @@ class EndNode(Generic[InputT]):
             RuntimeError: Always, as this method should never be executed.
         """
         raise RuntimeError('This method should never be called, it is just defined for typing purposes.')
-
-    # def _force_variance(self) -> InputT:
-    #     raise RuntimeError('This method should never be called, it is just defined for typing purposes.')
 
 
 @dataclass
@@ -80,7 +77,7 @@ class Fork(Generic[InputT, OutputT]):
     If False, InputT must be OutputT and the same data is sent to all branches.
     """
 
-    def _force_variance(self, inputs: InputT) -> OutputT:
+    def _force_variance(self, inputs: InputT) -> OutputT:  # pragma: no cover
         """Force type variance for proper generic typing.
 
         This method exists solely for type checking purposes and should never be called.
