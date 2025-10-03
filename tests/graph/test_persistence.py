@@ -2,6 +2,7 @@
 from __future__ import annotations as _annotations
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -345,3 +346,34 @@ async def test_record_lookup_error(persistence_cls: type[BaseStatePersistence]):
 def test_snapshot_type_adapter_error():
     with pytest.raises(RuntimeError, match='Unable to build a Pydantic schema for `BaseNode` without setting'):
         build_snapshot_list_type_adapter(int, int)
+
+
+async def test_snapshot_state_stability():
+    @dataclass
+    class CountDownState:
+        counter: int
+
+    @dataclass
+    class CountDown(BaseNode[CountDownState, None, int]):
+        async def run(self, ctx: GraphRunContext[CountDownState]) -> CountDown | End[int]:
+            if ctx.state.counter <= 0:
+                return End(ctx.state.counter)
+            ctx.state.counter -= 1
+            return CountDown()
+
+    persistence = FullStatePersistence()
+    state = CountDownState(counter=3)
+    count_down_graph = Graph(nodes=[CountDown])
+
+    await count_down_graph.initialize(CountDown(), state=state, persistence=persistence)
+
+    done = False
+    while not done:
+        history = deepcopy(persistence.history)
+        async with count_down_graph.iter_from_persistence(persistence) as run:
+            result = await run.next()
+            done = isinstance(result, End)
+
+        for i in range(len(history)):
+            assert history[i].id == persistence.history[i].id
+            assert history[i].state == persistence.history[i].state, 'State should not change'

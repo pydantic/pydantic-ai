@@ -143,7 +143,7 @@ class FullStatePersistence(BaseStatePersistence[StateT, RunEndT]):
     async def load_next(self) -> NodeSnapshot[StateT, RunEndT] | None:
         if snapshot := next((s for s in self.history if isinstance(s, NodeSnapshot) and s.status == 'created'), None):
             snapshot.status = 'pending'
-            return snapshot
+            return copy.deepcopy(snapshot)
 
     async def load_all(self) -> list[Snapshot[StateT, RunEndT]]:
         return self.history
