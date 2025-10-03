@@ -227,6 +227,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         assert isinstance(next_node, End), f'Unexpected node type: {type(next_node)}'
         return next_node
 
+    # TODO (v2): Make this a property
     def usage(self) -> _usage.RunUsage:
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
         return self._graph_run.state.usage
@@ -344,12 +345,21 @@ class AgentRunResult(Generic[OutputDataT]):
             self.new_messages(output_tool_return_content=output_tool_return_content)
         )
 
+    @property
+    def response(self) -> _messages.ModelResponse:
+        """Return the last response from the message history."""
+        # The response may not be the very last item if it contained an output tool call. See `CallToolsNode._handle_final_result`.
+        for message in reversed(self.all_messages()):
+            if isinstance(message, _messages.ModelResponse):
+                return message
+        raise ValueError('No response found in the message history')  # pragma: no cover
+
+    # TODO (v2): Make this a property
     def usage(self) -> _usage.RunUsage:
         """Return the usage of the whole run."""
         return self._state.usage
 
+    # TODO (v2): Make this a property
     def timestamp(self) -> datetime:
         """Return the timestamp of last response."""
-        model_response = self.all_messages()[-1]
-        assert isinstance(model_response, _messages.ModelResponse)
-        return model_response.timestamp
+        return self.response.timestamp

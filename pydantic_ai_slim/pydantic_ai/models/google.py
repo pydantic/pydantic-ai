@@ -13,12 +13,13 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from ..builtin_tools import CodeExecutionTool, UrlContextTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, UrlContextTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    FilePart,
     FileUrl,
     FinishReason,
     ModelMessage,
@@ -95,7 +96,11 @@ LatestGoogleModelNames = Literal[
     'gemini-2.0-flash',
     'gemini-2.0-flash-lite',
     'gemini-2.5-flash',
+    'gemini-2.5-flash-preview-09-2025',
+    'gemini-flash-latest',
     'gemini-2.5-flash-lite',
+    'gemini-2.5-flash-lite-preview-09-2025',
+    'gemini-flash-lite-latest',
     'gemini-2.5-pro',
 ]
 """Latest Gemini models."""
@@ -308,6 +313,11 @@ class GoogleModel(Model):
         yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolDict] | None:
+        tools: list[ToolDict] = [
+            ToolDict(function_declarations=[_function_declaration_from_tool(t)])
+            for t in model_request_parameters.tool_defs.values()
+        ]
+
         if model_request_parameters.builtin_tools:
             if model_request_parameters.output_tools:
                 raise UserError(
@@ -316,21 +326,22 @@ class GoogleModel(Model):
             if model_request_parameters.function_tools:
                 raise UserError('Gemini does not support user tools and built-in tools at the same time.')
 
-        tools: list[ToolDict] = [
-            ToolDict(function_declarations=[_function_declaration_from_tool(t)])
-            for t in model_request_parameters.tool_defs.values()
-        ]
-        for tool in model_request_parameters.builtin_tools:
-            if isinstance(tool, WebSearchTool):
-                tools.append(ToolDict(google_search=GoogleSearchDict()))
-            elif isinstance(tool, UrlContextTool):
-                tools.append(ToolDict(url_context=UrlContextDict()))
-            elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
-                tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
-            else:  # pragma: no cover
-                raise UserError(
-                    f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'
-                )
+            for tool in model_request_parameters.builtin_tools:
+                if isinstance(tool, WebSearchTool):
+                    tools.append(ToolDict(google_search=GoogleSearchDict()))
+                elif isinstance(tool, UrlContextTool):
+                    tools.append(ToolDict(url_context=UrlContextDict()))
+                elif isinstance(tool, CodeExecutionTool):
+                    tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
+                elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
+                    if not self.profile.supports_image_output:
+                        raise UserError(
+                            "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
+                        )
+                else:  # pragma: no cover
+                    raise UserError(
+                        f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'
+                    )
         return tools or None
 
     def _get_tool_config(
@@ -382,6 +393,9 @@ class GoogleModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
         tools = self._get_tools(model_request_parameters)
+        if tools and not self.profile.supports_tools:
+            raise UserError('Tools are not supported by this model.')
+
         response_mime_type = None
         response_schema = None
         if model_request_parameters.output_mode == 'native':
@@ -394,6 +408,8 @@ class GoogleModel(Model):
             assert output_object is not None
             response_schema = self._map_response_schema(output_object)
         elif model_request_parameters.output_mode == 'prompted' and not tools:
+            if not self.profile.supports_json_object_output:
+                raise UserError('JSON output is not supported by this model.')
             response_mime_type = 'application/json'
 
         tool_config = self._get_tool_config(model_request_parameters, tools)
@@ -615,8 +631,8 @@ class GeminiStreamedResponse(StreamedResponse):
             #     candidate.grounding_metadata, self.provider_name
             # )
             # if web_search_call and web_search_return:
-            #     yield self._parts_manager.handle_builtin_tool_call_part(vendor_part_id=uuid4(), part=web_search_call)
-            #     yield self._parts_manager.handle_builtin_tool_return_part(
+            #     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_search_call)
+            #     yield self._parts_manager.handle_part(
             #         vendor_part_id=uuid4(), part=web_search_return
             #     )
 
@@ -658,9 +674,18 @@ class GeminiStreamedResponse(StreamedResponse):
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
+                elif part.inline_data is not None:
+                    data = part.inline_data.data
+                    mime_type = part.inline_data.mime_type
+                    assert data and mime_type, 'Inline data must have data and mime type'
+                    content = BinaryContent(data=data, media_type=mime_type)
+                    yield self._parts_manager.handle_part(
+                        vendor_part_id=uuid4(),
+                        part=FilePart(content=BinaryContent.narrow_type(content)),
+                    )
                 elif part.executable_code is not None:
                     code_execution_tool_call_id = _utils.generate_tool_call_id()
-                    yield self._parts_manager.handle_builtin_tool_call_part(
+                    yield self._parts_manager.handle_part(
                         vendor_part_id=uuid4(),
                         part=_map_executable_code(
                             part.executable_code, self.provider_name, code_execution_tool_call_id
@@ -668,7 +693,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     )
                 elif part.code_execution_result is not None:
                     assert code_execution_tool_call_id is not None
-                    yield self._parts_manager.handle_builtin_tool_return_part(
+                    yield self._parts_manager.handle_part(
                         vendor_part_id=uuid4(),
                         part=_map_code_execution_result(
                             part.code_execution_result, self.provider_name, code_execution_tool_call_id
@@ -729,6 +754,10 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
                 elif item.tool_name == WebSearchTool.kind:
                     # Web search results are not sent back
                     pass
+        elif isinstance(item, FilePart):
+            content = item.content
+            inline_data_dict: BlobDict = {'data': content.data, 'mime_type': content.media_type}
+            part['inline_data'] = inline_data_dict
         else:
             assert_never(item)
 
@@ -784,10 +813,14 @@ def _process_response_from_parts(
             item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
             if part.function_call.id is not None:
                 item.tool_call_id = part.function_call.id  # pragma: no cover
+        elif inline_data := part.inline_data:
+            data = inline_data.data
+            mime_type = inline_data.mime_type
+            assert data and mime_type, 'Inline data must have data and mime type'
+            content = BinaryContent(data=data, media_type=mime_type)
+            item = FilePart(content=BinaryContent.narrow_type(content))
         else:  # pragma: no cover
-            raise UnexpectedModelBehavior(
-                f'Unsupported response from Gemini, expected all parts to be function calls, text, or thoughts, got: {part!r}'
-            )
+            raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
 
         items.append(item)
     return ModelResponse(

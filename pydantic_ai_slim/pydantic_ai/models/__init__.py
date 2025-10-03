@@ -27,6 +27,8 @@ from .._run_context import RunContext
 from ..builtin_tools import AbstractBuiltinTool
 from ..exceptions import UserError
 from ..messages import (
+    BinaryImage,
+    FilePart,
     FileUrl,
     FinalResultEvent,
     FinishReason,
@@ -141,12 +143,20 @@ KnownModelName = TypeAliasType(
         'google-gla:gemini-2.0-flash',
         'google-gla:gemini-2.0-flash-lite',
         'google-gla:gemini-2.5-flash',
+        'google-gla:gemini-2.5-flash-preview-09-2025',
+        'google-gla:gemini-flash-latest',
         'google-gla:gemini-2.5-flash-lite',
+        'google-gla:gemini-2.5-flash-lite-preview-09-2025',
+        'google-gla:gemini-flash-lite-latest',
         'google-gla:gemini-2.5-pro',
         'google-vertex:gemini-2.0-flash',
         'google-vertex:gemini-2.0-flash-lite',
         'google-vertex:gemini-2.5-flash',
+        'google-vertex:gemini-2.5-flash-preview-09-2025',
+        'google-vertex:gemini-flash-latest',
         'google-vertex:gemini-2.5-flash-lite',
+        'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
+        'google-vertex:gemini-flash-lite-latest',
         'google-vertex:gemini-2.5-pro',
         'grok:grok-4',
         'grok:grok-4-0709',
@@ -300,6 +310,7 @@ class ModelRequestParameters:
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list)
     allow_text_output: bool = True
+    allow_image_output: bool = False
 
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
@@ -557,6 +568,7 @@ class StreamedResponse(ABC):
             finish_reason=self.finish_reason,
         )
 
+    # TODO (v2): Make this a property
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self._usage
@@ -865,7 +877,9 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
     """Return an appropriate FinalResultEvent if `e` corresponds to a part that will produce a final result."""
     if isinstance(e, PartStartEvent):
         new_part = e.part
-        if isinstance(new_part, TextPart) and params.allow_text_output:  # pragma: no branch
+        if (isinstance(new_part, TextPart) and params.allow_text_output) or (
+            isinstance(new_part, FilePart) and params.allow_image_output and isinstance(new_part.content, BinaryImage)
+        ):
             return FinalResultEvent(tool_name=None, tool_call_id=None)
         elif isinstance(new_part, ToolCallPart) and (tool_def := params.tool_defs.get(new_part.tool_name)):
             if tool_def.kind == 'output':

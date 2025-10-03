@@ -646,7 +646,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         context: dict[str, Any] = {'use_short_form': True}
         if fmt == 'yaml':
-            dumped_data = self.model_dump(mode='json', by_alias=True, exclude_defaults=True, context=context)
+            dumped_data = self.model_dump(mode='json', by_alias=True, context=context)
             content = yaml.dump(dumped_data, sort_keys=False)
             if schema_ref:  # pragma: no branch
                 yaml_language_server_line = f'{_YAML_SCHEMA_LINE_PREFIX}{schema_ref}'
@@ -654,7 +654,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             path.write_text(content)
         else:
             context['$schema'] = schema_ref
-            json_data = self.model_dump_json(indent=2, by_alias=True, exclude_defaults=True, context=context)
+            json_data = self.model_dump_json(indent=2, by_alias=True, context=context)
             path.write_text(json_data + '\n')
 
     @classmethod
@@ -724,6 +724,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa UP007
 
         class Dataset(BaseModel, extra='forbid'):
+            name: str | None = None
             cases: list[Case]
             if evaluator_schema_types:  # pragma: no branch
                 evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa UP007

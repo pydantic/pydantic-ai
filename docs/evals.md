@@ -653,10 +653,12 @@ async def main():
     print(output_file.read_text())
     """
     # yaml-language-server: $schema=questions_cases_schema.json
+    name: null
     cases:
     - name: Easy Capital Question
       inputs:
         question: What is the capital of France?
+        context: null
       metadata:
         difficulty: easy
         category: Geography
@@ -668,6 +670,7 @@ async def main():
     - name: Challenging Landmark Question
       inputs:
         question: Which world-famous landmark is located on the banks of the Seine River?
+        context: null
       metadata:
         difficulty: hard
         category: Landmarks
@@ -676,6 +679,7 @@ async def main():
         confidence: 0.9
       evaluators:
       - EqualsExpected
+    evaluators: []
     """
 ```
 
@@ -713,11 +717,13 @@ async def main():
     """
     {
       "$schema": "questions_cases_schema.json",
+      "name": null,
       "cases": [
         {
           "name": "Easy Capital Question",
           "inputs": {
-            "question": "What is the capital of France?"
+            "question": "What is the capital of France?",
+            "context": null
           },
           "metadata": {
             "difficulty": "easy",
@@ -734,7 +740,8 @@ async def main():
         {
           "name": "Challenging Landmark Question",
           "inputs": {
-            "question": "Which world-famous landmark is located on the banks of the Seine River?"
+            "question": "Which world-famous landmark is located on the banks of the Seine River?",
+            "context": null
           },
           "metadata": {
             "difficulty": "hard",
@@ -748,7 +755,8 @@ async def main():
             "EqualsExpected"
           ]
         }
-      ]
+      ],
+      "evaluators": []
     }
     """
 ```
