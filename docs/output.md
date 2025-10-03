@@ -474,7 +474,7 @@ _(This example is complete, it can be run "as is")_
 
 Some models can generate images as part of their response, for example those that support the [Image Generation built-in tool](builtin-tools.md#image-generation-tool) and OpenAI models using the [Code Execution built-in tool](builtin-tools.md#code-execution-tool) when told to generate a chart.
 
-To use the generated image as the output of the agent run, you can set `output_type` to [`BinaryImage`][pydantic_ai.messages.BinaryImage]. If the `ImageGenerationTool` built-in tool is not explicitly specified, it will be enabled automatically.
+To use the generated image as the output of the agent run, you can set `output_type` to [`BinaryImage`][pydantic_ai.messages.BinaryImage]. If no image-generating built-in tool is explicitly specified, the [`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool] will be enabled automatically.
 
 ```py {title="image_output.py"}
 from pydantic_ai import Agent, BinaryImage

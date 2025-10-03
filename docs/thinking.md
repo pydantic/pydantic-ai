@@ -14,12 +14,12 @@ You can customize the tags using the [`thinking_tags`][pydantic_ai.profiles.Mode
 ### OpenAI Responses
 
 The [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] can generate native thinking parts.
-To enable this functionality, you need to set the `openai_reasoning_effort` and `openai_reasoning_summary` fields in the
-[`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings].
+To enable this functionality, you need to set the
+[`OpenAIResponsesModelSettings.openai_reasoning_effort`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_effort] and [`OpenAIResponsesModelSettings.openai_reasoning_summary`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_summary] [model settings](agents.md#model-run-settings).
 
 By default, the unique IDs of reasoning, text, and function call parts from the message history are sent to the model, which can result in errors like `"Item 'rs_123' of type 'reasoning' was provided without its required following item."`
 if the message history you're sending does not match exactly what was received from the Responses API in a previous response, for example if you're using a [history processor](message-history.md#processing-message-history).
-To disable this, you can set the `openai_send_reasoning_ids` field on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings] to `False`.
+To disable this, you can disable the [`OpenAIResponsesModelSettings.openai_send_reasoning_ids`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_send_reasoning_ids] [model setting](agents.md#model-run-settings).
 
 ```python {title="openai_thinking_part.py"}
 from pydantic_ai import Agent
@@ -36,7 +36,7 @@ agent = Agent(model, model_settings=settings)
 
 ## Anthropic
 
-To enable thinking, use the `anthropic_thinking` field in the [`AnthropicModelSettings`][pydantic_ai.models.anthropic.AnthropicModelSettings].
+To enable thinking, use [`AnthropicModelSettings.anthropic_thinking`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thinking] [model setting](agents.md#model-run-settings).
 
 ```python {title="anthropic_thinking_part.py"}
 from pydantic_ai import Agent
@@ -52,8 +52,7 @@ agent = Agent(model, model_settings=settings)
 
 ## Google
 
-To enable thinking, use the `google_thinking_config` field in the
-[`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
+To enable thinking, use [`GoogleModelSettings.google_thinking_config`][pydantic_ai.models.google.GoogleModelSettings.google_thinking_config] [model setting](agents.md#model-run-settings).
 
 ```python {title="google_thinking_part.py"}
 from pydantic_ai import Agent
@@ -75,8 +74,7 @@ Groq supports different formats to receive thinking parts:
 - `"hidden"`: The thinking part is not included in the text content.
 - `"parsed"`: The thinking part has its own structured part in the response which is converted into a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] object.
 
-To enable thinking, use the `groq_reasoning_format` field in the
-[`GroqModelSettings`][pydantic_ai.models.groq.GroqModelSettings]:
+To enable thinking, use [`GroqModelSettings.groq_reasoning_format`][pydantic_ai.models.groq.GroqModelSettings.groq_reasoning_format] [model setting](agents.md#model-run-settings):
 
 ```python {title="groq_thinking_part.py"}
 from pydantic_ai import Agent

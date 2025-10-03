@@ -372,11 +372,11 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
                     response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolCallPart):
                     response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
-                elif isinstance(part, BuiltinToolCallPart):  # pragma: no cover
+                elif isinstance(part, BuiltinToolCallPart):
                     response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
-                elif isinstance(part, BuiltinToolReturnPart):  # pragma: no cover
+                elif isinstance(part, BuiltinToolReturnPart):
                     response_tokens += _estimate_string_tokens(part.model_response_str())
-                elif isinstance(part, FilePart):  # pragma: no cover
+                elif isinstance(part, FilePart):
                     response_tokens += _estimate_string_tokens([part.content])
                 else:
                     assert_never(part)

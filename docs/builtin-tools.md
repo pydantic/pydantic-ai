@@ -28,7 +28,7 @@ making it ideal for queries that require up-to-date data.
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI Responses | ✅ | Full feature support. To include search results on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls], enable [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources]. |
+| OpenAI Responses | ✅ | Full feature support. To include search results on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources] [model setting](agents.md#model-run-settings). |
 | Anthropic | ✅ | Full feature support |
 | Google | ✅ | No parameter support. No [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] is generated when streaming. Using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
@@ -120,7 +120,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI | ✅ | To include code execution output on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls], enable [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs]. If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. |
+| OpenAI | ✅ | To include code execution output on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agents.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. |
 | Google | ✅ | Using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
 | Anthropic | ✅ | |
 | Groq | ❌ | |
@@ -171,7 +171,7 @@ print(result.response.builtin_tool_calls)
 
 _(This example is complete, it can be run "as is")_
 
-In addition to text output, code execution with OpenAI can generate images as part of their response. Accessing this image via [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] or [image output](output.md#image-output) requires the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] model setting to be enabled.
+In addition to text output, code execution with OpenAI can generate images as part of their response. Accessing this image via [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] or [image output](output.md#image-output) requires the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agents.md#model-run-settings) to be enabled.
 
 ```py {title="code_execution_openai.py"}
 from pydantic_ai import Agent, BinaryImage, CodeExecutionTool
