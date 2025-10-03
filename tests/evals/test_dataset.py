@@ -4,7 +4,7 @@ import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 import yaml
@@ -862,6 +862,38 @@ async def test_serialization_to_json(example_dataset: Dataset[TaskInput, TaskOut
     schema = raw['$schema']
     assert isinstance(schema, str)
     assert (tmp_path / schema).exists()
+
+
+def test_serializing_parts_with_discriminators(tmp_path: Path):
+    class Foo(BaseModel):
+        foo: str
+        kind: Literal['foo'] = 'foo'
+
+    class Bar(BaseModel):
+        bar: str
+        kind: Literal['bar'] = 'bar'
+
+    items = [Foo(foo='foo'), Bar(bar='bar')]
+
+    dataset = Dataset[list[Foo | Bar]](cases=[Case(inputs=items)])
+    yaml_path = tmp_path / 'test_cases.yaml'
+    dataset.to_file(yaml_path)
+
+    loaded_dataset = Dataset[list[Foo | Bar]].from_file(yaml_path)
+    assert loaded_dataset == snapshot(
+        Dataset(
+            name='test_cases',
+            cases=[
+                Case(
+                    name=None,
+                    inputs=[
+                        Foo(foo='foo'),
+                        Bar(bar='bar'),
+                    ],
+                )
+            ],
+        )
+    )
 
 
 def test_serialization_errors(tmp_path: Path):
