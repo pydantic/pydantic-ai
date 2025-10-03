@@ -14,7 +14,7 @@ from typing import Any, Generic, overload
 from typing_extensions import TypeVar
 
 from pydantic_graph import BaseNode, End, GraphRunContext
-from pydantic_graph.beta.id_types import ForkId, JoinId
+from pydantic_graph.beta.id_types import ForkID, JoinID
 from pydantic_graph.beta.step import StepContext
 
 StateT = TypeVar('StateT', infer_variance=True)
@@ -206,7 +206,7 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
     """
 
     def __init__(
-        self, id: JoinId, reducer_type: type[Reducer[StateT, DepsT, InputT, OutputT]], joins: ForkId | None = None
+        self, id: JoinID, reducer_type: type[Reducer[StateT, DepsT, InputT, OutputT]], joins: ForkID | None = None
     ) -> None:
         """Initialize a join operation.
 

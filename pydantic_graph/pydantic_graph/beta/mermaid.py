@@ -8,7 +8,7 @@ from typing_extensions import assert_never
 
 from pydantic_graph.beta.decision import Decision
 from pydantic_graph.beta.graph import Graph
-from pydantic_graph.beta.id_types import NodeId
+from pydantic_graph.beta.id_types import NodeID
 from pydantic_graph.beta.join import Join
 from pydantic_graph.beta.node import EndNode, Fork, StartNode
 from pydantic_graph.beta.paths import BroadcastMarker, DestinationMarker, LabelMarker, Path, SpreadMarker
@@ -54,7 +54,7 @@ def build_mermaid_graph(graph: Graph[Any, Any, Any, Any]) -> MermaidGraph:  # no
     nodes: list[MermaidNode] = []
     edges_by_source: dict[str, list[MermaidEdge]] = defaultdict(list)
 
-    def _collect_edges(path: Path, last_source_id: NodeId) -> None:
+    def _collect_edges(path: Path, last_source_id: NodeID) -> None:
         working_label: str | None = None
         for item in path.items:
             if isinstance(item, SpreadMarker):

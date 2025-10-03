@@ -7,13 +7,14 @@ the v1 and v2 graph execution systems.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Protocol, cast, get_origin, overload
 
 from typing_extensions import TypeVar
 
-from pydantic_graph.beta.id_types import NodeId
+from pydantic_graph.beta.id_types import NodeID
 from pydantic_graph.nodes import BaseNode, End, GraphRunContext
 
 StateT = TypeVar('StateT', infer_variance=True)
@@ -126,7 +127,7 @@ class Step(Generic[StateT, DepsT, InputT, OutputT]):
 
     def __init__(
         self,
-        id: NodeId,
+        id: NodeID,
         call: StepFunction[StateT, DepsT, InputT, OutputT],
         user_label: str | None = None,
     ):
@@ -146,18 +147,16 @@ class Step(Generic[StateT, DepsT, InputT, OutputT]):
         self.user_label = user_label
         """Optional human-readable label for this step."""
 
-    # TODO(P3): Consider replacing this with __call__, so the decorated object can still be called with the same signature
-    @property
-    def call(self) -> StepFunction[StateT, DepsT, InputT, OutputT]:
+    async def call(self, ctx: StepContext[StateT, DepsT, InputT]) -> OutputT:
         """The step function to execute.
-
-        This property is necessary to ensure that Step maintains proper
-        covariance/contravariance in its type parameters.
 
         Returns:
             The wrapped step function
         """
-        return self._call
+        result = self._call(ctx)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
     # TODO(P3): Consider adding a `bind` method that returns an object that can be used to get something you can return from a BaseNode that allows you to transition to nodes using "new"-form edges
 
@@ -242,7 +241,7 @@ class NodeStep(Step[StateT, DepsT, Any, BaseNode[StateT, DepsT, Any] | End[Any]]
         self,
         node_type: type[BaseNode[StateT, DepsT, Any]],
         *,
-        id: NodeId | None = None,
+        id: NodeID | None = None,
         user_label: str | None = None,
     ):
         """Initialize a node step.
@@ -253,7 +252,7 @@ class NodeStep(Step[StateT, DepsT, Any, BaseNode[StateT, DepsT, Any] | End[Any]]
             user_label: Optional human-readable label for this step
         """
         super().__init__(
-            id=id or NodeId(node_type.get_node_id()),
+            id=id or NodeID(node_type.get_node_id()),
             call=self._call,
             user_label=user_label,
         )

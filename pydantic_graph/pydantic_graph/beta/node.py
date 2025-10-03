@@ -11,7 +11,7 @@ from typing import Generic
 
 from typing_extensions import TypeVar
 
-from pydantic_graph.beta.id_types import ForkId, NodeId
+from pydantic_graph.beta.id_types import ForkID, NodeID
 
 StateT = TypeVar('StateT', infer_variance=True)
 """Type variable for graph state."""
@@ -30,7 +30,7 @@ class StartNode(Generic[OutputT]):
     It acts as a fork node since it initiates the execution path(s).
     """
 
-    id = ForkId(NodeId('__start__'))
+    id = ForkID(NodeID('__start__'))
     """Fixed identifier for the start node."""
 
 
@@ -41,7 +41,7 @@ class EndNode(Generic[InputT]):
     and can collect the final output data.
     """
 
-    id = NodeId('__end__')
+    id = NodeID('__end__')
     """Fixed identifier for the end node."""
 
     def _force_variance(self, inputs: InputT) -> None:
@@ -70,7 +70,7 @@ class Fork(Generic[InputT, OutputT]):
     a sequence across multiple branches or duplicate data to each branch.
     """
 
-    id: ForkId
+    id: ForkID
     """Unique identifier for this fork node."""
 
     is_spread: bool

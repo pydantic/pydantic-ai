@@ -1,7 +1,8 @@
 # Beta Graph API
 
 !!! warning "Beta API"
-    This is the new beta graph API. It provides enhanced capabilities for parallel execution, conditional branching, and complex workflows. The original graph API is still available and documented in the [main graph documentation](../../graph.md).
+    This is the new beta graph API. It provides enhanced capabilities for parallel execution, conditional branching, and complex workflows.
+The original graph API is still available (and compatible of interop with the new beta API) and is documented in the [main graph documentation](../../graph.md).
 
 ## Overview
 
@@ -13,7 +14,7 @@ The beta graph API in `pydantic-graph` provides a powerful builder pattern for c
 - **Broadcast operations** for sending the same data to multiple parallel paths
 - **Join nodes and Reducers** for aggregating results from parallel execution
 
-This API is designed for advanced workflows where you need explicit control over parallelism, routing, and data aggregation.
+This API is designed for advanced workflows where you want declarative control over parallelism, routing, and data aggregation.
 
 ## Installation
 

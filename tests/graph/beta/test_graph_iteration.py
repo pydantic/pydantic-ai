@@ -9,7 +9,7 @@ import pytest
 
 from pydantic_graph.beta import GraphBuilder, StepContext
 from pydantic_graph.beta.graph import EndMarker, GraphTask, JoinItem
-from pydantic_graph.beta.id_types import NodeId
+from pydantic_graph.beta.id_types import NodeID
 
 pytestmark = pytest.mark.anyio
 
@@ -102,7 +102,7 @@ async def test_iter_inspect_tasks():
     graph = g.build()
     state = IterState()
 
-    task_nodes: list[NodeId] = []
+    task_nodes: list[NodeID] = []
     async with graph.iter(state=state) as run:
         async for event in run:
             if isinstance(event, list):

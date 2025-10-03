@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Generic, get_origin, overload
 from typing_extensions import Self, TypeAliasType, TypeVar
 
 from pydantic_graph import BaseNode
-from pydantic_graph.beta.id_types import ForkId, JoinId, NodeId
+from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID
 from pydantic_graph.beta.step import NodeStep, StepFunction
 
 StateT = TypeVar('StateT', infer_variance=True)
@@ -47,9 +47,9 @@ class SpreadMarker:
     for each item in the iterable.
     """
 
-    fork_id: ForkId
+    fork_id: ForkID
     """Unique identifier for the fork created by this spread operation."""
-    downstream_join_id: JoinId | None
+    downstream_join_id: JoinID | None
     """Optional identifier of a downstream join node that should be jumped to if spreading an empty iterable."""
 
 
@@ -64,7 +64,7 @@ class BroadcastMarker:
     paths: Sequence[Path]
     """The parallel paths that will receive the broadcast data."""
 
-    fork_id: ForkId
+    fork_id: ForkID
     """Unique identifier for the fork created by this broadcast operation."""
 
 
@@ -88,7 +88,7 @@ class DestinationMarker:
     of a path execution.
     """
 
-    destination_id: NodeId
+    destination_id: NodeID
     """The unique identifier of the destination node."""
 
 
@@ -177,7 +177,7 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
         if extra_destinations:
             next_item = BroadcastMarker(
                 paths=[Path(items=[DestinationMarker(d.id)]) for d in (destination,) + extra_destinations],
-                fork_id=ForkId(NodeId(fork_id or 'extra_broadcast_' + secrets.token_hex(8))),
+                fork_id=ForkID(NodeID(fork_id or 'extra_broadcast_' + secrets.token_hex(8))),
             )
         else:
             next_item = DestinationMarker(destination.id)
@@ -193,7 +193,7 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
         Returns:
             A complete Path that forks to the specified parallel paths
         """
-        next_item = BroadcastMarker(paths=forks, fork_id=ForkId(NodeId(fork_id or 'broadcast_' + secrets.token_hex(8))))
+        next_item = BroadcastMarker(paths=forks, fork_id=ForkID(NodeID(fork_id or 'broadcast_' + secrets.token_hex(8))))
         return Path(items=[*self.working_items, next_item])
 
     def transform(self, func: StepFunction[StateT, DepsT, OutputT, Any], /) -> PathBuilder[StateT, DepsT, Any]:
@@ -211,8 +211,8 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
     def spread(
         self: PathBuilder[StateT, DepsT, Iterable[Any]],
         *,
-        fork_id: ForkId | None = None,
-        downstream_join_id: JoinId | None = None,
+        fork_id: ForkID | None = None,
+        downstream_join_id: JoinID | None = None,
     ) -> PathBuilder[StateT, DepsT, Any]:
         """Spread iterable data across parallel execution paths.
 
@@ -227,7 +227,7 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
             A new PathBuilder that operates on individual items from the iterable
         """
         next_item = SpreadMarker(
-            fork_id=NodeId(fork_id or 'spread_' + secrets.token_hex(8)), downstream_join_id=downstream_join_id
+            fork_id=NodeID(fork_id or 'spread_' + secrets.token_hex(8)), downstream_join_id=downstream_join_id
         )
         return PathBuilder[StateT, DepsT, Any](working_items=[*self.working_items, next_item])
 
@@ -300,7 +300,7 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
         return self._path_builder
 
     @property
-    def last_fork_id(self) -> ForkId | None:
+    def last_fork_id(self) -> ForkID | None:
         """Get the ID of the most recent fork in the path.
 
         Returns:
@@ -368,8 +368,8 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
     def spread(
         self: EdgePathBuilder[StateT, DepsT, Iterable[Any]],
         *,
-        fork_id: ForkId | None = None,
-        downstream_join_id: JoinId | None = None,
+        fork_id: ForkID | None = None,
+        downstream_join_id: JoinID | None = None,
     ) -> EdgePathBuilder[StateT, DepsT, Any]:
         """Spread iterable data across parallel execution paths.
 

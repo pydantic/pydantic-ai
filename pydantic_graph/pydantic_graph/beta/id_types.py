@@ -9,23 +9,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import NewType
 
-NodeId = NewType('NodeId', str)
+NodeID = NewType('NodeID', str)
 """Unique identifier for a node in the graph."""
 
-NodeRunId = NewType('NodeRunId', str)
+NodeRunID = NewType('NodeRunID', str)
 """Unique identifier for a specific execution instance of a node."""
 
 # The following aliases are just included for clarity; making them NewTypes is a hassle
-JoinId = NodeId
+JoinID = NodeID
 """Alias for NodeId when referring to join nodes."""
 
-ForkId = NodeId
+ForkID = NodeID
 """Alias for NodeId when referring to fork nodes."""
 
-GraphRunId = NewType('GraphRunId', str)
+GraphRunID = NewType('GraphRunID', str)
 """Unique identifier for a complete graph execution run."""
 
-TaskId = NewType('TaskId', str)
+TaskID = NewType('TaskID', str)
 """Unique identifier for a task within the graph execution."""
 
 
@@ -38,9 +38,9 @@ class ForkStackItem:
     and coordinate parallel branches of execution.
     """
 
-    fork_id: ForkId
+    fork_id: ForkID
     """The ID of the node that created this fork."""
-    node_run_id: NodeRunId
+    node_run_id: NodeRunID
     """The ID associated to the specific run of the node that created this fork."""
     thread_index: int
     """The index of the execution "thread" created during the node run that created this fork.

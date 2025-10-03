@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import Never, Self, TypeVar
 
-from pydantic_graph.beta.id_types import ForkId, JoinId, NodeId
+from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID
 from pydantic_graph.beta.paths import Path, PathBuilder
 from pydantic_graph.beta.step import StepFunction
 from pydantic_graph.beta.util import TypeOrTypeExpression
@@ -42,7 +42,7 @@ class Decision(Generic[StateT, DepsT, HandledT]):
     branches based on the input data type or custom matching logic.
     """
 
-    id: NodeId
+    id: NodeID
     """Unique identifier for this decision node."""
 
     branches: list[DecisionBranch[Any]]
@@ -145,7 +145,7 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
     """Builder for the execution path."""
 
     @property
-    def last_fork_id(self) -> ForkId | None:
+    def last_fork_id(self) -> ForkID | None:
         """Get the ID of the last fork in the path.
 
         Returns:
@@ -214,8 +214,8 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
     def spread(
         self: DecisionBranchBuilder[StateT, DepsT, Iterable[T], SourceT, HandledT],
         *,
-        fork_id: ForkId | None = None,
-        downstream_join_id: JoinId | None = None,
+        fork_id: ForkID | None = None,
+        downstream_join_id: JoinID | None = None,
     ) -> DecisionBranchBuilder[StateT, DepsT, T, SourceT, HandledT]:
         """Spread the branch's output.
 

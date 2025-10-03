@@ -21,7 +21,7 @@ from typing_extensions import TypeVar, assert_never
 from pydantic_graph import exceptions
 from pydantic_graph._utils import AbstractSpan, get_traceparent, logfire_span
 from pydantic_graph.beta.decision import Decision
-from pydantic_graph.beta.id_types import ForkStack, ForkStackItem, GraphRunId, JoinId, NodeId, NodeRunId, TaskId
+from pydantic_graph.beta.id_types import ForkStack, ForkStackItem, GraphRunID, JoinID, NodeID, NodeRunID, TaskID
 from pydantic_graph.beta.join import Join, JoinNode, Reducer
 from pydantic_graph.beta.node import (
     EndNode,
@@ -82,7 +82,7 @@ class JoinItem:
     node, along with metadata about which execution 'fork' it originated from.
     """
 
-    join_id: JoinId
+    join_id: JoinID
     """The ID of the join node this item is targeting."""
 
     inputs: Any
@@ -125,16 +125,16 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
     auto_instrument: bool
     """Whether to automatically create instrumentation spans."""
 
-    nodes: dict[NodeId, AnyNode]
+    nodes: dict[NodeID, AnyNode]
     """All nodes in the graph indexed by their ID."""
 
-    edges_by_source: dict[NodeId, list[Path]]
+    edges_by_source: dict[NodeID, list[Path]]
     """Outgoing paths from each source node."""
 
-    parent_forks: dict[JoinId, ParentFork[NodeId]]
+    parent_forks: dict[JoinID, ParentFork[NodeID]]
     """Parent fork information for each join node."""
 
-    def get_parent_fork(self, join_id: JoinId) -> ParentFork[NodeId]:
+    def get_parent_fork(self, join_id: JoinID) -> ParentFork[NodeID]:
         """Get the parent fork information for a join node.
 
         Args:
@@ -288,7 +288,7 @@ class GraphTask:
     """
 
     # With our current BaseNode thing, next_node_id and next_node_inputs are merged into `next_node` itself
-    node_id: NodeId
+    node_id: NodeID
     """The ID of the node to execute."""
 
     inputs: Any
@@ -300,7 +300,7 @@ class GraphTask:
     Used by the GraphRun to decide when to proceed through joins.
     """
 
-    task_id: TaskId = field(default_factory=lambda: TaskId(str(uuid.uuid4())))
+    task_id: TaskID = field(default_factory=lambda: TaskID(str(uuid.uuid4())))
     """Unique identifier for this task."""
 
 
@@ -346,14 +346,14 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         self.inputs = inputs
         """The initial input data."""
 
-        self._active_reducers: dict[tuple[JoinId, NodeRunId], tuple[Reducer[Any, Any, Any, Any], ForkStack]] = {}
+        self._active_reducers: dict[tuple[JoinID, NodeRunID], tuple[Reducer[Any, Any, Any, Any], ForkStack]] = {}
         """Active reducers for join operations."""
 
         self._next: EndMarker[OutputT] | JoinItem | Sequence[GraphTask] | None = None
         """The next item to be processed."""
 
-        run_id = GraphRunId(str(uuid.uuid4()))
-        initial_fork_stack: ForkStack = (ForkStackItem(StartNode.id, NodeRunId(run_id), 0),)
+        run_id = GraphRunID(str(uuid.uuid4()))
+        initial_fork_stack: ForkStack = (ForkStackItem(StartNode.id, NodeRunID(run_id), 0),)
         self._first_task = GraphTask(node_id=StartNode.id, inputs=inputs, fork_stack=initial_fork_stack)
         self._iterator = self._iter_graph()
 
@@ -446,7 +446,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
     ) -> AsyncGenerator[
         EndMarker[OutputT] | JoinItem | Sequence[GraphTask], EndMarker[OutputT] | JoinItem | Sequence[GraphTask]
     ]:
-        tasks_by_id: dict[TaskId, GraphTask] = {}
+        tasks_by_id: dict[TaskID, GraphTask] = {}
         pending: set[asyncio.Task[EndMarker[OutputT] | JoinItem | Sequence[GraphTask]]] = set()
 
         def _start_task(t_: GraphTask) -> None:
@@ -490,7 +490,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                     reducer.reduce(StepContext(self.state, self.deps, result.inputs))
                 except StopIteration:
                     # cancel all concurrently running tasks with the same fork_run_id of the parent fork
-                    task_ids_to_cancel = set[TaskId]()
+                    task_ids_to_cancel = set[TaskID]()
                     for task_id, t in tasks_by_id.items():
                         for item in t.fork_stack:
                             if item.fork_id == parent_fork_id and item.node_run_id == fork_run_id:
@@ -510,7 +510,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                 done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                 for task in done:
                     task_result = task.result()
-                    source_task = tasks_by_id.pop(TaskId(task.get_name()))
+                    source_task = tasks_by_id.pop(TaskID(task.get_name()))
                     maybe_overridden_result = yield task_result
                     if _handle_result(maybe_overridden_result):
                         return
@@ -632,8 +632,8 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         self,
         t: GraphTask,
         active_tasks: Iterable[GraphTask],
-    ) -> list[tuple[JoinId, NodeRunId]]:
-        completed_fork_runs: list[tuple[JoinId, NodeRunId]] = []
+    ) -> list[tuple[JoinID, NodeRunID]]:
+        completed_fork_runs: list[tuple[JoinID, NodeRunID]] = []
 
         fork_run_indices = {fsi.node_run_id: i for i, fsi in enumerate(t.fork_stack)}
         for join_id, fork_run_id in self._active_reducers.keys():
@@ -661,7 +661,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             except TypeError:
                 raise RuntimeError(f'Cannot spread non-iterable value: {inputs!r}')
 
-            node_run_id = NodeRunId(str(uuid.uuid4()))
+            node_run_id = NodeRunID(str(uuid.uuid4()))
 
             # If the spread specifies a downstream join id, eagerly create a reducer for it
             if item.downstream_join_id is not None:
@@ -698,7 +698,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             new_tasks.extend(self._handle_path(path, inputs, fork_stack))
         return new_tasks
 
-    def _is_fork_run_completed(self, tasks: Iterable[GraphTask], join_id: JoinId, fork_run_id: NodeRunId) -> bool:
+    def _is_fork_run_completed(self, tasks: Iterable[GraphTask], join_id: JoinID, fork_run_id: NodeRunID) -> bool:
         # Check if any of the tasks in the graph have this fork_run_id in their fork_stack
         # If this is the case, then the fork run is not yet completed
         parent_fork = self.graph.get_parent_fork(join_id)

@@ -19,7 +19,7 @@ from typing_extensions import Never, TypeAliasType, TypeVar
 from pydantic_graph import _utils, exceptions
 from pydantic_graph.beta.decision import Decision, DecisionBranch, DecisionBranchBuilder
 from pydantic_graph.beta.graph import Graph
-from pydantic_graph.beta.id_types import ForkId, JoinId, NodeId
+from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID
 from pydantic_graph.beta.join import Join, JoinNode, Reducer
 from pydantic_graph.beta.node import (
     EndNode,
@@ -99,7 +99,7 @@ def join(
     node_id = node_id or get_callable_name(reducer_type)
 
     return Join[StateT, DepsT, Any, Any](
-        id=JoinId(NodeId(node_id)),
+        id=JoinID(NodeID(node_id)),
         reducer_type=reducer_type,
     )
 
@@ -137,10 +137,10 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
     auto_instrument: bool
     """Whether to automatically create instrumentation spans."""
 
-    _nodes: dict[NodeId, AnyNode]
+    _nodes: dict[NodeID, AnyNode]
     """Internal storage for nodes in the graph."""
 
-    _edges_by_source: dict[NodeId, list[Path]]
+    _edges_by_source: dict[NodeID, list[Path]]
     """Internal storage for edges by source node."""
 
     _decision_index: int
@@ -253,7 +253,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
 
         node_id = node_id or get_callable_name(call)
 
-        step = Step[StateT, DepsT, InputT, OutputT](id=NodeId(node_id), call=call, user_label=label)
+        step = Step[StateT, DepsT, InputT, OutputT](id=NodeID(node_id), call=call, user_label=label)
 
         return step
 
@@ -414,8 +414,8 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         *,
         pre_spread_label: str | None = None,
         post_spread_label: str | None = None,
-        fork_id: ForkId | None = None,
-        downstream_join_id: JoinId | None = None,
+        fork_id: ForkID | None = None,
+        downstream_join_id: JoinID | None = None,
     ) -> None:
         """Add an edge that spreads iterable data across parallel paths.
 
@@ -461,7 +461,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         Returns:
             A new Decision node with no branches
         """
-        return Decision(id=NodeId(self._get_new_decision_id()), branches=[], note=note)
+        return Decision(id=NodeID(self._get_new_decision_id()), branches=[], note=note)
 
     def match(
         self,
@@ -478,7 +478,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         Returns:
             A DecisionBranchBuilder for constructing the branch
         """
-        node_id = NodeId(self._get_new_decision_id())
+        node_id = NodeID(self._get_new_decision_id())
         decision = Decision[StateT, DepsT, Never](node_id, branches=[], note=None)
         new_path_builder = PathBuilder[StateT, DepsT, SourceT](working_items=[])
         return DecisionBranchBuilder(decision=decision, source=source, matches=matches, path_builder=new_path_builder)
@@ -721,8 +721,8 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
 
 
 def _normalize_forks(
-    nodes: dict[NodeId, AnyNode], edges: dict[NodeId, list[Path]]
-) -> tuple[dict[NodeId, AnyNode], dict[NodeId, list[Path]]]:
+    nodes: dict[NodeID, AnyNode], edges: dict[NodeID, list[Path]]
+) -> tuple[dict[NodeID, AnyNode], dict[NodeID, list[Path]]]:
     """Normalize the graph structure so only broadcast forks have multiple outgoing edges.
 
     This function ensures that any node with multiple outgoing edges is converted
@@ -736,7 +736,7 @@ def _normalize_forks(
         A tuple of normalized nodes and edges
     """
     new_nodes = nodes.copy()
-    new_edges: dict[NodeId, list[Path]] = {}
+    new_edges: dict[NodeID, list[Path]] = {}
 
     paths_to_handle: list[Path] = []
 
@@ -750,7 +750,7 @@ def _normalize_forks(
         if len(edges_from_source) == 1:
             new_edges[source_id] = edges_from_source
             continue
-        new_fork = Fork[Any, Any](id=ForkId(NodeId(f'{node.id}_broadcast_fork')), is_spread=False)
+        new_fork = Fork[Any, Any](id=ForkID(NodeID(f'{node.id}_broadcast_fork')), is_spread=False)
         new_nodes[new_fork.id] = new_fork
         new_edges[source_id] = [Path(items=[BroadcastMarker(fork_id=new_fork.id, paths=edges_from_source)])]
         new_edges[new_fork.id] = edges_from_source
@@ -772,8 +772,8 @@ def _normalize_forks(
 
 
 def _collect_dominating_forks(
-    graph_nodes: dict[NodeId, AnyNode], graph_edges_by_source: dict[NodeId, list[Path]]
-) -> dict[JoinId, ParentFork[NodeId]]:
+    graph_nodes: dict[NodeID, AnyNode], graph_edges_by_source: dict[NodeID, list[Path]]
+) -> dict[JoinID, ParentFork[NodeID]]:
     """Find the dominating fork for each join node in the graph.
 
     This function analyzes the graph structure to find the parent fork that
@@ -791,10 +791,10 @@ def _collect_dominating_forks(
         ValueError: If any join node lacks a dominating fork
     """
     nodes = set(graph_nodes)
-    start_ids: set[NodeId] = {StartNode.id}
-    edges: dict[NodeId, list[NodeId]] = defaultdict(list)
+    start_ids: set[NodeID] = {StartNode.id}
+    edges: dict[NodeID, list[NodeID]] = defaultdict(list)
 
-    fork_ids: set[NodeId] = set(start_ids)
+    fork_ids: set[NodeID] = set(start_ids)
     for source_id in nodes:
         working_source_id = source_id
         node = graph_nodes.get(source_id)
@@ -803,7 +803,7 @@ def _collect_dominating_forks(
             fork_ids.add(node.id)
             continue
 
-        def _handle_path(path: Path, last_source_id: NodeId):
+        def _handle_path(path: Path, last_source_id: NodeID):
             """Process a path and collect edges and fork information.
 
             Args:
@@ -840,7 +840,7 @@ def _collect_dominating_forks(
     )
 
     join_ids = {node.id for node in graph_nodes.values() if isinstance(node, Join)}
-    dominating_forks: dict[JoinId, ParentFork[NodeId]] = {}
+    dominating_forks: dict[JoinID, ParentFork[NodeID]] = {}
     for join_id in join_ids:
         dominating_fork = finder.find_parent_fork(join_id)
         if dominating_fork is None:
