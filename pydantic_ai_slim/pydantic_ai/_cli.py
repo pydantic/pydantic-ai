@@ -111,7 +111,6 @@ def cli(  # noqa: C901
     - Returns an int exit code for other invocations.
     """
 
-    # Build a Click command mirroring the previous argparse interface
     @click.command(
         context_settings={
             'help_option_names': ['-h', '--help'],
@@ -239,7 +238,6 @@ def cli(  # noqa: C901
             return 0
 
     args = list(args_list or [])
-    # Let `--help` behave like argparse (raise SystemExit for the README hook to catch)
     if any(a in ('-h', '--help') for a in args):  # pragma: no cover - exercised via hook
         _click_main.main(args=args, prog_name=prog_name, standalone_mode=True)
         # should not get here
