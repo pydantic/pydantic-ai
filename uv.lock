@@ -3650,6 +3650,9 @@ dbos = [
 examples = [
     { name = "pydantic-ai-examples" },
 ]
+prefect = [
+    { name = "pydantic-ai-slim", extra = ["prefect"] },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -3700,8 +3703,9 @@ requires-dist = [
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
     { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "temporal", "vertexai"], editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["dbos"], marker = "extra == 'dbos'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["prefect"], marker = "extra == 'prefect'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["a2a", "dbos", "examples"]
+provides-extras = ["a2a", "dbos", "examples", "prefect"]
 
 [package.metadata.requires-dev]
 dev = [

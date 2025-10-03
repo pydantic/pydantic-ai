@@ -1010,7 +1010,16 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         )
 
         @flow(name=f'run-{slugify(self._name)}')
-        async def served_run(user_prompt: str, *, deps: AgentDepsT | None = None):
+        # we can't support all `.run` args because Prefect needs to be able to generate a static schema
+        # for parameters at runtime (doesn't work for generic types) and all parameters need to be JSON
+        # serializable to allow providing them via the REST API
+        async def served_run(
+            user_prompt: str,
+            *,
+            model: models.KnownModelName | str | None = None,
+            model_settings: ModelSettings | None = None,
+            usage_limits: _usage.UsageLimits | None = None,
+        ):
             logger = get_run_logger()
             prompt_str = str(user_prompt)
             logger.info(f'Starting agent run with prompt: {prompt_str}')
@@ -1021,7 +1030,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 try:
                     result = await super(WrapperAgent, self).run(
                         user_prompt,
-                        deps=deps,  # type: ignore[arg-type]
+                        deps=None,  # type: ignore[arg-type]
+                        model=model,
+                        model_settings=model_settings,
+                        usage_limits=usage_limits,
                     )
                     logger.info(
                         f'Agent run completed. Requests: {result.usage().requests}, Tool calls: {result.usage().tool_calls}'
