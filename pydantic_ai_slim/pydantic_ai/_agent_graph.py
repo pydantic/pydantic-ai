@@ -1049,7 +1049,7 @@ async def _call_tool(
         metadata=tool_return.metadata,
     )
 
-    return return_part, tool_return.content
+    return return_part, tool_return.content or None
 
 
 @dataclasses.dataclass
