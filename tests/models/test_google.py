@@ -2844,7 +2844,7 @@ async def test_google_image_generation_with_tool_output(allow_model_requests: No
     model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
     agent = Agent(model=model, output_type=Animal)
 
-    with pytest.raises(UserError, match='Tool output is not supported by the model.'):
+    with pytest.raises(UserError, match='Tool output is not supported by this model.'):
         await agent.run('Generate an image of an axolotl.')
 
 
@@ -2856,7 +2856,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
     model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
     agent = Agent(model=model, output_type=NativeOutput(Animal))
 
-    with pytest.raises(UserError, match='Native structured output is not supported by the model.'):
+    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
         await agent.run('Generate an image of an axolotl.')
 
 
@@ -2870,7 +2870,7 @@ async def test_google_image_generation_with_prompted_output(
     model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
     agent = Agent(model=model, output_type=PromptedOutput(Animal))
 
-    with pytest.raises(UserError, match='JSON output is not supported by the model.'):
+    with pytest.raises(UserError, match='JSON output is not supported by this model.'):
         await agent.run('Generate an image of an axolotl.')
 
 
@@ -2882,7 +2882,7 @@ async def test_google_image_generation_with_tools(allow_model_requests: None, go
     async def get_animal() -> str:
         return 'axolotl'  # pragma: no cover
 
-    with pytest.raises(UserError, match='Tools are not supported by the model.'):
+    with pytest.raises(UserError, match='Tools are not supported by this model.'):
         await agent.run('Generate an image of an animal returned by the get_animal tool.')
 
 
@@ -2892,7 +2892,7 @@ async def test_google_image_generation_tool(allow_model_requests: None, google_p
 
     with pytest.raises(
         UserError,
-        match="`ImageGenerationTool` is not supported by the model. Use an 'image-preview' model instead.",
+        match="`ImageGenerationTool` is not supported by this model. Use an 'image-preview' model instead.",
     ):
         await agent.run('Generate an image of an animal returned by the get_animal tool.')
 

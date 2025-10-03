@@ -332,7 +332,7 @@ class GoogleModel(Model):
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                     if not self.profile.supports_image_output:
                         raise UserError(
-                            "`ImageGenerationTool` is not supported by the model. Use an 'image-preview' model instead."
+                            "`ImageGenerationTool` is not supported by this model. Use an 'image-preview' model instead."
                         )
                 else:  # pragma: no cover
                     raise UserError(
@@ -390,7 +390,7 @@ class GoogleModel(Model):
     ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
         tools = self._get_tools(model_request_parameters)
         if tools and not self.profile.supports_tools:
-            raise UserError('Tools are not supported by the model.')
+            raise UserError('Tools are not supported by this model.')
 
         response_mime_type = None
         response_schema = None
@@ -405,7 +405,7 @@ class GoogleModel(Model):
             response_schema = self._map_response_schema(output_object)
         elif model_request_parameters.output_mode == 'prompted' and not tools:
             if not self.profile.supports_json_object_output:
-                raise UserError('JSON output is not supported by the model.')
+                raise UserError('JSON output is not supported by this model.')
             response_mime_type = 'application/json'
 
         tool_config = self._get_tool_config(model_request_parameters, tools)

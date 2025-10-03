@@ -3940,17 +3940,17 @@ def test_unsupported_output_mode():
 
     agent = Agent(model, output_type=NativeOutput(Foo))
 
-    with pytest.raises(UserError, match='Native structured output is not supported by the model.'):
+    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
         agent.run_sync('Hello')
 
     agent = Agent(model, output_type=ToolOutput(Foo))
 
-    with pytest.raises(UserError, match='Tool output is not supported by the model.'):
+    with pytest.raises(UserError, match='Tool output is not supported by this model.'):
         agent.run_sync('Hello')
 
     agent = Agent(model, output_type=BinaryImage)
 
-    with pytest.raises(UserError, match='Image output is not supported by the model.'):
+    with pytest.raises(UserError, match='Image output is not supported by this model.'):
         agent.run_sync('Hello')
 
 

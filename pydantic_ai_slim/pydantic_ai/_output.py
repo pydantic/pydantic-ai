@@ -392,9 +392,9 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
         raise NotImplementedError()
 
     def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by the model."""
+        """Raise an error if the mode is not supported by this model."""
         if self.allows_image and not profile.supports_image_output:
-            raise UserError('Image output is not supported by the model.')
+            raise UserError('Image output is not supported by this model.')
 
     def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
         return self
@@ -463,7 +463,7 @@ class TextOutputSchema(OutputSchema[OutputDataT]):
         return 'text'
 
     def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by the model."""
+        """Raise an error if the mode is not supported by this model."""
         super().raise_if_unsupported(profile)
 
 
@@ -476,8 +476,8 @@ class ImageOutputSchema(OutputSchema[OutputDataT]):
         return 'image'
 
     def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by the model."""
-        # This already raises if image output is not supported by the model.
+        """Raise an error if the mode is not supported by this model."""
+        # This already raises if image output is not supported by this model.
         super().raise_if_unsupported(profile)
 
 
@@ -504,9 +504,9 @@ class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
         return 'native'
 
     def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by the model."""
+        """Raise an error if the mode is not supported by this model."""
         if not profile.supports_json_schema_output:
-            raise UserError('Native structured output is not supported by the model.')
+            raise UserError('Native structured output is not supported by this model.')
 
 
 @dataclass(init=False)
@@ -533,7 +533,7 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
         return 'prompted'
 
     def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by the model."""
+        """Raise an error if the mode is not supported by this model."""
         super().raise_if_unsupported(profile)
 
     def instructions(self, default_template: str) -> str:
@@ -575,10 +575,10 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
         return 'tool'
 
     def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by the model."""
+        """Raise an error if the mode is not supported by this model."""
         super().raise_if_unsupported(profile)
         if not profile.supports_tools:
-            raise UserError('Tool output is not supported by the model.')
+            raise UserError('Tool output is not supported by this model.')
 
 
 class BaseOutputProcessor(ABC, Generic[OutputDataT]):

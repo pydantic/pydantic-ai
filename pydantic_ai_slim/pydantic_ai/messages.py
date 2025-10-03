@@ -983,7 +983,7 @@ class ThinkingPart:
 class FilePart:
     """A file response from a model."""
 
-    content: Annotated[BinaryContent, pydantic.AfterValidator(lambda bc: BinaryImage.narrow_type(bc))]
+    content: Annotated[BinaryContent, pydantic.AfterValidator(BinaryImage.narrow_type)]
     """The file content of the response."""
 
     _: KW_ONLY

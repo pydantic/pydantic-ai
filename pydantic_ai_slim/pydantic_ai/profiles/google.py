@@ -10,13 +10,13 @@ from . import ModelProfile
 
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
-    image_model = 'image-preview' in model_name
+    is_image_model = 'image-preview' in model_name
     return ModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
-        supports_image_output=image_model,
-        supports_json_schema_output=not image_model,
-        supports_json_object_output=not image_model,
-        supports_tools=not image_model,
+        supports_image_output=is_image_model,
+        supports_json_schema_output=not is_image_model,
+        supports_json_object_output=not is_image_model,
+        supports_tools=not is_image_model,
     )
 
 
