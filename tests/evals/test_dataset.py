@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from dirty_equals import HasRepr, IsNumber
 from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
@@ -106,7 +107,7 @@ def example_cases() -> list[Case[TaskInput, TaskOutput, TaskMetadata]]:
 def example_dataset(
     example_cases: list[Case[TaskInput, TaskOutput, TaskMetadata]],
 ) -> Dataset[TaskInput, TaskOutput, TaskMetadata]:
-    return Dataset[TaskInput, TaskOutput, TaskMetadata](cases=example_cases)
+    return Dataset[TaskInput, TaskOutput, TaskMetadata](name='example', cases=example_cases)
 
 
 @pytest.fixture
@@ -764,6 +765,7 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
                 'gen_ai.usage.input_tokens': 1,
                 'gen_ai.usage.details.special_tokens': 2,
                 'other_attribute': 3,
+                'operation.cost': 1.23,
             },
         ):
             with logfire.span('some other span'):
@@ -779,7 +781,7 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
                 metadata=TaskMetadata(difficulty='easy', category='general'),
                 expected_output=TaskOutput(answer='4', confidence=1.0),
                 output=TaskOutput(answer='answer to What is 2+2?', confidence=1.0),
-                metrics={'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
+                metrics={'cost': 1.23, 'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
                 attributes={},
                 scores={},
                 labels={},
@@ -795,7 +797,7 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
                 metadata=TaskMetadata(difficulty='medium', category='geography'),
                 expected_output=TaskOutput(answer='Paris', confidence=1.0),
                 output=TaskOutput(answer='answer to What is the capital of France?', confidence=1.0),
-                metrics={'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
+                metrics={'cost': 1.23, 'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
                 attributes={},
                 scores={},
                 labels={},
@@ -819,8 +821,27 @@ async def test_serialization_to_yaml(example_dataset: Dataset[TaskInput, TaskOut
     # Test loading back
     loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
     assert len(loaded_dataset.cases) == 2
+    assert loaded_dataset.name == 'example'
     assert loaded_dataset.cases[0].name == 'case1'
     assert loaded_dataset.cases[0].inputs.query == 'What is 2+2?'
+
+
+async def test_deserializing_without_name(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path
+):
+    """Test serializing a dataset to YAML."""
+    # Save the dataset
+    yaml_path = tmp_path / 'test_cases.yaml'
+    example_dataset.to_file(yaml_path)
+
+    # Rewrite the file _without_ a name to test deserializing a name-less file
+    obj = yaml.safe_load(yaml_path.read_text())
+    obj.pop('name', None)
+    yaml_path.write_text(yaml.dump(obj))
+
+    # Test loading results in the name coming from the filename stem
+    loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
+    assert loaded_dataset.name == 'test_cases'
 
 
 async def test_serialization_to_json(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path):
@@ -854,6 +875,7 @@ def test_serialization_errors(tmp_path: Path):
 async def test_from_text():
     """Test creating a dataset from text."""
     dataset_dict = {
+        'name': 'my dataset',
         'cases': [
             {
                 'name': '1',
@@ -873,6 +895,7 @@ async def test_from_text():
     }
 
     loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
+    assert loaded_dataset.name == 'my dataset'
     assert loaded_dataset.cases == snapshot(
         [
             Case(
@@ -1240,7 +1263,7 @@ async def test_dataset_evaluate_with_custom_name(example_dataset: Dataset[TaskIn
     async def task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer=inputs.query.upper())
 
-    report = await example_dataset.evaluate(task, name='custom_task')
+    report = await example_dataset.evaluate(task, task_name='custom_task')
     assert report.name == 'custom_task'
 
 
@@ -1490,16 +1513,26 @@ async def test_evaluate_async_logfire(
             (
                 'evaluate {name}',
                 {
-                    'name': 'mock_async_task',
-                    'n_cases': 2,
                     'assertion_pass_rate': 1.0,
-                    'logfire.msg_template': 'evaluate {name}',
-                    'logfire.msg': 'evaluate mock_async_task',
-                    'logfire.span_type': 'span',
+                    'dataset_name': 'example',
+                    'gen_ai.operation.name': 'experiment',
                     'logfire.json_schema': {
+                        'properties': {
+                            'assertion_pass_rate': {},
+                            'dataset_name': {},
+                            'gen_ai.operation.name': {},
+                            'n_cases': {},
+                            'name': {},
+                            'task_name': {},
+                        },
                         'type': 'object',
-                        'properties': {'name': {}, 'n_cases': {}, 'assertion_pass_rate': {}},
                     },
+                    'logfire.msg': 'evaluate mock_async_task',
+                    'logfire.msg_template': 'evaluate {name}',
+                    'logfire.span_type': 'span',
+                    'n_cases': 2,
+                    'name': 'mock_async_task',
+                    'task_name': 'mock_async_task',
                 },
             ),
             (

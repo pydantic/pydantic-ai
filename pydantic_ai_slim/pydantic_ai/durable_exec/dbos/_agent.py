@@ -8,13 +8,14 @@ from dbos import DBOS, DBOSConfiguredInstance
 from typing_extensions import Never
 
 from pydantic_ai import (
+    AbstractToolset,
     _utils,
     messages as _messages,
     models,
     usage as _usage,
 )
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
-from pydantic_ai.agent.abstract import RunOutputDataT
+from pydantic_ai.agent.abstract import Instructions, RunOutputDataT
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
@@ -28,7 +29,6 @@ from pydantic_ai.tools import (
     Tool,
     ToolFuncEither,
 )
-from pydantic_ai.toolsets import AbstractToolset
 
 from ._model import DBOSModel
 from ._utils import StepConfig
@@ -730,8 +730,9 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
-        """Context manager to temporarily override agent dependencies, model, toolsets, or tools.
+        """Context manager to temporarily override agent dependencies, model, toolsets, tools, or instructions.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
@@ -741,11 +742,18 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
+            instructions: The instructions to use instead of the instructions registered with the agent.
         """
         if _utils.is_set(model) and not isinstance(model, (DBOSModel)):
             raise UserError(
                 'Non-DBOS model cannot be contextually overridden inside a DBOS workflow, it must be set at agent creation time.'
             )
 
-        with super().override(deps=deps, model=model, toolsets=toolsets, tools=tools):
+        with super().override(
+            deps=deps,
+            model=model,
+            toolsets=toolsets,
+            tools=tools,
+            instructions=instructions,
+        ):
             yield

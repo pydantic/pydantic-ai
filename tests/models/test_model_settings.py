@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.direct import model_request as direct_model_request
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
@@ -162,3 +166,39 @@ def test_empty_settings_objects():
     assert captured_settings is not None
     assert captured_settings.get('temperature') == 0.75
     assert len(captured_settings) == 1  # Only one setting should be present
+
+
+def test_direct_model_request_merges_model_settings():
+    """Ensure direct requests merge model defaults with provided run settings."""
+
+    captured_settings = None
+
+    async def capture(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+        nonlocal captured_settings
+        captured_settings = agent_info.model_settings
+        return ModelResponse(parts=[TextPart('ok')])
+
+    model = FunctionModel(
+        capture,
+        settings=ModelSettings(max_tokens=50, temperature=0.3),
+    )
+
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('hi')]
+    run_settings = ModelSettings(temperature=0.9, top_p=0.2)
+
+    async def _run() -> ModelResponse:
+        return await direct_model_request(
+            model,
+            messages,
+            model_settings=run_settings,
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+    response = asyncio.run(_run())
+
+    assert response.parts == [TextPart('ok')]
+    assert captured_settings == {
+        'max_tokens': 50,
+        'temperature': 0.9,
+        'top_p': 0.2,
+    }

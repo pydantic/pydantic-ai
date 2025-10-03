@@ -10,11 +10,10 @@ from typing import Any, Literal, cast, overload
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
-from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
-
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
+from ..builtin_tools import CodeExecutionTool, MemoryTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
@@ -54,7 +53,7 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
 
 
 try:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncStream
+    from anthropic import NOT_GIVEN, APIStatusError, AsyncStream, omit as OMIT
     from anthropic.types.beta import (
         BetaBase64PDFBlockParam,
         BetaBase64PDFSourceParam,
@@ -68,6 +67,7 @@ try:
         BetaContentBlockParam,
         BetaImageBlockParam,
         BetaInputJSONDelta,
+        BetaMemoryTool20250818Param,
         BetaMessage,
         BetaMessageParam,
         BetaMetadataParam,
@@ -205,6 +205,10 @@ class AnthropicModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         response = await self._messages_create(
             messages, False, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )
@@ -220,6 +224,10 @@ class AnthropicModel(Model):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         response = await self._messages_create(
             messages, True, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )
@@ -255,8 +263,7 @@ class AnthropicModel(Model):
     ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
         # standalone function to make it easier to override
         tools = self._get_tools(model_request_parameters)
-        builtin_tools, tool_headers = self._get_builtin_tools(model_request_parameters)
-        tools += builtin_tools
+        tools, beta_features = self._add_builtin_tools(tools, model_request_parameters)
 
         tool_choice: BetaToolChoiceParam | None
 
@@ -265,6 +272,10 @@ class AnthropicModel(Model):
         else:
             if not model_request_parameters.allow_text_output:
                 tool_choice = {'type': 'any'}
+                if (thinking := model_settings.get('anthropic_thinking')) and thinking.get('type') == 'enabled':
+                    raise UserError(
+                        'Anthropic does not support thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+                    )
             else:
                 tool_choice = {'type': 'auto'}
 
@@ -275,24 +286,26 @@ class AnthropicModel(Model):
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
-            for k, v in tool_headers.items():
-                extra_headers.setdefault(k, v)
             extra_headers.setdefault('User-Agent', get_user_agent())
+            if beta_features:
+                if 'anthropic-beta' in extra_headers:
+                    beta_features.insert(0, extra_headers['anthropic-beta'])
+                extra_headers['anthropic-beta'] = ','.join(beta_features)
 
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
-                system=system_prompt or NOT_GIVEN,
+                system=system_prompt or OMIT,
                 messages=anthropic_messages,
                 model=self._model_name,
-                tools=tools or NOT_GIVEN,
-                tool_choice=tool_choice or NOT_GIVEN,
+                tools=tools or OMIT,
+                tool_choice=tool_choice or OMIT,
                 stream=stream,
-                thinking=model_settings.get('anthropic_thinking', NOT_GIVEN),
-                stop_sequences=model_settings.get('stop_sequences', NOT_GIVEN),
-                temperature=model_settings.get('temperature', NOT_GIVEN),
-                top_p=model_settings.get('top_p', NOT_GIVEN),
+                thinking=model_settings.get('anthropic_thinking', OMIT),
+                stop_sequences=model_settings.get('stop_sequences', OMIT),
+                temperature=model_settings.get('temperature', OMIT),
+                top_p=model_settings.get('top_p', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
-                metadata=model_settings.get('anthropic_metadata', NOT_GIVEN),
+                metadata=model_settings.get('anthropic_metadata', OMIT),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -363,14 +376,13 @@ class AnthropicModel(Model):
             _provider_name=self._provider.name,
         )
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[BetaToolParam]:
+    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[BetaToolUnionParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
-    def _get_builtin_tools(
-        self, model_request_parameters: ModelRequestParameters
-    ) -> tuple[list[BetaToolUnionParam], dict[str, str]]:
-        tools: list[BetaToolUnionParam] = []
-        extra_headers: dict[str, str] = {}
+    def _add_builtin_tools(
+        self, tools: list[BetaToolUnionParam], model_request_parameters: ModelRequestParameters
+    ) -> tuple[list[BetaToolUnionParam], list[str]]:
+        beta_features: list[str] = []
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 user_location = UserLocation(type='approximate', **tool.user_location) if tool.user_location else None
@@ -385,13 +397,20 @@ class AnthropicModel(Model):
                     )
                 )
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
-                extra_headers['anthropic-beta'] = 'code-execution-2025-05-22'
                 tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
+                beta_features.append('code-execution-2025-05-22')
+            elif isinstance(tool, MemoryTool):  # pragma: no branch
+                if 'memory' not in model_request_parameters.tool_defs:
+                    raise UserError("Built-in `MemoryTool` requires a 'memory' tool to be defined.")
+                # Replace the memory tool definition with the built-in memory tool
+                tools = [tool for tool in tools if tool['name'] != 'memory']
+                tools.append(BetaMemoryTool20250818Param(name='memory', type='memory_20250818'))
+                beta_features.append('context-management-2025-06-27')
             else:  # pragma: no cover
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
-        return tools, extra_headers
+        return tools, beta_features
 
     async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[BetaMessageParam]]:  # noqa: C901
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
@@ -759,6 +778,8 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )
+    elif item.name in ('web_fetch', 'bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
+        raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     else:
         assert_never(item.name)
 
