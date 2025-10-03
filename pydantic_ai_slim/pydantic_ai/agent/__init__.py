@@ -36,7 +36,7 @@ from .._agent_graph import (
 )
 from .._output import OutputToolset
 from .._tool_manager import ToolManager
-from ..builtin_tools import AbstractBuiltinTool, merge_builtin_tools
+from ..builtin_tools import AbstractBuiltinTool
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec
 from ..profiles import ModelProfile
@@ -631,8 +631,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_schema=output_schema,
             output_validators=output_validators,
             history_processors=self.history_processors,
-            builtin_tools=merge_builtin_tools(
-                list(self._builtin_tools), list(builtin_tools) if builtin_tools else None
+            builtin_tools=list(
+                {
+                    **({type(tool): tool for tool in self._builtin_tools or []}),
+                    **({type(tool): tool for tool in builtin_tools or []}),
+                }.values()
             ),
             tool_manager=tool_manager,
             tracer=tracer,
