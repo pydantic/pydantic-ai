@@ -106,7 +106,7 @@ def setup_logfire_instrumentation() -> Iterator[None]:
 @pytest.fixture(autouse=True, scope='session')
 def setup_prefect_test_harness() -> Iterator[None]:
     """Set up Prefect test harness for all tests."""
-    with prefect_test_harness():
+    with prefect_test_harness(server_startup_timeout=60):
         yield
 
 
