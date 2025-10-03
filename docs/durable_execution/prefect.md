@@ -110,7 +110,7 @@ Agent tools are automatically wrapped as Prefect tasks, which means they benefit
 
 You can customize tool task behavior using `tool_task_config` (applies to all tools) or `tool_task_config_by_name` (per-tool configuration):
 
-```python
+```python {title="prefect_agent_config.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectAgent, TaskConfig
 
@@ -256,7 +256,7 @@ prefect_agent = PrefectAgent(agent)
 prefect_agent.serve(
     name='daily-report-deployment',
     cron='0 9 * * *',  # Run daily at 9am
-    parameters={'user_prompt': 'Generate today\'s report'},
+    parameters={'user_prompt': "Generate today's report"},
     tags=['production', 'reports'],
 )
 ```
