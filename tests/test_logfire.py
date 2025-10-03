@@ -469,6 +469,7 @@ def test_logfire(
                         'output_tools': [],
                         'output_object': None,
                         'allow_text_output': True,
+                        'allow_image_output': False,
                     }
                 )
             ),
@@ -910,6 +911,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                             }
                         ],
                         'allow_text_output': False,
+                        'allow_image_output': False,
                     }
                 )
             ),
@@ -1014,6 +1016,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'output_object': None,
                         'output_tools': [],
                         'allow_text_output': True,
+                        'allow_image_output': False,
                     },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',
@@ -1889,7 +1892,7 @@ def test_text_output_function_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
 ) -> None:
-    """Test logfire attributes for TextOutput functions (PlainTextOutputProcessor)."""
+    """Test logfire attributes for TextOutput functions (TextOutputProcessor)."""
 
     def call_text_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Return a plain text response (not a tool call)

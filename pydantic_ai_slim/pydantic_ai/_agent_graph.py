@@ -222,7 +222,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 if self.user_prompt is None:
                     # Skip ModelRequestNode and go directly to CallToolsNode
                     return CallToolsNode[DepsT, NodeRunEndT](last_message)
-                elif any(isinstance(part, _messages.ToolCallPart) for part in last_message.parts):
+                elif last_message.tool_calls:
                     raise exceptions.UserError(
                         'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
                     )
@@ -272,7 +272,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             raise exceptions.UserError(
                 'Tool call results were provided, but the message history does not contain a `ModelResponse`.'
             )
-        if not any(isinstance(part, _messages.ToolCallPart) for part in last_model_response.parts):
+        if not last_model_response.tool_calls:
             raise exceptions.UserError(
                 'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
             )
@@ -356,9 +356,6 @@ async def _prepare_request_parameters(
     if isinstance(output_schema, _output.NativeOutputSchema):
         output_object = output_schema.object_def
 
-    # ToolOrTextOutputSchema, NativeOutputSchema, and PromptedOutputSchema all inherit from TextOutputSchema
-    allow_text_output = isinstance(output_schema, _output.TextOutputSchema)
-
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
     for tool_def in ctx.deps.tool_manager.tool_defs:
@@ -373,7 +370,8 @@ async def _prepare_request_parameters(
         output_mode=output_schema.mode,
         output_tools=output_tools,
         output_object=output_object,
-        allow_text_output=allow_text_output,
+        allow_text_output=output_schema.allows_text,
+        allow_image_output=output_schema.allows_image,
     )
 
 
@@ -543,27 +541,58 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         if self._events_iterator is None:
             # Ensure that the stream is only run once
 
+            output_schema = ctx.deps.output_schema
+
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
+                if not self.model_response.parts:
+                    # we got an empty response.
+                    # this sometimes happens with anthropic (and perhaps other models)
+                    # when the model has already returned text along side tool calls
+                    if text_processor := output_schema.text_processor:
+                        # in this scenario, if text responses are allowed, we return text from the most recent model
+                        # response, if any
+                        for message in reversed(ctx.state.message_history):
+                            if isinstance(message, _messages.ModelResponse):
+                                text = ''
+                                for part in message.parts:
+                                    if isinstance(part, _messages.TextPart):
+                                        text += part.content
+                                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                                        # Text parts before a built-in tool call are essentially thoughts,
+                                        # not part of the final result output, so we reset the accumulated text
+                                        text = ''  # pragma: no cover
+                                if text:
+                                    self._next_node = await self._handle_text_response(ctx, text, text_processor)
+                                    return
+
+                    # Go back to the model request node with an empty request, which means we'll essentially
+                    # resubmit the most recent request that resulted in an empty response,
+                    # as the empty response and request will not create any items in the API payload,
+                    # in the hope the model will return a non-empty response this time.
+                    ctx.state.increment_retries(ctx.deps.max_result_retries)
+                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[]))
+                    return
+
                 text = ''
                 tool_calls: list[_messages.ToolCallPart] = []
-                invisible_parts: bool = False
+                files: list[_messages.BinaryContent] = []
 
                 for part in self.model_response.parts:
                     if isinstance(part, _messages.TextPart):
                         text += part.content
                     elif isinstance(part, _messages.ToolCallPart):
                         tool_calls.append(part)
+                    elif isinstance(part, _messages.FilePart):
+                        files.append(part.content)
                     elif isinstance(part, _messages.BuiltinToolCallPart):
                         # Text parts before a built-in tool call are essentially thoughts,
                         # not part of the final result output, so we reset the accumulated text
                         text = ''
-                        invisible_parts = True
                         yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.BuiltinToolReturnPart):
-                        invisible_parts = True
                         yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.ThinkingPart):
-                        invisible_parts = True
+                        pass
                     else:
                         assert_never(part)
 
@@ -572,47 +601,35 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 # This accounts for cases like anthropic returns that might contain a text response
                 # and a tool call response, where the text response just indicates the tool call will happen.
                 try:
+                    alternatives: list[str] = []
                     if tool_calls:
                         async for event in self._handle_tool_calls(ctx, tool_calls):
                             yield event
-                    elif text:
-                        # No events are emitted during the handling of text responses, so we don't need to yield anything
-                        self._next_node = await self._handle_text_response(ctx, text)
-                    elif invisible_parts:
-                        # handle responses with only thinking or built-in tool parts.
-                        # this can happen with models that support thinking mode when they don't provide
-                        # actionable output alongside their thinking content. so we tell the model to try again.
-                        m = _messages.RetryPromptPart(
-                            content='Responses without text or tool calls are not permitted.',
-                        )
-                        raise ToolRetryError(m)
+                        return
+                    elif output_schema.toolset:
+                        alternatives.append('include your response in a tool call')
                     else:
-                        # we got an empty response with no tool calls, text, thinking, or built-in tool calls.
-                        # this sometimes happens with anthropic (and perhaps other models)
-                        # when the model has already returned text along side tool calls
-                        # in this scenario, if text responses are allowed, we return text from the most recent model
-                        # response, if any
-                        if isinstance(ctx.deps.output_schema, _output.TextOutputSchema):
-                            for message in reversed(ctx.state.message_history):
-                                if isinstance(message, _messages.ModelResponse):
-                                    text = ''
-                                    for part in message.parts:
-                                        if isinstance(part, _messages.TextPart):
-                                            text += part.content
-                                        elif isinstance(part, _messages.BuiltinToolCallPart):
-                                            # Text parts before a built-in tool call are essentially thoughts,
-                                            # not part of the final result output, so we reset the accumulated text
-                                            text = ''  # pragma: no cover
-                                    if text:
-                                        self._next_node = await self._handle_text_response(ctx, text)
-                                        return
+                        alternatives.append('call a tool')
 
-                        # Go back to the model request node with an empty request, which means we'll essentially
-                        # resubmit the most recent request that resulted in an empty response,
-                        # as the empty response and request will not create any items in the API payload,
-                        # in the hope the model will return a non-empty response this time.
-                        ctx.state.increment_retries(ctx.deps.max_result_retries)
-                        self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[]))
+                    if output_schema.allows_image:
+                        if image := next((file for file in files if isinstance(file, _messages.BinaryImage)), None):
+                            self._next_node = await self._handle_image_response(ctx, image)
+                            return
+                        alternatives.append('return an image')
+
+                    if text_processor := output_schema.text_processor:
+                        if text:
+                            self._next_node = await self._handle_text_response(ctx, text, text_processor)
+                            return
+                        alternatives.insert(0, 'return text')
+
+                    # handle responses with only parts that don't constitute output.
+                    # This can happen with models that support thinking mode when they don't provide
+                    # actionable output alongside their thinking content. so we tell the model to try again.
+                    m = _messages.RetryPromptPart(
+                        content=f'Please {" or ".join(alternatives)}.',
+                    )
+                    raise ToolRetryError(m)
                 except ToolRetryError as e:
                     ctx.state.increment_retries(ctx.deps.max_result_retries, e)
                     self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
@@ -655,6 +672,28 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 _messages.ModelRequest(parts=output_parts, instructions=instructions)
             )
 
+    async def _handle_text_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        text: str,
+        text_processor: _output.BaseOutputProcessor[NodeRunEndT],
+    ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
+        run_context = build_run_context(ctx)
+
+        result_data = await text_processor.process(text, run_context)
+
+        for validator in ctx.deps.output_validators:
+            result_data = await validator.validate(result_data, run_context)
+        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
+
+    async def _handle_image_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        image: _messages.BinaryImage,
+    ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
+        result_data = cast(NodeRunEndT, image)
+        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
+
     def _handle_final_result(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
@@ -668,26 +707,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             messages.append(_messages.ModelRequest(parts=tool_responses))
 
         return End(final_result)
-
-    async def _handle_text_response(
-        self,
-        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        text: str,
-    ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
-        output_schema = ctx.deps.output_schema
-        run_context = build_run_context(ctx)
-
-        if isinstance(output_schema, _output.TextOutputSchema):
-            result_data = await output_schema.process(text, run_context)
-        else:
-            m = _messages.RetryPromptPart(
-                content='Plain text responses are not permitted, please include your response in a tool call',
-            )
-            raise ToolRetryError(m)
-
-        for validator in ctx.deps.output_validators:
-            result_data = await validator.validate(result_data, run_context)
-        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
 
     __repr__ = dataclasses_no_defaults_repr
 

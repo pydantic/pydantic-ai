@@ -9,7 +9,14 @@ from .agent import (
     UserPromptNode,
     capture_run_messages,
 )
-from .builtin_tools import CodeExecutionTool, UrlContextTool, WebSearchTool, WebSearchUserLocation
+from .builtin_tools import (
+    CodeExecutionTool,
+    ImageGenerationTool,
+    MemoryTool,
+    UrlContextTool,
+    WebSearchTool,
+    WebSearchUserLocation,
+)
 from .exceptions import (
     AgentRunError,
     ApprovalRequired,
@@ -30,11 +37,13 @@ from .messages import (
     BaseToolCallPart,
     BaseToolReturnPart,
     BinaryContent,
+    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentFormat,
     DocumentMediaType,
     DocumentUrl,
+    FilePart,
     FileUrl,
     FinalResultEvent,
     FinishReason,
@@ -131,6 +140,7 @@ __all__ = (
     'DocumentMediaType',
     'DocumentUrl',
     'FileUrl',
+    'FilePart',
     'FinalResultEvent',
     'FinishReason',
     'FunctionToolCallEvent',
@@ -139,6 +149,7 @@ __all__ = (
     'ImageFormat',
     'ImageMediaType',
     'ImageUrl',
+    'BinaryImage',
     'ModelMessage',
     'ModelMessagesTypeAdapter',
     'ModelRequest',
@@ -197,6 +208,8 @@ __all__ = (
     'WebSearchUserLocation',
     'UrlContextTool',
     'CodeExecutionTool',
+    'ImageGenerationTool',
+    'MemoryTool',
     # output
     'ToolOutput',
     'NativeOutput',
