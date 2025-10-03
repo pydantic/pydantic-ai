@@ -603,13 +603,25 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
 
         Example:
         ```python
-        from pydantic_ai import Agent
+        from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent
 
         agent = Agent('openai:gpt-4o')
 
         async def main():
+            events: list[AgentStreamEvent | AgentRunResultEvent] = []
             async for event in agent.run_stream_events('What is the capital of France?'):
-                print(event)
+                events.append(event)
+            print(events)
+            '''
+            [
+                PartStartEvent(index=0, part=TextPart(content='The capital of ')),
+                FinalResultEvent(tool_name=None, tool_call_id=None),
+                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='France is Paris. ')),
+                AgentRunResultEvent(
+                    result=AgentRunResult(output='The capital of France is Paris. ')
+                ),
+            ]
+            '''
         ```
 
         Arguments are the same as for [`self.run`][pydantic_ai.agent.AbstractAgent.run],
