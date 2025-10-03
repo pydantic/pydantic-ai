@@ -9,6 +9,7 @@ from typing_extensions import Never
 
 from pydantic_ai import (
     AbstractToolset,
+    AgentRunResultEvent,
     _utils,
     messages as _messages,
     models,
@@ -525,9 +526,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         """
         if DBOS.workflow_id is not None and DBOS.step_id is None:
             raise UserError(
-                '`agent.run_stream()` cannot currently be used inside a DBOS workflow. '
-                'Set an `event_stream_handler` on the agent and use `agent.run()` instead. '
-                'Please file an issue if this is not sufficient for your use case.'
+                '`agent.run_stream()` cannot be used inside a DBOS workflow. '
+                'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             )
 
         async with super().run_stream(
@@ -546,6 +546,109 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             **_deprecated_kwargs,
         ) as result:
             yield result
+
+    @overload
+    def run_stream_events(
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: None = None,
+        message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
+
+    @overload
+    def run_stream_events(
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT],
+        message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
+
+    def run_stream_events(
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
+        message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+        """Run the agent with a user prompt in async mode and stream events from the run.
+
+        This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
+        uses the `event_stream_handler` kwarg to get a stream of events from the run.
+
+        Example:
+        ```python
+        from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent
+
+        agent = Agent('openai:gpt-4o')
+
+        async def main():
+            events: list[AgentStreamEvent | AgentRunResultEvent] = []
+            async for event in agent.run_stream_events('What is the capital of France?'):
+                events.append(event)
+            print(events)
+            '''
+            [
+                PartStartEvent(index=0, part=TextPart(content='The capital of ')),
+                FinalResultEvent(tool_name=None, tool_call_id=None),
+                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='France is Paris. ')),
+                AgentRunResultEvent(
+                    result=AgentRunResult(output='The capital of France is Paris. ')
+                ),
+            ]
+            '''
+        ```
+
+        Arguments are the same as for [`self.run`][pydantic_ai.agent.AbstractAgent.run],
+        except that `event_stream_handler` is now allowed.
+
+        Args:
+            user_prompt: User input to start/continue the conversation.
+            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
+                output validators since output validators would expect an argument that matches the agent's output type.
+            message_history: History of the conversation so far.
+            deferred_tool_results: Optional results for deferred tool calls in the message history.
+            model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            deps: Optional dependencies to use for this run.
+            model_settings: Optional settings to use for this model's request.
+            usage_limits: Optional limits on model request count or token usage.
+            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            toolsets: Optional additional toolsets for this run.
+
+        Returns:
+            An async iterable of stream events `AgentStreamEvent` and finally a `AgentRunResultEvent` with the final
+            run result.
+        """
+        raise UserError(
+            '`agent.run_stream_events()` cannot be used with DBOS. '
+            'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+        )
 
     @overload
     def iter(

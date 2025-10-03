@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    AgentRunResultEvent,
     AgentStreamEvent,
     BinaryImage,
     ExternalToolset,
@@ -30,6 +31,7 @@ from pydantic_ai import (
     RetryPromptPart,
     RunContext,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
@@ -1124,6 +1126,25 @@ async def test_temporal_agent_run_stream(allow_model_requests: None):
         )
 
 
+async def test_temporal_agent_run_stream_events(allow_model_requests: None):
+    events = [event async for event in simple_temporal_agent.run_stream_events('What is the capital of Mexico?')]
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='The')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' capital')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' Mexico')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' Mexico')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' City')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='.')),
+            AgentRunResultEvent(result=AgentRunResult(output='The capital of Mexico is Mexico City.')),
+        ]
+    )
+
+
 async def test_temporal_agent_iter(allow_model_requests: None):
     output: list[str] = []
     async with simple_temporal_agent.iter('What is the capital of Mexico?') as run:
@@ -1192,13 +1213,41 @@ async def test_temporal_agent_run_stream_in_workflow(allow_model_requests: None,
         with workflow_raises(
             UserError,
             snapshot(
-                '`agent.run_stream()` cannot currently be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead. Please file an issue if this is not sufficient for your use case.'
+                '`agent.run_stream()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             ),
         ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
                 SimpleAgentWorkflowWithRunStream.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunStream.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+
+@workflow.defn
+class SimpleAgentWorkflowWithRunStreamEvents:
+    @workflow.run
+    async def run(self, prompt: str) -> list[AgentStreamEvent | AgentRunResultEvent]:
+        return [event async for event in simple_temporal_agent.run_stream_events(prompt)]
+
+
+async def test_temporal_agent_run_stream_events_in_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SimpleAgentWorkflowWithRunStreamEvents],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                '`agent.run_stream_events()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+            ),
+        ):
+            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+                SimpleAgentWorkflowWithRunStreamEvents.run,
+                args=['What is the capital of Mexico?'],
+                id=SimpleAgentWorkflowWithRunStreamEvents.__name__,
                 task_queue=TASK_QUEUE,
             )
 
@@ -1223,7 +1272,7 @@ async def test_temporal_agent_iter_in_workflow(allow_model_requests: None, clien
         with workflow_raises(
             UserError,
             snapshot(
-                '`agent.iter()` cannot currently be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead. Please file an issue if this is not sufficient for your use case.'
+                '`agent.iter()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             ),
         ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]

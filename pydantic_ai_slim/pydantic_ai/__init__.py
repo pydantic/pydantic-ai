@@ -88,6 +88,7 @@ from .profiles import (
     ModelProfile,
     ModelProfileSpec,
 )
+from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
 from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
 from .toolsets import (
@@ -224,5 +225,9 @@ __all__ = (
     'RunUsage',
     'RequestUsage',
     'UsageLimits',
+    # run
+    'AgentRun',
+    'AgentRunResult',
+    'AgentRunResultEvent',
 )
 __version__ = _metadata_version('pydantic_ai_slim')
