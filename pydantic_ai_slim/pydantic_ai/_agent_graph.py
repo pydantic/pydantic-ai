@@ -820,6 +820,7 @@ async def process_tool_calls(  # noqa: C901
             tool_calls=calls_to_run,
             tool_call_results=calls_to_run_results,
             tracer=ctx.deps.tracer,
+            usage=ctx.state.usage,
             usage_limits=ctx.deps.usage_limits,
             output_parts=output_parts,
             output_deferred_calls=deferred_calls,
@@ -861,30 +862,13 @@ async def process_tool_calls(  # noqa: C901
         output_final_result.append(final_result)
 
 
-def _check_tool_call_limits(
-    tool_manager: ToolManager[DepsT],
-    tool_calls: list[_messages.ToolCallPart],
-    usage_limits: _usage.UsageLimits | None,
-) -> None:
-    """Check if executing the tool calls would exceed the limit."""
-    if usage_limits is None or usage_limits.tool_calls_limit is None:
-        return
-
-    current_tool_calls = tool_manager.ctx.usage.tool_calls if tool_manager.ctx is not None else 0
-    projected_tool_calls = current_tool_calls + len(tool_calls)
-
-    if projected_tool_calls > usage_limits.tool_calls_limit:
-        projected_usage = deepcopy(tool_manager.ctx.usage) if tool_manager.ctx else _usage.RunUsage()
-        projected_usage.tool_calls = projected_tool_calls
-        usage_limits.check_before_tool_call(projected_usage)
-
-
 async def _call_tools(
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult],
     tracer: Tracer,
-    usage_limits: _usage.UsageLimits | None,
+    usage: _usage.RunUsage,
+    usage_limits: _usage.UsageLimits,
     output_parts: list[_messages.ModelRequestPart],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
@@ -892,7 +876,10 @@ async def _call_tools(
     user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
 
-    _check_tool_call_limits(tool_manager, tool_calls, usage_limits)
+    if usage_limits.tool_calls_limit is not None:
+        projected_usage = deepcopy(usage)
+        projected_usage.tool_calls += len(tool_calls)
+        usage_limits.check_before_tool_call(projected_usage)
 
     for call in tool_calls:
         yield _messages.FunctionToolCallEvent(call)

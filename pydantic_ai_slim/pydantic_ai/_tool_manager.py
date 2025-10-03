@@ -159,9 +159,6 @@ class ToolManager(Generic[AgentDepsT]):
             else:
                 args_dict = validator.validate_python(call.args or {}, allow_partial=pyd_allow_partial)
 
-            if usage_limits is not None and count_tool_usage:
-                usage_limits.check_before_tool_call(self.ctx.usage)
-
             result = await self.toolset.call_tool(name, args_dict, ctx, tool)
 
             if count_tool_usage:

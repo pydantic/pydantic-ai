@@ -630,16 +630,12 @@ try:
     agent.run_sync('Please call the tool twice', usage_limits=UsageLimits(tool_calls_limit=1))
 except UsageLimitExceeded as e:
     print(e)
-    """
-    With the next tool call(s), the projected amount of tool calls (2) would exceed the limit of 1.
-    """
+    #> The next tool call(s) would exceed the tool_calls_limit of 1 (tool_calls=2).
 ```
 
 !!! note
     - Usage limits are especially relevant if you've registered many tools. Use `request_limit` to bound the number of model turns, and `tool_calls_limit` to cap the number of successful tool executions within a run.
-    - The `tool_calls_limit` is checked before executing tool calls. If the projected total would exceed the limit, no tools from that batch are executed.
-
-#### Model (Run) Settings
+    - The `tool_calls_limit` is checked before executing tool calls. If the model returns parallel tool calls that would exceed the limit, no tools will be executed.
 
 Pydantic AI offers a [`settings.ModelSettings`][pydantic_ai.settings.ModelSettings] structure to help you fine tune your requests.
 This structure allows you to configure common parameters that influence the model's behavior, such as `temperature`, `max_tokens`,

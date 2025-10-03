@@ -257,9 +257,7 @@ async def test_tool_call_limit() -> None:
 
     with pytest.raises(
         UsageLimitExceeded,
-        match=re.escape(
-            'With the next tool call(s), the projected amount of tool calls (1) would exceed the limit of 0.'
-        ),
+        match=re.escape('The next tool call(s) would exceed the tool_calls_limit of 0 (tool_calls=1).'),
     ):
         await test_agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=0))
 
@@ -380,9 +378,7 @@ async def test_parallel_tool_calls_limit_enforced():
     # Run with tool call limit of 6; expecting an error when trying to execute 3 more tools
     with pytest.raises(
         UsageLimitExceeded,
-        match=re.escape(
-            'With the next tool call(s), the projected amount of tool calls (8) would exceed the limit of 6.'
-        ),
+        match=re.escape('The next tool call(s) would exceed the tool_calls_limit of 6 (tool_calls=8).'),
     ):
         await agent.run('Use tools', usage_limits=UsageLimits(tool_calls_limit=6))
 
