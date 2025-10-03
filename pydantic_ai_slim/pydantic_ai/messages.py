@@ -1654,7 +1654,7 @@ class FunctionToolResultEvent:
 
     _: KW_ONLY
 
-    content: str | Sequence[UserContent] | None
+    content: str | Sequence[UserContent] | None = None
     """The content that will be sent to the model as a UserPromptPart following the result."""
 
     event_kind: Literal['function_tool_result'] = 'function_tool_result'
