@@ -250,7 +250,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
 
         return build_mermaid_graph(self).render(title=title, direction=direction)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Return a Mermaid diagram representation of the graph.
 
         Returns:

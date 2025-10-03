@@ -195,7 +195,7 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
     """A join operation that synchronizes and aggregates parallel execution paths.
 
     A join defines how to combine outputs from multiple parallel execution paths
-    using a [`Reducer`][pydantic_graph.v2.join.Reducer]. It specifies which fork
+    using a [`Reducer`][pydantic_graph.beta.join.Reducer]. It specifies which fork
     it joins (if any) and manages the creation of reducer instances.
 
     Type Parameters:
@@ -228,9 +228,6 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
 
     def create_reducer(self) -> Reducer[StateT, DepsT, InputT, OutputT]:
         """Create a reducer instance for this join operation.
-
-        Args:
-            ctx: The step context containing the first input data
 
         Returns:
             A new reducer instance initialized with the provided context
@@ -274,7 +271,7 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
             inputs: The input data to bind to this step, or None
 
         Returns:
-            A [`StepNode`][pydantic_graph.v2.step.StepNode] with this step and the bound inputs
+            A [`StepNode`][pydantic_graph.beta.step.StepNode] with this step and the bound inputs
         """
         return JoinNode(self, inputs)
 
@@ -284,7 +281,7 @@ class JoinNode(BaseNode[StateT, DepsT, Any]):
     """A base node that represents a join item with bound inputs.
 
     JoinNode bridges between the v1 and v2 graph execution systems by wrapping
-    a [`Join`][pydantic_graph.v2.step.Join] with bound inputs in a BaseNode interface.
+    a [`Join`][pydantic_graph.beta.join.Join] with bound inputs in a BaseNode interface.
     It is not meant to be run directly but rather used to indicate transitions
     to v2-style steps.
     """

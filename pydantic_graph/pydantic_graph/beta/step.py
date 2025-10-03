@@ -66,7 +66,7 @@ class StepContext(Generic[StateT, DepsT, InputT]):
         inputs: InputT
         """The input data for this step."""
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Return a string representation of the step context.
 
         Returns:
@@ -183,11 +183,11 @@ class Step(Generic[StateT, DepsT, InputT, OutputT]):
             inputs: The input data to bind to this step, or None
 
         Returns:
-            A [`StepNode`][pydantic_graph.v2.step.StepNode] with this step and the bound inputs
+            A [`StepNode`][pydantic_graph.beta.step.StepNode] with this step and the bound inputs
         """
         return StepNode(self, inputs)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Return a string representation of the step context.
 
         Returns:
@@ -201,7 +201,7 @@ class StepNode(BaseNode[StateT, DepsT, Any]):
     """A base node that represents a step with bound inputs.
 
     StepNode bridges between the v1 and v2 graph execution systems by wrapping
-    a [`Step`][pydantic_graph.v2.step.Step] with bound inputs in a BaseNode interface.
+    a [`Step`][pydantic_graph.beta.step.Step] with bound inputs in a BaseNode interface.
     It is not meant to be run directly but rather used to indicate transitions
     to v2-style steps.
     """
