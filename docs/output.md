@@ -520,7 +520,7 @@ There two main challenges with streamed results:
     it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
 
     If you want to always run the agent graph to completion and stream all events from the model's streaming response and the agent's execution of tools,
-    use [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] with an `event_stream_handler` ([docs](agents.md#streaming-all-events)) or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] ([docs](agents.md#streaming-all-events-and-output)) instead.
+    use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] ([docs](agents.md#streaming-all-events)) or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] ([docs](agents.md#streaming-all-events-and-output)) instead.
 
 ### Streaming Text
 

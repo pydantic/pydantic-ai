@@ -87,10 +87,10 @@ Can optionally accept a `RunContext` as a parameter.
 class GraphAgentState:
     """State kept across the execution of the agent graph."""
 
-    message_history: list[_messages.ModelMessage]
-    usage: _usage.RunUsage
-    retries: int
-    run_step: int
+    message_history: list[_messages.ModelMessage] = dataclasses.field(default_factory=list)
+    usage: _usage.RunUsage = dataclasses.field(default_factory=_usage.RunUsage)
+    retries: int = 0
+    run_step: int = 0
 
     def increment_retries(self, max_result_retries: int, error: BaseException | None = None) -> None:
         self.retries += 1

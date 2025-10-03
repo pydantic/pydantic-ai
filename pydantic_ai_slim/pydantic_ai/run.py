@@ -10,6 +10,7 @@ from pydantic_graph import End, GraphRun, GraphRunContext
 
 from . import (
     _agent_graph,
+    _utils,
     exceptions,
     messages as _messages,
     usage as _usage,
@@ -245,10 +246,12 @@ class AgentRunResult(Generic[OutputDataT]):
     output: OutputDataT
     """The output data from the agent run."""
 
-    _output_tool_name: str | None = dataclasses.field(repr=False)
-    _state: _agent_graph.GraphAgentState = dataclasses.field(repr=False)
-    _new_message_index: int = dataclasses.field(repr=False)
-    _traceparent_value: str | None = dataclasses.field(repr=False)
+    _output_tool_name: str | None = dataclasses.field(repr=False, compare=False, default=None)
+    _state: _agent_graph.GraphAgentState = dataclasses.field(
+        repr=False, compare=False, default_factory=_agent_graph.GraphAgentState
+    )
+    _new_message_index: int = dataclasses.field(repr=False, compare=False, default=0)
+    _traceparent_value: str | None = dataclasses.field(repr=False, compare=False, default=None)
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...
@@ -363,3 +366,18 @@ class AgentRunResult(Generic[OutputDataT]):
     def timestamp(self) -> datetime:
         """Return the timestamp of last response."""
         return self.response.timestamp
+
+
+@dataclasses.dataclass(repr=False)
+class AgentRunResultEvent(Generic[OutputDataT]):
+    """An event indicating the agent run ended and containing the final result of the agent run."""
+
+    result: AgentRunResult[OutputDataT]
+    """The result of the run."""
+
+    _: dataclasses.KW_ONLY
+
+    event_kind: Literal['agent_run_result'] = 'agent_run_result'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
