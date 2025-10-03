@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: 💬 Join Slack
-    url: 'https://logfire.pydantic.dev/docs/help/#slack'
+    url: 'https://logfire.pydantic.dev/docs/join-slack/'
     about: Join the Logfire Slack to ask questions, get help and chat about Pydantic AI
