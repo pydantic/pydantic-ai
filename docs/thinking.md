@@ -36,7 +36,7 @@ agent = Agent(model, model_settings=settings)
 
 ## Anthropic
 
-To enable thinking, use [`AnthropicModelSettings.anthropic_thinking`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thinking] [model setting](agents.md#model-run-settings).
+To enable thinking, use the [`AnthropicModelSettings.anthropic_thinking`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thinking] [model setting](agents.md#model-run-settings).
 
 ```python {title="anthropic_thinking_part.py"}
 from pydantic_ai import Agent
@@ -52,7 +52,7 @@ agent = Agent(model, model_settings=settings)
 
 ## Google
 
-To enable thinking, use [`GoogleModelSettings.google_thinking_config`][pydantic_ai.models.google.GoogleModelSettings.google_thinking_config] [model setting](agents.md#model-run-settings).
+To enable thinking, use the [`GoogleModelSettings.google_thinking_config`][pydantic_ai.models.google.GoogleModelSettings.google_thinking_config] [model setting](agents.md#model-run-settings).
 
 ```python {title="google_thinking_part.py"}
 from pydantic_ai import Agent
@@ -74,7 +74,7 @@ Groq supports different formats to receive thinking parts:
 - `"hidden"`: The thinking part is not included in the text content.
 - `"parsed"`: The thinking part has its own structured part in the response which is converted into a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] object.
 
-To enable thinking, use [`GroqModelSettings.groq_reasoning_format`][pydantic_ai.models.groq.GroqModelSettings.groq_reasoning_format] [model setting](agents.md#model-run-settings):
+To enable thinking, use the [`GroqModelSettings.groq_reasoning_format`][pydantic_ai.models.groq.GroqModelSettings.groq_reasoning_format] [model setting](agents.md#model-run-settings):
 
 ```python {title="groq_thinking_part.py"}
 from pydantic_ai import Agent

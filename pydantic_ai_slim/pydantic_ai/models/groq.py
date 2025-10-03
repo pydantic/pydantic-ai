@@ -117,6 +117,10 @@ class GroqModelSettings(ModelSettings, total=False):
     # ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     groq_reasoning_format: Literal['hidden', 'raw', 'parsed']
+    """The format of the reasoning output.
+
+    See [the Groq docs](https://console.groq.com/docs/reasoning#reasoning-format) for more details.
+    """
 
 
 @dataclass(init=False)
