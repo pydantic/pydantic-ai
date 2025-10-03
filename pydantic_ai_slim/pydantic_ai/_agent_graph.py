@@ -917,7 +917,7 @@ async def _call_tools(
         if tool_manager.should_call_sequentially(tool_calls):
             for index, call in enumerate(tool_calls):
                 if event := await handle_call_or_result(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), usage_limits),
+                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
                     index,
                 ):
                     yield event
@@ -925,7 +925,7 @@ async def _call_tools(
         else:
             tasks = [
                 asyncio.create_task(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), usage_limits),
+                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
                     name=call.tool_name,
                 )
                 for call in tool_calls
@@ -952,15 +952,14 @@ async def _call_tool(
     tool_manager: ToolManager[DepsT],
     tool_call: _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
-    usage_limits: _usage.UsageLimits | None,
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]:
     try:
         if tool_call_result is None:
-            tool_result = await tool_manager.handle_call(tool_call, usage_limits=usage_limits)
+            tool_result = await tool_manager.handle_call(tool_call)
         elif isinstance(tool_call_result, ToolApproved):
             if tool_call_result.override_args is not None:
                 tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
-            tool_result = await tool_manager.handle_call(tool_call, usage_limits=usage_limits)
+            tool_result = await tool_manager.handle_call(tool_call)
         elif isinstance(tool_call_result, ToolDenied):
             return _messages.ToolReturnPart(
                 tool_name=tool_call.tool_name,
