@@ -351,11 +351,11 @@ def handle_slash_command(
         console.print('[dim]Exiting…[/dim]')
         return 0, multiline
     elif ident_prompt == '/cp':
-        if not messages or not isinstance(messages[-1], ModelResponse) or not (text_to_copy := messages[-1].text):
+        if not messages or not isinstance(messages[-1], ModelResponse):
             console.print('[dim]No output available to copy.[/dim]')
         else:
-            text_to_copy = text_to_copy.strip()
-            if text_to_copy:
+            text_to_copy = messages[-1].text
+            if text_to_copy and (text_to_copy := text_to_copy.strip()):
                 pyperclip.copy(text_to_copy)
                 console.print('[dim]Copied last output to clipboard.[/dim]')
             else:
