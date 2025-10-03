@@ -290,6 +290,40 @@ async def test_output_tool_not_counted() -> None:
     assert result_output.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=15, tool_calls=1))
 
 
+async def test_output_tool_allowed_at_limit() -> None:
+    """Test that output tools can be called even when at the tool_calls_limit."""
+
+    class MyOutput(BaseModel):
+        result: str
+
+    def call_output_after_regular(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('regular_tool', {'x': 'test'}, 'call_1'),
+                ],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('final_result', {'result': 'success'}, 'call_2'),
+                ],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+
+    test_agent = Agent(FunctionModel(call_output_after_regular), output_type=ToolOutput(MyOutput))
+
+    @test_agent.tool_plain
+    async def regular_tool(x: str) -> str:
+        return f'{x}-processed'
+
+    result = await test_agent.run('test', usage_limits=UsageLimits(tool_calls_limit=1))
+
+    assert result.output.result == 'success'
+    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=20, output_tokens=10, tool_calls=1))
+
+
 async def test_failed_tool_calls_not_counted() -> None:
     """Test that failed tool calls (raising ModelRetry) are not counted."""
     test_agent = Agent(TestModel())

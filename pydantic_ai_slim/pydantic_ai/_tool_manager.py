@@ -125,7 +125,6 @@ class ToolManager(Generic[AgentDepsT]):
         call: ToolCallPart,
         allow_partial: bool,
         wrap_validation_errors: bool,
-        usage_limits: UsageLimits | None = None,
         count_tool_usage: bool = True,
     ) -> Any:
         if self.tools is None or self.ctx is None:
@@ -239,7 +238,7 @@ class ToolManager(Generic[AgentDepsT]):
             attributes=span_attributes,
         ) as span:
             try:
-                tool_result = await self._call_tool(call, allow_partial, wrap_validation_errors, usage_limits)
+                tool_result = await self._call_tool(call, allow_partial, wrap_validation_errors)
             except ToolRetryError as e:
                 part = e.tool_retry
                 if include_content and span.is_recording():
