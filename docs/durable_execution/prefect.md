@@ -15,28 +15,39 @@ The diagram below shows the overall architecture of an agentic application with 
 Prefect uses client-side task orchestration by default, with optional server connectivity for advanced features like scheduling and monitoring.
 
 ```text
-                    Clients
-            (HTTP, CLI, API, etc.)
-                        |
-                        v
+            +---------------------+
+            |   Prefect Server    |      (Monitoring,
+            |      or Cloud       |       scheduling, UI,
+            +---------------------+       orchestration)
+                     ^
+                     |
+        Flow state,  |   Schedule flows,
+        metadata,    |   track execution
+        logs         |
+                     |
 +------------------------------------------------------+
 |               Application Process                    |
-|                                                      |
 |   +----------------------------------------------+   |
-|   |        Pydantic AI + Prefect Libraries       |   |
-|   |                                              |   |
-|   |  [ Flows (Agent Run Loop) ]                  |   |
-|   |  [ Tasks (Tool, MCP, Model) ]                |   |
-|   |  [ Result Persistence ] [ Caching ]          |   |
+|   |              Flow (Agent.run)                |   |
 |   +----------------------------------------------+   |
-|                                                      |
+|          |          |                |               |
+|          v          v                v               |
+|   +-----------+ +------------+ +-------------+       |
+|   |   Task    | |    Task    | |    Task     |       |
+|   |  (Tool)   | | (MCP Tool) | | (Model API) |       |
+|   +-----------+ +------------+ +-------------+       |
+|         |           |                |               |
+|       Cache &     Cache &          Cache &           |
+|       persist     persist          persist           |
+|         to           to               to             |
+|         v            v                v              |
+|   +----------------------------------------------+   |
+|   |     Result Storage (Local FS, S3, etc.)     |    |
+|   +----------------------------------------------+   |
 +------------------------------------------------------+
-                        |
-                        v
-+------------------------------------------------------+
-|                  Prefect Server/Cloud                |
-|      (Monitoring, Scheduling, Orchestration)         |
-+------------------------------------------------------+
+          |           |                |
+          v           v                v
+      [External APIs, services, databases, etc.]
 ```
 
 See the [Prefect documentation](https://docs.prefect.io/) for more information.

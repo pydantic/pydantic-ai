@@ -938,6 +938,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     async def serve(
         self,
+        *,
         name: str | None = None,
         interval: int | float | timedelta | None = None,
         cron: str | None = None,
@@ -960,7 +961,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         a long-running process that monitors for scheduled work from the Prefect server.
 
         Example:
-        ```python
+        ```python {title="prefect_agent_serve.py" test="skip"}
         from pydantic_ai import Agent
         from pydantic_ai.durable_exec.prefect import PrefectAgent
 
