@@ -13,16 +13,16 @@ pytestmark = pytest.mark.anyio
 
 
 @dataclass
-class TestState:
+class MyState:
     value: int = 0
 
 
 async def test_graph_repr():
     """Test that Graph.__repr__ returns a mermaid diagram."""
-    g = GraphBuilder(state_type=TestState, output_type=int)
+    g = GraphBuilder(state_type=MyState, output_type=int)
 
     @g.step
-    async def simple_step(ctx: StepContext[TestState, None, None]) -> int:
+    async def simple_step(ctx: StepContext[MyState, None, None]) -> int:
         return 42
 
     g.add(
@@ -37,10 +37,10 @@ async def test_graph_repr():
 
 async def test_graph_render_with_title():
     """Test Graph.render method with title parameter."""
-    g = GraphBuilder(state_type=TestState, output_type=int)
+    g = GraphBuilder(state_type=MyState, output_type=int)
 
     @g.step
-    async def simple_step(ctx: StepContext[TestState, None, None]) -> int:
+    async def simple_step(ctx: StepContext[MyState, None, None]) -> int:
         return 42
 
     g.add(
@@ -57,10 +57,10 @@ async def test_get_parent_fork_missing():
     """Test that get_parent_fork raises RuntimeError when join has no parent fork."""
     from pydantic_graph.beta.id_types import JoinID, NodeID
 
-    g = GraphBuilder(state_type=TestState, output_type=int)
+    g = GraphBuilder(state_type=MyState, output_type=int)
 
     @g.step
-    async def simple_step(ctx: StepContext[TestState, None, None]) -> int:
+    async def simple_step(ctx: StepContext[MyState, None, None]) -> int:
         return 42
 
     g.add(
@@ -78,14 +78,14 @@ async def test_get_parent_fork_missing():
 
 async def test_decision_no_matching_branch():
     """Test that decision raises RuntimeError when no branch matches."""
-    g = GraphBuilder(state_type=TestState, output_type=str)
+    g = GraphBuilder(state_type=MyState, output_type=str)
 
     @g.step
-    async def return_unexpected(ctx: StepContext[TestState, None, None]) -> int:
+    async def return_unexpected(ctx: StepContext[MyState, None, None]) -> int:
         return 999
 
     @g.step
-    async def handle_str(ctx: StepContext[TestState, None, str]) -> str:
+    async def handle_str(ctx: StepContext[MyState, None, str]) -> str:
         return f'Got: {ctx.inputs}'
 
     g.add(
@@ -97,20 +97,20 @@ async def test_decision_no_matching_branch():
     graph = g.build()
 
     with pytest.raises(RuntimeError, match='No branch matched'):
-        await graph.run(state=TestState())
+        await graph.run(state=MyState())
 
 
 async def test_decision_invalid_type_check():
     """Test decision branch with invalid type for isinstance check."""
 
-    g = GraphBuilder(state_type=TestState, output_type=str)
+    g = GraphBuilder(state_type=MyState, output_type=str)
 
     @g.step
-    async def return_value(ctx: StepContext[TestState, None, None]) -> int:
+    async def return_value(ctx: StepContext[MyState, None, None]) -> int:
         return 42
 
     @g.step
-    async def handle_value(ctx: StepContext[TestState, None, int]) -> str:
+    async def handle_value(ctx: StepContext[MyState, None, int]) -> str:
         return str(ctx.inputs)
 
     # Try to use a non-type as a branch source - this might cause TypeError during isinstance check
@@ -123,24 +123,24 @@ async def test_decision_invalid_type_check():
     )
 
     graph = g.build()
-    result = await graph.run(state=TestState())
+    result = await graph.run(state=MyState())
     assert result == '42'
 
 
 async def test_map_non_iterable():
     """Test that mapping a non-iterable value raises RuntimeError."""
-    g = GraphBuilder(state_type=TestState, output_type=int)
+    g = GraphBuilder(state_type=MyState, output_type=int)
 
     @g.step
-    async def return_non_iterable(ctx: StepContext[TestState, None, None]) -> int:
+    async def return_non_iterable(ctx: StepContext[MyState, None, None]) -> int:
         return 42  # Not iterable!
 
     @g.step
-    async def process_item(ctx: StepContext[TestState, None, int]) -> int:
+    async def process_item(ctx: StepContext[MyState, None, int]) -> int:
         return ctx.inputs
 
     @g.step
-    async def sum_items(ctx: StepContext[TestState, None, list[int]]) -> int:
+    async def sum_items(ctx: StepContext[MyState, None, list[int]]) -> int:
         return sum(ctx.inputs)
 
     # This will fail at runtime because we're trying to map over a non-iterable
@@ -154,7 +154,7 @@ async def test_map_non_iterable():
     graph = g.build()
 
     with pytest.raises(RuntimeError, match='Cannot map non-iterable'):
-        await graph.run(state=TestState())
+        await graph.run(state=MyState())
 
 
 async def test_reducer_stop_iteration():
@@ -218,10 +218,10 @@ async def test_reducer_stop_iteration():
 
 async def test_empty_path_handling():
     """Test handling of empty paths in graph execution."""
-    g = GraphBuilder(state_type=TestState, output_type=int)
+    g = GraphBuilder(state_type=MyState, output_type=int)
 
     @g.step
-    async def return_value(ctx: StepContext[TestState, None, None]) -> int:
+    async def return_value(ctx: StepContext[MyState, None, None]) -> int:
         return 42
 
     # Just connect start to step to end - this should work fine
@@ -231,28 +231,28 @@ async def test_empty_path_handling():
     )
 
     graph = g.build()
-    result = await graph.run(state=TestState())
+    result = await graph.run(state=MyState())
     assert result == 42
 
 
 async def test_literal_branch_matching():
     """Test decision branch matching with Literal types."""
-    g = GraphBuilder(state_type=TestState, output_type=str)
+    g = GraphBuilder(state_type=MyState, output_type=str)
 
     @g.step
-    async def choose_option(ctx: StepContext[TestState, None, None]) -> Literal['a', 'b', 'c']:
+    async def choose_option(ctx: StepContext[MyState, None, None]) -> Literal['a', 'b', 'c']:
         return 'b'
 
     @g.step
-    async def handle_a(ctx: StepContext[TestState, None, object]) -> str:
+    async def handle_a(ctx: StepContext[MyState, None, object]) -> str:
         return 'Chose A'
 
     @g.step
-    async def handle_b(ctx: StepContext[TestState, None, object]) -> str:
+    async def handle_b(ctx: StepContext[MyState, None, object]) -> str:
         return 'Chose B'
 
     @g.step
-    async def handle_c(ctx: StepContext[TestState, None, object]) -> str:
+    async def handle_c(ctx: StepContext[MyState, None, object]) -> str:
         return 'Chose C'
 
     from pydantic_graph.beta import TypeExpression
@@ -269,20 +269,20 @@ async def test_literal_branch_matching():
     )
 
     graph = g.build()
-    result = await graph.run(state=TestState())
+    result = await graph.run(state=MyState())
     assert result == 'Chose B'
 
 
 async def test_path_with_label_marker():
     """Test that LabelMarker in paths doesn't affect execution."""
-    g = GraphBuilder(state_type=TestState, output_type=int)
+    g = GraphBuilder(state_type=MyState, output_type=int)
 
     @g.step
-    async def step_a(ctx: StepContext[TestState, None, None]) -> int:
+    async def step_a(ctx: StepContext[MyState, None, None]) -> int:
         return 10
 
     @g.step
-    async def step_b(ctx: StepContext[TestState, None, int]) -> int:
+    async def step_b(ctx: StepContext[MyState, None, int]) -> int:
         return ctx.inputs * 2
 
     # Add labels to the path
@@ -293,28 +293,28 @@ async def test_path_with_label_marker():
     )
 
     graph = g.build()
-    result = await graph.run(state=TestState())
+    result = await graph.run(state=MyState())
     assert result == 20
 
 
 async def test_nested_reducers_with_prefix():
     """Test multiple active reducers where one is a prefix of another."""
-    g = GraphBuilder(state_type=TestState, output_type=int)
+    g = GraphBuilder(state_type=MyState, output_type=int)
 
     @g.step
-    async def outer_list(ctx: StepContext[TestState, None, None]) -> list[list[int]]:
+    async def outer_list(ctx: StepContext[MyState, None, None]) -> list[list[int]]:
         return [[1, 2], [3, 4]]
 
     @g.step
-    async def inner_process(ctx: StepContext[TestState, None, int]) -> int:
+    async def inner_process(ctx: StepContext[MyState, None, int]) -> int:
         return ctx.inputs * 2
 
     @g.step
-    async def outer_sum(ctx: StepContext[TestState, None, list[int]]) -> int:
+    async def outer_sum(ctx: StepContext[MyState, None, list[int]]) -> int:
         return sum(ctx.inputs)
 
     @g.step
-    async def final_sum(ctx: StepContext[TestState, None, list[int]]) -> int:
+    async def final_sum(ctx: StepContext[MyState, None, list[int]]) -> int:
         return sum(ctx.inputs)
 
     # Create nested map operations
@@ -327,6 +327,6 @@ async def test_nested_reducers_with_prefix():
     )
 
     graph = g.build()
-    result = await graph.run(state=TestState())
+    result = await graph.run(state=MyState())
     # (1+2+3+4) * 2 = 20
     assert result == 20

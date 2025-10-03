@@ -13,18 +13,47 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, get_origin, overload
 
-from typing_extensions import Self, TypeAliasType, TypeVar
+from typing_extensions import Protocol, Self, TypeAliasType, TypeVar
 
 from pydantic_graph import BaseNode
 from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID
-from pydantic_graph.beta.step import NodeStep, StepFunction
+from pydantic_graph.beta.step import NodeStep, StepContext
 
 StateT = TypeVar('StateT', infer_variance=True)
 DepsT = TypeVar('DepsT', infer_variance=True)
 OutputT = TypeVar('OutputT', infer_variance=True)
+InputT = TypeVar('InputT', infer_variance=True)
 
 if TYPE_CHECKING:
     from pydantic_graph.beta.node_types import AnyDestinationNode, DestinationNode, SourceNode
+
+
+class TransformFunction(Protocol[StateT, DepsT, InputT, OutputT]):
+    """Protocol for step functions that can be executed in the graph.
+
+    Transform functions are sync callables that receive a step context and return
+    a result. This protocol enables serialization and deserialization of step
+    calls similar to how evaluators work.
+
+    This is very similar to a StepFunction, but must be sync instead of async.
+
+    Type Parameters:
+        StateT: The type of the graph state
+        DepsT: The type of the dependencies
+        InputT: The type of the input data
+        OutputT: The type of the output data
+    """
+
+    def __call__(self, ctx: StepContext[StateT, DepsT, InputT]) -> OutputT:
+        """Execute the step function with the given context.
+
+        Args:
+            ctx: The step context containing state, dependencies, and inputs
+
+        Returns:
+            An awaitable that resolves to the step's output
+        """
+        raise NotImplementedError
 
 
 @dataclass
@@ -35,7 +64,7 @@ class TransformMarker:
     through the graph path.
     """
 
-    transform: StepFunction[Any, Any, Any, Any]
+    transform: TransformFunction[Any, Any, Any, Any]
     """The step function that performs the transformation."""
 
 
@@ -196,7 +225,7 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
         next_item = BroadcastMarker(paths=forks, fork_id=ForkID(NodeID(fork_id or 'broadcast_' + secrets.token_hex(8))))
         return Path(items=[*self.working_items, next_item])
 
-    def transform(self, func: StepFunction[StateT, DepsT, OutputT, Any], /) -> PathBuilder[StateT, DepsT, Any]:
+    def transform(self, func: TransformFunction[StateT, DepsT, OutputT, Any], /) -> PathBuilder[StateT, DepsT, Any]:
         """Add a transformation step to the path.
 
         Args:
@@ -385,7 +414,7 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
             path_builder=self.path_builder.map(fork_id=fork_id, downstream_join_id=downstream_join_id),
         )
 
-    def transform(self, func: StepFunction[StateT, DepsT, OutputT, Any], /) -> EdgePathBuilder[StateT, DepsT, Any]:
+    def transform(self, func: TransformFunction[StateT, DepsT, OutputT, Any], /) -> EdgePathBuilder[StateT, DepsT, Any]:
         """Add a transformation step to the edge path.
 
         Args:

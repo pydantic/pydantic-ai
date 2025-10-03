@@ -9,13 +9,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic
+from typing import TYPE_CHECKING, Any, Final, Generic
 
 from typing_extensions import Never, Self, TypeVar
 
 from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID
-from pydantic_graph.beta.paths import Path, PathBuilder
-from pydantic_graph.beta.step import StepFunction
+from pydantic_graph.beta.paths import Path, PathBuilder, TransformFunction
 from pydantic_graph.beta.util import TypeOrTypeExpression
 
 if TYPE_CHECKING:
@@ -124,7 +123,7 @@ NewOutputT = TypeVar('NewOutputT', infer_variance=True)
 """Type variable for transformed output."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
     """Builder for constructing decision branches with fluent API.
 
@@ -132,16 +131,18 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
     forks, and transformations in a type-safe manner.
     """
 
-    decision: Decision[StateT, DepsT, HandledT]
+    # The use of `Final` on these attributes is necessary for them to be treated as read-only for purposes
+    # of variance-inference. This could be done with `frozen` but that
+    decision: Final[Decision[StateT, DepsT, HandledT]]
     """The parent decision node."""
 
-    source: TypeOrTypeExpression[SourceT]
+    source: Final[TypeOrTypeExpression[SourceT]]
     """The expected source type for this branch."""
 
-    matches: Callable[[Any], bool] | None
+    matches: Final[Callable[[Any], bool] | None]
     """Optional matching predicate."""
 
-    path_builder: PathBuilder[StateT, DepsT, OutputT]
+    path_builder: Final[PathBuilder[StateT, DepsT, OutputT]]
     """Builder for the execution path."""
 
     @property
@@ -194,7 +195,7 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
         return DecisionBranch(source=self.source, matches=self.matches, path=self.path_builder.fork(new_paths))
 
     def transform(
-        self, func: StepFunction[StateT, DepsT, OutputT, NewOutputT], /
+        self, func: TransformFunction[StateT, DepsT, OutputT, NewOutputT], /
     ) -> DecisionBranchBuilder[StateT, DepsT, NewOutputT, SourceT, HandledT]:
         """Apply a transformation to the branch's output.
 

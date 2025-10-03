@@ -1,6 +1,5 @@
 """Tests for node and step primitives."""
 
-
 from pydantic_graph.beta.node import EndNode, StartNode
 from pydantic_graph.beta.step import StepContext
 

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 
-from pydantic_graph.beta import GraphBuilder, Reducer, StepContext, TypeExpression
+from pydantic_graph.beta import GraphBuilder, ListReducer, Reducer, StepContext, TypeExpression
 
 pytestmark = pytest.mark.anyio
 
@@ -350,18 +350,21 @@ async def test_decision_branch_last_fork_id_with_map():
     async def process_item(ctx: StepContext[DecisionState, None, int]) -> int:
         return ctx.inputs * 2
 
-    class SumReducer(Reducer[object, object, float, float]):
+    class SumReducer(Reducer[object, object, int, int]):
         """A reducer that sums values."""
 
-        value: float = 0.0
+        value: int = 0
 
-        def reduce(self, ctx: StepContext[object, object, float]) -> None:
+        def reduce(self, ctx: StepContext[object, object, int]) -> None:
             self.value += ctx.inputs
 
-        def finalize(self, ctx: StepContext[object, object, None]) -> float:
+        def finalize(self, ctx: StepContext[object, object, None]) -> int:
             return self.value
 
     sum_results = g.join(SumReducer)
+
+    def is_list_int(x: Any) -> bool:
+        return isinstance(x, list) and all(isinstance(y, int) for y in x)  # pyright: ignore[reportUnknownVariableType]
 
     # Use decision with map to test last_fork_id
     g.add(
@@ -370,7 +373,7 @@ async def test_decision_branch_last_fork_id_with_map():
             g.decision().branch(
                 g.match(
                     TypeExpression[list[int]],
-                    matches=lambda x: isinstance(x, list) and all(isinstance(y, int) for y in x),
+                    matches=is_list_int,
                 )
                 .map()
                 .to(process_item)
@@ -397,8 +400,8 @@ async def test_decision_branch_transform():
     async def format_result(ctx: StepContext[DecisionState, None, str]) -> str:
         return f'Result: {ctx.inputs}'
 
-    async def double_value(ctx: StepContext[DecisionState, None, int], value: int) -> str:
-        return str(value * 2)
+    def double_value(ctx: StepContext[DecisionState, None, int]) -> str:
+        return str(ctx.inputs * 2)
 
     g.add(
         g.edge_from(g.start_node).to(get_value),
@@ -458,6 +461,8 @@ async def test_decision_branch_fork():
     async def path_2(ctx: StepContext[DecisionState, None, object]) -> str:
         return 'Path 2'
 
+    collect = g.join(ListReducer[str])
+
     @g.step
     async def combine(ctx: StepContext[DecisionState, None, list[str]]) -> str:
         return ', '.join(ctx.inputs)
@@ -474,7 +479,8 @@ async def test_decision_branch_fork():
                 )
             )
         ),
-        g.edge_from(path_1, path_2).join().to(combine),
+        g.edge_from(path_1, path_2).to(collect),
+        g.edge_from(collect).to(combine),
         g.edge_from(combine).to(g.end_node),
     )
 

@@ -22,7 +22,7 @@ pytestmark = pytest.mark.anyio
 
 
 @dataclass
-class TestState:
+class MyState:
     value: int = 0
 
 
@@ -48,14 +48,14 @@ async def test_path_last_fork_with_map():
 
 async def test_path_builder_last_fork_no_forks():
     """Test PathBuilder.last_fork property when there are no forks."""
-    builder = PathBuilder[TestState, None, int](working_items=[LabelMarker('test')])
+    builder = PathBuilder[MyState, None, int](working_items=[LabelMarker('test')])
     assert builder.last_fork is None
 
 
 async def test_path_builder_last_fork_with_map():
     """Test PathBuilder.last_fork property with a MapMarker."""
     map = MapMarker(fork_id=ForkID(NodeID('map1')), downstream_join_id=None)
-    builder = PathBuilder[TestState, None, int](working_items=[map, LabelMarker('test')])
+    builder = PathBuilder[MyState, None, int](working_items=[map, LabelMarker('test')])
     assert builder.last_fork is map
 
 
@@ -65,7 +65,7 @@ async def test_path_builder_transform():
     async def transform_func(ctx, input_data):
         return input_data * 2
 
-    builder = PathBuilder[TestState, None, int](working_items=[])
+    builder = PathBuilder[MyState, None, int](working_items=[])
     new_builder = builder.transform(transform_func)
 
     assert len(new_builder.working_items) == 1
@@ -74,18 +74,18 @@ async def test_path_builder_transform():
 
 async def test_edge_path_builder_transform():
     """Test EdgePathBuilder.transform method creates proper path."""
-    g = GraphBuilder(state_type=TestState, output_type=int)
+    g = GraphBuilder(state_type=MyState, output_type=int)
 
     @g.step
-    async def step_a(ctx: StepContext[TestState, None, None]) -> int:
+    async def step_a(ctx: StepContext[MyState, None, None]) -> int:
         return 10
 
     @g.step
-    async def step_b(ctx: StepContext[TestState, None, int]) -> int:
+    async def step_b(ctx: StepContext[MyState, None, int]) -> int:
         return ctx.inputs * 3
 
-    async def double(ctx: StepContext[TestState, None, int], value: int) -> int:
-        return value * 2
+    def double(ctx: StepContext[MyState, None, int]) -> int:
+        return ctx.inputs * 2
 
     # Build graph with transform in the path
     g.add(
@@ -95,16 +95,16 @@ async def test_edge_path_builder_transform():
     )
 
     graph = g.build()
-    result = await graph.run(state=TestState())
+    result = await graph.run(state=MyState())
     assert result == 60  # 10 * 2 * 3
 
 
 async def test_edge_path_builder_last_fork_id_none():
     """Test EdgePathBuilder.last_fork_id when there are no forks."""
-    g = GraphBuilder(state_type=TestState, output_type=int)
+    g = GraphBuilder(state_type=MyState, output_type=int)
 
     @g.step
-    async def step_a(ctx: StepContext[TestState, None, None]) -> int:
+    async def step_a(ctx: StepContext[MyState, None, None]) -> int:
         return 10
 
     edge_builder = g.edge_from(g.start_node)
@@ -114,25 +114,24 @@ async def test_edge_path_builder_last_fork_id_none():
 
 async def test_edge_path_builder_last_fork_id_with_map():
     """Test EdgePathBuilder.last_fork_id after a map operation."""
-    g = GraphBuilder(state_type=TestState, output_type=int)
+    g = GraphBuilder(state_type=MyState, output_type=int)
 
     @g.step
-    async def list_step(ctx: StepContext[TestState, None, None]) -> list[int]:
+    async def list_step(ctx: StepContext[MyState, None, None]) -> list[int]:
         return [1, 2, 3]
 
     @g.step
-    async def process_item(ctx: StepContext[TestState, None, int]) -> int:
+    async def process_item(ctx: StepContext[MyState, None, int]) -> int:
         return ctx.inputs * 2
 
     edge_builder = g.edge_from(list_step).map()
     fork_id = edge_builder.last_fork_id
     assert fork_id is not None
-    assert isinstance(fork_id, ForkID)
 
 
 async def test_path_builder_label():
     """Test PathBuilder.label method."""
-    builder = PathBuilder[TestState, None, int](working_items=[])
+    builder = PathBuilder[MyState, None, int](working_items=[])
     new_builder = builder.label('my label')
 
     assert len(new_builder.working_items) == 1
