@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    BinaryImage,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -1946,9 +1947,9 @@ def return_settings(messages: list[ModelMessage], agent_info: AgentInfo) -> Mode
 
 
 model_settings = CustomModelSettings(max_tokens=123, custom_setting='custom_value')
-model = FunctionModel(return_settings, settings=model_settings)
+return_settings_model = FunctionModel(return_settings, settings=model_settings)
 
-settings_agent = Agent(model, name='settings_agent')
+settings_agent = Agent(return_settings_model, name='settings_agent')
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
 settings_temporal_agent = TemporalAgent(settings_agent, activity_config=BASE_ACTIVITY_CONFIG)
@@ -1976,3 +1977,36 @@ async def test_custom_model_settings(allow_model_requests: None, client: Client)
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot("{'max_tokens': 123, 'custom_setting': 'custom_value'}")
+
+
+image_agent = Agent(model, name='image_agent', output_type=BinaryImage)
+
+# This needs to be done before the `TemporalAgent` is bound to the workflow.
+image_temporal_agent = TemporalAgent(image_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class ImageAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> BinaryImage:
+        result = await image_temporal_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_image_agent(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ImageAgentWorkflow],
+        plugins=[AgentPlugin(image_temporal_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot('Image output is not supported with Temporal because of the 2MB payload size limit.'),
+        ):
+            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+                ImageAgentWorkflow.run,
+                args=['Generate an image of an axolotl.'],
+                id=ImageAgentWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )

@@ -141,6 +141,21 @@ async def test_streamed_structured_response():
         response = await result.get_output()
         assert response == snapshot(('a', 'a'))
         assert result.is_complete
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={'response': ['a', 'a']},
+                    tool_call_id='pyd_ai_tool_call_id__final_result',
+                )
+            ],
+            usage=RequestUsage(input_tokens=50),
+            model_name='test',
+            timestamp=IsDatetime(),
+            provider_name='test',
+        )
+    )
 
 
 async def test_structured_response_iter():
@@ -869,6 +884,15 @@ async def test_custom_output_type_default_str() -> None:
     async with agent.run_stream('test') as result:
         response = await result.get_output()
         assert response == snapshot('success (no tool calls)')
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='success (no tool calls)')],
+            usage=RequestUsage(input_tokens=51, output_tokens=4),
+            model_name='test',
+            timestamp=IsDatetime(),
+            provider_name='test',
+        )
+    )
 
     async with agent.run_stream('test', output_type=OutputType) as result:
         response = await result.get_output()
@@ -898,7 +922,7 @@ async def test_iter_stream_output():
         return re.sub('cat sat', 'bat sat', data)
 
     run: AgentRun
-    stream: AgentStream
+    stream: AgentStream | None = None
     messages: list[str] = []
 
     stream_usage: RunUsage | None = None
@@ -909,6 +933,16 @@ async def test_iter_stream_output():
                     async for chunk in stream.stream_output(debounce_by=None):
                         messages.append(chunk)
                 stream_usage = deepcopy(stream.usage())
+    assert stream is not None
+    assert stream.response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='The cat sat on the mat.')],
+            usage=RequestUsage(input_tokens=51, output_tokens=7),
+            model_name='test',
+            timestamp=IsDatetime(),
+            provider_name='test',
+        )
+    )
     assert run.next_node == End(data=FinalResult(output='The bat sat on the mat.', tool_name=None, tool_call_id=None))
     assert run.usage() == stream_usage == RunUsage(requests=1, input_tokens=51, output_tokens=7)
 

@@ -13,7 +13,7 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
-from typing_extensions import deprecated
+from typing_extensions import Self, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -461,7 +461,7 @@ class BinaryContent:
     """The media type of the binary data."""
 
     identifier: str
-    """Identifier for the binary content, such as a unique ID. generating one from the data if not explicitly set
+    """Identifier for the binary content, such as a unique ID.
     This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
     and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
 
@@ -495,6 +495,33 @@ class BinaryContent:
         self.identifier = identifier or _multi_modal_content_identifier(data)
         self.vendor_metadata = vendor_metadata
         self.kind = kind
+
+    @staticmethod
+    def narrow_type(bc: BinaryContent) -> BinaryContent | BinaryImage:
+        """Narrow the type of the `BinaryContent` to `BinaryImage` if it's an image."""
+        if bc.is_image:
+            return BinaryImage(
+                data=bc.data,
+                media_type=bc.media_type,
+                identifier=bc.identifier,
+                vendor_metadata=bc.vendor_metadata,
+            )
+        else:
+            return bc  # pragma: no cover
+
+    @classmethod
+    def from_data_uri(cls, data_uri: str) -> Self:
+        """Create a `BinaryContent` from a data URI."""
+        prefix = 'data:'
+        if not data_uri.startswith(prefix):
+            raise ValueError('Data URI must start with "data:"')  # pragma: no cover
+        media_type, data = data_uri[len(prefix) :].split(';base64,', 1)
+        return cls(data=base64.b64decode(data), media_type=media_type)
+
+    @property
+    def data_uri(self) -> str:
+        """Convert the `BinaryContent` to a data URI."""
+        return f'data:{self.media_type};base64,{base64.b64encode(self.data).decode()}'
 
     @property
     def is_audio(self) -> bool:
@@ -532,6 +559,24 @@ class BinaryContent:
             raise ValueError(f'Unknown media type: {self.media_type}') from e
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+class BinaryImage(BinaryContent):
+    """Binary content that's guaranteed to be an image."""
+
+    def __init__(
+        self,
+        data: bytes,
+        *,
+        media_type: str,
+        identifier: str | None = None,
+        vendor_metadata: dict[str, Any] | None = None,
+        kind: Literal['binary'] = 'binary',
+    ):
+        super().__init__(data=data, media_type=media_type, identifier=identifier, vendor_metadata=vendor_metadata)
+
+        if not self.is_image:
+            raise ValueError('`BinaryImage` must be have a media type that starts with "image/"')  # pragma: no cover
 
 
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
@@ -935,6 +980,32 @@ class ThinkingPart:
 
 
 @dataclass(repr=False)
+class FilePart:
+    """A file response from a model."""
+
+    content: Annotated[BinaryContent, pydantic.AfterValidator(BinaryImage.narrow_type)]
+    """The file content of the response."""
+
+    _: KW_ONLY
+
+    id: str | None = None
+    """The identifier of the file part."""
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+    """
+
+    part_kind: Literal['file'] = 'file'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    def has_content(self) -> bool:
+        """Return `True` if the file content is non-empty."""
+        return bool(self.content)  # pragma: no cover
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class BaseToolCallPart:
     """A tool call from a model."""
 
@@ -1016,7 +1087,7 @@ class BuiltinToolCallPart(BaseToolCallPart):
 
 
 ModelResponsePart = Annotated[
-    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart,
+    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
     pydantic.Discriminator('part_kind'),
 ]
 """A message part returned by a model."""
@@ -1073,6 +1144,61 @@ class ModelResponse:
     finish_reason: FinishReason | None = None
     """Reason the model finished generating the response, normalized to OpenTelemetry values."""
 
+    @property
+    def text(self) -> str | None:
+        """Get the text in the response."""
+        texts: list[str] = []
+        last_part: ModelResponsePart | None = None
+        for part in self.parts:
+            if isinstance(part, TextPart):
+                # Adjacent text parts should be joined together, but if there are parts in between
+                # (like built-in tool calls) they should have newlines between them
+                if isinstance(last_part, TextPart):
+                    texts[-1] += part.content
+                else:
+                    texts.append(part.content)
+            last_part = part
+        if not texts:
+            return None
+
+        return '\n\n'.join(texts)
+
+    @property
+    def thinking(self) -> str | None:
+        """Get the thinking in the response."""
+        thinking_parts = [part.content for part in self.parts if isinstance(part, ThinkingPart)]
+        if not thinking_parts:
+            return None
+        return '\n\n'.join(thinking_parts)
+
+    @property
+    def files(self) -> list[BinaryContent]:
+        """Get the files in the response."""
+        return [part.content for part in self.parts if isinstance(part, FilePart)]
+
+    @property
+    def images(self) -> list[BinaryImage]:
+        """Get the images in the response."""
+        return [file for file in self.files if isinstance(file, BinaryImage)]
+
+    @property
+    def tool_calls(self) -> list[ToolCallPart]:
+        """Get the tool calls in the response."""
+        return [part for part in self.parts if isinstance(part, ToolCallPart)]
+
+    @property
+    def builtin_tool_calls(self) -> list[tuple[BuiltinToolCallPart, BuiltinToolReturnPart]]:
+        """Get the builtin tool calls and results in the response."""
+        calls = [part for part in self.parts if isinstance(part, BuiltinToolCallPart)]
+        if not calls:
+            return []
+        returns_by_id = {part.tool_call_id: part for part in self.parts if isinstance(part, BuiltinToolReturnPart)}
+        return [
+            (call_part, returns_by_id[call_part.tool_call_id])
+            for call_part in calls
+            if call_part.tool_call_id in returns_by_id
+        ]
+
     @deprecated('`price` is deprecated, use `cost` instead')
     def price(self) -> genai_types.PriceCalculation:  # pragma: no cover
         return self.cost()
@@ -1118,6 +1244,18 @@ class ModelResponse:
                 body.setdefault('content', []).append(
                     {'kind': kind, **({'text': part.content} if settings.include_content else {})}
                 )
+            elif isinstance(part, FilePart):
+                body.setdefault('content', []).append(
+                    {
+                        'kind': 'binary',
+                        'media_type': part.content.media_type,
+                        **(
+                            {'binary_content': base64.b64encode(part.content.data).decode()}
+                            if settings.include_content and settings.include_binary_content
+                            else {}
+                        ),
+                    }
+                )
 
         if content := body.get('content'):
             text_content = content[0].get('text')
@@ -1143,6 +1281,11 @@ class ModelResponse:
                         **({'content': part.content} if settings.include_content else {}),
                     )
                 )
+            elif isinstance(part, FilePart):
+                converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.content.media_type)
+                if settings.include_content and settings.include_binary_content:
+                    converted_part['content'] = base64.b64encode(part.content.data).decode()
+                parts.append(converted_part)
             elif isinstance(part, BaseToolCallPart):
                 call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
                 if isinstance(part, BuiltinToolCallPart):
