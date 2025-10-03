@@ -907,13 +907,19 @@ async def _call_tools(
 
         async def handle_call_or_result(
             coro_or_task: Awaitable[
-                tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
+                tuple[
+                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
+                ]
             ]
-            | Task[tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]],
+            | Task[
+                tuple[
+                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
+                ]
+            ],
             index: int,
         ) -> _messages.HandleResponseEvent | None:
             try:
-                tool_part, tool_user_part = (
+                tool_part, tool_user_content = (
                     (await coro_or_task) if inspect.isawaitable(coro_or_task) else coro_or_task.result()
                 )
             except exceptions.CallDeferred:
@@ -922,10 +928,10 @@ async def _call_tools(
                 deferred_calls_by_index[index] = 'unapproved'
             else:
                 tool_parts_by_index[index] = tool_part
-                if tool_user_part:
-                    user_parts_by_index[index] = tool_user_part
+                if tool_user_content:
+                    user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
 
-                return _messages.FunctionToolResultEvent(tool_part)
+                return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
 
         if tool_manager.should_call_sequentially(tool_calls):
             for index, call in enumerate(tool_calls):
@@ -966,7 +972,7 @@ async def _call_tool(
     tool_call: _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
     usage_limits: _usage.UsageLimits | None,
-) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]:
+) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
     try:
         if tool_call_result is None:
             tool_result = await tool_manager.handle_call(tool_call, usage_limits=usage_limits)
@@ -1043,14 +1049,7 @@ async def _call_tool(
         metadata=tool_return.metadata,
     )
 
-    user_part: _messages.UserPromptPart | None = None
-    if tool_return.content:
-        user_part = _messages.UserPromptPart(
-            content=tool_return.content,
-            part_kind='user-prompt',
-        )
-
-    return return_part, user_part
+    return return_part, tool_return.content
 
 
 @dataclasses.dataclass
