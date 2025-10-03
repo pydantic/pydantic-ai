@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Generic, cast, overload
+from typing import TYPE_CHECKING, Generic, cast, overload
 
 from pydantic import ValidationError
 from typing_extensions import TypeVar, deprecated
@@ -25,8 +25,10 @@ from .output import (
     OutputDataT,
     ToolOutput,
 )
-from .run import AgentRunResult
 from .usage import RunUsage, UsageLimits
+
+if TYPE_CHECKING:
+    from .run import AgentRunResult
 
 __all__ = (
     'OutputDataT',

@@ -15,6 +15,8 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    AgentRunResult,
+    AgentRunResultEvent,
     AgentStreamEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -1623,5 +1625,41 @@ async def test_stream_tool_returning_user_content():
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"get_image":"See ')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='file ')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='bd38f5"}')),
+        ]
+    )
+
+
+async def test_run_stream_events():
+    m = TestModel()
+
+    test_agent = Agent(m)
+    assert test_agent.name is None
+
+    @test_agent.tool_plain
+    async def ret_a(x: str) -> str:
+        return f'{x}-apple'
+
+    events = [event async for event in test_agent.run_stream_events('Hello')]
+
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='ret_a',
+                    content='a-apple',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
+            AgentRunResultEvent(result=AgentRunResult(output='{"ret_a":"a-apple"}')),
         ]
     )
