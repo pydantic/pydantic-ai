@@ -927,6 +927,20 @@ wheels = [
 ]
 
 [[package]]
+name = "docker"
+version = "7.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
+    { name = "requests" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/91/9b/4a2ea29aeba62471211598dac5d96825bb49348fa07e906ea930394a83ce/docker-7.1.0.tar.gz", hash = "sha256:ad8c70e6e3f8926cb8a92619b832b4ea5299e2831c14284663184e200546fa6c", size = 117834, upload-time = "2024-05-23T11:13:57.216Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e3/26/57c6fb270950d476074c087527a558ccb6f4436657314bfb6cdf484114c4/docker-7.1.0-py3-none-any.whl", hash = "sha256:c96b93b7f0a746f9e77d325bcfb87422a3d8bd4f03136ae8a85b37f1898d5fc0", size = 147774, upload-time = "2024-05-23T11:13:55.01Z" },
+]
+
+[[package]]
 name = "docstring-parser"
 version = "0.17.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3293,6 +3307,7 @@ dev = [
     { name = "pytest-recording" },
     { name = "pytest-xdist" },
     { name = "strict-no-cover" },
+    { name = "testcontainers" },
 ]
 docs = [
     { name = "black" },
@@ -3346,6 +3361,7 @@ dev = [
     { name = "pytest-recording", specifier = ">=0.13.2" },
     { name = "pytest-xdist", specifier = ">=3.6.1" },
     { name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=7fc59da2c4dff919db2095a0f0e47101b657131d" },
+    { name = "testcontainers", specifier = ">=4.13.1" },
 ]
 docs = [
     { name = "black", specifier = ">=24.10.0" },
@@ -4425,6 +4441,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a3/4d/6a19536c50b849338fcbe9290d562b52cbdcf30d8963d3588a68a4107df1/tenacity-8.5.0.tar.gz", hash = "sha256:8bc6c0c8a09b31e6cad13c47afbed1a567518250a9a171418582ed8d9c20ca78", size = 47309, upload-time = "2024-07-05T07:25:31.836Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d2/3f/8ba87d9e287b9d385a02a7114ddcef61b26f86411e121c9003eb509a1773/tenacity-8.5.0-py3-none-any.whl", hash = "sha256:b594c2a5945830c267ce6b79a166228323ed52718f30302c1359836112346687", size = 28165, upload-time = "2024-07-05T07:25:29.591Z" },
+]
+
+[[package]]
+name = "testcontainers"
+version = "4.13.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "docker" },
+    { name = "python-dotenv" },
+    { name = "typing-extensions" },
+    { name = "urllib3" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/52/ce/4fd72abe8372cc8c737c62da9dadcdfb6921b57ad8932f7a0feb605e5bf5/testcontainers-4.13.1.tar.gz", hash = "sha256:4a6c5b2faa3e8afb91dff18b389a14b485f3e430157727b58e65d30c8dcde3f3", size = 77955, upload-time = "2025-09-24T22:47:47.2Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cc/30/f0660686920e09680b8afb0d2738580223dbef087a9bd92f3f14163c2fa6/testcontainers-4.13.1-py3-none-any.whl", hash = "sha256:10e6013a215eba673a0bcc153c8809d6f1c53c245e0a236e3877807652af4952", size = 123995, upload-time = "2025-09-24T22:47:45.44Z" },
 ]
 
 [[package]]

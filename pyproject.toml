@@ -111,6 +111,7 @@ dev = [
     "pip>=25.2",
     "genai-prices>=0.0.28",
     "mcp-run-python>=0.0.20",
+    "testcontainers>=4.13.1"
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [
