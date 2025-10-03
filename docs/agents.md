@@ -637,6 +637,8 @@ except UsageLimitExceeded as e:
     - Usage limits are especially relevant if you've registered many tools. Use `request_limit` to bound the number of model turns, and `tool_calls_limit` to cap the number of successful tool executions within a run.
     - The `tool_calls_limit` is checked before executing tool calls. If the model returns parallel tool calls that would exceed the limit, no tools will be executed.
 
+#### Model (Run) Settings
+
 Pydantic AI offers a [`settings.ModelSettings`][pydantic_ai.settings.ModelSettings] structure to help you fine tune your requests.
 This structure allows you to configure common parameters that influence the model's behavior, such as `temperature`, `max_tokens`,
 `timeout`, and more.
