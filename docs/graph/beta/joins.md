@@ -139,8 +139,9 @@ async def main():
 
     graph = g.build()
     result = await graph.run(state=SimpleState())
+    result = {k: result[k] for k in sorted(result)}  # force deterministic ordering
     print(result)
-    #> {'cherry': 6, 'banana': 6, 'apple': 5}
+    #> {'apple': 5, 'banana': 6, 'cherry': 6}
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
