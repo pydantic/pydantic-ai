@@ -66,7 +66,7 @@ There are five ways to run an agent:
 1. [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] — an async function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response.
 2. [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] — a plain, synchronous function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response (internally, this just calls `loop.run_until_complete(self.run())`).
 3. [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] — an async context manager which returns a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], which contains methods to stream text and structured output as an async iterable.
-4. [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] — an function which returns an async iterable of [`AgentStreamEvent`s][pydantic_ai.agent.AgentStreamEvent] and a [`AgentRunResultEvent`][pydantic_ai.agent.AgentRunResultEvent] containing the final run result.
+4. [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] — a function which returns an async iterable of [`AgentStreamEvent`s][pydantic_ai.agent.AgentStreamEvent] and a [`AgentRunResultEvent`][pydantic_ai.agent.AgentRunResultEvent] containing the final run result.
 5. [`agent.iter()`][pydantic_ai.Agent.iter] — a context manager which returns an [`AgentRun`][pydantic_ai.agent.AgentRun], an async iterable over the nodes of the agent's underlying [`Graph`][pydantic_graph.graph.Graph].
 
 Here's a simple example demonstrating the first four:
