@@ -1,11 +1,19 @@
 import base64
 from collections.abc import Sequence
-from typing import Literal
+from typing import Any, Literal, cast
+
+import logfire
+from pydantic.alias_generators import to_snake
+
+from pydantic_ai.agent.abstract import AbstractAgent
 
 from . import exceptions, messages
+from .agent import AgentDepsT, OutputDataT
 
 try:
     from mcp import types as mcp_types
+    from mcp.server.lowlevel.server import Server, StructuredContent
+    from mcp.types import Tool
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `mcp` package to use the MCP server, '
@@ -121,3 +129,45 @@ def map_from_sampling_content(
         return messages.TextPart(content=content.text)
     else:
         raise NotImplementedError('Image and Audio responses in sampling are not yet supported')
+
+
+def agent_to_mcp(
+    agent: AbstractAgent[AgentDepsT, OutputDataT],
+    *,
+    server_name: str | None = None,
+    tool_name: str | None = None,
+    tool_description: str | None = None,
+    # TODO(Marcelo): Should this actually be a factory that is created in every tool call?
+    deps: AgentDepsT = None,
+) -> Server:
+    server_name = to_snake((server_name or agent.name or 'PydanticAI Agent').replace(' ', '_'))
+    tool_name = to_snake((tool_name or agent.name or 'PydanticAI Agent').replace(' ', '_'))
+    app = Server(name=server_name)
+
+    async def list_tools() -> list[Tool]:
+        return [
+            Tool(
+                name=tool_name,
+                description=tool_description,
+                inputSchema={'type': 'object', 'properties': {'prompt': {'type': 'string'}}},
+                # TODO(Marcelo): How do I get this?
+                outputSchema={'type': 'object', 'properties': {}},
+            )
+        ]
+
+    async def call_tool(name: str, args: dict[str, Any]) -> StructuredContent:
+        if name != tool_name:
+            raise ValueError(f'Unknown tool: {name}')
+
+        # TODO(Marcelo): Should we pass the `message_history` instead?
+        prompt = cast(str, args['prompt'])
+        logfire.info(f'Calling tool: {name} with args: {args}')
+
+        result = await agent.run(user_prompt=prompt, deps=deps)
+
+        return dict(result=result.output)
+
+    app.list_tools()(list_tools)
+    app.call_tool()(call_tool)
+
+    return app
