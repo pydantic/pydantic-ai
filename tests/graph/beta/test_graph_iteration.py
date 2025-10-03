@@ -212,8 +212,8 @@ async def test_iter_next_task_property():
         assert next_task is not None
 
 
-async def test_iter_with_spread():
-    """Test iteration with spread operations."""
+async def test_iter_with_map():
+    """Test iteration with map operations."""
     g = GraphBuilder(state_type=IterState, output_type=list[int])
 
     @g.step
@@ -230,7 +230,7 @@ async def test_iter_with_spread():
 
     g.add(
         g.edge_from(g.start_node).to(generate),
-        g.edge_from(generate).spread().to(square),
+        g.edge_from(generate).map().to(square),
         g.edge_from(square).to(collect),
         g.edge_from(collect).to(g.end_node),
     )
@@ -244,7 +244,7 @@ async def test_iter_with_spread():
             if isinstance(event, list):
                 task_count += len(event)
 
-    # Should see multiple tasks from the spread
+    # Should see multiple tasks from the map
     assert task_count >= 3
 
 

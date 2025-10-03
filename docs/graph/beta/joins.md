@@ -4,7 +4,7 @@ Join nodes synchronize and aggregate data from parallel execution paths. They us
 
 ## Overview
 
-When you use [parallel execution](parallel.md) (broadcasting or spreading), you often need to collect and combine the results. Join nodes serve this purpose by:
+When you use [parallel execution](parallel.md) (broadcasting or mapping), you often need to collect and combine the results. Join nodes serve this purpose by:
 
 1. Waiting for all parallel tasks to complete
 2. Aggregating their outputs using a [`Reducer`][pydantic_graph.beta.join.Reducer]
@@ -41,7 +41,7 @@ async def main():
 
     g.add(
         g.edge_from(g.start_node).to(generate_numbers),
-        g.edge_from(generate_numbers).spread().to(square),
+        g.edge_from(generate_numbers).map().to(square),
         g.edge_from(square).to(collect),
         g.edge_from(collect).to(g.end_node),
     )
@@ -88,7 +88,7 @@ async def main():
 
     g.add(
         g.edge_from(g.start_node).to(generate),
-        g.edge_from(generate).spread().to(to_string),
+        g.edge_from(generate).map().to(to_string),
         g.edge_from(to_string).to(collect),
         g.edge_from(collect).to(g.end_node),
     )
@@ -131,7 +131,7 @@ async def main():
 
     g.add(
         g.edge_from(g.start_node).to(generate_keys),
-        g.edge_from(generate_keys).spread().to(create_entry),
+        g.edge_from(generate_keys).map().to(create_entry),
         g.edge_from(create_entry).to(merge),
         g.edge_from(merge).to(g.end_node),
     )
@@ -180,7 +180,7 @@ async def main():
 
     g.add(
         g.edge_from(g.start_node).to(generate),
-        g.edge_from(generate).spread().to(accumulate),
+        g.edge_from(generate).map().to(accumulate),
         g.edge_from(accumulate).to(ignore),
         g.edge_from(ignore).to(get_total),
         g.edge_from(get_total).to(g.end_node),
@@ -240,7 +240,7 @@ async def main():
 
     g.add(
         g.edge_from(g.start_node).to(generate),
-        g.edge_from(generate).spread().to(identity),
+        g.edge_from(generate).map().to(identity),
         g.edge_from(identity).to(sum_join),
         g.edge_from(sum_join).to(g.end_node),
     )
@@ -311,7 +311,7 @@ async def main():
 
     g.add(
         g.edge_from(g.start_node).to(generate),
-        g.edge_from(generate).spread().to(process),
+        g.edge_from(generate).map().to(process),
         g.edge_from(process).to(metrics),
         g.edge_from(metrics).to(g.end_node),
     )
@@ -381,8 +381,8 @@ async def main():
 
     g.add(
         g.edge_from(g.start_node).to(source_a, source_b),
-        g.edge_from(source_a).spread().to(process_a),
-        g.edge_from(source_b).spread().to(process_b),
+        g.edge_from(source_a).map().to(process_a),
+        g.edge_from(source_b).map().to(process_b),
         g.edge_from(process_a).to(join_a),
         g.edge_from(process_b).to(join_b),
         g.edge_from(join_a).to(store_a),
@@ -429,6 +429,6 @@ This ensures proper synchronization even with nested parallel operations.
 
 ## Next Steps
 
-- Learn about [parallel execution](parallel.md) with broadcasting and spreading
+- Learn about [parallel execution](parallel.md) with broadcasting and mapping
 - Explore [conditional branching](decisions.md) with decision nodes
 - See the [API reference][pydantic_graph.beta.join] for complete reducer documentation

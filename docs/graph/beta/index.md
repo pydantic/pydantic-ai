@@ -118,7 +118,7 @@ Every graph has:
 
 ## A More Complex Example
 
-Here's an example showcasing parallel execution with a spread operation:
+Here's an example showcasing parallel execution with a map operation:
 
 ```python {title="parallel_processing.py"}
 from dataclasses import dataclass
@@ -149,9 +149,9 @@ async def main():
     # Create a join to collect results
     collect_results = g.join(ListReducer[int])
 
-    # Build the graph with spread operation
+    # Build the graph with map operation
     g.add(
-        g.edge_from(g.start_node).spread().to(square),
+        g.edge_from(g.start_node).map().to(square),
         g.edge_from(square).to(collect_results),
         g.edge_from(collect_results).to(g.end_node),
     )
@@ -171,7 +171,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 In this example:
 
 1. The start node receives a list of integers
-2. The `.spread()` operation fans out each item to a separate parallel execution of the `square` step
+2. The `.map()` operation fans out each item to a separate parallel execution of the `square` step
 3. All results are collected back together using a [`ListReducer`][pydantic_graph.beta.join.ListReducer]
 4. The joined results flow to the end node
 
@@ -182,7 +182,7 @@ Explore the detailed documentation for each feature:
 - [**Steps**](steps.md) - Learn about step nodes and execution contexts
 - [**Joins**](joins.md) - Understand join nodes and reducer patterns
 - [**Decisions**](decisions.md) - Implement conditional branching
-- [**Parallel Execution**](parallel.md) - Master broadcasting and spreading
+- [**Parallel Execution**](parallel.md) - Master broadcasting and mapping
 
 ## Comparison with Original API
 
@@ -190,7 +190,7 @@ The original graph API (documented in the [main graph page](../../graph.md)) use
 
 **Advantages:**
 - More concise syntax for simple workflows
-- Explicit control over parallelism with spread/broadcast
+- Explicit control over parallelism with map/broadcast
 - Built-in reducers for common aggregation patterns
 - Easier to visualize complex data flows
 

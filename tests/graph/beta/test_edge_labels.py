@@ -62,8 +62,8 @@ async def test_multiple_labels_in_path():
     assert result == 15
 
 
-async def test_label_before_spread():
-    """Test label placement before a spread operation."""
+async def test_label_before_map():
+    """Test label placement before a map operation."""
     g = GraphBuilder(state_type=LabelState, output_type=list[int])
 
     @g.step
@@ -80,7 +80,7 @@ async def test_label_before_spread():
 
     g.add(
         g.edge_from(g.start_node).to(generate),
-        g.edge_from(generate).label('before spread').spread().label('after spread').to(double),
+        g.edge_from(generate).label('before map').map().label('after map').to(double),
         g.edge_from(double).to(collect),
         g.edge_from(collect).to(g.end_node),
     )
@@ -217,7 +217,7 @@ async def test_complex_labeled_path():
 
     g.add(
         g.edge_from(g.start_node).label('initialize').to(start),
-        g.edge_from(start).label('before spread').spread().label('spreading').to(process),
+        g.edge_from(start).label('before map').map().label('mapping').to(process),
         g.edge_from(process).label('to stringify').to(stringify),
         g.edge_from(stringify).label('collecting').to(collect),
         g.edge_from(collect).label('done').to(g.end_node),

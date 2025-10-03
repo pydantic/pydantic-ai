@@ -420,6 +420,6 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 ## Next Steps
 
-- Learn about [parallel execution](parallel.md) with broadcasting and spreading
+- Learn about [parallel execution](parallel.md) with broadcasting and mapping
 - Understand [join nodes](joins.md) for aggregating parallel results
 - See the [API reference][pydantic_graph.beta.decision] for complete decision documentation

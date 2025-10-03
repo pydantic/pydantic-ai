@@ -33,7 +33,7 @@ async def test_null_reducer():
 
     g.add(
         g.edge_from(g.start_node).to(source),
-        g.edge_from(source).spread().to(process),
+        g.edge_from(source).map().to(process),
         g.edge_from(process).to(null_join),
         g.edge_from(null_join).to(g.end_node),
     )
@@ -62,7 +62,7 @@ async def test_list_reducer():
 
     g.add(
         g.edge_from(g.start_node).to(generate_numbers),
-        g.edge_from(generate_numbers).spread().to(to_string),
+        g.edge_from(generate_numbers).map().to(to_string),
         g.edge_from(to_string).to(list_join),
         g.edge_from(list_join).to(g.end_node),
     )
@@ -89,7 +89,7 @@ async def test_dict_reducer():
 
     g.add(
         g.edge_from(g.start_node).to(generate_keys),
-        g.edge_from(generate_keys).spread().to(create_dict),
+        g.edge_from(generate_keys).map().to(create_dict),
         g.edge_from(create_dict).to(dict_join),
         g.edge_from(dict_join).to(g.end_node),
     )
@@ -126,7 +126,7 @@ async def test_custom_reducer():
 
     g.add(
         g.edge_from(g.start_node).to(generate_numbers),
-        g.edge_from(generate_numbers).spread().to(identity),
+        g.edge_from(generate_numbers).map().to(identity),
         g.edge_from(identity).to(sum_join),
         g.edge_from(sum_join).to(g.end_node),
     )
@@ -164,7 +164,7 @@ async def test_reducer_with_state_access():
 
     g.add(
         g.edge_from(g.start_node).to(generate),
-        g.edge_from(generate).spread().to(process),
+        g.edge_from(generate).map().to(process),
         g.edge_from(process).to(aware_join),
         g.edge_from(aware_join).to(g.end_node),
     )
@@ -192,7 +192,7 @@ async def test_join_with_custom_id():
 
     g.add(
         g.edge_from(g.start_node).to(source),
-        g.edge_from(source).spread().to(process),
+        g.edge_from(source).map().to(process),
         g.edge_from(process).to(custom_join),
         g.edge_from(custom_join).to(g.end_node),
     )
@@ -243,8 +243,8 @@ async def test_multiple_joins():
 
     g.add(
         g.edge_from(g.start_node).to(source_a, source_b),
-        g.edge_from(source_a).spread().to(process_a),
-        g.edge_from(source_b).spread().to(process_b),
+        g.edge_from(source_a).map().to(process_a),
+        g.edge_from(source_b).map().to(process_b),
         g.edge_from(process_a).to(join_a),
         g.edge_from(process_b).to(join_b),
         g.edge_from(join_a).to(store_a),
@@ -277,7 +277,7 @@ async def test_dict_reducer_with_overlapping_keys():
 
     g.add(
         g.edge_from(g.start_node).to(generate),
-        g.edge_from(generate).spread().to(create_dict),
+        g.edge_from(generate).map().to(create_dict),
         g.edge_from(create_dict).to(dict_join),
         g.edge_from(dict_join).to(g.end_node),
     )

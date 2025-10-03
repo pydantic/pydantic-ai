@@ -7,7 +7,6 @@ the v1 and v2 graph execution systems.
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Protocol, cast, get_origin, overload
@@ -147,16 +146,18 @@ class Step(Generic[StateT, DepsT, InputT, OutputT]):
         self.user_label = user_label
         """Optional human-readable label for this step."""
 
-    async def call(self, ctx: StepContext[StateT, DepsT, InputT]) -> OutputT:
+    # TODO(P3): Consider replacing this with __call__, so the decorated object can still be called with the same signature
+    @property
+    def call(self) -> StepFunction[StateT, DepsT, InputT, OutputT]:
         """The step function to execute.
+
+        This property is necessary to ensure that Step maintains proper
+        covariance/contravariance in its type parameters.
 
         Returns:
             The wrapped step function
         """
-        result = self._call(ctx)
-        if inspect.isawaitable(result):
-            return await result
-        return result
+        return self._call
 
     # TODO(P3): Consider adding a `bind` method that returns an object that can be used to get something you can return from a BaseNode that allows you to transition to nodes using "new"-form edges
 

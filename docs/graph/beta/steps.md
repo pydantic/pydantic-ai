@@ -345,6 +345,6 @@ async def returns_str(ctx: StepContext[MyState, None, None]) -> str:
 
 ## Next Steps
 
-- Learn about [parallel execution](parallel.md) with broadcasting and spreading
+- Learn about [parallel execution](parallel.md) with broadcasting and mapping
 - Understand [join nodes](joins.md) for aggregating parallel results
 - Explore [conditional branching](decisions.md) with decision nodes

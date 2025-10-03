@@ -112,7 +112,7 @@ class DecisionBranch(Generic[SourceT]):
     path: Path
     """The execution path to follow when an input value matches this branch of a decision node.
 
-    This can include transforming, spreading, and broadcasting the output before sending to the next node or nodes.
+    This can include transforming, mapping, and broadcasting the output before sending to the next node or nodes.
 
     The path can also include position-aware labels which are used when generating mermaid diagrams."""
 
@@ -211,7 +211,7 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
             path_builder=self.path_builder.transform(func),
         )
 
-    def spread(
+    def map(
         self: DecisionBranchBuilder[StateT, DepsT, Iterable[T], SourceT, HandledT],
         *,
         fork_id: ForkID | None = None,
@@ -224,16 +224,16 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
 
         Args:
             fork_id: Optional ID for the fork, defaults to a generated value
-            downstream_join_id: Optional ID of a downstream join node which is involved when spreading empty iterables
+            downstream_join_id: Optional ID of a downstream join node which is involved when mapping empty iterables
 
         Returns:
-            A new DecisionBranchBuilder where spreading is performed prior to generating the final output.
+            A new DecisionBranchBuilder where mapping is performed prior to generating the final output.
         """
         return DecisionBranchBuilder(
             decision=self.decision,
             source=self.source,
             matches=self.matches,
-            path_builder=self.path_builder.spread(fork_id=fork_id, downstream_join_id=downstream_join_id),
+            path_builder=self.path_builder.map(fork_id=fork_id, downstream_join_id=downstream_join_id),
         )
 
     def label(self, label: str) -> DecisionBranchBuilder[StateT, DepsT, OutputT, SourceT, HandledT]:

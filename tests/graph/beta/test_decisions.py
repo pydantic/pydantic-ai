@@ -280,8 +280,8 @@ async def test_decision_with_label():
     assert result == 'Path A'
 
 
-async def test_decision_with_spread():
-    """Test decision branch that spreads output."""
+async def test_decision_with_map():
+    """Test decision branch that maps output."""
     g = GraphBuilder(state_type=DecisionState, output_type=int)
 
     @g.step
@@ -312,7 +312,7 @@ async def test_decision_with_spread():
             .branch(g.match(TypeExpression[Literal['list']]).to(make_list))
             .branch(g.match(TypeExpression[Literal['single']]).to(make_single))
         ),
-        g.edge_from(make_list).spread().to(process_item),
+        g.edge_from(make_list).map().to(process_item),
         g.edge_from(make_single).to(process_item),
         g.edge_from(process_item).to(get_value),
         g.edge_from(get_value).to(g.end_node),

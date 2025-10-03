@@ -344,7 +344,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         """Add one or more edge paths to the graph.
 
         This method processes edge paths and automatically creates any necessary
-        fork nodes for broadcasts and spreads.
+        fork nodes for broadcasts and maps.
 
         Args:
             *edges: The edge paths to add to the graph
@@ -358,12 +358,12 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             """
             for item in p.items:
                 if isinstance(item, BroadcastMarker):
-                    new_node = Fork[Any, Any](id=item.fork_id, is_spread=False)
+                    new_node = Fork[Any, Any](id=item.fork_id, is_map=False)
                     self._insert_node(new_node)
                     for path in item.paths:
                         _handle_path(Path(items=[*path.items]))
                 elif isinstance(item, SpreadMarker):
-                    new_node = Fork[Any, Any](id=item.fork_id, is_spread=True)
+                    new_node = Fork[Any, Any](id=item.fork_id, is_map=True)
                     self._insert_node(new_node)
                 elif isinstance(item, DestinationMarker):
                     pass
@@ -407,34 +407,34 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             builder = builder.label(label)
         self.add(builder.to(destination))
 
-    def add_spreading_edge(
+    def add_mapping_edge(
         self,
         source: Source[Iterable[T]],
-        spread_to: Destination[T],
+        map_to: Destination[T],
         *,
-        pre_spread_label: str | None = None,
-        post_spread_label: str | None = None,
+        pre_map_label: str | None = None,
+        post_map_label: str | None = None,
         fork_id: ForkID | None = None,
         downstream_join_id: JoinID | None = None,
     ) -> None:
-        """Add an edge that spreads iterable data across parallel paths.
+        """Add an edge that maps iterable data across parallel paths.
 
         Args:
             source: The source node that produces iterable data
-            spread_to: The destination node that receives individual items
-            pre_spread_label: Optional label before the spread operation
-            post_spread_label: Optional label after the spread operation
-            fork_id: Optional ID for the fork node produced for this spread operation
-            downstream_join_id: Optional ID of a join node that will always be downstream of this spread.
-                Specifying this ensures correct handling if you try to spread an empty iterable.
+            map_to: The destination node that receives individual items
+            pre_map_label: Optional label before the map operation
+            post_map_label: Optional label after the map operation
+            fork_id: Optional ID for the fork node produced for this map operation
+            downstream_join_id: Optional ID of a join node that will always be downstream of this map.
+                Specifying this ensures correct handling if you try to map an empty iterable.
         """
         builder = self.edge_from(source)
-        if pre_spread_label is not None:
-            builder = builder.label(pre_spread_label)
-        builder = builder.spread(fork_id=fork_id, downstream_join_id=downstream_join_id)
-        if post_spread_label is not None:
-            builder = builder.label(post_spread_label)
-        self.add(builder.to(spread_to))
+        if pre_map_label is not None:
+            builder = builder.label(pre_map_label)
+        builder = builder.map(fork_id=fork_id, downstream_join_id=downstream_join_id)
+        if post_map_label is not None:
+            builder = builder.label(post_map_label)
+        self.add(builder.to(map_to))
 
     # TODO(P2): Support adding subgraphs ... not sure exactly what that looks like yet..
     #  probably similar to a step, but with some tweaks
@@ -590,17 +590,17 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             index += 1
         return node_id
 
-    def _get_new_spread_id(self, from_: str | None = None, to: str | None = None) -> str:
-        """Generate a unique ID for a new spread fork.
+    def _get_new_map_id(self, from_: str | None = None, to: str | None = None) -> str:
+        """Generate a unique ID for a new map fork.
 
         Args:
             from_: Optional source identifier to include in the ID
             to: Optional destination identifier to include in the ID
 
         Returns:
-            A unique spread fork ID
+            A unique map fork ID
         """
-        prefix = 'spread'
+        prefix = 'map'
         if from_ is not None:
             prefix += f'_from_{from_}'
         if to is not None:
@@ -744,13 +744,13 @@ def _normalize_forks(
         paths_to_handle.extend(edges_from_source)
 
         node = nodes[source_id]
-        if isinstance(node, Fork) and not node.is_spread:
+        if isinstance(node, Fork) and not node.is_map:
             new_edges[source_id] = edges_from_source
             continue  # broadcast fork; nothing to do
         if len(edges_from_source) == 1:
             new_edges[source_id] = edges_from_source
             continue
-        new_fork = Fork[Any, Any](id=ForkID(NodeID(f'{node.id}_broadcast_fork')), is_spread=False)
+        new_fork = Fork[Any, Any](id=ForkID(NodeID(f'{node.id}_broadcast_fork')), is_map=False)
         new_nodes[new_fork.id] = new_fork
         new_edges[source_id] = [Path(items=[BroadcastMarker(fork_id=new_fork.id, paths=edges_from_source)])]
         new_edges[new_fork.id] = edges_from_source
@@ -764,7 +764,7 @@ def _normalize_forks(
             if isinstance(item, BroadcastMarker):
                 assert item.fork_id in new_nodes
                 # if item.fork_id not in new_nodes:
-                #     new_nodes[new_fork.id] = Fork[Any, Any](id=item.fork_id, is_spread=False)
+                #     new_nodes[new_fork.id] = Fork[Any, Any](id=item.fork_id, is_map=False)
                 new_edges[item.fork_id] = [*item.paths]
                 paths_to_handle.extend(item.paths)
 

@@ -1,4 +1,4 @@
-"""Tests for broadcast (parallel) and spread (fan-out) operations."""
+"""Tests for broadcast (parallel) and map (fan-out) operations."""
 
 from __future__ import annotations
 
@@ -51,8 +51,8 @@ async def test_broadcast_to_multiple_steps():
     assert sorted(result) == [11, 12, 13]
 
 
-async def test_spread_over_list():
-    """Test spreading a list to process items in parallel."""
+async def test_map_over_list():
+    """Test mapping a list to process items in parallel."""
     g = GraphBuilder(state_type=CounterState, output_type=list[int])
 
     @g.step
@@ -65,7 +65,7 @@ async def test_spread_over_list():
 
     collect = g.join(ListReducer[int])
 
-    g.add_spreading_edge(generate_list, square)
+    g.add_mapping_edge(generate_list, square)
     g.add(
         g.edge_from(g.start_node).to(generate_list),
         g.edge_from(square).to(collect),
@@ -77,8 +77,8 @@ async def test_spread_over_list():
     assert sorted(result) == [1, 4, 9, 16, 25]
 
 
-async def test_spread_with_labels():
-    """Test spread operation with labeled edges."""
+async def test_map_with_labels():
+    """Test map operation with labeled edges."""
     g = GraphBuilder(state_type=CounterState, output_type=list[str])
 
     @g.step
@@ -91,11 +91,11 @@ async def test_spread_with_labels():
 
     collect = g.join(ListReducer[str])
 
-    g.add_spreading_edge(
+    g.add_mapping_edge(
         generate_numbers,
         stringify,
-        pre_spread_label='before spread',
-        post_spread_label='after spread',
+        pre_map_label='before map',
+        post_map_label='after map',
     )
     g.add(
         g.edge_from(g.start_node).to(generate_numbers),
@@ -108,8 +108,8 @@ async def test_spread_with_labels():
     assert sorted(result) == ['Value: 10', 'Value: 20', 'Value: 30']
 
 
-async def test_spread_empty_list():
-    """Test spreading an empty list."""
+async def test_map_empty_list():
+    """Test mapping an empty list."""
     g = GraphBuilder(state_type=CounterState, output_type=list[int])
 
     @g.step
@@ -122,7 +122,7 @@ async def test_spread_empty_list():
 
     collect = g.join(ListReducer[int])
 
-    g.add_spreading_edge(generate_empty, double, downstream_join_id=collect.id)
+    g.add_mapping_edge(generate_empty, double, downstream_join_id=collect.id)
     g.add(
         g.edge_from(g.start_node).to(generate_empty),
         g.edge_from(double).to(collect),
@@ -176,8 +176,8 @@ async def test_nested_broadcasts():
     assert sorted(result) == [16, 30]
 
 
-async def test_spread_then_broadcast():
-    """Test spreading followed by broadcasting from each spread item."""
+async def test_map_then_broadcast():
+    """Test mapping followed by broadcasting from each map item."""
     g = GraphBuilder(state_type=CounterState, output_type=list[int])
 
     @g.step
@@ -196,7 +196,7 @@ async def test_spread_then_broadcast():
 
     g.add(
         g.edge_from(g.start_node).to(generate_list),
-        g.edge_from(generate_list).spread().to(add_one, add_two),
+        g.edge_from(generate_list).map().to(add_one, add_two),
         g.edge_from(add_one, add_two).to(collect),
         g.edge_from(collect).to(g.end_node),
     )
@@ -208,8 +208,8 @@ async def test_spread_then_broadcast():
     assert sorted(result) == [11, 12, 21, 22]
 
 
-async def test_multiple_sequential_spreads():
-    """Test multiple sequential spread operations."""
+async def test_multiple_sequential_maps():
+    """Test multiple sequential map operations."""
     g = GraphBuilder(state_type=CounterState, output_type=list[str])
 
     @g.step
@@ -228,8 +228,8 @@ async def test_multiple_sequential_spreads():
 
     g.add(
         g.edge_from(g.start_node).to(generate_pairs),
-        g.edge_from(generate_pairs).spread().to(unpack_pair),
-        g.edge_from(unpack_pair).spread().to(stringify),
+        g.edge_from(generate_pairs).map().to(unpack_pair),
+        g.edge_from(unpack_pair).map().to(stringify),
         g.edge_from(stringify).to(collect),
         g.edge_from(collect).to(g.end_node),
     )

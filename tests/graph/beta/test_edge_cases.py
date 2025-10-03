@@ -101,8 +101,8 @@ async def test_step_with_empty_string():
     assert result == 'appended'
 
 
-async def test_spread_single_item():
-    """Test spreading a single-item list."""
+async def test_map_single_item():
+    """Test mapping a single-item list."""
     g = GraphBuilder(state_type=EdgeCaseState, output_type=list[int])
 
     @g.step
@@ -119,7 +119,7 @@ async def test_spread_single_item():
 
     g.add(
         g.edge_from(g.start_node).to(single_item),
-        g.edge_from(single_item).spread().to(process),
+        g.edge_from(single_item).map().to(process),
         g.edge_from(process).to(collect),
         g.edge_from(collect).to(g.end_node),
     )
@@ -223,7 +223,7 @@ async def test_join_with_single_input():
 
 
 async def test_null_reducer_with_no_inputs():
-    """Test NullReducer behavior with spread that produces no items."""
+    """Test NullReducer behavior with map that produces no items."""
     g = GraphBuilder(state_type=EdgeCaseState)
 
     @g.step
@@ -238,7 +238,7 @@ async def test_null_reducer_with_no_inputs():
 
     g.add(
         g.edge_from(g.start_node).to(empty_list),
-        g.edge_from(empty_list).spread(downstream_join_id=null_join.id).to(process),
+        g.edge_from(empty_list).map(downstream_join_id=null_join.id).to(process),
         g.edge_from(process).to(null_join),
         g.edge_from(null_join).to(g.end_node),
     )
@@ -304,7 +304,7 @@ async def test_multiple_joins_same_fork():
 
     g.add(
         g.edge_from(g.start_node).to(source),
-        g.edge_from(source).spread().to(path_a, path_b),
+        g.edge_from(source).map().to(path_a, path_b),
         g.edge_from(path_a).to(join_a),
         g.edge_from(path_b).to(join_b),
         # Note: This test demonstrates structure but may need adjustment based on actual API
@@ -339,7 +339,7 @@ async def test_state_with_mutable_collections():
 
     g.add(
         g.edge_from(g.start_node).to(generate),
-        g.edge_from(generate).spread().to(append_to_state),
+        g.edge_from(generate).map().to(append_to_state),
         g.edge_from(append_to_state).to(collect),
         g.edge_from(collect).to(get_state_items),
         g.edge_from(get_state_items).to(g.end_node),

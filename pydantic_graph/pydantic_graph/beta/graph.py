@@ -659,23 +659,23 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             try:
                 iter(inputs)
             except TypeError:
-                raise RuntimeError(f'Cannot spread non-iterable value: {inputs!r}')
+                raise RuntimeError(f'Cannot map non-iterable value: {inputs!r}')
 
             node_run_id = NodeRunID(str(uuid.uuid4()))
 
-            # If the spread specifies a downstream join id, eagerly create a reducer for it
+            # If the map specifies a downstream join id, eagerly create a reducer for it
             if item.downstream_join_id is not None:
                 join_node = self.graph.nodes[item.downstream_join_id]
                 assert isinstance(join_node, Join)
                 self._active_reducers[(item.downstream_join_id, node_run_id)] = join_node.create_reducer(), fork_stack
 
-            spread_tasks: list[GraphTask] = []
+            map_tasks: list[GraphTask] = []
             for thread_index, input_item in enumerate(inputs):
                 item_tasks = self._handle_path(
                     path.next_path, input_item, fork_stack + (ForkStackItem(item.fork_id, node_run_id, thread_index),)
                 )
-                spread_tasks += item_tasks
-            return spread_tasks
+                map_tasks += item_tasks
+            return map_tasks
         elif isinstance(item, BroadcastMarker):
             return [GraphTask(item.fork_id, inputs, fork_stack)]
         elif isinstance(item, TransformMarker):

@@ -66,14 +66,14 @@ class Fork(Generic[InputT, OutputT]):
     """Fork node that creates parallel execution branches.
 
     A Fork node splits the execution flow into multiple parallel branches,
-    enabling concurrent execution of downstream nodes. It can either spread
+    enabling concurrent execution of downstream nodes. It can either map
     a sequence across multiple branches or duplicate data to each branch.
     """
 
     id: ForkID
     """Unique identifier for this fork node."""
 
-    is_spread: bool
+    is_map: bool
     """Determines fork behavior.
 
     If True, InputT must be Sequence[OutputT] and each element is sent to a separate branch.

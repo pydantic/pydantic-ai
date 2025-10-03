@@ -27,7 +27,7 @@ StateDiagramDirection = Literal['TB', 'LR', 'RL', 'BT']
 - `'BT'`: Bottom to top
 """
 
-NodeKind = Literal['broadcast', 'spread', 'join', 'start', 'end', 'step', 'decision', 'base_node']
+NodeKind = Literal['broadcast', 'map', 'join', 'start', 'end', 'step', 'decision', 'base_node']
 
 
 @dataclass
@@ -59,7 +59,7 @@ def build_mermaid_graph(graph: Graph[Any, Any, Any, Any]) -> MermaidGraph:  # no
         for item in path.items:
             if isinstance(item, SpreadMarker):
                 edges_by_source[last_source_id].append(MermaidEdge(last_source_id, item.fork_id, working_label))
-                return  # spread markers correspond to nodes already in the graph; downstream gets handled separately
+                return  # map markers correspond to nodes already in the graph; downstream gets handled separately
             elif isinstance(item, BroadcastMarker):
                 edges_by_source[last_source_id].append(MermaidEdge(last_source_id, item.fork_id, working_label))
                 return  # broadcast markers correspond to nodes already in the graph; downstream gets handled separately
@@ -82,7 +82,7 @@ def build_mermaid_graph(graph: Graph[Any, Any, Any, Any]) -> MermaidGraph:  # no
         elif isinstance(node, Join):
             kind = 'join'
         elif isinstance(node, Fork):
-            kind = 'spread' if node.is_spread else 'broadcast'
+            kind = 'map' if node.is_map else 'broadcast'
         elif isinstance(node, Decision):
             kind = 'decision'
             note = node.note
@@ -143,7 +143,7 @@ class MermaidGraph:
                 node_lines.append(line)
             elif node.kind == 'join':
                 node_lines = [f'  state {node.id} <<join>>']
-            elif node.kind == 'broadcast' or node.kind == 'spread':
+            elif node.kind == 'broadcast' or node.kind == 'map':
                 node_lines = [f'  state {node.id} <<fork>>']
             elif node.kind == 'decision':
                 node_lines = [f'  state {node.id} <<choice>>']

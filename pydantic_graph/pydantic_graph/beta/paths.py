@@ -1,7 +1,7 @@
 """Path and edge definition for graph navigation.
 
 This module provides the building blocks for defining paths through a graph,
-including transformations, spreads, broadcasts, and routing to destinations.
+including transformations, maps, broadcasts, and routing to destinations.
 Paths enable complex data flow patterns in graph execution.
 """
 
@@ -41,16 +41,16 @@ class TransformMarker:
 
 @dataclass
 class SpreadMarker:
-    """A marker indicating that iterable data should be spread across parallel paths.
+    """A marker indicating that iterable data should be map across parallel paths.
 
     Spread markers take iterable input and create parallel execution paths
     for each item in the iterable.
     """
 
     fork_id: ForkID
-    """Unique identifier for the fork created by this spread operation."""
+    """Unique identifier for the fork created by this map operation."""
     downstream_join_id: JoinID | None
-    """Optional identifier of a downstream join node that should be jumped to if spreading an empty iterable."""
+    """Optional identifier of a downstream join node that should be jumped to if mapping an empty iterable."""
 
 
 @dataclass
@@ -109,7 +109,7 @@ class Path:
 
     @property
     def last_fork(self) -> BroadcastMarker | SpreadMarker | None:
-        """Get the most recent fork or spread marker in this path.
+        """Get the most recent fork or map marker in this path.
 
         Returns:
             The last BroadcastMarker or SpreadMarker in the path, or None if no forks exist
@@ -134,7 +134,7 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
     """A builder for constructing paths with method chaining.
 
     PathBuilder provides a fluent interface for creating paths by chaining
-    operations like transforms, spreads, and routing to destinations.
+    operations like transforms, maps, and routing to destinations.
 
     Type Parameters:
         StateT: The type of the graph state
@@ -147,7 +147,7 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
 
     @property
     def last_fork(self) -> BroadcastMarker | SpreadMarker | None:
-        """Get the most recent fork or spread marker in the working path.
+        """Get the most recent fork or map marker in the working path.
 
         Returns:
             The last BroadcastMarker or SpreadMarker in the working items, or None if no forks exist
@@ -208,7 +208,7 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
         next_item = TransformMarker(func)
         return PathBuilder[StateT, DepsT, Any](working_items=[*self.working_items, next_item])
 
-    def spread(
+    def map(
         self: PathBuilder[StateT, DepsT, Iterable[Any]],
         *,
         fork_id: ForkID | None = None,
@@ -221,13 +221,13 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
 
         Args:
             fork_id: Optional ID for the fork, defaults to a generated value
-            downstream_join_id: Optional ID of a downstream join node which is involved when spreading empty iterables
+            downstream_join_id: Optional ID of a downstream join node which is involved when mapping empty iterables
 
         Returns:
             A new PathBuilder that operates on individual items from the iterable
         """
         next_item = SpreadMarker(
-            fork_id=NodeID(fork_id or 'spread_' + secrets.token_hex(8)), downstream_join_id=downstream_join_id
+            fork_id=NodeID(fork_id or 'map_' + secrets.token_hex(8)), downstream_join_id=downstream_join_id
         )
         return PathBuilder[StateT, DepsT, Any](working_items=[*self.working_items, next_item])
 
@@ -365,7 +365,7 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
                 destinations=destinations,
             )
 
-    def spread(
+    def map(
         self: EdgePathBuilder[StateT, DepsT, Iterable[Any]],
         *,
         fork_id: ForkID | None = None,
@@ -375,14 +375,14 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
 
         Args:
             fork_id: Optional ID for the fork, defaults to a generated value
-            downstream_join_id: Optional ID of a downstream join node which is involved when spreading empty iterables
+            downstream_join_id: Optional ID of a downstream join node which is involved when mapping empty iterables
 
         Returns:
             A new EdgePathBuilder that operates on individual items from the iterable
         """
         return EdgePathBuilder(
             sources=self.sources,
-            path_builder=self.path_builder.spread(fork_id=fork_id, downstream_join_id=downstream_join_id),
+            path_builder=self.path_builder.map(fork_id=fork_id, downstream_join_id=downstream_join_id),
         )
 
     def transform(self, func: StepFunction[StateT, DepsT, OutputT, Any], /) -> EdgePathBuilder[StateT, DepsT, Any]:

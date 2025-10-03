@@ -1,6 +1,6 @@
 # Parallel Execution
 
-The beta graph API provides two powerful mechanisms for parallel execution: **broadcasting** and **spreading**.
+The beta graph API provides two powerful mechanisms for parallel execution: **broadcasting** and **mapping**.
 
 ## Overview
 
@@ -67,7 +67,7 @@ All three steps receive the same input value (`10`) and execute in parallel.
 
 Spreading fans out elements from an iterable, processing each element in parallel:
 
-```python {title="basic_spread.py"}
+```python {title="basic_map.py"}
 from dataclasses import dataclass
 
 from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext
@@ -94,7 +94,7 @@ async def main():
     # Spreading: each item in the list gets its own parallel execution
     g.add(
         g.edge_from(g.start_node).to(generate_list),
-        g.edge_from(generate_list).spread().to(square),
+        g.edge_from(generate_list).map().to(square),
         g.edge_from(square).to(collect),
         g.edge_from(collect).to(g.end_node),
     )
@@ -107,11 +107,11 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
 
-### Using `add_spreading_edge()`
+### Using `add_mapping_edge()`
 
-The convenience method [`add_spreading_edge()`][pydantic_graph.beta.graph_builder.GraphBuilder.add_spreading_edge] provides a simpler syntax:
+The convenience method [`add_mapping_edge()`][pydantic_graph.beta.graph_builder.GraphBuilder.add_mapping_edge] provides a simpler syntax:
 
-```python {title="spreading_convenience.py"}
+```python {title="mapping_convenience.py"}
 from dataclasses import dataclass
 
 from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext
@@ -136,7 +136,7 @@ async def main():
     collect = g.join(ListReducer[str])
 
     g.add(g.edge_from(g.start_node).to(generate_numbers))
-    g.add_spreading_edge(generate_numbers, stringify)
+    g.add_mapping_edge(generate_numbers, stringify)
     g.add(
         g.edge_from(stringify).to(collect),
         g.edge_from(collect).to(g.end_node),
@@ -152,9 +152,9 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 ## Empty Iterables
 
-When spreading an empty iterable, you can specify a `downstream_join_id` to ensure the join still executes:
+When mapping an empty iterable, you can specify a `downstream_join_id` to ensure the join still executes:
 
-```python {title="empty_spread.py"}
+```python {title="empty_map.py"}
 from dataclasses import dataclass
 
 from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext
@@ -179,7 +179,7 @@ async def main():
     collect = g.join(ListReducer[int])
 
     g.add(g.edge_from(g.start_node).to(generate_empty))
-    g.add_spreading_edge(generate_empty, double, downstream_join_id=collect.id)
+    g.add_mapping_edge(generate_empty, double, downstream_join_id=collect.id)
     g.add(
         g.edge_from(double).to(collect),
         g.edge_from(collect).to(g.end_node),
@@ -195,11 +195,11 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 ## Nested Parallel Operations
 
-You can nest broadcasts and spreads for complex parallel patterns:
+You can nest broadcasts and maps for complex parallel patterns:
 
 ### Spread then Broadcast
 
-```python {title="spread_then_broadcast.py"}
+```python {title="map_then_broadcast.py"}
 from dataclasses import dataclass
 
 from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext
@@ -230,7 +230,7 @@ async def main():
     g.add(
         g.edge_from(g.start_node).to(generate_list),
         # Spread the list, then broadcast each item to both steps
-        g.edge_from(generate_list).spread().to(add_one, add_two),
+        g.edge_from(generate_list).map().to(add_one, add_two),
         g.edge_from(add_one, add_two).to(collect),
         g.edge_from(collect).to(g.end_node),
     )
@@ -249,7 +249,7 @@ The result contains:
 
 ### Multiple Sequential Spreads
 
-```python {title="sequential_spreads.py"}
+```python {title="sequential_maps.py"}
 from dataclasses import dataclass
 
 from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext
@@ -279,10 +279,10 @@ async def main():
 
     g.add(
         g.edge_from(g.start_node).to(generate_pairs),
-        # First spread: one task per tuple
-        g.edge_from(generate_pairs).spread().to(unpack_pair),
-        # Second spread: one task per number in each tuple
-        g.edge_from(unpack_pair).spread().to(stringify),
+        # First map: one task per tuple
+        g.edge_from(generate_pairs).map().to(unpack_pair),
+        # Second map: one task per number in each tuple
+        g.edge_from(unpack_pair).map().to(stringify),
         g.edge_from(stringify).to(collect),
         g.edge_from(collect).to(g.end_node),
     )
@@ -324,11 +324,11 @@ async def main():
     collect = g.join(ListReducer[str])
 
     g.add(g.edge_from(g.start_node).to(generate))
-    g.add_spreading_edge(
+    g.add_mapping_edge(
         generate,
         process,
-        pre_spread_label='before spread',
-        post_spread_label='after spread',
+        pre_map_label='before map',
+        post_map_label='after map',
     )
     g.add(
         g.edge_from(process).to(collect),
@@ -375,7 +375,7 @@ async def main():
 
     g.add(
         g.edge_from(g.start_node).to(generate),
-        g.edge_from(generate).spread().to(track_and_square),
+        g.edge_from(generate).map().to(track_and_square),
         g.edge_from(track_and_square).to(collect),
         g.edge_from(collect).to(g.end_node),
     )

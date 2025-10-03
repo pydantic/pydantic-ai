@@ -175,7 +175,7 @@ async def test_mixed_v1_v2_with_broadcast():
     g.add(
         g.node(ProcessNode),
         g.edge_from(g.start_node).to(generate_values),
-        g.edge_from(generate_values).spread().to(create_node),
+        g.edge_from(generate_values).map().to(create_node),
         g.edge_from(auxiliary_node).to(collect),
         g.edge_from(collect).to(g.end_node),
     )
