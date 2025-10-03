@@ -12,6 +12,7 @@ __all__ = (
     'WebSearchUserLocation',
     'CodeExecutionTool',
     'UrlContextTool',
+    'ImageGenerationTool',
     'MemoryTool',
 )
 
@@ -149,6 +150,7 @@ class ImageGenerationTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses
+    * Google
     """
 
     background: Literal['transparent', 'opaque', 'auto'] = 'auto'

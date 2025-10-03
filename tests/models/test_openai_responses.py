@@ -5635,6 +5635,23 @@ async def test_openai_responses_image_or_text_output(allow_model_requests: None,
     )
 
 
+async def test_openai_responses_image_and_text_output(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()])
+
+    result = await agent.run('Tell me a two-sentence story about an axolotl with an illustration.')
+    assert result.output == snapshot(IsStr())
+    assert result.response.files == snapshot(
+        [
+            BinaryImage(
+                data=IsBytes(),
+                media_type='image/png',
+                identifier='fbb409',
+            )
+        ]
+    )
+
+
 async def test_openai_responses_image_generation_with_tool_output(allow_model_requests: None, openai_api_key: str):
     class Animal(BaseModel):
         species: str

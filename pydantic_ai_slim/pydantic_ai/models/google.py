@@ -332,7 +332,7 @@ class GoogleModel(Model):
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                     if not self.profile.supports_image_output:
                         raise UserError(
-                            "`ImageGenerationTool` is not supported by this model. Use an 'image-preview' model instead."
+                            "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
                         )
                 else:  # pragma: no cover
                     raise UserError(

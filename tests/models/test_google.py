@@ -2836,6 +2836,25 @@ async def test_google_image_or_text_output(allow_model_requests: None, google_pr
     )
 
 
+async def test_google_image_and_text_output(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    agent = Agent(m)
+
+    result = await agent.run('Tell me a two-sentence story about an axolotl with an illustration.')
+    assert result.output == snapshot(
+        'Once, in a hidden cenote, lived an axolotl named Pip who loved to collect shiny pebbles. One day, Pip found a pebble that glowed, illuminating his entire underwater world with a soft, warm light. '
+    )
+    assert result.response.files == snapshot(
+        [
+            BinaryImage(
+                data=IsBytes(),
+                media_type='image/png',
+                identifier='67b12f',
+            )
+        ]
+    )
+
+
 async def test_google_image_generation_with_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
     class Animal(BaseModel):
         species: str
@@ -2892,9 +2911,9 @@ async def test_google_image_generation_tool(allow_model_requests: None, google_p
 
     with pytest.raises(
         UserError,
-        match="`ImageGenerationTool` is not supported by this model. Use an 'image-preview' model instead.",
+        match="`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead.",
     ):
-        await agent.run('Generate an image of an animal returned by the get_animal tool.')
+        await agent.run('Generate an image of an axolotl.')
 
 
 async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):

@@ -280,9 +280,20 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
             if len(outputs) > 1:
                 raise UserError('`NativeOutput` must be the only output type.')  # pragma: no cover
 
+            flattened_outputs = _flatten_output_spec(output.outputs)
+
+            if DeferredToolRequests in flattened_outputs:
+                raise UserError(  # pragma: no cover
+                    '`NativeOutput` cannot contain `DeferredToolRequests`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), DeferredToolRequests]`'
+                )
+            if _messages.BinaryImage in flattened_outputs:
+                raise UserError(  # pragma: no cover
+                    '`NativeOutput` cannot contain `BinaryImage`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), BinaryImage]`'
+                )
+
             return NativeOutputSchema(
                 processor=cls._build_processor(
-                    _flatten_output_spec(output.outputs),
+                    flattened_outputs,
                     name=output.name,
                     description=output.description,
                     strict=output.strict,
@@ -294,10 +305,21 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
             if len(outputs) > 1:
                 raise UserError('`PromptedOutput` must be the only output type.')  # pragma: no cover
 
+            flattened_outputs = _flatten_output_spec(output.outputs)
+
+            if DeferredToolRequests in flattened_outputs:
+                raise UserError(  # pragma: no cover
+                    '`PromptedOutput` cannot contain `DeferredToolRequests`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), DeferredToolRequests]`'
+                )
+            if _messages.BinaryImage in flattened_outputs:
+                raise UserError(  # pragma: no cover
+                    '`PromptedOutput` cannot contain `BinaryImage`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), BinaryImage]`'
+                )
+
             return PromptedOutputSchema(
                 template=output.template,
                 processor=cls._build_processor(
-                    _flatten_output_spec(output.outputs),
+                    flattened_outputs,
                     name=output.name,
                     description=output.description,
                 ),

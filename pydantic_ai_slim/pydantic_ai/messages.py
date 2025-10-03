@@ -1188,7 +1188,7 @@ class ModelResponse:
 
     @property
     def builtin_tool_calls(self) -> list[tuple[BuiltinToolCallPart, BuiltinToolReturnPart]]:
-        """Get the builtin tool calls in the response."""
+        """Get the builtin tool calls and results in the response."""
         calls = [part for part in self.parts if isinstance(part, BuiltinToolCallPart)]
         if not calls:
             return []
