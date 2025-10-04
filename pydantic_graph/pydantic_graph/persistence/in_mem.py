@@ -76,7 +76,7 @@ class SimpleStatePersistence(BaseStatePersistence[StateT, RunEndT]):
     async def load_next(self) -> NodeSnapshot[StateT, RunEndT] | None:
         if isinstance(self.last_snapshot, NodeSnapshot) and self.last_snapshot.status == 'created':
             self.last_snapshot.status = 'pending'
-            return self.last_snapshot
+            return copy.deepcopy(self.last_snapshot)
 
     async def load_all(self) -> list[Snapshot[StateT, RunEndT]]:
         raise NotImplementedError('load is not supported for SimpleStatePersistence')

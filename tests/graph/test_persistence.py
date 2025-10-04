@@ -348,7 +348,7 @@ def test_snapshot_type_adapter_error():
         build_snapshot_list_type_adapter(int, int)
 
 
-async def test_snapshot_state_stability():
+async def test_full_state_persistence_snapshot_state_stability():
     @dataclass
     class CountDownState:
         counter: int
@@ -377,3 +377,30 @@ async def test_snapshot_state_stability():
         for i in range(len(history)):
             assert history[i].id == persistence.history[i].id
             assert history[i].state == persistence.history[i].state, 'State should not change'
+
+
+async def test_simple_state_persistence_snapshot_state_stability():
+    @dataclass
+    class CountDownState:
+        counter: int
+
+    @dataclass
+    class CountDown(BaseNode[CountDownState, None, int]):
+        async def run(self, ctx: GraphRunContext[CountDownState]) -> CountDown | End[int]:
+            if ctx.state.counter <= 0:
+                return End(ctx.state.counter)
+            ctx.state.counter -= 1
+            return CountDown()
+
+    persistence = SimpleStatePersistence()
+    state = CountDownState(counter=3)
+    count_down_graph = Graph(nodes=[CountDown])
+
+    await count_down_graph.initialize(CountDown(), state=state, persistence=persistence)
+
+    last_snapshot = persistence.last_snapshot
+    async with count_down_graph.iter_from_persistence(persistence) as run:
+        await run.next()
+
+    assert last_snapshot and last_snapshot.state.counter == 3
+    assert persistence.last_snapshot and persistence.last_snapshot.state.counter == 2
