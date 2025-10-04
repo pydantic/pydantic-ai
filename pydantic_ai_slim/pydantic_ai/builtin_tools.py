@@ -1,14 +1,13 @@
 from __future__ import annotations as _annotations
 
-from typing import TYPE_CHECKING
+from abc import ABC
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
+
+from typing_extensions import TypedDict
 
 if TYPE_CHECKING:
     from .builtin_tools import AbstractBuiltinTool
-from abc import ABC
-from dataclasses import dataclass
-from typing import Literal
-
-from typing_extensions import TypedDict
 
 __all__ = (
     'AbstractBuiltinTool',
