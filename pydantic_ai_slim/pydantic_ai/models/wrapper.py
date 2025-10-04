@@ -46,6 +46,13 @@ class WrapperModel(Model):
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         return self.wrapped.customize_request_parameters(model_request_parameters)
 
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        return self.wrapped.prepare_request(model_settings, model_request_parameters)
+
     @property
     def model_name(self) -> str:
         return self.wrapped.model_name

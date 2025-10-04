@@ -9,11 +9,13 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelRetry,
+    RunContext,
     SystemPromptPart,
     TextPart,
     ToolCallPart,

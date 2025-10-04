@@ -359,8 +359,7 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel, EmailStr
 
-from pydantic_ai import Agent, format_as_xml
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai import Agent, ModelMessage, format_as_xml
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
 
@@ -662,7 +661,7 @@ from pydantic_graph import (
     GraphRunContext,
 )
 from pydantic_ai import Agent, format_as_xml
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai import ModelMessage
 
 ask_agent = Agent('openai:gpt-4o', output_type=str, instrument=True)
 
@@ -756,7 +755,7 @@ from pathlib import Path
 
 from pydantic_graph import End
 from pydantic_graph.persistence.file import FileStatePersistence
-from pydantic_ai.messages import ModelMessage  # noqa: F401
+from pydantic_ai import ModelMessage  # noqa: F401
 
 from ai_q_and_a_graph import Ask, question_graph, Evaluate, QuestionState, Answer
 

@@ -6,9 +6,9 @@ from typing import overload
 import httpx
 from openai import AsyncOpenAI
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.providers import Provider
 

@@ -130,7 +130,7 @@ Image generation is not currently supported. If you need this feature, please co
 
 File search and Computer use can be enabled by passing an [`openai.types.responses.FileSearchToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/file_search_tool_param.py) or [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_builtin_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. They don't currently generate [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for these built-in tools.
 
-```python{title="file_search_tool.py"}
+```python {title="file_search_tool.py"}
 from openai.types.responses import FileSearchToolParam
 
 from pydantic_ai import Agent
@@ -235,9 +235,8 @@ When using an alternative provider class provided by Pydantic AI, an appropriate
 If the model you're using is not working correctly out of the box, you can tweak various aspects of how model requests are constructed by providing your own [`ModelProfile`][pydantic_ai.profiles.ModelProfile] (for behaviors shared among all model classes) or [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (for behaviors specific to `OpenAIChatModel`):
 
 ```py
-from pydantic_ai import Agent
+from pydantic_ai import Agent, InlineDefsJsonSchemaTransformer
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -294,23 +293,11 @@ agent = Agent(model)
 
 ### Ollama
 
-To use [Ollama](https://ollama.com/), you must first download the Ollama client, and then download a model using the [Ollama model library](https://ollama.com/library).
+Pydantic AI supports both self-hosted [Ollama](https://ollama.com/) servers (running locally or remotely) and [Ollama Cloud](https://ollama.com/cloud) through the [`OllamaProvider`][pydantic_ai.providers.ollama.OllamaProvider].
 
-You must also ensure the Ollama server is running when trying to make requests to it. For more information, please see the [Ollama documentation](https://github.com/ollama/ollama/tree/main/docs).
+The API URL and optional API key can be provided to the `OllamaProvider` using the `base_url` and `api_key` arguments, or the `OLLAMA_BASE_URL` and `OLLAMA_API_KEY` environment variables.
 
-You can then use the model with the [`OllamaProvider`][pydantic_ai.providers.ollama.OllamaProvider].
-
-#### Example local usage
-
-With `ollama` installed, you can run the server with the model you want to use:
-
-```bash
-ollama run llama3.2
-```
-
-(this will pull the `llama3.2` model if you don't already have it downloaded)
-
-Then run your code, here's a minimal example:
+For servers running locally, use the `http://localhost:11434/v1` base URL. For Ollama Cloud, use `https://ollama.com/v1` and ensure an API key is set.
 
 ```python
 from pydantic import BaseModel
@@ -326,8 +313,8 @@ class CityLocation(BaseModel):
 
 
 ollama_model = OpenAIChatModel(
-    model_name='llama3.2',
-    provider=OllamaProvider(base_url='http://localhost:11434/v1'),
+    model_name='gpt-oss:20b',
+    provider=OllamaProvider(base_url='http://localhost:11434/v1'),  # (1)!
 )
 agent = Agent(ollama_model, output_type=CityLocation)
 
@@ -338,37 +325,8 @@ print(result.usage())
 #> RunUsage(input_tokens=57, output_tokens=8, requests=1)
 ```
 
-#### Example using a remote server
+1. For Ollama Cloud, use the `base_url='https://ollama.com/v1'` and set the `OLLAMA_API_KEY` environment variable.
 
-```python
-from pydantic import BaseModel
-
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.ollama import OllamaProvider
-
-ollama_model = OpenAIChatModel(
-    model_name='qwen2.5-coder:7b',  # (1)!
-    provider=OllamaProvider(base_url='http://192.168.1.74:11434/v1'),  # (2)!
-)
-
-
-class CityLocation(BaseModel):
-    city: str
-    country: str
-
-
-agent = Agent(model=ollama_model, output_type=CityLocation)
-
-result = agent.run_sync('Where were the olympics held in 2012?')
-print(result.output)
-#> city='London' country='United Kingdom'
-print(result.usage())
-#> RunUsage(input_tokens=57, output_tokens=8, requests=1)
-```
-
-1. The name of the model running on the remote server
-2. The url of the remote server
 
 ### Azure AI Foundry
 

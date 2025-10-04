@@ -340,12 +340,13 @@ class UsageLimits:
         if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
             raise UsageLimitExceeded(f'Exceeded the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})')
 
-    def check_before_tool_call(self, usage: RunUsage) -> None:
-        """Raises a `UsageLimitExceeded` exception if the next tool call would exceed the tool call limit."""
+    def check_before_tool_call(self, projected_usage: RunUsage) -> None:
+        """Raises a `UsageLimitExceeded` exception if the next tool call(s) would exceed the tool call limit."""
         tool_calls_limit = self.tool_calls_limit
-        if tool_calls_limit is not None and usage.tool_calls >= tool_calls_limit:
+        tool_calls = projected_usage.tool_calls
+        if tool_calls_limit is not None and tool_calls > tool_calls_limit:
             raise UsageLimitExceeded(
-                f'The next tool call would exceed the tool_calls_limit of {tool_calls_limit} (tool_calls={usage.tool_calls})'
+                f'The next tool call(s) would exceed the tool_calls_limit of {tool_calls_limit} ({tool_calls=}).'
             )
 
     __repr__ = _utils.dataclasses_no_defaults_repr

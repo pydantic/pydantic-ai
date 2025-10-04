@@ -15,18 +15,17 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelHTTPError, ModelRetry
-from pydantic_ai.builtin_tools import WebSearchTool
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     BinaryContent,
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolCallPart,
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
     FinalResultEvent,
     ImageUrl,
+    ModelHTTPError,
     ModelRequest,
     ModelResponse,
+    ModelRetry,
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
@@ -38,6 +37,11 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+)
+from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.messages import (
+    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
+    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.usage import RequestUsage, RunUsage

@@ -13,9 +13,8 @@ from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry
-from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     AudioUrl,
     BinaryContent,
     DocumentUrl,
@@ -23,6 +22,7 @@ from pydantic_ai.messages import (
     ImageUrl,
     ModelRequest,
     ModelResponse,
+    ModelRetry,
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
@@ -36,6 +36,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
@@ -890,51 +891,6 @@ text 2\
             {'content': 'another request', 'role': 'user'},
         ]
     )
-
-
-@pytest.mark.parametrize('strict', [True, False, None])
-async def test_tool_strict_mode(allow_model_requests: None, strict: bool | None):
-    tool_call = ChatCompletionOutputToolCall.parse_obj_as_instance(  # type:ignore
-        {
-            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # type:ignore
-                {
-                    'name': 'my_tool',
-                    'arguments': '{"x": 42}',
-                }
-            ),
-            'id': '1',
-            'type': 'function',
-        }
-    )
-    responses = [
-        completion_message(
-            ChatCompletionOutputMessage.parse_obj_as_instance(  # type:ignore
-                {
-                    'content': None,
-                    'role': 'assistant',
-                    'tool_calls': [tool_call],
-                }
-            )
-        ),
-        completion_message(ChatCompletionOutputMessage(content='final response', role='assistant')),  # type: ignore
-    ]
-    mock_client = MockHuggingFace.create_mock(responses)
-    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    agent = Agent(model)
-
-    @agent.tool_plain(strict=strict)
-    def my_tool(x: int) -> int:
-        return x
-
-    result = await agent.run('hello')
-    assert result.output == 'final response'
-
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    tools = kwargs['tools']
-    if strict is not None:
-        assert tools[0]['function']['strict'] is strict
-    else:
-        assert 'strict' not in tools[0]['function']
 
 
 @pytest.mark.parametrize(

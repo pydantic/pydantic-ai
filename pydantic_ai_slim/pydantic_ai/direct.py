@@ -44,8 +44,8 @@ async def model_request(
     """Make a non-streamed request to a model.
 
     ```py title="model_request_example.py"
+    from pydantic_ai import ModelRequest
     from pydantic_ai.direct import model_request
-    from pydantic_ai.messages import ModelRequest
 
 
     async def main():
@@ -81,7 +81,7 @@ async def model_request(
     return await model_instance.request(
         messages,
         model_settings,
-        model_instance.customize_request_parameters(model_request_parameters or models.ModelRequestParameters()),
+        model_request_parameters or models.ModelRequestParameters(),
     )
 
 
@@ -99,8 +99,8 @@ def model_request_sync(
     `loop.run_until_complete(...)`. You therefore can't use this method inside async code or if there's an active event loop.
 
     ```py title="model_request_sync_example.py"
+    from pydantic_ai import ModelRequest
     from pydantic_ai.direct import model_request_sync
-    from pydantic_ai.messages import ModelRequest
 
     model_response = model_request_sync(
         'anthropic:claude-3-5-haiku-latest',
@@ -153,8 +153,8 @@ def model_request_stream(
 
     ```py {title="model_request_stream_example.py"}
 
+    from pydantic_ai import ModelRequest
     from pydantic_ai.direct import model_request_stream
-    from pydantic_ai.messages import ModelRequest
 
 
     async def main():
@@ -193,7 +193,7 @@ def model_request_stream(
     return model_instance.request_stream(
         messages,
         model_settings,
-        model_instance.customize_request_parameters(model_request_parameters or models.ModelRequestParameters()),
+        model_request_parameters or models.ModelRequestParameters(),
     )
 
 
@@ -212,8 +212,8 @@ def model_request_stream_sync(
 
     ```py {title="model_request_stream_sync_example.py"}
 
+    from pydantic_ai import ModelRequest
     from pydantic_ai.direct import model_request_stream_sync
-    from pydantic_ai.messages import ModelRequest
 
     messages = [ModelRequest.user_text_prompt('Who was Albert Einstein?')]
     with model_request_stream_sync('openai:gpt-4.1-mini', messages) as stream:
@@ -364,10 +364,17 @@ class StreamedResponseSync:
         if self._thread and self._thread.is_alive():
             self._thread.join()
 
+    # TODO (v2): Drop in favor of `response` property
     def get(self) -> messages.ModelResponse:
         """Build a ModelResponse from the data received from the stream so far."""
         return self._ensure_stream_ready().get()
 
+    @property
+    def response(self) -> messages.ModelResponse:
+        """Get the current state of the response."""
+        return self.get()
+
+    # TODO (v2): Make this a property
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far."""
         return self._ensure_stream_ready().usage()

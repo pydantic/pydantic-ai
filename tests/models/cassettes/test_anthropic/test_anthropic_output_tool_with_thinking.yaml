@@ -1,0 +1,74 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '471'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is 3 + 3?
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      system: |-
+        Always respond with a JSON object that's compatible with this schema:
+
+        {"properties": {"response": {"type": "integer"}}, "required": ["response"], "type": "object", "title": "int"}
+
+        Don't include any text or Markdown fencing before or after.
+      thinking:
+        budget_tokens: 3000
+        type: enabled
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1032'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - signature: ErQCCkYICBgCKkDId3yuTWB+RmnrHX1N/m+Q+uvt6TTyU6tRWGzFYK1UmQo+lkK5PFjgRvLK6eXA/q8sbVIC6mO3/1eq5aTkSX7+EgzYnRzfZdWJZ1X+410aDC5zyOhlAbOmBiBUmiIwPC3/mI3lVg3woo5Q2jwuZ/u+Pl8LMzrFxG0YbK2F5YDVuCjhrJsOq5e1V36GWJjqKpsBsKiPfPZQ6wizN25g64pwJb+Wjm55hDeGpK8xJeVFuren6PNKKkruBtlK1PIVpjSXBGkdTJCC69xlhwaXF20zah/A8HDm/2QEqid8Gz8+7zu+b7OGa22WdW0uZEwQgJtydTscZFqWzyAm8CZtsCh8STbRNPggOaCNg9vX5ipu2D+jXnAaL6MIOOQ3FUO+CdljS0mvfoyeCabS8TUYAQ==
+        thinking: The user is asking for 3 + 3, which equals 6. I need to respond with a JSON object that has a "response"
+          field containing an integer value.
+        type: thinking
+      - text: '{"response": 6}'
+        type: text
+      id: msg_01Fo4JKsQzJMTQBgLSAeCJDG
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 105
+        output_tokens: 55
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

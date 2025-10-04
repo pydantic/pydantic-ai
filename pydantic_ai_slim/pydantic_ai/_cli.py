@@ -18,7 +18,7 @@ from . import __version__
 from ._run_context import AgentDepsT
 from .agent import AbstractAgent, Agent
 from .exceptions import UserError
-from .messages import ModelMessage, TextPart
+from .messages import ModelMessage, ModelResponse
 from .models import KnownModelName, infer_model
 from .output import OutputDataT
 
@@ -351,14 +351,11 @@ def handle_slash_command(
         console.print('[dim]Exiting…[/dim]')
         return 0, multiline
     elif ident_prompt == '/cp':
-        try:
-            parts = messages[-1].parts
-        except IndexError:
+        if not messages or not isinstance(messages[-1], ModelResponse):
             console.print('[dim]No output available to copy.[/dim]')
         else:
-            text_to_copy = ''.join(part.content for part in parts if isinstance(part, TextPart))
-            text_to_copy = text_to_copy.strip()
-            if text_to_copy:
+            text_to_copy = messages[-1].text
+            if text_to_copy and (text_to_copy := text_to_copy.strip()):
                 pyperclip.copy(text_to_copy)
                 console.print('[dim]Copied last output to clipboard.[/dim]')
             else:

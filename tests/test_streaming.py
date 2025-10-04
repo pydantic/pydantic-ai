@@ -13,26 +13,33 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
-from pydantic_ai.agent import AgentRun
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
+    AgentRunResult,
+    AgentRunResultEvent,
     AgentStreamEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
+    RunContext,
     TextPart,
     TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
+    UnexpectedModelBehavior,
+    UserError,
     UserPromptPart,
+    capture_run_messages,
 )
+from pydantic_ai.agent import AgentRun
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
@@ -137,6 +144,21 @@ async def test_streamed_structured_response():
         response = await result.get_output()
         assert response == snapshot(('a', 'a'))
         assert result.is_complete
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={'response': ['a', 'a']},
+                    tool_call_id='pyd_ai_tool_call_id__final_result',
+                )
+            ],
+            usage=RequestUsage(input_tokens=50),
+            model_name='test',
+            timestamp=IsDatetime(),
+            provider_name='test',
+        )
+    )
 
 
 async def test_structured_response_iter():
@@ -865,6 +887,15 @@ async def test_custom_output_type_default_str() -> None:
     async with agent.run_stream('test') as result:
         response = await result.get_output()
         assert response == snapshot('success (no tool calls)')
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='success (no tool calls)')],
+            usage=RequestUsage(input_tokens=51, output_tokens=4),
+            model_name='test',
+            timestamp=IsDatetime(),
+            provider_name='test',
+        )
+    )
 
     async with agent.run_stream('test', output_type=OutputType) as result:
         response = await result.get_output()
@@ -894,7 +925,7 @@ async def test_iter_stream_output():
         return re.sub('cat sat', 'bat sat', data)
 
     run: AgentRun
-    stream: AgentStream
+    stream: AgentStream | None = None
     messages: list[str] = []
 
     stream_usage: RunUsage | None = None
@@ -905,6 +936,16 @@ async def test_iter_stream_output():
                     async for chunk in stream.stream_output(debounce_by=None):
                         messages.append(chunk)
                 stream_usage = deepcopy(stream.usage())
+    assert stream is not None
+    assert stream.response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='The cat sat on the mat.')],
+            usage=RequestUsage(input_tokens=51, output_tokens=7),
+            model_name='test',
+            timestamp=IsDatetime(),
+            provider_name='test',
+        )
+    )
     assert run.next_node == End(data=FinalResult(output='The bat sat on the mat.', tool_name=None, tool_call_id=None))
     assert run.usage() == stream_usage == RunUsage(requests=1, input_tokens=51, output_tokens=7)
 
@@ -1535,5 +1576,90 @@ async def test_run_stream_event_stream_handler():
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
+        ]
+    )
+
+
+async def test_stream_tool_returning_user_content():
+    m = TestModel()
+
+    agent = Agent(m)
+    assert agent.name is None
+
+    @agent.tool_plain
+    async def get_image() -> ImageUrl:
+        return ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg')
+
+    events: list[AgentStreamEvent] = []
+
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+        async for event in stream:
+            events.append(event)
+
+    await agent.run('Hello', event_stream_handler=event_stream_handler)
+
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr())),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='get_image',
+                    content='See file bd38f5',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                content=[
+                    'This is file bd38f5:',
+                    ImageUrl(
+                        url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+                        identifier='bd38f5',
+                    ),
+                ],
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"get_image":"See ')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='file ')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='bd38f5"}')),
+        ]
+    )
+
+
+async def test_run_stream_events():
+    m = TestModel()
+
+    test_agent = Agent(m)
+    assert test_agent.name is None
+
+    @test_agent.tool_plain
+    async def ret_a(x: str) -> str:
+        return f'{x}-apple'
+
+    events = [event async for event in test_agent.run_stream_events('Hello')]
+
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='ret_a',
+                    content='a-apple',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
+            AgentRunResultEvent(result=AgentRunResult(output='{"ret_a":"a-apple"}')),
         ]
     )

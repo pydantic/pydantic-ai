@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import sys
@@ -15,47 +16,52 @@ from pydantic import BaseModel, TypeAdapter, field_validator
 from pydantic_core import to_json
 from typing_extensions import Self
 
-from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
+from pydantic_ai import (
+    AbstractToolset,
+    Agent,
+    AgentStreamEvent,
+    AudioUrl,
+    BinaryContent,
+    BinaryImage,
+    CombinedToolset,
+    DocumentUrl,
+    FunctionToolset,
+    ImageUrl,
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelProfile,
+    ModelRequest,
+    ModelResponse,
+    ModelResponsePart,
+    ModelRetry,
+    PrefixedToolset,
+    RetryPromptPart,
+    RunContext,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+    UnexpectedModelBehavior,
+    UserError,
+    UserPromptPart,
+    VideoUrl,
+    capture_run_messages,
+)
 from pydantic_ai._output import (
     NativeOutput,
     NativeOutputSchema,
     OutputSpec,
     PromptedOutput,
     TextOutput,
-    TextOutputSchema,
     ToolOutputSchema,
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
-from pydantic_ai.messages import (
-    AgentStreamEvent,
-    AudioUrl,
-    BinaryContent,
-    DocumentUrl,
-    ImageUrl,
-    ModelMessage,
-    ModelMessagesTypeAdapter,
-    ModelRequest,
-    ModelResponse,
-    ModelResponsePart,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ToolCallPart,
-    ToolReturn,
-    ToolReturnPart,
-    UserPromptPart,
-    VideoUrl,
-)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import StructuredDict, ToolOutput
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
-from pydantic_ai.toolsets.abstract import AbstractToolset
-from pydantic_ai.toolsets.combined import CombinedToolset
-from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.toolsets.prefixed import PrefixedToolset
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsNow, IsStr, TestEnv
@@ -73,6 +79,14 @@ def test_result_tuple():
 
     result = agent.run_sync('Hello')
     assert result.output == ('foo', 'bar')
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())],
+            usage=RequestUsage(input_tokens=51, output_tokens=7),
+            model_name='function:return_tuple:',
+            timestamp=IsDatetime(),
+        )
+    )
 
 
 class Person(BaseModel):
@@ -334,7 +348,7 @@ def test_plain_response_then_tuple():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Plain text responses are not permitted, please include your response in a tool call',
+                        content='Please include your response in a tool call.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     )
@@ -344,7 +358,7 @@ def test_plain_response_then_tuple():
                 parts=[
                     ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())
                 ],
-                usage=RequestUsage(input_tokens=74, output_tokens=8),
+                usage=RequestUsage(input_tokens=68, output_tokens=8),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -389,6 +403,14 @@ def test_output_tool_return_content_str_return():
 
     result = agent.run_sync('Hello')
     assert result.output == 'success (no tool calls)'
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='success (no tool calls)')],
+            usage=RequestUsage(input_tokens=51, output_tokens=4),
+            model_name='test',
+            timestamp=IsDatetime(),
+        )
+    )
 
     msg = re.escape('Cannot set output tool return content when the return type is `str`.')
     with pytest.raises(ValueError, match=msg):
@@ -484,7 +506,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
         got_tool_call_name = ctx.tool_name
         return o
 
-    assert isinstance(agent._output_schema, TextOutputSchema)  # pyright: ignore[reportPrivateUsage]
+    assert agent._output_schema.allows_text  # pyright: ignore[reportPrivateUsage]
 
     result = agent.run_sync('Hello')
     assert isinstance(result.output, str)
@@ -999,7 +1021,7 @@ def test_output_type_text_output_invalid():
     def int_func(x: int) -> str:
         return str(int)  # pragma: no cover
 
-    with pytest.raises(UserError, match='TextOutput must take a function taking a `str`'):
+    with pytest.raises(UserError, match='TextOutput must take a function taking a single `str` argument'):
         output_type: TextOutput[str] = TextOutput(int_func)  # type: ignore
         Agent('test', output_type=output_type)
 
@@ -1391,6 +1413,109 @@ def test_output_type_structured_dict():
             ),
         ]
     )
+
+
+def test_output_type_structured_dict_nested():
+    """Test StructuredDict with nested JSON schemas using $ref - Issue #2466."""
+    # Schema with nested $ref that pydantic's generator can't resolve
+    CarDict = StructuredDict(
+        {
+            '$defs': {
+                'Tire': {
+                    'type': 'object',
+                    'properties': {'brand': {'type': 'string'}, 'size': {'type': 'integer'}},
+                    'required': ['brand', 'size'],
+                }
+            },
+            'type': 'object',
+            'properties': {
+                'make': {'type': 'string'},
+                'model': {'type': 'string'},
+                'tires': {'type': 'array', 'items': {'$ref': '#/$defs/Tire'}},
+            },
+            'required': ['make', 'model', 'tires'],
+        },
+        name='Car',
+        description='A car with tires',
+    )
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        # Verify the output tool schema has been properly transformed
+        # The $refs should be inlined by InlineDefsJsonSchemaTransformer
+        output_tool = info.output_tools[0]
+        schema = output_tool.parameters_json_schema
+        assert schema is not None
+
+        assert schema == snapshot(
+            {
+                'properties': {
+                    'make': {'type': 'string'},
+                    'model': {'type': 'string'},
+                    'tires': {
+                        'items': {
+                            'properties': {'brand': {'type': 'string'}, 'size': {'type': 'integer'}},
+                            'required': ['brand', 'size'],
+                            'type': 'object',
+                        },
+                        'type': 'array',
+                    },
+                },
+                'required': ['make', 'model', 'tires'],
+                'title': 'Car',
+                'type': 'object',
+            }
+        )
+
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    output_tool.name, {'make': 'Toyota', 'model': 'Camry', 'tires': [{'brand': 'Michelin', 'size': 17}]}
+                )
+            ]
+        )
+
+    agent = Agent(FunctionModel(call_tool), output_type=CarDict)
+
+    result = agent.run_sync('Generate a car')
+
+    assert result.output == snapshot({'make': 'Toyota', 'model': 'Camry', 'tires': [{'brand': 'Michelin', 'size': 17}]})
+
+
+def test_structured_dict_recursive_refs():
+    class Node(BaseModel):
+        nodes: list['Node'] | dict[str, 'Node']
+
+    schema = Node.model_json_schema()
+    assert schema == snapshot(
+        {
+            '$defs': {
+                'Node': {
+                    'properties': {
+                        'nodes': {
+                            'anyOf': [
+                                {'items': {'$ref': '#/$defs/Node'}, 'type': 'array'},
+                                {'additionalProperties': {'$ref': '#/$defs/Node'}, 'type': 'object'},
+                            ],
+                            'title': 'Nodes',
+                        }
+                    },
+                    'required': ['nodes'],
+                    'title': 'Node',
+                    'type': 'object',
+                }
+            },
+            '$ref': '#/$defs/Node',
+        }
+    )
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            '`StructuredDict` does not currently support recursive `$ref`s and `$defs`. See https://github.com/pydantic/pydantic/issues/12145 for more information.'
+        ),
+    ):
+        StructuredDict(schema)
 
 
 def test_default_structured_output_mode():
@@ -3815,12 +3940,17 @@ def test_unsupported_output_mode():
 
     agent = Agent(model, output_type=NativeOutput(Foo))
 
-    with pytest.raises(UserError, match='Native structured output is not supported by the model.'):
+    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
         agent.run_sync('Hello')
 
     agent = Agent(model, output_type=ToolOutput(Foo))
 
-    with pytest.raises(UserError, match='Output tools are not supported by the model.'):
+    with pytest.raises(UserError, match='Tool output is not supported by this model.'):
+        agent.run_sync('Hello')
+
+    agent = Agent(model, output_type=BinaryImage)
+
+    with pytest.raises(UserError, match='Image output is not supported by this model.'):
         agent.run_sync('Hello')
 
 
@@ -4586,7 +4716,7 @@ async def test_wrapper_agent():
 
 async def test_thinking_only_response_retry():
     """Test that thinking-only responses trigger a retry mechanism."""
-    from pydantic_ai.messages import ThinkingPart
+    from pydantic_ai import ThinkingPart
     from pydantic_ai.models.function import FunctionModel
 
     call_count = 0
@@ -4636,7 +4766,7 @@ async def test_thinking_only_response_retry():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Responses without text or tool calls are not permitted.',
+                        content='Please return text or call a tool.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -4644,7 +4774,7 @@ async def test_thinking_only_response_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Final answer')],
-                usage=RequestUsage(input_tokens=75, output_tokens=8),
+                usage=RequestUsage(input_tokens=73, output_tokens=8),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
@@ -5040,3 +5170,365 @@ async def test_consecutive_model_responses_in_history():
             ),
         ]
     )
+
+
+def test_override_instructions_basic():
+    """Test that override can override instructions."""
+    agent = Agent('test')
+
+    @agent.instructions
+    def instr_fn() -> str:
+        return 'SHOULD_BE_IGNORED'
+
+    with capture_run_messages() as base_messages:
+        agent.run_sync('Hello', model=TestModel(custom_output_text='baseline'))
+
+    base_req = base_messages[0]
+    assert isinstance(base_req, ModelRequest)
+    assert base_req.instructions == 'SHOULD_BE_IGNORED'
+
+    with agent.override(instructions='OVERRIDE'):
+        with capture_run_messages() as messages:
+            agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    assert req.instructions == 'OVERRIDE'
+
+
+def test_override_reset_after_context():
+    """Test that instructions are reset after exiting the override context."""
+    agent = Agent('test', instructions='ORIG')
+
+    with agent.override(instructions='NEW'):
+        with capture_run_messages() as messages_new:
+            agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
+
+    with capture_run_messages() as messages_orig:
+        agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
+
+    req_new = messages_new[0]
+    assert isinstance(req_new, ModelRequest)
+    req_orig = messages_orig[0]
+    assert isinstance(req_orig, ModelRequest)
+    assert req_new.instructions == 'NEW'
+    assert req_orig.instructions == 'ORIG'
+
+
+def test_override_none_clears_instructions():
+    """Test that passing None for instructions clears all instructions."""
+    agent = Agent('test', instructions='BASE')
+
+    @agent.instructions
+    def instr_fn() -> str:  # pragma: no cover - ignored under override
+        return 'ALSO_BASE'
+
+    with agent.override(instructions=None):
+        with capture_run_messages() as messages:
+            agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    assert req.instructions is None
+
+
+def test_override_instructions_callable_replaces_functions():
+    """Override with a callable should replace existing instruction functions."""
+    agent = Agent('test')
+
+    @agent.instructions
+    def base_fn() -> str:
+        return 'BASE_FN'
+
+    def override_fn() -> str:
+        return 'OVERRIDE_FN'
+
+    with capture_run_messages() as base_messages:
+        agent.run_sync('Hello', model=TestModel(custom_output_text='baseline'))
+
+    base_req = base_messages[0]
+    assert isinstance(base_req, ModelRequest)
+    assert base_req.instructions is not None
+    assert 'BASE_FN' in base_req.instructions
+
+    with agent.override(instructions=override_fn):
+        with capture_run_messages() as messages:
+            agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    assert req.instructions == 'OVERRIDE_FN'
+    assert 'BASE_FN' not in req.instructions
+
+
+async def test_override_instructions_async_callable():
+    """Override with an async callable should be awaited."""
+    agent = Agent('test')
+
+    async def override_fn() -> str:
+        await asyncio.sleep(0)
+        return 'ASYNC_FN'
+
+    with agent.override(instructions=override_fn):
+        with capture_run_messages() as messages:
+            await agent.run('Hi', model=TestModel(custom_output_text='ok'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    assert req.instructions == 'ASYNC_FN'
+
+
+def test_override_instructions_sequence_mixed_types():
+    """Override can mix literal strings and functions."""
+    agent = Agent('test', instructions='BASE')
+
+    def override_fn() -> str:
+        return 'FUNC_PART'
+
+    def override_fn_2() -> str:
+        return 'FUNC_PART_2'
+
+    with agent.override(instructions=['OVERRIDE1', override_fn, 'OVERRIDE2', override_fn_2]):
+        with capture_run_messages() as messages:
+            agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    assert req.instructions == 'OVERRIDE1\nOVERRIDE2\n\nFUNC_PART\n\nFUNC_PART_2'
+    assert 'BASE' not in req.instructions
+
+
+async def test_override_concurrent_isolation():
+    """Test that concurrent overrides are isolated from each other."""
+    agent = Agent('test', instructions='ORIG')
+
+    async def run_with(instr: str) -> str | None:
+        with agent.override(instructions=instr):
+            with capture_run_messages() as messages:
+                await agent.run('Hi', model=TestModel(custom_output_text='ok'))
+            req = messages[0]
+            assert isinstance(req, ModelRequest)
+            return req.instructions
+
+    a, b = await asyncio.gather(
+        run_with('A'),
+        run_with('B'),
+    )
+
+    assert a == 'A'
+    assert b == 'B'
+
+
+def test_override_replaces_instructions():
+    """Test overriding instructions replaces the base instructions."""
+    agent = Agent('test', instructions='ORIG_INSTR')
+
+    with agent.override(instructions='NEW_INSTR'):
+        with capture_run_messages() as messages:
+            agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    assert req.instructions == 'NEW_INSTR'
+
+
+def test_override_nested_contexts():
+    """Test nested override contexts."""
+    agent = Agent('test', instructions='ORIG')
+
+    with agent.override(instructions='OUTER'):
+        with capture_run_messages() as outer_messages:
+            agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
+
+        with agent.override(instructions='INNER'):
+            with capture_run_messages() as inner_messages:
+                agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
+
+    outer_req = outer_messages[0]
+    assert isinstance(outer_req, ModelRequest)
+    inner_req = inner_messages[0]
+    assert isinstance(inner_req, ModelRequest)
+
+    assert outer_req.instructions == 'OUTER'
+    assert inner_req.instructions == 'INNER'
+
+
+async def test_override_async_run():
+    """Test override with async run method."""
+    agent = Agent('test', instructions='ORIG')
+
+    with agent.override(instructions='ASYNC_OVERRIDE'):
+        with capture_run_messages() as messages:
+            await agent.run('Hi', model=TestModel(custom_output_text='ok'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    assert req.instructions == 'ASYNC_OVERRIDE'
+
+
+def test_override_with_dynamic_prompts():
+    """Test override interacting with dynamic prompts."""
+    agent = Agent('test')
+
+    dynamic_value = 'DYNAMIC'
+
+    @agent.system_prompt
+    def dynamic_sys() -> str:
+        return dynamic_value
+
+    @agent.instructions
+    def dynamic_instr() -> str:
+        return 'DYNAMIC_INSTR'
+
+    with capture_run_messages() as base_messages:
+        agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
+
+    base_req = base_messages[0]
+    assert isinstance(base_req, ModelRequest)
+    assert base_req.instructions == 'DYNAMIC_INSTR'
+
+    # Override should take precedence over dynamic instructions but leave system prompts intact
+    with agent.override(instructions='OVERRIDE_INSTR'):
+        with capture_run_messages() as messages:
+            agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    assert req.instructions == 'OVERRIDE_INSTR'
+    sys_texts = [p.content for p in req.parts if isinstance(p, SystemPromptPart)]
+    # The dynamic system prompt should still be present since overrides target instructions only
+    assert dynamic_value in sys_texts
+
+
+def test_continue_conversation_that_ended_in_output_tool_call(allow_model_requests: None):
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(p, ToolReturnPart) and p.tool_name == 'roll_dice' for p in messages[-1].parts):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'dice_roll': 4},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')]
+        )
+
+    class Result(BaseModel):
+        dice_roll: int
+
+    agent = Agent(FunctionModel(llm), output_type=Result)
+
+    @agent.tool_plain
+    def roll_dice() -> int:
+        return 4
+
+    result = agent.run_sync('Roll me a dice.')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Roll me a dice.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')],
+                usage=RequestUsage(input_tokens=55, output_tokens=2),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='roll_dice',
+                        content=4,
+                        tool_call_id='pyd_ai_tool_call_id__roll_dice',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'dice_roll': 4},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=56, output_tokens=6),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+    result = agent.run_sync('Roll me a dice again.', message_history=messages)
+    new_messages = result.new_messages()
+    assert new_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Roll me a dice again.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')],
+                usage=RequestUsage(input_tokens=66, output_tokens=8),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='roll_dice',
+                        content=4,
+                        tool_call_id='pyd_ai_tool_call_id__roll_dice',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'dice_roll': 4},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=67, output_tokens=12),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+    assert not any(isinstance(p, ToolReturnPart) and p.tool_name == 'final_result' for p in new_messages[0].parts)

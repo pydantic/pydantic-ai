@@ -13,7 +13,7 @@ pip/uv-add "pydantic-ai-slim[mcp]"
 
 ## Usage
 
-Pydantic AI comes with two ways to connect to MCP servers:
+Pydantic AI comes with three ways to connect to MCP servers:
 
 - [`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] which connects to an MCP server using the [Streamable HTTP](https://modelcontextprotocol.io/introduction#streamable-http) transport
 - [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] which connects to an MCP server using the [HTTP SSE](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) transport
@@ -72,14 +72,14 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 **What's happening here?**
 
-- The model is receiving the prompt "how many days between 2000-01-01 and 2025-03-18?"
-- The model decides "Oh, I've got this `run_python_code` tool, that will be a good way to answer this question", and writes some python code to calculate the answer.
+- The model receives the prompt "What is 7 plus 5?"
+- The model decides "Oh, I've got this `add` tool, that will be a good way to answer this question"
 - The model returns a tool call
-- Pydantic AI sends the tool call to the MCP server using the SSE transport
-- The model is called again with the return value of running the code
+- Pydantic AI sends the tool call to the MCP server using the Streamable HTTP transport
+- The model is called again with the return value of running the `add` tool (12)
 - The model returns the final answer
 
-You can visualise this clearly, and even see the code that's run by adding three lines of code to instrument the example with [logfire](https://logfire.pydantic.dev/docs):
+You can visualise this clearly, and even see the tool call, by adding three lines of code to instrument the example with [logfire](https://logfire.pydantic.dev/docs):
 
 ```python {title="mcp_sse_client_logfire.py" test="skip"}
 import logfire
@@ -87,10 +87,6 @@ import logfire
 logfire.configure()
 logfire.instrument_pydantic_ai()
 ```
-
-Will display as follows:
-
-![Logfire run python code](../img/logfire-run-python-code.png)
 
 ### SSE Client
 
@@ -216,10 +212,10 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-## Tool call customisation
+## Tool call customization
 
 The MCP servers provide the ability to set a `process_tool_call` which allows
-the customisation of tool call requests and their responses.
+the customization of tool call requests and their responses.
 
 A common use case for this is to inject metadata to the requests which the server
 call needs:

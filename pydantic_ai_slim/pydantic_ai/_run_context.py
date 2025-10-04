@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Generic
 from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
 
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+
 from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
@@ -36,6 +38,8 @@ class RunContext(Generic[AgentDepsT]):
     """The tracer to use for tracing the run."""
     trace_include_content: bool = False
     """Whether to include the content of the messages in the trace."""
+    instrumentation_version: int = DEFAULT_INSTRUMENTATION_VERSION
+    """Instrumentation settings version, if instrumentation is enabled."""
     retries: dict[str, int] = field(default_factory=dict)
     """Number of retries for each tool so far."""
     tool_call_id: str | None = None

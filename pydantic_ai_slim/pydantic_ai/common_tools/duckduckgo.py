@@ -4,7 +4,7 @@ from dataclasses import KW_ONLY, dataclass
 import anyio
 import anyio.to_thread
 from pydantic import TypeAdapter
-from typing_extensions import TypedDict
+from typing_extensions import Any, TypedDict
 
 from pydantic_ai.tools import Tool
 
@@ -69,7 +69,7 @@ def duckduckgo_search_tool(duckduckgo_client: DDGS | None = None, max_results: i
         duckduckgo_client: The DuckDuckGo search client.
         max_results: The maximum number of results. If None, returns results only from the first response.
     """
-    return Tool(
+    return Tool[Any](
         DuckDuckGoSearchTool(client=duckduckgo_client or DDGS(), max_results=max_results).__call__,
         name='duckduckgo_search',
         description='Searches DuckDuckGo for the given query and returns the results.',

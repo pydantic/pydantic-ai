@@ -4,8 +4,8 @@ import httpx
 import pytest
 from pytest_mock import MockerFixture
 
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
