@@ -290,6 +290,14 @@ KnownModelName = TypeAliasType(
         'openai:o3-pro-2025-06-10',
         'openai:computer-use-preview',
         'openai:computer-use-preview-2025-03-11',
+        'zhipu:glm-4.6',
+        'zhipu:glm-4.5',
+        'zhipu:glm-4.5v',
+        'zhipu:glm-4.5-air',
+        'zhipu:glm-4.5-flash',
+        'zhipu:glm-4v',
+        'zhipu:glm-4v-plus',
+        'zhipu:codegeex-4',
         'test',
     ],
 )
@@ -691,6 +699,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         'together',
         'vercel',
         'litellm',
+        'zhipu',
     ):
         from .openai import OpenAIChatModel
 
