@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from enum import Enum
 from typing import Any
 
@@ -574,6 +574,14 @@ def test_nested_data():
 <item>08:15:00</item>\
 """),
             id='list[time]',
+        ),
+        pytest.param(
+            [timedelta(days=1, hours=2, minutes=30), timedelta(seconds=90)],
+            snapshot("""\
+<item>1 day, 2:30:00</item>
+<item>0:01:30</item>\
+"""),
+            id='list[timedelta]',
         ),
     ],
 )
