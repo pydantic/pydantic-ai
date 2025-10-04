@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
-from datetime import date
+from datetime import date, time
 from enum import Enum
 from typing import Any, Literal
 from xml.etree import ElementTree
@@ -27,7 +27,7 @@ def format_as_xml(
     This is useful since LLMs often find it easier to read semi-structured data (e.g. examples) as XML,
     rather than JSON etc.
 
-    Supports: `str`, `bytes`, `bytearray`, `bool`, `int`, `float`, `date`, `datetime`, `Enum`,
+    Supports: `str`, `bytes`, `bytearray`, `bool`, `int`, `float`, `date`, `datetime`, `time`, `Enum`,
     `Mapping`, `Iterable`, `dataclass`, and `BaseModel`.
 
     Args:
@@ -104,7 +104,7 @@ class _ToXml:
             element.text = value.decode(errors='ignore')
         elif isinstance(value, bool | int | float | Enum):
             element.text = str(value)
-        elif isinstance(value, date):
+        elif isinstance(value, date | time):
             element.text = value.isoformat()
         elif isinstance(value, Mapping):
             if tag is None and path in self._element_names:
@@ -165,7 +165,7 @@ class _ToXml:
         path: str = '',
     ):
         """Parse data structures as dataclasses or Pydantic models to extract element names and attributes."""
-        if value is None or isinstance(value, (str | int | float | date | bytearray | bytes | bool)):
+        if value is None or isinstance(value, (str | int | float | date | time | bytearray | bytes | bool)):
             return
         elif isinstance(value, Mapping):
             for k, v in value.items():  # pyright: ignore[reportUnknownVariableType]

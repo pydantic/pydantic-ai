@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, time
 from enum import Enum
 from typing import Any
 
@@ -566,6 +566,14 @@ def test_nested_data():
 <item>2025-01-02</item>\
 """),
             id='list[date]',
+        ),
+        pytest.param(
+            [time(12, 30, 45), time(8, 15)],
+            snapshot("""\
+<item>12:30:45</item>
+<item>08:15:00</item>\
+"""),
+            id='list[time]',
         ),
     ],
 )
