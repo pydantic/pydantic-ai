@@ -85,7 +85,7 @@ def test_known_model_names():  # pragma: lax no cover
         + groq_names
         + mistral_names
         + moonshotai_names
-    + zhipu_names
+        + zhipu_names
         + openai_names
         + bedrock_names
         + deepseek_names

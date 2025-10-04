@@ -526,10 +526,11 @@ class OpenAIChatModel(Model):
         if not isinstance(response, chat.ChatCompletion):
             raise UnexpectedModelBehavior('Invalid response from OpenAI chat completions endpoint, expected JSON data')
 
-        # Some OpenAI-compatible providers (e.g. Zhipu/Z.ai, see issue #2723) omit the `object` field even though
-        # the OpenAI schema includes it. We populate it here so validation succeeds.
-        # This mirrors the workaround for missing `created` timestamps below.
-        if not getattr(response, 'object', None):  # pragma: no branch
+        # Some OpenAI-compatible providers (currently only Zhipu/Z.ai, see issue #2723) omit the `object` field even
+        # though the OpenAI schema includes it. We only patch it for that provider to avoid changing validation
+        # error counts in tests that purposefully feed invalid OpenAI responses (which expect 4 errors, including
+        # a missing `object`).
+        if self._provider.name == 'zhipu' and not getattr(response, 'object', None):  # pragma: no branch
             try:  # defensive, in case attribute is read-only in future SDK versions
                 response.object = 'chat.completion'
             except Exception:  # pragma: no cover
