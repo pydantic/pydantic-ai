@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import pytest
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.profiles.openai import OpenAIModelProfile
 
 from ..conftest import try_import
 
@@ -56,7 +57,7 @@ def test_init_with_openai_client_and_api_key_raises():
     """Test that providing both openai_client and api_key raises an error."""
     client = AsyncOpenAI(api_key='test-key', base_url='https://open.bigmodel.cn/api/paas/v4/')
     with pytest.raises(AssertionError, match='Cannot provide both'):
-        ZhipuProvider(openai_client=client, api_key='another-key')
+        ZhipuProvider(openai_client=client, api_key='another-key')  # type: ignore[arg-type]
 
 
 def test_model_profile_glm_4_5():
@@ -64,6 +65,7 @@ def test_model_profile_glm_4_5():
     provider = ZhipuProvider(api_key='test-key')
     profile = provider.model_profile('glm-4.5')
     assert profile is not None
+    assert isinstance(profile, OpenAIModelProfile)
     assert profile.supports_json_schema_output is True
     assert profile.supports_json_object_output is True
     assert profile.supports_image_output is False

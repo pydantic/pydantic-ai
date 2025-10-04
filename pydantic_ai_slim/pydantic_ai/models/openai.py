@@ -284,6 +284,7 @@ class OpenAIChatModel(Model):
             'together',
             'vercel',
             'litellm',
+            'zhipu',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -312,6 +313,7 @@ class OpenAIChatModel(Model):
             'together',
             'vercel',
             'litellm',
+            'zhipu',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -339,6 +341,7 @@ class OpenAIChatModel(Model):
             'together',
             'vercel',
             'litellm',
+            'zhipu',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -528,7 +531,7 @@ class OpenAIChatModel(Model):
         # This mirrors the workaround for missing `created` timestamps below.
         if not getattr(response, 'object', None):  # pragma: no branch
             try:  # defensive, in case attribute is read-only in future SDK versions
-                response.object = 'chat.completion'  # pyright: ignore[reportAttributeAccessIssue]
+                response.object = 'chat.completion'
             except Exception:  # pragma: no cover
                 pass
 

@@ -22,6 +22,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIModelName
     from pydantic_ai.providers.grok import GrokModelName
     from pydantic_ai.providers.moonshotai import MoonshotAIModelName
+    from pydantic_ai.providers.zhipu import ZhipuModelName
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
@@ -66,6 +67,7 @@ def test_known_model_names():  # pragma: lax no cover
     grok_names = [f'grok:{n}' for n in get_model_names(GrokModelName)]
     groq_names = [f'groq:{n}' for n in get_model_names(GroqModelName)]
     moonshotai_names = [f'moonshotai:{n}' for n in get_model_names(MoonshotAIModelName)]
+    zhipu_names = [f'zhipu:{n}' for n in get_model_names(ZhipuModelName)]
     mistral_names = [f'mistral:{n}' for n in get_model_names(MistralModelName)]
     openai_names = [f'openai:{n}' for n in get_model_names(OpenAIModelName)]
     bedrock_names = [f'bedrock:{n}' for n in get_model_names(BedrockModelName)]
@@ -83,6 +85,7 @@ def test_known_model_names():  # pragma: lax no cover
         + groq_names
         + mistral_names
         + moonshotai_names
+    + zhipu_names
         + openai_names
         + bedrock_names
         + deepseek_names

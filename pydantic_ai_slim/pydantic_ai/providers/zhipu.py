@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
+from typing import Literal, overload
 
 import httpx
 
@@ -10,6 +10,17 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.zhipu import zhipu_model_profile
 from pydantic_ai.providers import Provider
+
+ZhipuModelName = Literal[
+    'glm-4.5',
+    'glm-4.5-air',
+    'glm-4.5-flash',
+    'glm-4.5v',
+    'glm-4.6',
+    'glm-4v',
+    'glm-4v-plus',
+    'codegeex-4',
+]
 
 try:
     from openai import AsyncOpenAI
