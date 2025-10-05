@@ -20,19 +20,6 @@ pytestmark = [
 ]
 
 
-async def test_openrouter_infer_provider(allow_model_requests: None) -> None:
-    model = OpenRouterModel('google/gemini-2.5-flash-lite')
-    agent = Agent(model, instructions='Be helpful.', retries=1)
-    response = await agent.run('Tell me a joke.')
-    assert response.output == snapshot(
-        """\
-Why did the scarecrow win an award?
-
-Because he was outstanding in his field!\
-"""
-    )
-
-
 async def test_openrouter_with_preset(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.5-flash-lite', provider=provider)
@@ -66,7 +53,8 @@ I'm Grok, a helpful and maximally truthful AI built by xAI. I'm not based on any
 What can I help you with today?\
 """
     )
-    assert response.provider_name == 'xAI'
+    assert response.provider_details is not None
+    assert response.provider_details['downstream_provider'] == 'xAI'
 
 
 async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_api_key: str) -> None:

@@ -2,14 +2,13 @@ from typing import Any, Literal, cast
 
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
-from pydantic import BaseModel
 from typing_extensions import TypedDict
 
-from ..messages import ModelMessage, ModelResponse
+from ..messages import ModelResponse
 from ..profiles import ModelProfileSpec
-from ..providers import Provider, infer_provider
+from ..providers import Provider
 from ..settings import ModelSettings
-from . import ModelRequestParameters, check_allow_model_requests
+from . import ModelRequestParameters
 from .openai import OpenAIChatModel, OpenAIChatModelSettings
 
 
@@ -139,6 +138,27 @@ class OpenRouterPreferences(TypedDict, total=False):
     """The maximum pricing you want to pay for this request. [See details](https://openrouter.ai/docs/features/provider-routing#max-price)"""
 
 
+class OpenRouterReasoning(TypedDict, total=False):
+    """Configuration for reasoning tokens in OpenRouter requests.
+
+    Reasoning tokens allow models to show their step-by-step thinking process.
+    You can configure this using either OpenAI-style effort levels or Anthropic-style
+    token limits, but not both simultaneously.
+    """
+
+    effort: Literal['high', 'medium', 'low']
+    """OpenAI-style reasoning effort level. Cannot be used with max_tokens."""
+
+    max_tokens: int
+    """Anthropic-style specific token limit for reasoning. Cannot be used with effort."""
+
+    exclude: bool
+    """Whether to exclude reasoning tokens from the response. Default is False. All models support this."""
+
+    enabled: bool
+    """Whether to enable reasoning with default parameters. Default is inferred from effort or max_tokens."""
+
+
 class OpenRouterModelSettings(ModelSettings, total=False):
     """Settings used for an OpenRouter model request."""
 
@@ -166,35 +186,39 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     Transforms work by removing or truncating messages from the middle of the prompt, until the prompt fits within the model’s context window. [See more](https://openrouter.ai/docs/features/message-transforms)
     """
 
+    openrouter_reasoning: OpenRouterReasoning
+    """To control the reasoning tokens in the request.
 
-class OpenRouterErrorResponse(BaseModel):
-    """Represents error responses from upstream LLM provider relayed by OpenRouter.
-
-    Attributes:
-        code: The error code returned by LLM provider.
-        message: The error message returned by OpenRouter
-        metadata: Additional error context provided by OpenRouter.
-
-    See: https://openrouter.ai/docs/api-reference/errors
+    The reasoning config object consolidates settings for controlling reasoning strength across different models. [See more](https://openrouter.ai/docs/use-cases/reasoning-tokens)
     """
 
-    code: int
-    message: str
-    metadata: dict[str, Any] | None
 
+def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSettings) -> OpenAIChatModelSettings:
+    """Transforms a 'OpenRouterModelSettings' object into an 'OpenAIChatModelSettings' object.
 
-class OpenRouterChatCompletion(ChatCompletion):
-    """Extends ChatCompletion with OpenRouter-specific attributes.
+    Args:
+        model_settings: The 'OpenRouterModelSettings' object to transform.
 
-    This class extends the base ChatCompletion model to include additional
-    fields returned specifically by the OpenRouter API.
-
-    Attributes:
-        provider: The name of the upstream LLM provider (e.g., "Anthropic",
-            "OpenAI", etc.) that processed the request through OpenRouter.
+    Returns:
+        An 'OpenAIChatModelSettings' object with equivalent settings.
     """
+    extra_body: dict[str, Any] = {}
 
-    provider: str
+    if models := model_settings.get('openrouter_models'):
+        extra_body['models'] = models
+    if provider := model_settings.get('openrouter_preferences'):
+        extra_body['provider'] = provider
+    if preset := model_settings.get('openrouter_preset'):
+        extra_body['preset'] = preset
+    if transforms := model_settings.get('openrouter_transforms'):
+        extra_body['transforms'] = transforms
+
+    base_keys = ModelSettings.__annotations__.keys()
+    base_data: dict[str, Any] = {k: model_settings[k] for k in base_keys if k in model_settings}
+
+    new_settings = OpenAIChatModelSettings(**base_data, extra_body=extra_body)
+
+    return new_settings
 
 
 class OpenRouterModel(OpenAIChatModel):
@@ -213,75 +237,31 @@ class OpenRouterModel(OpenAIChatModel):
         Args:
             model_name: The name of the model to use.
             provider: The provider to use for authentication and API access. Currently, uses OpenAI as the internal client. Can be either the string
-                'openai' or an instance of `Provider[AsyncOpenAI]`. If not provided, a new provider will be
+                'openrouter' or an instance of `Provider[AsyncOpenAI]`. If not provided, a new provider will be
                 created using the other parameters.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
-            json_mode_schema_prompt: The prompt to show when the model expects a JSON object as input.
             settings: Model-specific settings that will be used as defaults for this model.
         """
-        self._model_name = model_name
+        super().__init__(model_name, provider=provider, profile=profile, settings=settings)
 
-        if isinstance(provider, str):
-            provider = infer_provider(provider)
-        self._provider = provider
-        self.client = provider.client
-
-        super().__init__(model_name, provider=provider, profile=profile or provider.model_profile, settings=settings)
-
-    async def request(
+    def prepare_request(
         self,
-        messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:
-        check_allow_model_requests()
-        transformed_settings = OpenRouterModel._openrouter_settings_to_openai_settings(
-            cast(OpenRouterModelSettings, model_settings or {})
-        )
-
-        response = await super()._completions_create(
-            messages=messages,
-            stream=False,
-            model_settings=transformed_settings,
-            model_request_parameters=model_request_parameters,
-        )
-
-        model_response = self._process_response(response)
-        return model_response
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+        new_settings = _openrouter_settings_to_openai_settings(cast(OpenRouterModelSettings, merged_settings or {}))
+        return new_settings, customized_parameters
 
     def _process_response(self, response: ChatCompletion | str) -> ModelResponse:
         model_response = super()._process_response(response=response)
         response = cast(ChatCompletion, response)  # If above did not raise an error, we can assume response != str
 
-        if openrouter_provider := getattr(response, 'provider', None):
-            model_response.provider_name = openrouter_provider
+        provider_details: dict[str, str] = {}
+
+        if openrouter_provider := getattr(response, 'provider', None):  # pragma: lax no cover
+            provider_details['downstream_provider'] = openrouter_provider
+
+        model_response.provider_details = provider_details
 
         return model_response
-
-    @staticmethod
-    def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSettings) -> OpenAIChatModelSettings:
-        """Transforms a 'OpenRouterModelSettings' object into an 'OpenAIChatModelSettings' object.
-
-        Args:
-            model_settings: The 'OpenRouterModelSettings' object to transform.
-
-        Returns:
-            An 'OpenAIChatModelSettings' object with equivalent settings.
-        """
-        extra_body: dict[str, Any] = {}
-
-        if models := model_settings.get('openrouter_models'):
-            extra_body['models'] = models
-        if provider := model_settings.get('openrouter_preferences'):
-            extra_body['provider'] = provider
-        if preset := model_settings.get('openrouter_preset'):
-            extra_body['preset'] = preset
-        if transforms := model_settings.get('openrouter_transforms'):
-            extra_body['transforms'] = transforms
-
-        base_keys = ModelSettings.__annotations__.keys()
-        base_data: dict[str, Any] = {k: model_settings[k] for k in base_keys if k in model_settings}
-
-        new_settings = OpenAIChatModelSettings(**base_data, extra_body=extra_body)
-
-        return new_settings
