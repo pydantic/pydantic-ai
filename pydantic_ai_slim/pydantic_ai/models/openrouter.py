@@ -183,7 +183,7 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     openrouter_transforms: list[Transforms]
     """To help with prompts that exceed the maximum context size of a model.
 
-    Transforms work by removing or truncating messages from the middle of the prompt, until the prompt fits within the model’s context window. [See more](https://openrouter.ai/docs/features/message-transforms)
+    Transforms work by removing or truncating messages from the middle of the prompt, until the prompt fits within the model's context window. [See more](https://openrouter.ai/docs/features/message-transforms)
     """
 
     openrouter_reasoning: OpenRouterReasoning

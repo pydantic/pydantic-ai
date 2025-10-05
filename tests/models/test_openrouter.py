@@ -5,12 +5,11 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRequest, TextPart
 from pydantic_ai.direct import model_request
-from pydantic_ai.models.openrouter import OpenRouterModelSettings
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 pytestmark = [
