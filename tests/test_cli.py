@@ -293,6 +293,7 @@ def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
         prog_name='pydantic-ai',
         deps=None,
         message_history=None,
+        show_tool_calls=False,
     )
 
 
@@ -309,6 +310,7 @@ async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
         prog_name='pydantic-ai',
         deps=None,
         message_history=None,
+        show_tool_calls=False,
     )
 
 
@@ -329,6 +331,7 @@ async def test_agent_to_cli_with_message_history(mocker: MockerFixture, env: Tes
         prog_name='pydantic-ai',
         deps=None,
         message_history=test_messages,
+        show_tool_calls=False,
     )
 
 
@@ -348,4 +351,5 @@ def test_agent_to_cli_sync_with_message_history(mocker: MockerFixture, env: Test
         prog_name='pydantic-ai',
         deps=None,
         message_history=test_messages,
+        show_tool_calls=False,
     )

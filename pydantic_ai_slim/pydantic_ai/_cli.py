@@ -18,7 +18,7 @@ from . import __version__
 from ._run_context import AgentDepsT
 from .agent import AbstractAgent, Agent
 from .exceptions import UserError
-from .messages import ModelMessage, ModelResponse
+from .messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse
 from .models import KnownModelName, infer_model
 from .output import OutputDataT
 
@@ -229,6 +229,7 @@ async def run_chat(
     config_dir: Path | None = None,
     deps: AgentDepsT = None,
     message_history: list[ModelMessage] | None = None,
+    show_tool_calls: bool = False,
 ) -> int:
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -255,7 +256,7 @@ async def run_chat(
                 return exit_value
         else:
             try:
-                messages = await ask_agent(agent, text, stream, console, code_theme, deps, messages)
+                messages = await ask_agent(agent, text, stream, console, code_theme, deps, messages, show_tool_calls)
             except CancelledError:  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
             except Exception as e:  # pragma: no cover
@@ -273,6 +274,7 @@ async def ask_agent(
     code_theme: str,
     deps: AgentDepsT = None,
     messages: list[ModelMessage] | None = None,
+    show_tool_calls: bool = False,
 ) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
 
@@ -294,6 +296,17 @@ async def ask_agent(
 
                         async for content in handle_stream.stream_output(debounce_by=None):
                             live.update(Markdown(str(content), code_theme=code_theme))
+                elif show_tool_calls and Agent.is_call_tools_node(node):
+                    async with node.stream(agent_run.ctx) as handle_stream:
+                        async for event in handle_stream:
+                            if isinstance(event, FunctionToolCallEvent):
+                                console.print(
+                                    Markdown(f'[Tool] {event.part.tool_name!r} called with args={event.part.args}')
+                                )
+                            elif isinstance(event, FunctionToolResultEvent):
+                                console.print(
+                                    Markdown(f'[Tool] {event.result.tool_name!r} returned => {event.result.content}')
+                                )
 
         assert agent_run.result is not None
         return agent_run.result.all_messages()
