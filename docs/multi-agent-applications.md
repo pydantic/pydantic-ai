@@ -185,8 +185,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from rich.prompt import Prompt
 
-from pydantic_ai import Agent, RunContext, RunUsage, UsageLimits
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai import Agent, ModelMessage, RunContext, RunUsage, UsageLimits
 
 
 class FlightDetails(BaseModel):

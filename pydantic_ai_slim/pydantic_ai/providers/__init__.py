@@ -8,7 +8,7 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from typing import Any, Generic, TypeVar
 
-from pydantic_ai.profiles import ModelProfile
+from pydantic_ai import ModelProfile
 
 InterfaceClient = TypeVar('InterfaceClient')
 

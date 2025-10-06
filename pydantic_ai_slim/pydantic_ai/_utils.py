@@ -6,7 +6,7 @@ import inspect
 import re
 import time
 import uuid
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
@@ -70,14 +70,31 @@ def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
 
     if schema.get('type') == 'object':
         return schema
-    elif schema.get('$ref') is not None:
-        maybe_result = schema.get('$defs', {}).get(schema['$ref'][8:])  # This removes the initial "#/$defs/".
-
-        if "'$ref': '#/$defs/" in str(maybe_result):
-            return schema  # We can't remove the $defs because the schema contains other references
-        return maybe_result
+    elif ref := schema.get('$ref'):
+        prefix = '#/$defs/'
+        # Return the referenced schema unless it contains additional nested references.
+        if (
+            ref.startswith(prefix)
+            and (resolved := schema.get('$defs', {}).get(ref[len(prefix) :]))
+            and resolved.get('type') == 'object'
+            and not _contains_ref(resolved)
+        ):
+            return resolved
+        return schema
     else:
         raise UserError('Schema must be an object')
+
+
+def _contains_ref(obj: JsonSchemaValue | list[JsonSchemaValue]) -> bool:
+    """Recursively check if an object contains any $ref keys."""
+    items: Iterable[JsonSchemaValue]
+    if isinstance(obj, dict):
+        if '$ref' in obj:
+            return True
+        items = obj.values()
+    else:
+        items = obj
+    return any(isinstance(item, dict | list) and _contains_ref(item) for item in items)  # pyright: ignore[reportUnknownArgumentType]
 
 
 T = TypeVar('T')

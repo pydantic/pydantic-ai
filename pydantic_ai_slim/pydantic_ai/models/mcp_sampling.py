@@ -52,6 +52,8 @@ class MCPSamplingModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         system_prompt, sampling_messages = _mcp.map_from_pai_messages(messages)
+
+        model_settings, _ = self.prepare_request(model_settings, model_request_parameters)
         model_settings = cast(MCPSamplingModelSettings, model_settings or {})
 
         result = await self.session.create_message(

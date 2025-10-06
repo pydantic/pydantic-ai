@@ -21,6 +21,8 @@ from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provide
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+
 from .. import _otel_messages
 from .._run_context import RunContext
 from ..messages import (
@@ -90,7 +92,7 @@ class InstrumentationSettings:
     event_mode: Literal['attributes', 'logs'] = 'attributes'
     include_binary_content: bool = True
     include_content: bool = True
-    version: Literal[1, 2] = 1
+    version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION
 
     def __init__(
         self,
@@ -99,7 +101,7 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
-        version: Literal[1, 2] = 2,
+        version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION,
         event_mode: Literal['attributes', 'logs'] = 'attributes',
         event_logger_provider: EventLoggerProvider | None = None,
     ):
@@ -352,8 +354,12 @@ class InstrumentedModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        with self._instrument(messages, model_settings, model_request_parameters) as finish:
-            response = await super().request(messages, model_settings, model_request_parameters)
+        prepared_settings, prepared_parameters = self.wrapped.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
+        with self._instrument(messages, prepared_settings, prepared_parameters) as finish:
+            response = await self.wrapped.request(messages, model_settings, model_request_parameters)
             finish(response)
             return response
 
@@ -365,10 +371,14 @@ class InstrumentedModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
-        with self._instrument(messages, model_settings, model_request_parameters) as finish:
+        prepared_settings, prepared_parameters = self.wrapped.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
+        with self._instrument(messages, prepared_settings, prepared_parameters) as finish:
             response_stream: StreamedResponse | None = None
             try:
-                async with super().request_stream(
+                async with self.wrapped.request_stream(
                     messages, model_settings, model_request_parameters, run_context
                 ) as response_stream:
                     yield response_stream

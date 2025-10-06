@@ -88,7 +88,7 @@ from dirty_equals import IsNow, IsStr
 
 from pydantic_ai import models, capture_run_messages, RequestUsage
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.messages import (
+from pydantic_ai import (
     ModelResponse,
     SystemPromptPart,
     TextPart,
@@ -196,7 +196,7 @@ import re
 import pytest
 
 from pydantic_ai import models
-from pydantic_ai.messages import (
+from pydantic_ai import (
     ModelMessage,
     ModelResponse,
     TextPart,
