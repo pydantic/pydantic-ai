@@ -1,7 +1,5 @@
 """Tests for pydantic_graph.beta.util module."""
 
-from typing import Union
-
 from pydantic_graph.beta.util import (
     Some,
     TypeExpression,
@@ -18,9 +16,9 @@ def test_type_expression_unpacking():
     assert result is int
 
     # Test with TypeExpression wrapper
-    wrapped = TypeExpression[Union[str, int]]
+    wrapped = TypeExpression[str | int]
     result = unpack_type_expression(wrapped)
-    assert result == Union[str, int]
+    assert result == str | int
 
 
 def test_some_wrapper():

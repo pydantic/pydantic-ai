@@ -1,5 +1,7 @@
 """Tests for parent fork identification and dominator analysis."""
 
+from inline_snapshot import snapshot
+
 from pydantic_graph.beta.parent_forks import ParentForkFinder
 
 
@@ -50,7 +52,10 @@ def test_parent_fork_with_cycle():
 
 
 def test_parent_fork_nested_forks():
-    """Test parent fork identification with nested forks."""
+    """Test parent fork identification with nested forks.
+
+    In this case, it should return the most ancestral valid parent fork.
+    """
     join_id = 'J'
     nodes = {'start', 'F1', 'F2', 'A', 'B', 'C', 'J', 'end'}
     start_ids = {'start'}
@@ -68,36 +73,43 @@ def test_parent_fork_nested_forks():
     parent_fork = finder.find_parent_fork(join_id)
 
     assert parent_fork is not None
-    # Should find F2 as the immediate parent fork
-    assert parent_fork.fork_id == 'F2'
+    # Should find F1 as the most ancestral parent fork
+    assert parent_fork.fork_id == 'F1'
 
 
-def test_parent_fork_most_ancestral():
-    """Test that the most ancestral valid parent fork is found."""
-    join_id = 'J'
-    nodes = {'start', 'F1', 'F2', 'I', 'A', 'B', 'C', 'J', 'end'}
+def test_parent_fork_parallel_nested_forks():
+    """Test parent fork identification with nested forks.
+
+    This test is mostly included to document the current behavior, which is always to use the most ancestral
+    valid fork, even if the most ancestral fork isn't guaranteed to pass through the specified join, and another
+    fork is.
+
+    We might want to change this behavior at some point, but if we do, we'll probably want to do so in some sort
+    of user-specified way to ensure we don't break user code.
+    """
+    nodes = {'start', 'F1', 'F2-A', 'F2-B', 'A1', 'A2', 'B1', 'B2', 'C', 'J-A', 'J-B', 'J', 'end'}
     start_ids = {'start'}
-    fork_ids = {'F1', 'F2'}
-    # F1 is the most ancestral fork, F2 is nested, with intermediate node I, and a cycle from J back to I
+    fork_ids = {'F1', 'F2A', 'F2B'}
     edges = {
         'start': ['F1'],
-        'F1': ['F2'],
-        'F2': ['I'],
-        'I': ['A', 'B'],
-        'A': ['J'],
-        'B': ['J'],
-        'J': ['C'],
-        'C': ['end', 'I'],  # Cycle back to I
+        'F1': ['F2-A', 'F2-B'],
+        'F2-A': ['A1', 'A2'],
+        'F2-B': ['B1', 'B2'],
+        'A1': ['J-A'],
+        'A2': ['J-A'],
+        'B1': ['J-B'],
+        'B2': ['J-B'],
+        'J-A': ['J'],
+        'J-B': ['J'],
+        'J': ['end'],
     }
 
     finder = ParentForkFinder(nodes, start_ids, fork_ids, edges)
-    parent_fork = finder.find_parent_fork(join_id)
-
-    # F2 is not a valid parent because J has a cycle back to I which avoids F2
-    # F1 is also not valid for the same reason
-    # But we should find I as the intermediate fork... wait, I is not a fork
-    # So we should get None OR the most ancestral fork that doesn't have the cycle issue
-    assert parent_fork is None or parent_fork.fork_id in fork_ids
+    parent_fork_ids = [
+        finder.find_parent_fork(join_id).fork_id  # pyright: ignore[reportOptionalMemberAccess]
+        for join_id in ['J-A', 'J-B', 'J']
+    ]
+    assert parent_fork_ids == snapshot(['F1', 'F1', 'F1'])  # NOT: ['F2-A', 'F2-B', 'F1'] as one might suspect
 
 
 def test_parent_fork_no_forks():

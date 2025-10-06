@@ -196,6 +196,8 @@ class DictUpdateReducer(Reducer[object, object, dict[K, V], dict[K, V]], Generic
 
 
 class SupportsSum(Protocol):
+    """A protocol for a type that supports adding to itself."""
+
     @abstractmethod
     def __add__(self, other: Self, /) -> Self:
         pass

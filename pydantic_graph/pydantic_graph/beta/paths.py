@@ -135,6 +135,7 @@ class Path:
 
     items: Sequence[PathItem]
     """The sequence of path items that define this path."""
+    # TODO: Change items to be Sequence[TransformMarker | MapMarker | LabelMarker] and add field `destination: BroadcastMarker | DestinationMarker`
 
     @property
     def last_fork(self) -> BroadcastMarker | MapMarker | None:

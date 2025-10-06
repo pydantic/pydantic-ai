@@ -178,20 +178,19 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
 
     def fork(
         self,
-        get_forks: Callable[[Self], Sequence[Decision[StateT, DepsT, HandledT | SourceT]]],
+        get_forks: Callable[[Self], Sequence[DecisionBranch[SourceT]]],
         /,
     ) -> DecisionBranch[SourceT]:
         """Create a fork in the execution path.
 
         Args:
-            get_forks: Function that generates fork decisions.
+            get_forks: Function that generates forked decision branches.
 
         Returns:
             A completed DecisionBranch with forked execution paths.
         """
-        n_initial_branches = len(self.decision.branches)
-        fork_decisions = get_forks(self)
-        new_paths = [b.path for fd in fork_decisions for b in fd.branches[n_initial_branches:]]
+        fork_decision_branches = get_forks(self)
+        new_paths = [b.path for b in fork_decision_branches]
         return DecisionBranch(source=self.source, matches=self.matches, path=self.path_builder.fork(new_paths))
 
     def transform(

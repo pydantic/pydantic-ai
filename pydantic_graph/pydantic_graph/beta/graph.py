@@ -693,14 +693,39 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
 
     def _handle_edges(self, node: AnyNode, inputs: Any, fork_stack: ForkStack) -> Sequence[GraphTask]:
         edges = self.graph.edges_by_source.get(node.id, [])
-        assert len(edges) == 1 or isinstance(node, Fork), (
+        assert len(edges) == 1 or (isinstance(node, Fork) and not node.is_map), (
             edges,
             node.id,
         )  # this should have already been ensured during graph building
 
         new_tasks: list[GraphTask] = []
-        for path in edges:
-            new_tasks.extend(self._handle_path(path, inputs, fork_stack))
+
+        if isinstance(node, Fork):
+            node_run_id = NodeRunID(str(uuid.uuid4()))
+            if node.is_map:
+                # Eagerly raise a clear error if the input value is not iterable as expected
+                try:
+                    iter(inputs)
+                except TypeError:
+                    raise RuntimeError(f'Cannot map non-iterable value: {inputs!r}')
+
+                # If the map specifies a downstream join id, eagerly create a reducer for it
+                if (join_id := node.downstream_join_id) is not None:
+                    join_node = self.graph.nodes[join_id]
+                    assert isinstance(join_node, Join)
+                    self._active_reducers[(join_id, node_run_id)] = join_node.create_reducer(), fork_stack
+
+                for thread_index, input_item in enumerate(inputs):
+                    item_tasks = self._handle_path(
+                        edges[0], input_item, fork_stack + (ForkStackItem(node.id, node_run_id, thread_index),)
+                    )
+                    new_tasks += item_tasks
+            else:
+                for i, path in enumerate(edges):
+                    new_tasks += self._handle_path(path, inputs, fork_stack + (ForkStackItem(node.id, node_run_id, i),))
+        else:
+            new_tasks += self._handle_path(edges[0], inputs, fork_stack)
+
         return new_tasks
 
     def _is_fork_run_completed(self, tasks: Iterable[GraphTask], join_id: JoinID, fork_run_id: NodeRunID) -> bool:

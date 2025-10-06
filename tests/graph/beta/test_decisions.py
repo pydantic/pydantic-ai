@@ -437,7 +437,7 @@ async def test_decision_branch_label():
 
 async def test_decision_branch_fork():
     """Test DecisionBranchBuilder.fork method."""
-    g = GraphBuilder(state_type=DecisionState, output_type=str)
+    g = GraphBuilder(state_type=DecisionState, output_type=list[str])
 
     @g.step
     async def choose_option(ctx: StepContext[DecisionState, None, None]) -> Literal['fork']:
@@ -453,28 +453,22 @@ async def test_decision_branch_fork():
 
     collect = g.join(ListAppendReducer[str])
 
-    @g.step
-    async def combine(ctx: StepContext[DecisionState, None, list[str]]) -> str:
-        return ', '.join(ctx.inputs)
-
     g.add(
         g.edge_from(g.start_node).to(choose_option),
         g.edge_from(choose_option).to(
             g.decision().branch(
                 g.match(TypeExpression[Literal['fork']]).fork(
                     lambda b: [
-                        b.decision.branch(g.match(TypeExpression[Literal['fork']]).to(path_1)),
-                        b.decision.branch(g.match(TypeExpression[Literal['fork']]).to(path_2)),
+                        b.to(path_1),
+                        b.to(path_2),
                     ]
                 )
             )
         ),
         g.edge_from(path_1, path_2).to(collect),
-        g.edge_from(collect).to(combine),
-        g.edge_from(combine).to(g.end_node),
+        g.edge_from(collect).to(g.end_node),
     )
 
     graph = g.build()
     result = await graph.run(state=DecisionState())
-    assert 'Path 1' in result
-    assert 'Path 2' in result
+    assert sorted(result) == ['Path 1', 'Path 2']

@@ -11,7 +11,7 @@ from typing import Generic
 
 from typing_extensions import TypeVar
 
-from pydantic_graph.beta.id_types import ForkID, NodeID
+from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID
 
 StateT = TypeVar('StateT', infer_variance=True)
 """Type variable for graph state."""
@@ -76,6 +76,8 @@ class Fork(Generic[InputT, OutputT]):
     If True, InputT must be Sequence[OutputT] and each element is sent to a separate branch.
     If False, InputT must be OutputT and the same data is sent to all branches.
     """
+    downstream_join_id: JoinID | None
+    """Optional identifier of a downstream join node that should be jumped to if mapping an empty iterable."""
 
     def _force_variance(self, inputs: InputT) -> OutputT:  # pragma: no cover
         """Force type variance for proper generic typing.

@@ -341,7 +341,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             return join(reducer_type=reducer_factory, node_id=node_id)
 
     # Edge building
-    def add(self, *edges: EdgePath[StateT, DepsT]) -> None:
+    def add(self, *edges: EdgePath[StateT, DepsT]) -> None:  # noqa C901
         """Add one or more edge paths to the graph.
 
         This method processes edge paths and automatically creates any necessary
@@ -359,12 +359,12 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             """
             for item in p.items:
                 if isinstance(item, BroadcastMarker):
-                    new_node = Fork[Any, Any](id=item.fork_id, is_map=False)
+                    new_node = Fork[Any, Any](id=item.fork_id, is_map=False, downstream_join_id=None)
                     self._insert_node(new_node)
                     for path in item.paths:
                         _handle_path(Path(items=[*path.items]))
                 elif isinstance(item, MapMarker):
-                    new_node = Fork[Any, Any](id=item.fork_id, is_map=True)
+                    new_node = Fork[Any, Any](id=item.fork_id, is_map=True, downstream_join_id=item.downstream_join_id)
                     self._insert_node(new_node)
                 elif isinstance(item, DestinationMarker):
                     pass
@@ -710,6 +710,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         # TODO(P3): Consider doing a deepcopy here to prevent modifications to the underlying nodes and edges
         nodes = self._nodes
         edges_by_source = self._edges_by_source
+        nodes, edges_by_source = _flatten_paths(nodes, edges_by_source)
         nodes, edges_by_source = _normalize_forks(nodes, edges_by_source)
         parent_forks = _collect_dominating_forks(nodes, edges_by_source)
 
@@ -724,6 +725,52 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             parent_forks=parent_forks,
             auto_instrument=self.auto_instrument,
         )
+
+
+def _flatten_paths(
+    nodes: dict[NodeID, AnyNode], edges: dict[NodeID, list[Path]]
+) -> tuple[dict[NodeID, AnyNode], dict[NodeID, list[Path]]]:
+    new_nodes = nodes.copy()
+    new_edges: dict[NodeID, list[Path]] = defaultdict(list)
+
+    paths_to_handle: list[tuple[NodeID, Path]] = []
+
+    def _split_at_first_fork(path: Path) -> tuple[Path, list[tuple[NodeID, Path]]]:
+        for i, item in enumerate(path.items):
+            if isinstance(item, MapMarker):
+                if item.fork_id not in nodes:
+                    new_nodes[item.fork_id] = Fork(
+                        id=item.fork_id, is_map=True, downstream_join_id=item.downstream_join_id
+                    )
+                upstream = Path(list(path.items[:i]) + [DestinationMarker(item.fork_id)])
+                downstream = Path(path.items[i + 1 :])
+                return upstream, [(item.fork_id, downstream)]
+
+            if isinstance(item, BroadcastMarker):
+                if item.fork_id not in nodes:
+                    new_nodes[item.fork_id] = Fork(id=item.fork_id, is_map=True, downstream_join_id=None)
+                upstream = Path(list(path.items[:i]) + [DestinationMarker(item.fork_id)])
+                return upstream, [(item.fork_id, p) for p in item.paths]
+        return path, []
+
+    for node in new_nodes.values():
+        if isinstance(node, Decision):
+            for branch in node.branches:
+                upstream, downstreams = _split_at_first_fork(branch.path)
+                branch.path = upstream
+                paths_to_handle.extend(downstreams)
+
+    for source_id, edges_from_source in edges.items():
+        for path in edges_from_source:
+            paths_to_handle.append((source_id, path))
+
+    while paths_to_handle:
+        source_id, path = paths_to_handle.pop()
+        upstream, downstreams = _split_at_first_fork(path)
+        new_edges[source_id].append(upstream)
+        paths_to_handle.extend(downstreams)
+
+    return new_nodes, dict(new_edges)
 
 
 def _normalize_forks(
@@ -756,24 +803,10 @@ def _normalize_forks(
         if len(edges_from_source) == 1:
             new_edges[source_id] = edges_from_source
             continue
-        new_fork = Fork[Any, Any](id=ForkID(NodeID(f'{node.id}_broadcast_fork')), is_map=False)
+        new_fork = Fork[Any, Any](id=ForkID(NodeID(f'{node.id}_broadcast_fork')), is_map=False, downstream_join_id=None)
         new_nodes[new_fork.id] = new_fork
         new_edges[source_id] = [Path(items=[BroadcastMarker(fork_id=new_fork.id, paths=edges_from_source)])]
         new_edges[new_fork.id] = edges_from_source
-
-    while paths_to_handle:
-        path = paths_to_handle.pop()
-        for item in path.items:
-            if isinstance(item, MapMarker):
-                assert item.fork_id in new_nodes
-                new_edges[item.fork_id] = [path.next_path]
-                paths_to_handle.append(path.next_path)
-                break
-            elif isinstance(item, BroadcastMarker):
-                assert item.fork_id in new_nodes
-                new_edges[item.fork_id] = [*item.paths]
-                paths_to_handle.extend(item.paths)
-                break
 
     return new_nodes, new_edges
 
@@ -808,7 +841,6 @@ def _collect_dominating_forks(
 
         if isinstance(node, Fork):
             fork_ids.add(node.id)
-            continue
 
         def _handle_path(path: Path, last_source_id: NodeID):
             """Process a path and collect edges and fork information.
