@@ -18,7 +18,7 @@ from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
-from .usage import UsageLimits
+from .usage import RunUsage
 
 _sequential_tool_calls_ctx_var: ContextVar[bool] = ContextVar('sequential_tool_calls', default=False)
 
@@ -93,7 +93,6 @@ class ToolManager(Generic[AgentDepsT]):
         call: ToolCallPart,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
-        usage_limits: UsageLimits | None = None,
     ) -> Any:
         """Handle a tool call by validating the arguments, calling the tool, and handling retries.
 
@@ -108,16 +107,16 @@ class ToolManager(Generic[AgentDepsT]):
 
         if (tool := self.tools.get(call.tool_name)) and tool.tool_def.kind == 'output':
             # Output tool calls are not traced and not counted
-            return await self._call_tool(call, allow_partial, wrap_validation_errors, count_tool_usage=False)
+            return await self._call_tool(call, allow_partial, wrap_validation_errors)
         else:
-            return await self._call_tool_traced(
+            return await self._call_function_tool(
                 call,
                 allow_partial,
                 wrap_validation_errors,
                 self.ctx.tracer,
                 self.ctx.trace_include_content,
                 self.ctx.instrumentation_version,
-                usage_limits,
+                self.ctx.usage,
             )
 
     async def _call_tool(
@@ -125,8 +124,6 @@ class ToolManager(Generic[AgentDepsT]):
         call: ToolCallPart,
         allow_partial: bool,
         wrap_validation_errors: bool,
-        usage_limits: UsageLimits | None = None,
-        count_tool_usage: bool = True,
     ) -> Any:
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
@@ -159,13 +156,7 @@ class ToolManager(Generic[AgentDepsT]):
             else:
                 args_dict = validator.validate_python(call.args or {}, allow_partial=pyd_allow_partial)
 
-            if usage_limits is not None and count_tool_usage:
-                usage_limits.check_before_tool_call(self.ctx.usage)
-
             result = await self.toolset.call_tool(name, args_dict, ctx, tool)
-
-            if count_tool_usage:
-                self.ctx.usage.tool_calls += 1
 
             return result
         except (ValidationError, ModelRetry) as e:
@@ -199,7 +190,7 @@ class ToolManager(Generic[AgentDepsT]):
 
                 raise e
 
-    async def _call_tool_traced(
+    async def _call_function_tool(
         self,
         call: ToolCallPart,
         allow_partial: bool,
@@ -207,7 +198,7 @@ class ToolManager(Generic[AgentDepsT]):
         tracer: Tracer,
         include_content: bool,
         instrumentation_version: int,
-        usage_limits: UsageLimits | None = None,
+        usage: RunUsage,
     ) -> Any:
         """See <https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/#execute-tool-span>."""
         instrumentation_names = InstrumentationNames.for_version(instrumentation_version)
@@ -242,7 +233,9 @@ class ToolManager(Generic[AgentDepsT]):
             attributes=span_attributes,
         ) as span:
             try:
-                tool_result = await self._call_tool(call, allow_partial, wrap_validation_errors, usage_limits)
+                tool_result = await self._call_tool(call, allow_partial, wrap_validation_errors)
+                usage.tool_calls += 1
+
             except ToolRetryError as e:
                 part = e.tool_retry
                 if include_content and span.is_recording():

@@ -131,6 +131,7 @@ nav:
           - api/profiles.md
           - api/providers.md
           - api/retries.md
+          - api/run.md
       - pydantic_evals:
           - api/pydantic_evals/dataset.md
           - api/pydantic_evals/evaluators.md
