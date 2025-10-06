@@ -23,6 +23,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._mcp import Resource
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.mcp import MCPServerStreamableHTTP, load_mcp_servers
@@ -1500,9 +1501,16 @@ async def test_read_text_resource(run_context: RunContext[int]):
     """Test reading a text resource (converted to string)."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
+        # Test reading by URI string
         content = await server.read_resource('resource://product_name.txt')
         assert isinstance(content, str)
         assert content == snapshot('Pydantic AI\n')
+
+        # Test reading by Resource object
+        resource = Resource(uri='resource://product_name.txt', name='product_name_resource')
+        content_from_resource = await server.read_resource(resource)
+        assert isinstance(content_from_resource, str)
+        assert content_from_resource == snapshot('Pydantic AI\n')
 
 
 async def test_read_blob_resource(run_context: RunContext[int]):

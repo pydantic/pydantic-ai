@@ -10,7 +10,7 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontext
 from dataclasses import field, replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, overload
 
 import anyio
 import httpx
@@ -320,18 +320,29 @@ class MCPServer(AbstractToolset[Any], ABC):
             result = await self._client.list_resource_templates()
         return [_mcp.map_from_mcp_resource_template(t) for t in result.resourceTemplates]
 
-    async def read_resource(self, uri: str) -> str | messages.BinaryContent | list[str | messages.BinaryContent]:
+    @overload
+    async def read_resource(self, uri: str) -> str | messages.BinaryContent | list[str | messages.BinaryContent]: ...
+
+    @overload
+    async def read_resource(
+        self, uri: _mcp.Resource
+    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent]: ...
+
+    async def read_resource(
+        self, uri: str | _mcp.Resource
+    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent]:
         """Read the contents of a specific resource by URI.
 
         Args:
-            uri: The URI of the resource to read.
+            uri: The URI of the resource to read, or a Resource object.
 
         Returns:
             The resource contents. If the resource has a single content item, returns that item directly.
             If the resource has multiple content items, returns a list of items.
         """
+        resource_uri = uri if isinstance(uri, str) else uri.uri
         async with self:  # Ensure server is running
-            result = await self._client.read_resource(AnyUrl(uri))
+            result = await self._client.read_resource(AnyUrl(resource_uri))
         return (
             self._get_content(result.contents[0])
             if len(result.contents) == 1
