@@ -387,8 +387,6 @@ async def test_simple_state_persistence_snapshot_state_stability():
     @dataclass
     class CountDown(BaseNode[CountDownState, None, int]):
         async def run(self, ctx: GraphRunContext[CountDownState]) -> CountDown | End[int]:
-            if ctx.state.counter <= 0:
-                return End(ctx.state.counter)
             ctx.state.counter -= 1
             return CountDown()
 
