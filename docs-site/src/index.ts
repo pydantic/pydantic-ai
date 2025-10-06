@@ -1,6 +1,8 @@
+import { env } from 'cloudflare:workers'
+import { instrument } from '@pydantic/logfire-cf-workers'
  import { marked } from 'marked'
 
-export default {
+const handler = {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url)
     if (url.pathname === '/changelog.html') {
@@ -8,11 +10,15 @@ export default {
       return new Response(changelog, { headers: {'content-type': 'text/html'} })
     }
     const r = await env.ASSETS.fetch(request)
-    if (r.status == 404) {
+    if (r.status === 404) {
       const redirectPath = redirect(url.pathname)
       if (redirectPath) {
-        url.pathname = redirectPath
-        return Response.redirect(url.toString(), 301)
+        if (redirectPath.startsWith('http')) {
+          return Response.redirect(redirectPath, 301)
+        } else {
+          url.pathname = redirectPath
+          return Response.redirect(url.toString(), 301)
+        }
       }
       url.pathname = '/404.html'
       const r = await env.ASSETS.fetch(url)
@@ -22,14 +28,31 @@ export default {
   },
 } satisfies ExportedHandler<Env>
 
+export default instrument(handler, {
+	service: {
+		name: 'pai-docs',
+		version: env.GIT_COMMIT_SHA,
+	},
+});
+
 const redirect_lookup: Record<string, string> = {
   '/common_tools': '/common-tools/',
   '/testing-evals': '/testing/',
   '/result': '/output/',
+  '/mcp/run-python': 'https://github.com/pydantic/mcp-run-python',
+  '/temporal': '/durable_execution/temporal/',
+  '/api': '/api/agent/',
+  '/examples/question-graph': '/graph/',
+  '/api/models/vertexai': '/models/google/',
+  '/models/gemini': '/models/google/',
+  '/api/models/gemini': '/api/models/google/',
+  '/contributing': '/contributing/',
+  '/api/format_as_xml/': '/api/format_prompt/',
+  '/api/models/ollama/': '/models/openai/#ollama',
 }
 
 function redirect(pathname: string): string | null {
-  return redirect_lookup[pathname.replace(/\/+$/, '')] ?? null
+  return redirect_lookup[pathname.replace(/[/:]+$/, '')] ?? null
 }
 
 async function getChangelog(kv: KVNamespace, commitSha: string): Promise<string> {
@@ -44,7 +67,7 @@ async function getChangelog(kv: KVNamespace, commitSha: string): Promise<string>
   }
   let url: string | undefined = 'https://api.github.com/repos/pydantic/pydantic-ai/releases'
   const releases: Release[] = []
-  while (typeof url == 'string') {
+  while (typeof url === 'string') {
     const response = await fetch(url, { headers })
     if (!response.ok) {
       const text = await response.text()
@@ -77,7 +100,7 @@ function prepRelease(release: Release): string {
   const body = release.body
     .replace(/(#+)/g, (m) => `##${m}`)
     .replace(/https:\/\/github.com\/pydantic\/pydantic-ai\/pull\/(\d+)/g, (url, id) => `[#${id}](${url})`)
-    .replace(/(\s)@([\w\-]+)/g, (_, s, u) => `${s}[@${u}](https://github.com/${u})`)
+    .replace(/(\s)@([\w-]+)/g, (_, s, u) => `${s}[@${u}](https://github.com/${u})`)
     .replace(/\*\*Full Changelog\*\*: (\S+)/, (_, url) => `[${githubIcon} Compare diff](${url}).`)
   return `
 ### ${release.name}

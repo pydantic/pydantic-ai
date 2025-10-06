@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@cloudflare/workers-types": "^4.20250129.0",
+    "@pydantic/logfire-api": "^0.8.2",
+    "@pydantic/logfire-cf-workers": "^0.8.2",
     "cookie": ">=0.7.0",
     "esbuild": ">=0.25.0",
     "marked": "^15.0.8",
