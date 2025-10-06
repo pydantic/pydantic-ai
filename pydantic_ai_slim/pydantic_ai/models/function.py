@@ -18,6 +18,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    FilePart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -319,12 +320,12 @@ class FunctionStreamedResponse(StreamedResponse):
                         if content := delta.args_as_json_str():  # pragma: no branch
                             response_tokens = _estimate_string_tokens(content)
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                        yield self._parts_manager.handle_builtin_tool_call_part(vendor_part_id=dtc_index, part=delta)
+                        yield self._parts_manager.handle_part(vendor_part_id=dtc_index, part=delta)
                     elif isinstance(delta, BuiltinToolReturnPart):
                         if content := delta.model_response_str():  # pragma: no branch
                             response_tokens = _estimate_string_tokens(content)
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                        yield self._parts_manager.handle_builtin_tool_return_part(vendor_part_id=dtc_index, part=delta)
+                        yield self._parts_manager.handle_part(vendor_part_id=dtc_index, part=delta)
                     else:
                         assert_never(delta)
 
@@ -371,10 +372,12 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
                     response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolCallPart):
                     response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
-                elif isinstance(part, BuiltinToolCallPart):  # pragma: no cover
+                elif isinstance(part, BuiltinToolCallPart):
                     response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
-                elif isinstance(part, BuiltinToolReturnPart):  # pragma: no cover
+                elif isinstance(part, BuiltinToolReturnPart):
                     response_tokens += _estimate_string_tokens(part.model_response_str())
+                elif isinstance(part, FilePart):
+                    response_tokens += _estimate_string_tokens([part.content])
                 else:
                     assert_never(part)
         else:

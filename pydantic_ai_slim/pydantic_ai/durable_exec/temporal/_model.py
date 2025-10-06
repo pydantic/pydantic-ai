@@ -128,6 +128,8 @@ class TemporalModel(WrapperModel):
         if not workflow.in_workflow():
             return await super().request(messages, model_settings, model_request_parameters)
 
+        self._validate_model_request_parameters(model_request_parameters)
+
         return await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
             activity=self.request_activity,
             arg=_RequestParams(
@@ -163,6 +165,8 @@ class TemporalModel(WrapperModel):
         # and that only calls `request_stream` if `event_stream_handler` is set.
         assert self.event_stream_handler is not None
 
+        self._validate_model_request_parameters(model_request_parameters)
+
         serialized_run_context = self.run_context_type.serialize_run_context(run_context)
         response = await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
             activity=self.request_stream_activity,
@@ -178,3 +182,7 @@ class TemporalModel(WrapperModel):
             **self.activity_config,
         )
         yield TemporalStreamedResponse(model_request_parameters, response)
+
+    def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
+        if model_request_parameters.allow_image_output:
+            raise UserError('Image output is not supported with Temporal because of the 2MB payload size limit.')
