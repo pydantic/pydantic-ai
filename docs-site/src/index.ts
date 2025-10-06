@@ -35,6 +35,7 @@ export default instrument(handler, {
 	service: {
 		name: 'pai-docs',
 	},
+	baseUrl: 'https://api.logfire.dev',
 })
 
 const redirect_lookup: Record<string, string> = {
