@@ -1,7 +1,12 @@
 """Tests for node and step primitives."""
 
+from typing import Any
+
+from pydantic_graph.beta.decision import Decision
+from pydantic_graph.beta.id_types import NodeID
 from pydantic_graph.beta.node import EndNode, StartNode
-from pydantic_graph.beta.step import StepContext
+from pydantic_graph.beta.node_types import is_destination, is_source
+from pydantic_graph.beta.step import Step, StepContext
 
 
 def test_step_context_repr():
@@ -15,30 +20,27 @@ def test_step_context_repr():
 def test_start_node_id():
     """Test that StartNode has the correct ID."""
     start = StartNode[int]()
-    assert start.id.value == '__start__'
+    assert start.id == '__start__'
 
 
 def test_end_node_id():
     """Test that EndNode has the correct ID."""
     end = EndNode[int]()
-    assert end.id.value == '__end__'
+    assert end.id == '__end__'
 
 
 def test_is_source_type_guard():
     """Test is_source type guard function."""
-    from pydantic_graph.beta.id_types import NodeID
-    from pydantic_graph.beta.node_types import is_source
-    from pydantic_graph.beta.step import Step
 
     # Test with StartNode
     start = StartNode[int]()
     assert is_source(start)
 
     # Test with Step
-    async def my_step(ctx):
+    async def my_step(ctx: StepContext[Any, Any, Any]):
         return 42
 
-    step = Step[None, None, None, int](id=NodeID('test'), step=my_step)
+    step = Step[None, None, None, int](id=NodeID('test'), call=my_step)
     assert is_source(step)
 
     # Test with EndNode (should be False)
@@ -48,20 +50,15 @@ def test_is_source_type_guard():
 
 def test_is_destination_type_guard():
     """Test is_destination type guard function."""
-    from pydantic_graph.beta.decision import Decision
-    from pydantic_graph.beta.id_types import NodeID
-    from pydantic_graph.beta.node_types import is_destination
-    from pydantic_graph.beta.step import Step
-
     # Test with EndNode
     end = EndNode[int]()
     assert is_destination(end)
 
     # Test with Step
-    async def my_step(ctx):
+    async def my_step(ctx: StepContext[Any, Any, Any]):
         return 42
 
-    step = Step[None, None, None, int](id=NodeID('test'), step=my_step)
+    step = Step[None, None, None, int](id=NodeID('test'), call=my_step)
     assert is_destination(step)
 
     # Test with Decision

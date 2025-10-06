@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Literal
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import Reducer, SumReducer
 
 pytestmark = pytest.mark.anyio
 
@@ -31,8 +34,20 @@ async def test_graph_repr():
     )
 
     graph = g.build()
-    repr_str = repr(graph)
-    assert 'graph' in repr_str.lower() or 'flowchart' in repr_str.lower()
+    graph_repr = repr(graph)
+
+    # Replace the non-constant graph object id with a constant string:
+    normalized_graph_repr = re.sub(hex(id(graph)), '0xGraphObjectId', graph_repr)
+
+    assert normalized_graph_repr == snapshot("""\
+<pydantic_graph.beta.graph.Graph object at 0xGraphObjectId
+stateDiagram-v2
+  simple_step
+
+  [*] --> simple_step
+  simple_step --> [*]
+>\
+""")
 
 
 async def test_graph_render_with_title():
@@ -50,7 +65,16 @@ async def test_graph_render_with_title():
 
     graph = g.build()
     rendered = graph.render(title='My Graph')
-    assert 'My Graph' in rendered or 'graph' in rendered.lower()
+    assert rendered == snapshot("""\
+---
+title: My Graph
+---
+stateDiagram-v2
+  simple_step
+
+  [*] --> simple_step
+  simple_step --> [*]\
+""")
 
 
 async def test_get_parent_fork_missing():
@@ -88,9 +112,11 @@ async def test_decision_no_matching_branch():
     async def handle_str(ctx: StepContext[MyState, None, str]) -> str:
         return f'Got: {ctx.inputs}'
 
+    # the purpose of this test is to test runtime behavior when you have this type failure, which is why
+    # we have the `# type: ignore` below
     g.add(
         g.edge_from(g.start_node).to(return_unexpected),
-        g.edge_from(return_unexpected).to(g.decision().branch(g.match(str).to(handle_str))),
+        g.edge_from(return_unexpected).to(g.decision().branch(g.match(str).to(handle_str))),  # type: ignore
         g.edge_from(handle_str).to(g.end_node),
     )
 
@@ -139,15 +165,14 @@ async def test_map_non_iterable():
     async def process_item(ctx: StepContext[MyState, None, int]) -> int:
         return ctx.inputs
 
-    @g.step
-    async def sum_items(ctx: StepContext[MyState, None, list[int]]) -> int:
-        return sum(ctx.inputs)
+    sum_items = g.join(SumReducer[int])
 
     # This will fail at runtime because we're trying to map over a non-iterable
+    # We have a `# type: ignore` below because we are testing behavior when you ignore the type error
     g.add(
         g.edge_from(g.start_node).to(return_non_iterable),
-        g.edge_from(return_non_iterable).map().to(process_item),
-        g.edge_from(process_item).join().to(sum_items),
+        g.edge_from(return_non_iterable).map().to(process_item),  # type: ignore
+        g.edge_from(process_item).to(sum_items),
         g.edge_from(sum_items).to(g.end_node),
     )
 
@@ -176,34 +201,35 @@ async def test_reducer_stop_iteration():
         return ctx.inputs * 2
 
     @g.join
-    class EarlyStopReducer(g.Reducer[int, int]):
+    class EarlyStopReducer(Reducer[EarlyStopState, None, int, int]):
         def __init__(self):
             self.total = 0
             self.count = 0
-
-        def initialize(self):
-            return 0
+            self.stopped = False
 
         def reduce(self, ctx: StepContext[EarlyStopState, None, int]):
+            if self.stopped:
+                # Cancelled tasks don't necessarily stop immediately, so we add handling here
+                # to prevent the reduce method from doing anything in concurrent tasks that
+                # haven't been immediately cancelled
+                raise StopIteration
+
             self.count += 1
             self.total += ctx.inputs
             # Stop after receiving 2 items
             if self.count >= 2:
-                ctx.state.stopped = True
+                self.stopped = True
+                ctx.state.stopped = True  # set it on the state so we can assert after the run completes
                 raise StopIteration
 
         def finalize(self, ctx: StepContext[EarlyStopState, None, None]) -> int:
             return self.total
 
-    @g.step
-    async def finalize_result(ctx: StepContext[EarlyStopState, None, int]) -> int:
-        return ctx.inputs
-
     g.add(
         g.edge_from(g.start_node).to(generate_numbers),
         g.edge_from(generate_numbers).map().to(slow_process),
-        g.edge_from(slow_process).join(EarlyStopReducer).to(finalize_result),
-        g.edge_from(finalize_result).to(g.end_node),
+        g.edge_from(slow_process).to(EarlyStopReducer),
+        g.edge_from(EarlyStopReducer).to(g.end_node),
     )
 
     graph = g.build()
@@ -213,7 +239,8 @@ async def test_reducer_stop_iteration():
     # Should have stopped early
     assert state.stopped
     # Result should be less than the full sum (2+4+6+8+10=30)
-    assert result < 30
+    # Actually, it should be less than the maximum of any two terms, (8+10=18)
+    assert result <= 18
 
 
 async def test_empty_path_handling():
@@ -297,6 +324,7 @@ async def test_path_with_label_marker():
     assert result == 20
 
 
+# TODO: Make a version of this test where we manually specify the parent fork so that we can do different joining behavior at the different levels
 async def test_nested_reducers_with_prefix():
     """Test multiple active reducers where one is a prefix of another."""
     g = GraphBuilder(state_type=MyState, output_type=int)
@@ -309,21 +337,18 @@ async def test_nested_reducers_with_prefix():
     async def inner_process(ctx: StepContext[MyState, None, int]) -> int:
         return ctx.inputs * 2
 
-    @g.step
-    async def outer_sum(ctx: StepContext[MyState, None, list[int]]) -> int:
-        return sum(ctx.inputs)
-
-    @g.step
-    async def final_sum(ctx: StepContext[MyState, None, list[int]]) -> int:
-        return sum(ctx.inputs)
+    # Note: we use  the _most_ ancestral fork as the parent fork by default, which means that this join
+    # actually will join all forks from the initial outer_list, therefore summing everything, rather
+    # than _only_ summing the inner loops. If/when we add more control over the parent fork calculation, we can
+    # test that it's possible to use separate logic for the inside vs. the outside.
+    sum_join = g.join(SumReducer[int])
 
     # Create nested map operations
     g.add(
         g.edge_from(g.start_node).to(outer_list),
         g.edge_from(outer_list).map().map().to(inner_process),
-        g.edge_from(inner_process).join().to(outer_sum),
-        g.edge_from(outer_sum).join().to(final_sum),
-        g.edge_from(final_sum).to(g.end_node),
+        g.edge_from(inner_process).to(sum_join),
+        g.edge_from(sum_join).to(g.end_node),
     )
 
     graph = g.build()

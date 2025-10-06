@@ -87,7 +87,7 @@ agent = Agent(
 )
 
 result = agent.run_sync('Use the web to get the current time.')
-# > In San Francisco, it's 8:21:41 pm PDT on Wednesday, August 6, 2025.
+#> In San Francisco, it's 8:21:41 pm PDT on Wednesday, August 6, 2025.
 ```
 
 ### Parameter Support by Provider
@@ -129,7 +129,7 @@ from pydantic_ai import Agent, CodeExecutionTool
 agent = Agent('anthropic:claude-sonnet-4-0', builtin_tools=[CodeExecutionTool()])
 
 result = agent.run_sync('Calculate the factorial of 15 and show your work')
-# > The factorial of 15 is **1,307,674,368,000**.
+#> The factorial of 15 is **1,307,674,368,000**.
 ```
 
 ## URL Context Tool
@@ -158,7 +158,7 @@ from pydantic_ai import Agent, UrlContextTool
 agent = Agent('google-gla:gemini-2.5-flash', builtin_tools=[UrlContextTool()])
 
 result = agent.run_sync('What is this? https://ai.pydantic.dev')
-# > A Python agent framework for building Generative AI applications.
+#> A Python agent framework for building Generative AI applications.
 ```
 
 ## Memory Tool

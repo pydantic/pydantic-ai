@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext
 
 pytestmark = pytest.mark.anyio
 
@@ -36,7 +36,7 @@ async def test_broadcast_to_multiple_steps():
     async def add_three(ctx: StepContext[CounterState, None, int]) -> int:
         return ctx.inputs + 3
 
-    collect = g.join(ListReducer[int])
+    collect = g.join(ListAppendReducer[int])
 
     g.add(
         g.edge_from(g.start_node).to(source),
@@ -63,7 +63,7 @@ async def test_map_over_list():
     async def square(ctx: StepContext[CounterState, None, int]) -> int:
         return ctx.inputs * ctx.inputs
 
-    collect = g.join(ListReducer[int])
+    collect = g.join(ListAppendReducer[int])
 
     g.add_mapping_edge(generate_list, square)
     g.add(
@@ -89,7 +89,7 @@ async def test_map_with_labels():
     async def stringify(ctx: StepContext[CounterState, None, int]) -> str:
         return f'Value: {ctx.inputs}'
 
-    collect = g.join(ListReducer[str])
+    collect = g.join(ListAppendReducer[str])
 
     g.add_mapping_edge(
         generate_numbers,
@@ -120,7 +120,7 @@ async def test_map_empty_list():
     async def double(ctx: StepContext[CounterState, None, int]) -> int:
         return ctx.inputs * 2
 
-    collect = g.join(ListReducer[int])
+    collect = g.join(ListAppendReducer[int])
 
     g.add_mapping_edge(generate_empty, double, downstream_join_id=collect.id)
     g.add(
@@ -158,7 +158,7 @@ async def test_nested_broadcasts():
     async def path_b2(ctx: StepContext[CounterState, None, int]) -> int:
         return ctx.inputs * 3
 
-    collect = g.join(ListReducer[int])
+    collect = g.join(ListAppendReducer[int])
 
     g.add(
         g.edge_from(g.start_node).to(start_value),
@@ -192,7 +192,7 @@ async def test_map_then_broadcast():
     async def add_two(ctx: StepContext[CounterState, None, int]) -> int:
         return ctx.inputs + 2
 
-    collect = g.join(ListReducer[int])
+    collect = g.join(ListAppendReducer[int])
 
     g.add(
         g.edge_from(g.start_node).to(generate_list),
@@ -224,7 +224,7 @@ async def test_multiple_sequential_maps():
     async def stringify(ctx: StepContext[CounterState, None, int]) -> str:
         return f'num:{ctx.inputs}'
 
-    collect = g.join(ListReducer[str])
+    collect = g.join(ListAppendReducer[str])
 
     g.add(
         g.edge_from(g.start_node).to(generate_pairs),
@@ -255,7 +255,7 @@ async def test_broadcast_with_different_outputs():
     async def return_str(ctx: StepContext[CounterState, None, int]) -> str:
         return str(ctx.inputs)
 
-    collect = g.join(ListReducer[int | str])
+    collect = g.join(ListAppendReducer[int | str])
 
     g.add(
         g.edge_from(g.start_node).to(source),

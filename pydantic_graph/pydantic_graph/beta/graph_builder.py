@@ -58,6 +58,7 @@ GraphOutputT = TypeVar('GraphOutputT', infer_variance=True)
 T = TypeVar('T', infer_variance=True)
 
 
+# TODO(P1): Should we make this method private? Not sure why it was public..
 @overload
 def join(
     *,
@@ -766,12 +767,13 @@ def _normalize_forks(
             if isinstance(item, MapMarker):
                 assert item.fork_id in new_nodes
                 new_edges[item.fork_id] = [path.next_path]
-            if isinstance(item, BroadcastMarker):
+                paths_to_handle.append(path.next_path)
+                break
+            elif isinstance(item, BroadcastMarker):
                 assert item.fork_id in new_nodes
-                # if item.fork_id not in new_nodes:
-                #     new_nodes[new_fork.id] = Fork[Any, Any](id=item.fork_id, is_map=False)
                 new_edges[item.fork_id] = [*item.paths]
                 paths_to_handle.extend(item.paths)
+                break
 
     return new_nodes, new_edges
 

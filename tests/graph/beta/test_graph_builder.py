@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pytest
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta import GraphBuilder, Reducer, StepContext
+from pydantic_graph.beta.graph_builder import join
 
 pytestmark = pytest.mark.anyio
 
@@ -250,18 +251,19 @@ async def test_state_mutation():
 
 async def test_join_decorator_usage():
     """Test using join as a decorator."""
-    from pydantic_graph.beta import Reducer
-    from pydantic_graph.beta.graph_builder import join
 
     @join(node_id='my_join')
-    class MyReducer(Reducer[SimpleState, None, int, list[int]]):
-        def initialize(self):
-            return []
+    @dataclass
+    class MyReducer(Reducer[object, object, int, list[int]]):
+        value: list[int] = field(default_factory=list)
 
-        def reduce(self, current: list[int], item: int) -> list[int]:
-            return current + [item]
+        def reduce(self, ctx: StepContext[object, object, int]) -> None:
+            return self.value.append(ctx.inputs)
 
-    assert MyReducer.id.value == 'my_join'
+        def finalize(self, ctx: StepContext[object, object, None]) -> list[int]:
+            return self.value
+
+    assert MyReducer.id == 'my_join'
 
 
 async def test_graph_builder_join_method_with_decorator():
@@ -277,12 +279,15 @@ async def test_graph_builder_join_method_with_decorator():
         return ctx.inputs * 2
 
     @g.join(node_id='my_custom_join')
-    class SumReducer(g.Reducer[int, list[int]]):
-        def initialize(self):
-            return []
+    @dataclass
+    class MyReducer(Reducer[object, object, int, list[int]]):
+        value: list[int] = field(default_factory=list)
 
-        def reduce(self, current: list[int], item: int) -> list[int]:
-            return current + [item]
+        def reduce(self, ctx: StepContext[object, object, int]) -> None:
+            return self.value.append(ctx.inputs)
+
+        def finalize(self, ctx: StepContext[object, object, None]) -> list[int]:
+            return self.value
 
     @g.step
     async def format_result(ctx: StepContext[SimpleState, None, list[int]]) -> list[int]:
@@ -291,7 +296,8 @@ async def test_graph_builder_join_method_with_decorator():
     g.add(
         g.edge_from(g.start_node).to(generate_items),
         g.edge_from(generate_items).map().to(double_item),
-        g.edge_from(double_item).join(SumReducer).to(format_result),
+        g.edge_from(double_item).to(MyReducer),
+        g.edge_from(MyReducer).to(format_result),
         g.edge_from(format_result).to(g.end_node),
     )
 

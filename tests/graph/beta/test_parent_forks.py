@@ -105,7 +105,7 @@ def test_parent_fork_no_forks():
     join_id = 'J'
     nodes = {'start', 'A', 'B', 'J', 'end'}
     start_ids = {'start'}
-    fork_ids = set()
+    fork_ids = set[str]()
     edges = {
         'start': ['A'],
         'A': ['B'],

@@ -10,17 +10,17 @@ This module provides a parallel control flow graph execution framework with supp
 
 from .graph import Graph
 from .graph_builder import GraphBuilder
-from .join import DictReducer, ListReducer, NullReducer, Reducer
+from .join import DictUpdateReducer, ListAppendReducer, NullReducer, Reducer
 from .node import EndNode, StartNode
 from .step import StepContext, StepNode
 from .util import TypeExpression
 
 __all__ = (
-    'DictReducer',
+    'DictUpdateReducer',
     'EndNode',
     'Graph',
     'GraphBuilder',
-    'ListReducer',
+    'ListAppendReducer',
     'NullReducer',
     'Reducer',
     'StartNode',

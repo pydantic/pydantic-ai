@@ -16,7 +16,7 @@ Broadcasting sends identical data to multiple destinations simultaneously:
 ```python {title="basic_broadcast.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext
 
 
 @dataclass
@@ -43,7 +43,7 @@ async def main():
     async def add_three(ctx: StepContext[SimpleState, None, int]) -> int:
         return ctx.inputs + 3
 
-    collect = g.join(ListReducer[int])
+    collect = g.join(ListAppendReducer[int])
 
     # Broadcasting: send the value from source to all three steps
     g.add(
@@ -70,7 +70,7 @@ Spreading fans out elements from an iterable, processing each element in paralle
 ```python {title="basic_map.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext
 
 
 @dataclass
@@ -89,7 +89,7 @@ async def main():
     async def square(ctx: StepContext[SimpleState, None, int]) -> int:
         return ctx.inputs * ctx.inputs
 
-    collect = g.join(ListReducer[int])
+    collect = g.join(ListAppendReducer[int])
 
     # Spreading: each item in the list gets its own parallel execution
     g.add(
@@ -114,7 +114,7 @@ The convenience method [`add_mapping_edge()`][pydantic_graph.beta.graph_builder.
 ```python {title="mapping_convenience.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext, Reducer
+from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext
 
 
 @dataclass
@@ -133,7 +133,7 @@ async def main():
     async def stringify(ctx: StepContext[SimpleState, None, int]) -> str:
         return f'Value: {ctx.inputs}'
 
-    collect = g.join(ListReducer[str])
+    collect = g.join(ListAppendReducer[str])
 
     g.add(g.edge_from(g.start_node).to(generate_numbers))
     g.add_mapping_edge(generate_numbers, stringify)
@@ -157,7 +157,7 @@ When mapping an empty iterable, you can specify a `downstream_join_id` to ensure
 ```python {title="empty_map.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext
 
 
 @dataclass
@@ -176,7 +176,7 @@ async def main():
     async def double(ctx: StepContext[SimpleState, None, int]) -> int:
         return ctx.inputs * 2
 
-    collect = g.join(ListReducer[int])
+    collect = g.join(ListAppendReducer[int])
 
     g.add(g.edge_from(g.start_node).to(generate_empty))
     g.add_mapping_edge(generate_empty, double, downstream_join_id=collect.id)
@@ -202,7 +202,7 @@ You can nest broadcasts and maps for complex parallel patterns:
 ```python {title="map_then_broadcast.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext
 
 
 @dataclass
@@ -225,7 +225,7 @@ async def main():
     async def add_two(ctx: StepContext[SimpleState, None, int]) -> int:
         return ctx.inputs + 2
 
-    collect = g.join(ListReducer[int])
+    collect = g.join(ListAppendReducer[int])
 
     g.add(
         g.edge_from(g.start_node).to(generate_list),
@@ -252,7 +252,7 @@ The result contains:
 ```python {title="sequential_maps.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext
 
 
 @dataclass
@@ -275,7 +275,7 @@ async def main():
     async def stringify(ctx: StepContext[SimpleState, None, int]) -> str:
         return f'num:{ctx.inputs}'
 
-    collect = g.join(ListReducer[str])
+    collect = g.join(ListAppendReducer[str])
 
     g.add(
         g.edge_from(g.start_node).to(generate_pairs),
@@ -302,7 +302,7 @@ Add labels to parallel edges for better documentation:
 ```python {title="labeled_parallel.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext
 
 
 @dataclass
@@ -321,7 +321,7 @@ async def main():
     async def process(ctx: StepContext[SimpleState, None, int]) -> str:
         return f'item-{ctx.inputs}'
 
-    collect = g.join(ListReducer[str])
+    collect = g.join(ListAppendReducer[str])
 
     g.add(g.edge_from(g.start_node).to(generate))
     g.add_mapping_edge(
@@ -350,7 +350,7 @@ All parallel tasks share the same graph state. Be careful with mutations:
 ```python {title="parallel_state.py"}
 from dataclasses import dataclass, field
 
-from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext
 
 
 @dataclass
@@ -371,7 +371,7 @@ async def main():
         ctx.state.values.append(ctx.inputs)
         return ctx.inputs * ctx.inputs
 
-    collect = g.join(ListReducer[int])
+    collect = g.join(ListAppendReducer[int])
 
     g.add(
         g.edge_from(g.start_node).to(generate),

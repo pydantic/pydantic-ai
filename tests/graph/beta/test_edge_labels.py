@@ -74,9 +74,9 @@ async def test_label_before_map():
     async def double(ctx: StepContext[LabelState, None, int]) -> int:
         return ctx.inputs * 2
 
-    from pydantic_graph.beta import ListReducer
+    from pydantic_graph.beta import ListAppendReducer
 
-    collect = g.join(ListReducer[int])
+    collect = g.join(ListAppendReducer[int])
 
     g.add(
         g.edge_from(g.start_node).to(generate),
@@ -106,9 +106,9 @@ async def test_labeled_broadcast():
     async def path_b(ctx: StepContext[LabelState, None, int]) -> int:
         return ctx.inputs + 2
 
-    from pydantic_graph.beta import ListReducer
+    from pydantic_graph.beta import ListAppendReducer
 
-    collect = g.join(ListReducer[int])
+    collect = g.join(ListAppendReducer[int])
 
     g.add(
         g.edge_from(g.start_node).to(source),
@@ -174,9 +174,9 @@ async def test_label_with_lambda_fork():
     async def fork_b(ctx: StepContext[LabelState, None, int]) -> int:
         return ctx.inputs + 2
 
-    from pydantic_graph.beta import ListReducer
+    from pydantic_graph.beta import ListAppendReducer
 
-    collect = g.join(ListReducer[int])
+    collect = g.join(ListAppendReducer[int])
 
     g.add(
         g.edge_from(g.start_node).to(source),
@@ -211,9 +211,9 @@ async def test_complex_labeled_path():
     async def stringify(ctx: StepContext[LabelState, None, int]) -> str:
         return f'value={ctx.inputs}'
 
-    from pydantic_graph.beta import ListReducer
+    from pydantic_graph.beta import ListAppendReducer
 
-    collect = g.join(ListReducer[str])
+    collect = g.join(ListAppendReducer[str])
 
     g.add(
         g.edge_from(g.start_node).label('initialize').to(start),

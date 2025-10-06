@@ -7,7 +7,8 @@ from typing import Any, Literal
 
 import pytest
 
-from pydantic_graph.beta import GraphBuilder, ListReducer, Reducer, StepContext, TypeExpression
+from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext, TypeExpression
+from pydantic_graph.beta.join import SumReducer
 
 pytestmark = pytest.mark.anyio
 
@@ -350,18 +351,7 @@ async def test_decision_branch_last_fork_id_with_map():
     async def process_item(ctx: StepContext[DecisionState, None, int]) -> int:
         return ctx.inputs * 2
 
-    class SumReducer(Reducer[object, object, int, int]):
-        """A reducer that sums values."""
-
-        value: int = 0
-
-        def reduce(self, ctx: StepContext[object, object, int]) -> None:
-            self.value += ctx.inputs
-
-        def finalize(self, ctx: StepContext[object, object, None]) -> int:
-            return self.value
-
-    sum_results = g.join(SumReducer)
+    sum_results = g.join(SumReducer[int])
 
     def is_list_int(x: Any) -> bool:
         return isinstance(x, list) and all(isinstance(y, int) for y in x)  # pyright: ignore[reportUnknownVariableType]
@@ -461,7 +451,7 @@ async def test_decision_branch_fork():
     async def path_2(ctx: StepContext[DecisionState, None, object]) -> str:
         return 'Path 2'
 
-    collect = g.join(ListReducer[str])
+    collect = g.join(ListAppendReducer[str])
 
     @g.step
     async def combine(ctx: StepContext[DecisionState, None, list[str]]) -> str:

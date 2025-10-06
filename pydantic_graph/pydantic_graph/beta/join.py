@@ -7,11 +7,12 @@ sources into a single output.
 
 from __future__ import annotations
 
-from abc import ABC
+from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Generic, overload
+from typing import Any, Generic, cast, overload
 
-from typing_extensions import TypeVar
+from typing_extensions import Protocol, Self, TypeVar
 
 from pydantic_graph import BaseNode, End, GraphRunContext
 from pydantic_graph.beta.id_types import ForkID, JoinID
@@ -92,7 +93,7 @@ class NullReducer(Reducer[object, object, object, None]):
 
 
 @dataclass(kw_only=True)
-class ListReducer(Reducer[object, object, T, list[T]], Generic[T]):
+class ListAppendReducer(Reducer[object, object, T, list[T]], Generic[T]):
     """A reducer that collects all input values into a list.
 
     This reducer accumulates each input value in order and returns them
@@ -126,7 +127,41 @@ class ListReducer(Reducer[object, object, T, list[T]], Generic[T]):
 
 
 @dataclass(kw_only=True)
-class DictReducer(Reducer[object, object, dict[K, V], dict[K, V]], Generic[K, V]):
+class ListExtendReducer(Reducer[object, object, Iterable[T], list[T]], Generic[T]):
+    """A reducer that collects all input values into a list.
+
+    This reducer accumulates each input value in order and returns them
+    as a list when finalized.
+
+    Type Parameters:
+        T: The type of elements in the resulting list
+    """
+
+    items: list[T] = field(default_factory=list)
+    """The accumulated list of input items."""
+
+    def reduce(self, ctx: StepContext[object, object, Iterable[T]]) -> None:
+        """Append the input value to the list of items.
+
+        Args:
+            ctx: The step context containing the input value to append
+        """
+        self.items.extend(ctx.inputs)
+
+    def finalize(self, ctx: StepContext[object, object, None]) -> list[T]:
+        """Return the accumulated list of items.
+
+        Args:
+            ctx: The step context for finalization
+
+        Returns:
+            A list containing all accumulated input values in order
+        """
+        return self.items
+
+
+@dataclass(kw_only=True)
+class DictUpdateReducer(Reducer[object, object, dict[K, V], dict[K, V]], Generic[K, V]):
     """A reducer that merges dictionary inputs into a single dictionary.
 
     This reducer accumulates dictionary inputs by merging them together,
@@ -158,6 +193,31 @@ class DictReducer(Reducer[object, object, dict[K, V], dict[K, V]], Generic[K, V]
             A dictionary containing all merged key-value pairs
         """
         return self.data
+
+
+class SupportsSum(Protocol):
+    @abstractmethod
+    def __add__(self, other: Self, /) -> Self:
+        pass
+
+
+NumericT = TypeVar('NumericT', bound=SupportsSum, infer_variance=True)
+
+
+@dataclass(kw_only=True)
+class SumReducer(Reducer[object, object, NumericT, NumericT]):
+    """A reducer that sums numeric values, with initial value zero.
+
+    I don't know of a good way to get type-checking for this, but the value `0` must be valid for any used `NumericT`.
+    """
+
+    value: NumericT = field(default=cast(NumericT, 0))
+
+    def reduce(self, ctx: StepContext[object, object, NumericT]) -> None:
+        self.value += ctx.inputs
+
+    def finalize(self, ctx: StepContext[object, object, None]) -> NumericT:
+        return self.value
 
 
 @dataclass(kw_only=True)

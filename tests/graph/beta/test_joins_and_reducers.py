@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from pydantic_graph.beta import DictReducer, GraphBuilder, ListReducer, NullReducer, Reducer, StepContext
+from pydantic_graph.beta import DictUpdateReducer, GraphBuilder, ListAppendReducer, NullReducer, Reducer, StepContext
 
 pytestmark = pytest.mark.anyio
 
@@ -46,8 +46,8 @@ async def test_null_reducer():
     assert state.value == 6
 
 
-async def test_list_reducer():
-    """Test ListReducer that collects all inputs into a list."""
+async def test_list_append_reducer():
+    """Test ListAppendReducer that collects all inputs into a list."""
     g = GraphBuilder(state_type=SimpleState, output_type=list[str])
 
     @g.step
@@ -58,7 +58,7 @@ async def test_list_reducer():
     async def to_string(ctx: StepContext[SimpleState, None, int]) -> str:
         return f'item-{ctx.inputs}'
 
-    list_join = g.join(ListReducer[str])
+    list_join = g.join(ListAppendReducer[str])
 
     g.add(
         g.edge_from(g.start_node).to(generate_numbers),
@@ -85,7 +85,7 @@ async def test_dict_reducer():
     async def create_dict(ctx: StepContext[SimpleState, None, str]) -> dict[str, int]:
         return {ctx.inputs: len(ctx.inputs)}
 
-    dict_join = g.join(DictReducer[str, int])
+    dict_join = g.join(DictUpdateReducer[str, int])
 
     g.add(
         g.edge_from(g.start_node).to(generate_keys),
@@ -188,7 +188,7 @@ async def test_join_with_custom_id():
     async def process(ctx: StepContext[SimpleState, None, int]) -> int:
         return ctx.inputs
 
-    custom_join = g.join(ListReducer[int], node_id='my_custom_join')
+    custom_join = g.join(ListAppendReducer[int], node_id='my_custom_join')
 
     g.add(
         g.edge_from(g.start_node).to(source),
@@ -226,8 +226,8 @@ async def test_multiple_joins():
     async def process_b(ctx: StepContext[MultiState, None, int]) -> int:
         return ctx.inputs * 3
 
-    join_a = g.join(ListReducer[int], node_id='join_a')
-    join_b = g.join(ListReducer[int], node_id='join_b')
+    join_a = g.join(ListAppendReducer[int], node_id='join_a')
+    join_b = g.join(ListAppendReducer[int], node_id='join_b')
 
     @g.step
     async def combine(ctx: StepContext[MultiState, None, None]) -> dict[str, list[int]]:
@@ -273,7 +273,7 @@ async def test_dict_reducer_with_overlapping_keys():
         # All create the same key
         return {'key': ctx.inputs}
 
-    dict_join = g.join(DictReducer[str, int])
+    dict_join = g.join(DictUpdateReducer[str, int])
 
     g.add(
         g.edge_from(g.start_node).to(generate),
@@ -287,36 +287,3 @@ async def test_dict_reducer_with_overlapping_keys():
     # One of the values should win (1, 2, or 3)
     assert 'key' in result
     assert result['key'] in [1, 2, 3]
-
-
-async def test_latest_reducer():
-    """Test LatestReducer that only keeps the last value."""
-    from pydantic_graph.beta.join import LatestReducer
-
-    g = GraphBuilder(state_type=SimpleState, output_type=int)
-
-    @g.step
-    async def generate_numbers(ctx: StepContext[SimpleState, None, None]) -> list[int]:
-        return [1, 2, 3, 4, 5]
-
-    @g.step
-    async def process_number(ctx: StepContext[SimpleState, None, int]) -> int:
-        return ctx.inputs * 10
-
-    @g.step
-    async def get_latest(ctx: StepContext[SimpleState, None, int]) -> int:
-        return ctx.inputs
-
-    g.add(
-        g.edge_from(g.start_node).to(generate_numbers),
-        g.edge_from(generate_numbers).map().to(process_number),
-        g.edge_from(process_number).join(LatestReducer[int]).to(get_latest),
-        g.edge_from(get_latest).to(g.end_node),
-    )
-
-    graph = g.build()
-    result = await graph.run(state=SimpleState())
-
-    # LatestReducer should keep only the last value processed
-    # Due to concurrent execution, we can't be sure which is last, but it should be one of the processed values
-    assert result in [10, 20, 30, 40, 50]

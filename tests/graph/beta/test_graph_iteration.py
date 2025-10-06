@@ -129,9 +129,9 @@ async def test_iter_with_broadcast():
     async def add_two(ctx: StepContext[IterState, None, int]) -> int:
         return ctx.inputs + 2
 
-    from pydantic_graph.beta import ListReducer
+    from pydantic_graph.beta import ListAppendReducer
 
-    collect = g.join(ListReducer[int])
+    collect = g.join(ListAppendReducer[int])
 
     g.add(
         g.edge_from(g.start_node).to(source),
@@ -224,9 +224,9 @@ async def test_iter_with_map():
     async def square(ctx: StepContext[IterState, None, int]) -> int:
         return ctx.inputs * ctx.inputs
 
-    from pydantic_graph.beta import ListReducer
+    from pydantic_graph.beta import ListAppendReducer
 
-    collect = g.join(ListReducer[int])
+    collect = g.join(ListAppendReducer[int])
 
     g.add(
         g.edge_from(g.start_node).to(generate),

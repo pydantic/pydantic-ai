@@ -1,6 +1,5 @@
 """Tests for pydantic_graph.beta.util module."""
 
-import inspect
 from typing import Union
 
 from pydantic_graph.beta.util import (
@@ -76,33 +75,20 @@ def test_infer_name_no_frame():
     assert result is None
 
 
-def test_infer_name_from_globals():
-    """Test infer_name can find names in globals."""
-    # Create an object and put it in globals (simulating module-level variable)
-    test_global = object()
-    current_frame = inspect.currentframe()
-    if current_frame is not None:
-        current_frame.f_globals['test_global_obj'] = test_global
-        try:
-            # Use depth=1 to look in this frame
-            result = infer_name(test_global, depth=1)
-            assert result == 'test_global_obj'
-        finally:
-            # Clean up
-            del current_frame.f_globals['test_global_obj']
+global_obj = object()
 
 
 def test_infer_name_locals_vs_globals():
     """Test infer_name prefers locals over globals."""
-    test_obj = object()
-    current_frame = inspect.currentframe()
-    if current_frame is not None:
-        # Add to both locals and globals with different names
-        current_frame.f_globals['global_name'] = test_obj
-        try:
-            local_name = test_obj  # This creates a local binding
-            result = infer_name(test_obj, depth=1)
-            # Should find the local name first
-            assert result in ('local_name', 'test_obj')
-        finally:
-            del current_frame.f_globals['global_name']
+    result = infer_name(global_obj, depth=1)
+    assert result == 'global_obj'
+
+    # Assign a local name to the variable and ensure it is found with precedence over the global
+    local_obj = global_obj
+    result = infer_name(global_obj, depth=1)
+    assert result == 'local_obj'
+
+    # If we unbind the local name, should find the global name again
+    del local_obj
+    result = infer_name(global_obj, depth=1)
+    assert result == 'global_obj'

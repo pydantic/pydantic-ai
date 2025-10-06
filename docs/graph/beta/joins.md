@@ -17,7 +17,7 @@ Create a join using [`g.join()`][pydantic_graph.beta.graph_builder.GraphBuilder.
 ```python {title="basic_join.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext
 
 
 @dataclass
@@ -36,7 +36,7 @@ async def square(ctx: StepContext[SimpleState, None, int]) -> int:
     return ctx.inputs * ctx.inputs
 
 # Create a join to collect all squared values
-collect = g.join(ListReducer[int])
+collect = g.join(ListAppendReducer[int])
 
 g.add(
     g.edge_from(g.start_node).to(generate_numbers),
@@ -59,14 +59,14 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 Pydantic Graph provides several common reducer types out of the box:
 
-### ListReducer
+### ListAppendReducer
 
-[`ListReducer`][pydantic_graph.beta.join.ListReducer] collects all inputs into a list:
+[`ListAppendReducer`][pydantic_graph.beta.join.ListAppendReducer] collects all inputs into a list:
 
 ```python {title="list_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext
 
 
 @dataclass
@@ -85,7 +85,7 @@ async def main():
     async def to_string(ctx: StepContext[SimpleState, None, int]) -> str:
         return f'value-{ctx.inputs}'
 
-    collect = g.join(ListReducer[str])
+    collect = g.join(ListAppendReducer[str])
 
     g.add(
         g.edge_from(g.start_node).to(generate),
@@ -109,7 +109,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 ```python {title="dict_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import DictReducer, GraphBuilder, StepContext
+from pydantic_graph.beta import DictUpdateReducer, GraphBuilder, StepContext
 
 
 @dataclass
@@ -128,7 +128,7 @@ async def main():
     async def create_entry(ctx: StepContext[SimpleState, None, str]) -> dict[str, int]:
         return {ctx.inputs: len(ctx.inputs)}
 
-    merge = g.join(DictReducer[str, int])
+    merge = g.join(DictUpdateReducer[str, int])
 
     g.add(
         g.edge_from(g.start_node).to(generate_keys),
@@ -339,7 +339,7 @@ A graph can have multiple independent joins:
 ```python {title="multiple_joins.py"}
 from dataclasses import dataclass, field
 
-from pydantic_graph.beta import GraphBuilder, ListReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext
 
 
 @dataclass
@@ -366,8 +366,8 @@ async def main():
     async def process_b(ctx: StepContext[MultiState, None, int]) -> int:
         return ctx.inputs * 3
 
-    join_a = g.join(ListReducer[int], node_id='join_a')
-    join_b = g.join(ListReducer[int], node_id='join_b')
+    join_a = g.join(ListAppendReducer[int], node_id='join_a')
+    join_b = g.join(ListAppendReducer[int], node_id='join_b')
 
     @g.step
     async def store_a(ctx: StepContext[MultiState, None, list[int]]) -> None:
@@ -412,9 +412,11 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 Like steps, joins can have custom IDs:
 
 ```python {title="join_custom_id.py" requires="basic_join.py"}
-from basic_join import ListReducer, g
+from pydantic_graph.beta import ListAppendReducer
 
-my_join = g.join(ListReducer[int], node_id='my_custom_join_id')
+from basic_join import g
+
+my_join = g.join(ListAppendReducer[int], node_id='my_custom_join_id')
 ```
 
 ## How Joins Work

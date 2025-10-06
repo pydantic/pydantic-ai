@@ -251,6 +251,11 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         return build_mermaid_graph(self).render(title=title, direction=direction)
 
     def __repr__(self) -> str:
+        super_repr = super().__repr__()  # include class and memory address
+        # Insert the result of calling `__str__` before the final '>' in the repr
+        return f'{super_repr[:-1]}\n{self}\n{super_repr[-1]}'
+
+    def __str__(self) -> str:
         """Return a Mermaid diagram representation of the graph.
 
         Returns:

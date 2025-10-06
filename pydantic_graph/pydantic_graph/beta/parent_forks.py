@@ -27,7 +27,7 @@ from typing import Generic
 
 from typing_extensions import TypeVar
 
-T = TypeVar('T', bound=Hashable, infer_variance=True)
+T = TypeVar('T', bound=Hashable, infer_variance=True, default=str)
 
 
 @dataclass
@@ -73,7 +73,7 @@ class ParentForkFinder(Generic[T]):
     def find_parent_fork(self, join_id: T) -> ParentFork[T] | None:
         """Find the parent fork for a given join node.
 
-        Searches for the most ancestral dominating fork that can serve as a parent fork
+        Searches for the _most_ ancestral dominating fork that can serve as a parent fork
         for the specified join node. A valid parent fork must dominate the join without
         allowing cycles that bypass it.
 
@@ -92,7 +92,7 @@ class ParentForkFinder(Generic[T]):
         visited: set[str] = set()
         cur = join_id  # start at J and walk up the immediate dominator chain
 
-        # TODO(P2): Make it a node-configuration option to choose the closest _or_ the farthest. Or manually specified(?)
+        # TODO(P2): Make it a node-configuration option to choose the most _or_ the least ancestral node as parent fork? Or manually specified(?)
         parent_fork: ParentFork[T] | None = None
         while True:
             cur = self._immediate_dominator(cur)
