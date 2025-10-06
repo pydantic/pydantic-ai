@@ -495,7 +495,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 raise exceptions.AgentRunError('Agent run produced final results')  # pragma: no cover
                             yielded = True
 
-                            messages = list(graph_ctx.state.message_history)
+                            messages = graph_ctx.state.message_history
 
                             async def on_complete() -> None:
                                 """Called when the stream has completed.
@@ -539,7 +539,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     # if a tool function raised CallDeferred or ApprovalRequired.
                     # In this case there's no response to stream, but we still let the user access the output etc as normal.
                     yield StreamedRunResult(
-                        list(graph_ctx.state.message_history),
+                        graph_ctx.state.message_history,
                         graph_ctx.deps.new_message_index,
                         run_result=agent_run.result,
                     )

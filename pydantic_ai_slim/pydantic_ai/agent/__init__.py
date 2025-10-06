@@ -684,7 +684,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 'all_messages_events': json.dumps(
                     [
                         InstrumentedModel.event_to_dict(e)
-                        for e in settings.messages_to_otel_events(list(state.message_history))
+                        for e in settings.messages_to_otel_events(state.message_history)
                     ]
                 )
             }
