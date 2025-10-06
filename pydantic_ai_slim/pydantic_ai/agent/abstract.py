@@ -495,7 +495,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 raise exceptions.AgentRunError('Agent run produced final results')  # pragma: no cover
                             yielded = True
 
-                            messages = graph_ctx.state.message_history
+                            messages = graph_ctx.state.message_history.copy()
 
                             async def on_complete() -> None:
                                 """Called when the stream has completed.
