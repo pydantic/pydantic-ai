@@ -726,7 +726,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
 
         Args:
-            name: The name to use instead of the name passed to the agent run.
+            name: The name to use instead of the name passed to the agent constructor and agent run.
             deps: The dependencies to use instead of the dependencies passed to the agent run.
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
