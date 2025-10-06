@@ -2,7 +2,9 @@ import base64
 from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
+
+from pydantic import Field
 
 from . import _utils, exceptions, messages
 
@@ -13,6 +15,19 @@ except ImportError as _import_error:
         'Please install the `mcp` package to use the MCP server, '
         'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
     ) from _import_error
+
+
+@dataclass(repr=False, kw_only=True)
+class ResourceAnnotations:
+    """Additional properties describing MCP entities."""
+
+    audience: list[mcp_types.Role] | None = None
+    """Intended audience for this entity."""
+
+    priority: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
+    """Priority level for this entity, ranging from 0.0 to 1.0."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 @dataclass(repr=False, kw_only=True)
@@ -31,7 +46,7 @@ class BaseResource(ABC):
     mime_type: str | None = None
     """The MIME type of the resource, if known."""
 
-    annotations: dict[str, Any] | None = None
+    annotations: ResourceAnnotations | None = None
     """Optional annotations for the resource."""
 
     meta: dict[str, Any] | None = None
@@ -178,7 +193,11 @@ def map_from_mcp_resource(mcp_resource: mcp_types.Resource) -> Resource:
         description=mcp_resource.description,
         mime_type=mcp_resource.mimeType,
         size=mcp_resource.size,
-        annotations=mcp_resource.annotations.model_dump() if mcp_resource.annotations else None,
+        annotations=(
+            ResourceAnnotations(audience=mcp_resource.annotations.audience, priority=mcp_resource.annotations.priority)
+            if mcp_resource.annotations
+            else None
+        ),
         meta=mcp_resource.meta,
     )
 
@@ -191,6 +210,10 @@ def map_from_mcp_resource_template(mcp_template: mcp_types.ResourceTemplate) -> 
         title=mcp_template.title,
         description=mcp_template.description,
         mime_type=mcp_template.mimeType,
-        annotations=mcp_template.annotations.model_dump() if mcp_template.annotations else None,
+        annotations=(
+            ResourceAnnotations(audience=mcp_template.annotations.audience, priority=mcp_template.annotations.priority)
+            if mcp_template.annotations
+            else None
+        ),
         meta=mcp_template.meta,
     )
