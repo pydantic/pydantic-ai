@@ -249,8 +249,7 @@ def cli(  # noqa: C901
         code = e.code
         if isinstance(code, int):
             return code
-        return 0 if code is None else 1
-    return 0
+        return 0 if code is None else 1  # pragma: no cover
 
 
 async def run_chat(
