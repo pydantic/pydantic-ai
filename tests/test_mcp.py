@@ -328,16 +328,16 @@ async def test_stdio_server_list_resources(run_context: RunContext[int]):
         resources = await server.list_resources()
         assert len(resources) == snapshot(3)
 
-        assert str(resources[0].uri) == snapshot('resource://kiwi.png')
-        assert resources[0].mimeType == snapshot('image/png')
+        assert resources[0].uri == snapshot('resource://kiwi.png')
+        assert resources[0].mime_type == snapshot('image/png')
         assert resources[0].name == snapshot('kiwi_resource')
 
-        assert str(resources[1].uri) == snapshot('resource://marcelo.mp3')
-        assert resources[1].mimeType == snapshot('audio/mpeg')
+        assert resources[1].uri == snapshot('resource://marcelo.mp3')
+        assert resources[1].mime_type == snapshot('audio/mpeg')
         assert resources[1].name == snapshot('marcelo_resource')
 
-        assert str(resources[2].uri) == snapshot('resource://product_name.txt')
-        assert resources[2].mimeType == snapshot('text/plain')
+        assert resources[2].uri == snapshot('resource://product_name.txt')
+        assert resources[2].mime_type == snapshot('text/plain')
         assert resources[2].name == snapshot('product_name_resource')
 
 
@@ -347,7 +347,7 @@ async def test_stdio_server_list_resource_templates(run_context: RunContext[int]
         resource_templates = await server.list_resource_templates()
         assert len(resource_templates) == snapshot(1)
 
-        assert resource_templates[0].uriTemplate == snapshot('resource://greeting/{name}')
+        assert resource_templates[0].uri_template == snapshot('resource://greeting/{name}')
         assert resource_templates[0].name == snapshot('greeting_resource_template')
         assert resource_templates[0].description == snapshot('Dynamic greeting resource template.')
 

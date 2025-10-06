@@ -1,8 +1,10 @@
 import base64
+from abc import ABC
 from collections.abc import Sequence
-from typing import Literal
+from dataclasses import dataclass
+from typing import Any, Literal
 
-from . import exceptions, messages
+from . import _utils, exceptions, messages
 
 try:
     from mcp import types as mcp_types
@@ -11,6 +13,50 @@ except ImportError as _import_error:
         'Please install the `mcp` package to use the MCP server, '
         'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
     ) from _import_error
+
+
+@dataclass(repr=False, kw_only=True)
+class BaseResource(ABC):
+    """Base class for MCP resources."""
+
+    name: str
+    """The programmatic name of the resource."""
+
+    title: str | None = None
+    """Human-readable title for UI contexts."""
+
+    description: str | None = None
+    """A description of what this resource represents."""
+
+    mime_type: str | None = None
+    """The MIME type of the resource, if known."""
+
+    annotations: dict[str, Any] | None = None
+    """Optional annotations for the resource."""
+
+    meta: dict[str, Any] | None = None
+    """Optional metadata for the resource."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class Resource(BaseResource):
+    """A resource that can be read from an MCP server."""
+
+    uri: str
+    """The URI of the resource."""
+
+    size: int | None = None
+    """The size of the raw resource content in bytes (before base64 encoding), if known."""
+
+
+@dataclass(repr=False, kw_only=True)
+class ResourceTemplate(BaseResource):
+    """A template for parameterized resources on an MCP server."""
+
+    uri_template: str
+    """URI template (RFC 6570) for constructing resource URIs."""
 
 
 def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[messages.ModelMessage]:
@@ -121,3 +167,30 @@ def map_from_sampling_content(
         return messages.TextPart(content=content.text)
     else:
         raise NotImplementedError('Image and Audio responses in sampling are not yet supported')
+
+
+def map_from_mcp_resource(mcp_resource: mcp_types.Resource) -> Resource:
+    """Convert from MCP Resource to native Pydantic AI Resource."""
+    return Resource(
+        uri=str(mcp_resource.uri),
+        name=mcp_resource.name,
+        title=mcp_resource.title,
+        description=mcp_resource.description,
+        mime_type=mcp_resource.mimeType,
+        size=mcp_resource.size,
+        annotations=mcp_resource.annotations.model_dump() if mcp_resource.annotations else None,
+        meta=mcp_resource.meta,
+    )
+
+
+def map_from_mcp_resource_template(mcp_template: mcp_types.ResourceTemplate) -> ResourceTemplate:
+    """Convert from MCP ResourceTemplate to native Pydantic AI ResourceTemplate."""
+    return ResourceTemplate(
+        uri_template=mcp_template.uriTemplate,
+        name=mcp_template.name,
+        title=mcp_template.title,
+        description=mcp_template.description,
+        mime_type=mcp_template.mimeType,
+        annotations=mcp_template.annotations.model_dump() if mcp_template.annotations else None,
+        meta=mcp_template.meta,
+    )

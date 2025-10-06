@@ -379,7 +379,7 @@ async def main():
         # List all available resources
         resources = await server.list_resources()
         for resource in resources:
-            print(f' - {resource.name}: {resource.uri} ({resource.mimeType})')
+            print(f' - {resource.name}: {resource.uri} ({resource.mime_type})')
             #>  - user_name_resource: resource://user_name.txt (text/plain)
 
         # Read a text resource

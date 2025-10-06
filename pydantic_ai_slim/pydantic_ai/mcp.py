@@ -303,7 +303,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 
-    async def list_resources(self) -> list[mcp_types.Resource]:
+    async def list_resources(self) -> list[_mcp.Resource]:
         """Retrieve resources that are currently present on the server.
 
         Note:
@@ -312,13 +312,13 @@ class MCPServer(AbstractToolset[Any], ABC):
         """
         async with self:  # Ensure server is running
             result = await self._client.list_resources()
-        return result.resources
+        return [_mcp.map_from_mcp_resource(r) for r in result.resources]
 
-    async def list_resource_templates(self) -> list[mcp_types.ResourceTemplate]:
+    async def list_resource_templates(self) -> list[_mcp.ResourceTemplate]:
         """Retrieve resource templates that are currently present on the server."""
         async with self:  # Ensure server is running
             result = await self._client.list_resource_templates()
-        return result.resourceTemplates
+        return [_mcp.map_from_mcp_resource_template(t) for t in result.resourceTemplates]
 
     async def read_resource(self, uri: str) -> list[mcp_types.TextResourceContents | mcp_types.BlobResourceContents]:
         """Read the contents of a specific resource by URI.
