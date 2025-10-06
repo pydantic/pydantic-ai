@@ -9,7 +9,14 @@ from .agent import (
     UserPromptNode,
     capture_run_messages,
 )
-from .builtin_tools import CodeExecutionTool, UrlContextTool, WebSearchTool, WebSearchUserLocation
+from .builtin_tools import (
+    CodeExecutionTool,
+    ImageGenerationTool,
+    MemoryTool,
+    UrlContextTool,
+    WebSearchTool,
+    WebSearchUserLocation,
+)
 from .exceptions import (
     AgentRunError,
     ApprovalRequired,
@@ -30,11 +37,13 @@ from .messages import (
     BaseToolCallPart,
     BaseToolReturnPart,
     BinaryContent,
+    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentFormat,
     DocumentMediaType,
     DocumentUrl,
+    FilePart,
     FileUrl,
     FinalResultEvent,
     FinishReason,
@@ -79,6 +88,7 @@ from .profiles import (
     ModelProfile,
     ModelProfileSpec,
 )
+from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
 from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
 from .toolsets import (
@@ -131,6 +141,7 @@ __all__ = (
     'DocumentMediaType',
     'DocumentUrl',
     'FileUrl',
+    'FilePart',
     'FinalResultEvent',
     'FinishReason',
     'FunctionToolCallEvent',
@@ -139,6 +150,7 @@ __all__ = (
     'ImageFormat',
     'ImageMediaType',
     'ImageUrl',
+    'BinaryImage',
     'ModelMessage',
     'ModelMessagesTypeAdapter',
     'ModelRequest',
@@ -197,6 +209,8 @@ __all__ = (
     'WebSearchUserLocation',
     'UrlContextTool',
     'CodeExecutionTool',
+    'ImageGenerationTool',
+    'MemoryTool',
     # output
     'ToolOutput',
     'NativeOutput',
@@ -211,5 +225,9 @@ __all__ = (
     'RunUsage',
     'RequestUsage',
     'UsageLimits',
+    # run
+    'AgentRun',
+    'AgentRunResult',
+    'AgentRunResultEvent',
 )
 __version__ = _metadata_version('pydantic_ai_slim')

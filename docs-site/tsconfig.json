@@ -11,8 +11,9 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
+    "skipLibCheck": true,
 
-    "types": ["@cloudflare/workers-types"]
+    "types": ["@cloudflare/workers-types", "./worker-configuration.d.ts"]
   },
-  "include": ["src", "worker-configuration.d.ts"]
+  "include": ["src"]
 }

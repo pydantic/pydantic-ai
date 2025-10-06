@@ -26,7 +26,7 @@ class OpenAIModelProfile(ModelProfile):
     """Turn off to don't send sampling settings like `temperature` and `top_p` to models that don't support them, like OpenAI's o-series reasoning models."""
 
     openai_unsupported_model_settings: Sequence[str] = ()
-    """A list of model settings that are not supported by the model."""
+    """A list of model settings that are not supported by this model."""
 
     # Some OpenAI-compatible providers (e.g. MoonshotAI) currently do **not** accept
     # `tool_choice="required"`.  This flag lets the calling model know whether it's
@@ -84,6 +84,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         json_schema_transformer=OpenAIJsonSchemaTransformer,
         supports_json_schema_output=True,
         supports_json_object_output=True,
+        supports_image_output=is_reasoning_model or '4.1' in model_name or '4o' in model_name,
         openai_unsupported_model_settings=openai_unsupported_model_settings,
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,
