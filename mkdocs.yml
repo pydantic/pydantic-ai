@@ -287,38 +287,50 @@ plugins:
         applications with Generative AI.
       sections:
         Introduction:
+          - index.md
           - install.md
           - help.md
           - troubleshooting.md
           - changelog.md
         Concepts documentation:
+          - a2a.md
+          - ag-ui.md
           - agents.md
+          - builtin-tools.md
           - dependencies.md
+          - deferred-tools.md
+          - direct.md
+          - input.md
           - tools.md
           - common-tools.md
-          - results.md
+          - output.md
+          - retries.md
           - message-history.md
           - multi-agent-applications.md
+          - thinking.md
+          - third-party-tools.md
+          - tools-advanced.md
+          - toolsets.md
         Models:
           - models/*.md
         Graphs:
           - graph.md
         API Reference:
-          - api/*.md
+          - api/*/*.md
         Evals:
           - evals.md
+        Durable Execution:
+          - durable_execution/*.md
         MCP:
           - mcp/*.md
         Optional:
           - testing.md
           - cli.md
           - logfire.md
+          - contributing.md
           - examples/*.md
-  - redirects:
-      redirect_maps:
-        "examples/index.md": "examples/setup.md"
-        "mcp/index.md": "mcp/overview.md"
-        "models/index.md": "models/overview.md"
+
+# DON'T PUT REDIRECTS IN THIS FILE! Instead add them to docs-site/src/index.ts
 
 hooks:
   - "docs/.hooks/main.py"

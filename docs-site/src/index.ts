@@ -49,8 +49,11 @@ const redirect_lookup: Record<string, string> = {
   '/models/gemini': '/models/google/',
   '/api/models/gemini': '/api/models/google/',
   '/contributing': '/contributing/',
-  '/api/format_as_xml/': '/api/format_prompt/',
-  '/api/models/ollama/': '/models/openai/#ollama',
+  '/api/format_as_xml': '/api/format_prompt/',
+  '/api/models/ollama': '/models/openai/#ollama',
+  '/examples': 'examples/setup/',
+  '/mcp': '/mcp/overview/',
+  '/models': '/models/overview/',
 }
 
 function redirect(pathname: string): string | null {
@@ -113,6 +116,25 @@ ${body}
 `
 }
 
+/** Logic to return text (the markdown document where available) when the Accept header prefers plain text over html
+ * See https://x.com/threepointone/status/1971988718052651300
+ */
+async function maybeGetTextResponse(request: Request, env: Env): Promise<Response | undefined> {
+  if (!preferText(request)) {
+    return
+  }
+  const url = new URL(request.url)
+  url.pathname = `${url.pathname.replace(/[/:]+$/, '')}/index.md`
+  const r = await env.ASSETS.fetch(url)
+  if (r.status === 200) {
+    return new Response(r.body, {
+      headers: {
+        'content-type': 'text/plain',
+      },
+    })
+  }
+}
+
 function preferText(request: Request): boolean {
   const accept = request.headers.get('accept')
   if (!accept || request.method !== 'GET') {
@@ -127,20 +149,4 @@ function preferText(request: Request): boolean {
     }
   }
   return false
-}
-
-async function maybeGetTextResponse(request: Request, env: Env): Promise<Response | undefined> {
-  if (!preferText(request)) {
-    return
-  }
-  const url = new URL(request.url)
-  url.pathname = `${url.pathname.replace(/[/:]+$/, '')}/index.md`
-  const r = await env.ASSETS.fetch(url)
-  if (r.status === 200) {
-    return new Response(await r.text(), {
-      headers: {
-        'content-type': 'text/plain',
-      },
-    })
-  }
 }
