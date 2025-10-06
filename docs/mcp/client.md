@@ -328,7 +328,7 @@ Pydantic AI provides methods to discover and read resources from MCP servers:
 - [`list_resource_templates()`][pydantic_ai.mcp.MCPServer.list_resource_templates] - List resource templates with parameter placeholders
 - [`read_resource(uri)`][pydantic_ai.mcp.MCPServer.read_resource] - Read the contents of a specific resource by URI
 
-Resources can contain either text content ([`TextResourceContents`][mcp.types.TextResourceContents]) or binary content ([`BlobResourceContents`][mcp.types.BlobResourceContents]) encoded as base64.
+Resources are automatically converted: text content is returned as `str`, and binary content is returned as [`BinaryContent`][pydantic_ai.messages.BinaryContent].
 
 Before consuming resources, we need to run a server that exposes some:
 
@@ -352,8 +352,6 @@ Then we can create the client:
 
 ```python {title="mcp_resources.py", requires="mcp_resource_server.py"}
 import asyncio
-
-from mcp.types import TextResourceContents
 
 from pydantic_ai import Agent
 from pydantic_ai._run_context import RunContext
@@ -383,15 +381,12 @@ async def main():
             #>  - user_name_resource: resource://user_name.txt (text/plain)
 
         # Read a text resource
-        text_contents = await server.read_resource('resource://user_name.txt')
-        for content in text_contents:
-            if isinstance(content, TextResourceContents):
-                print(f'Text content from {content.uri}: {content.text.strip()}')
-                #> Text content from resource://user_name.txt: Alice
+        user_name = await server.read_resource('resource://user_name.txt')
+        print(f'Text content: {user_name}')
+        #> Text content: Alice
 
     # Use resources in dependencies
     async with agent:
-        user_name = text_contents[0].text
         _ = await agent.run('Can you help me with my product?', deps=user_name)
 
 

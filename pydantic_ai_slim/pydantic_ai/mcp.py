@@ -320,18 +320,23 @@ class MCPServer(AbstractToolset[Any], ABC):
             result = await self._client.list_resource_templates()
         return [_mcp.map_from_mcp_resource_template(t) for t in result.resourceTemplates]
 
-    async def read_resource(self, uri: str) -> list[mcp_types.TextResourceContents | mcp_types.BlobResourceContents]:
+    async def read_resource(self, uri: str) -> str | messages.BinaryContent | list[str | messages.BinaryContent]:
         """Read the contents of a specific resource by URI.
 
         Args:
             uri: The URI of the resource to read.
 
         Returns:
-            A list of resource contents (either TextResourceContents or BlobResourceContents).
+            The resource contents. If the resource has a single content item, returns that item directly.
+            If the resource has multiple content items, returns a list of items.
         """
         async with self:  # Ensure server is running
             result = await self._client.read_resource(AnyUrl(uri))
-        return result.contents
+        return (
+            self._get_content(result.contents[0])
+            if len(result.contents) == 1
+            else [self._get_content(resource) for resource in result.contents]
+        )
 
     async def __aenter__(self) -> Self:
         """Enter the MCP server context.
@@ -427,12 +432,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             resource = part.resource
             return self._get_content(resource)
         elif isinstance(part, mcp_types.ResourceLink):
-            resource_result: mcp_types.ReadResourceResult = await self._client.read_resource(part.uri)
-            return (
-                self._get_content(resource_result.contents[0])
-                if len(resource_result.contents) == 1
-                else [self._get_content(resource) for resource in resource_result.contents]
-            )
+            return await self.read_resource(str(part.uri))
         else:
             assert_never(part)
 
