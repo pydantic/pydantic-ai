@@ -1,4 +1,4 @@
-# Introduction {.hide}
+# Pydantic AI {.hide}
 
 --8<-- "docs/.partials/index-header.html"
 

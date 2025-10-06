@@ -1,6 +1,5 @@
-import { env } from 'cloudflare:workers'
 import { instrument } from '@pydantic/logfire-cf-workers'
- import { marked } from 'marked'
+import { marked } from 'marked'
 
 const handler = {
   async fetch(request, env): Promise<Response> {
@@ -8,6 +7,10 @@ const handler = {
     if (url.pathname === '/changelog.html') {
       const changelog = await getChangelog(env.KV, env.GIT_COMMIT_SHA)
       return new Response(changelog, { headers: {'content-type': 'text/html'} })
+    }
+    const maybeTextResponse = await maybeGetTextResponse(request, env)
+    if (maybeTextResponse) {
+      return maybeTextResponse
     }
     const r = await env.ASSETS.fetch(request)
     if (r.status === 404) {
@@ -31,9 +34,8 @@ const handler = {
 export default instrument(handler, {
 	service: {
 		name: 'pai-docs',
-		version: env.GIT_COMMIT_SHA,
 	},
-});
+})
 
 const redirect_lookup: Record<string, string> = {
   '/common_tools': '/common-tools/',
@@ -68,7 +70,7 @@ async function getChangelog(kv: KVNamespace, commitSha: string): Promise<string>
   let url: string | undefined = 'https://api.github.com/repos/pydantic/pydantic-ai/releases'
   const releases: Release[] = []
   while (typeof url === 'string') {
-    const response = await fetch(url, { headers })
+    const response: Response = await fetch(url, { headers })
     if (!response.ok) {
       const text = await response.text()
       throw new Error(`Failed to fetch changelog: ${response.status} ${response.statusText} ${text}`)
@@ -109,4 +111,36 @@ ${body}
 
 [${githubIcon} View ${release.tag_name} release](${release.html_url}).
 `
+}
+
+function preferText(request: Request): boolean {
+  const accept = request.headers.get('accept')
+  if (!accept || request.method !== 'GET') {
+    return false
+  }
+  for (const option of accept.split(',')) {
+    const lowerOption = option.toLowerCase()
+    if (lowerOption.includes('html')) {
+      return false
+    } else if (lowerOption.includes('text/plain')) {
+      return true
+    }
+  }
+  return false
+}
+
+async function maybeGetTextResponse(request: Request, env: Env): Promise<Response | undefined> {
+  if (!preferText(request)) {
+    return
+  }
+  const url = new URL(request.url)
+  url.pathname = `${url.pathname.replace(/[/:]+$/, '')}/index.md`
+  const r = await env.ASSETS.fetch(url)
+  if (r.status === 200) {
+    return new Response(await r.text(), {
+      headers: {
+        'content-type': 'text/plain',
+      },
+    })
+  }
 }

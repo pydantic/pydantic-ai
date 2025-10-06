@@ -10,7 +10,7 @@ edit_uri: edit/main/docs/
 copyright: © Pydantic Services Inc. 2024 to present
 
 nav:
-  - Introduction: index.md
+  - index.md
   - install.md
   - help.md
   - troubleshooting.md
@@ -286,6 +286,11 @@ plugins:
         Pydantic AI is a Python agent framework designed to make it less painful to build production grade
         applications with Generative AI.
       sections:
+        Introduction:
+          - install.md
+          - help.md
+          - troubleshooting.md
+          - changelog.md
         Concepts documentation:
           - agents.md
           - dependencies.md
