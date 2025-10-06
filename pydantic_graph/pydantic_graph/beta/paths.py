@@ -23,6 +23,7 @@ StateT = TypeVar('StateT', infer_variance=True)
 DepsT = TypeVar('DepsT', infer_variance=True)
 OutputT = TypeVar('OutputT', infer_variance=True)
 InputT = TypeVar('InputT', infer_variance=True)
+T = TypeVar('T')
 
 if TYPE_CHECKING:
     from pydantic_graph.beta.node_types import AnyDestinationNode, DestinationNode, SourceNode
@@ -226,7 +227,7 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
         next_item = BroadcastMarker(paths=forks, fork_id=ForkID(NodeID(fork_id or 'broadcast_' + secrets.token_hex(8))))
         return Path(items=[*self.working_items, next_item])
 
-    def transform(self, func: TransformFunction[StateT, DepsT, OutputT, Any], /) -> PathBuilder[StateT, DepsT, Any]:
+    def transform(self, func: TransformFunction[StateT, DepsT, OutputT, T], /) -> PathBuilder[StateT, DepsT, T]:
         """Add a transformation step to the path.
 
         Args:
@@ -236,14 +237,14 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
             A new PathBuilder with the transformation added
         """
         next_item = TransformMarker(func)
-        return PathBuilder[StateT, DepsT, Any](working_items=[*self.working_items, next_item])
+        return PathBuilder[StateT, DepsT, T](working_items=[*self.working_items, next_item])
 
     def map(
-        self: PathBuilder[StateT, DepsT, Iterable[Any]],
+        self: PathBuilder[StateT, DepsT, Iterable[T]],
         *,
         fork_id: ForkID | None = None,
         downstream_join_id: JoinID | None = None,
-    ) -> PathBuilder[StateT, DepsT, Any]:
+    ) -> PathBuilder[StateT, DepsT, T]:
         """Spread iterable data across parallel execution paths.
 
         This method can only be called when the current output type is iterable.
@@ -259,7 +260,7 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
         next_item = MapMarker(
             fork_id=NodeID(fork_id or 'map_' + secrets.token_hex(8)), downstream_join_id=downstream_join_id
         )
-        return PathBuilder[StateT, DepsT, Any](working_items=[*self.working_items, next_item])
+        return PathBuilder[StateT, DepsT, T](working_items=[*self.working_items, next_item])
 
     def label(self, label: str, /) -> PathBuilder[StateT, DepsT, OutputT]:
         """Add a human-readable label to this point in the path.
@@ -396,11 +397,11 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
             )
 
     def map(
-        self: EdgePathBuilder[StateT, DepsT, Iterable[Any]],
+        self: EdgePathBuilder[StateT, DepsT, Iterable[T]],
         *,
         fork_id: ForkID | None = None,
         downstream_join_id: JoinID | None = None,
-    ) -> EdgePathBuilder[StateT, DepsT, Any]:
+    ) -> EdgePathBuilder[StateT, DepsT, T]:
         """Spread iterable data across parallel execution paths.
 
         Args:
@@ -415,7 +416,7 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
             path_builder=self.path_builder.map(fork_id=fork_id, downstream_join_id=downstream_join_id),
         )
 
-    def transform(self, func: TransformFunction[StateT, DepsT, OutputT, Any], /) -> EdgePathBuilder[StateT, DepsT, Any]:
+    def transform(self, func: TransformFunction[StateT, DepsT, OutputT, T], /) -> EdgePathBuilder[StateT, DepsT, T]:
         """Add a transformation step to the edge path.
 
         Args:
