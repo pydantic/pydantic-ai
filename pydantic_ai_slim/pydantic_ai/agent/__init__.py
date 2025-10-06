@@ -385,7 +385,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         If `None`, we try to infer the agent name from the call frame when the agent is first run.
         """
-        return self._name
+        name_ = self._override_name.get()
+        return name_.value if name_ else self._name
 
     @name.setter
     def name(self, value: str | None) -> None:
