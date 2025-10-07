@@ -17,10 +17,11 @@ from typing import Any, Generic, cast, get_origin, get_type_hints, overload
 from typing_extensions import Never, TypeAliasType, TypeVar
 
 from pydantic_graph import _utils, exceptions
+from pydantic_graph._utils import UNSET, Unset
 from pydantic_graph.beta.decision import Decision, DecisionBranch, DecisionBranchBuilder
 from pydantic_graph.beta.graph import Graph
 from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID
-from pydantic_graph.beta.join import Join, JoinNode, Reducer
+from pydantic_graph.beta.join import Join, JoinNode, ReducerFunction
 from pydantic_graph.beta.node import (
     EndNode,
     Fork,
@@ -56,53 +57,6 @@ SourceOutputT = TypeVar('SourceOutputT', infer_variance=True)
 GraphInputT = TypeVar('GraphInputT', infer_variance=True)
 GraphOutputT = TypeVar('GraphOutputT', infer_variance=True)
 T = TypeVar('T', infer_variance=True)
-
-
-# TODO(P1): Should we make this method private? Not sure why it was public..
-@overload
-def join(
-    *,
-    node_id: str | None = None,
-) -> Callable[[type[Reducer[StateT, DepsT, InputT, OutputT]]], Join[StateT, DepsT, InputT, OutputT]]: ...
-@overload
-def join(
-    reducer_type: type[Reducer[StateT, DepsT, InputT, OutputT]],
-    *,
-    node_id: str | None = None,
-) -> Join[StateT, DepsT, InputT, OutputT]: ...
-def join(
-    reducer_type: type[Reducer[StateT, DepsT, Any, Any]] | None = None,
-    *,
-    node_id: str | None = None,
-) -> Join[StateT, DepsT, Any, Any] | Callable[[type[Reducer[StateT, DepsT, Any, Any]]], Join[StateT, DepsT, Any, Any]]:
-    """Create a join node from a reducer type.
-
-    This function can be used as a decorator or called directly to create
-    a join node that aggregates data from parallel execution paths.
-
-    Args:
-        reducer_type: The reducer class to use for aggregating data
-        node_id: Optional ID for the node, defaults to the reducer type name
-
-    Returns:
-        Either a Join instance or a decorator function
-    """
-    if reducer_type is None:
-
-        def decorator(
-            reducer_type: type[Reducer[StateT, DepsT, Any, Any]],
-        ) -> Join[StateT, DepsT, Any, Any]:
-            return join(reducer_type=reducer_type, node_id=node_id)
-
-        return decorator
-
-    # TODO(P3): Ideally we'd be able to infer this from the parent frame variable assignment or similar
-    node_id = node_id or get_callable_name(reducer_type)
-
-    return Join[StateT, DepsT, Any, Any](
-        id=JoinID(NodeID(node_id)),
-        reducer_type=reducer_type,
-    )
 
 
 @dataclass(init=False)
@@ -304,41 +258,42 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
     @overload
     def join(
         self,
+        reducer: ReducerFunction[StateT, DepsT, InputT, OutputT],
         *,
+        initial: OutputT,
         node_id: str | None = None,
-    ) -> Callable[[type[Reducer[StateT, DepsT, InputT, OutputT]]], Join[StateT, DepsT, InputT, OutputT]]: ...
+        joins: ForkID | None = None,
+    ) -> Join[StateT, DepsT, InputT, OutputT]: ...
     @overload
     def join(
         self,
-        reducer_factory: type[Reducer[StateT, DepsT, InputT, OutputT]],
+        reducer: ReducerFunction[StateT, DepsT, InputT, OutputT],
         *,
+        initial_factory: Callable[[], OutputT],
         node_id: str | None = None,
+        joins: ForkID | None = None,
     ) -> Join[StateT, DepsT, InputT, OutputT]: ...
+
     def join(
         self,
-        reducer_factory: type[Reducer[StateT, DepsT, Any, Any]] | None = None,
+        reducer: ReducerFunction[StateT, DepsT, InputT, OutputT],
         *,
+        initial: OutputT | Unset = UNSET,
+        initial_factory: Callable[[], OutputT] | Unset = UNSET,
         node_id: str | None = None,
-    ) -> (
-        Join[StateT, DepsT, Any, Any]
-        | Callable[[type[Reducer[StateT, DepsT, Any, Any]]], Join[StateT, DepsT, Any, Any]]
-    ):
-        """Create a join node with a reducer.
+        joins: ForkID | None = None,
+    ) -> Join[StateT, DepsT, InputT, OutputT]:
+        node_id = node_id or get_callable_name(reducer)
 
-        This method can be used as a decorator or called directly to create
-        a join node that aggregates data from parallel execution paths.
+        if initial_factory is UNSET:
+            initial_factory = lambda: initial  # pyright: ignore[reportAssignmentType]  # noqa E731
 
-        Args:
-            reducer_factory: The reducer class to use for aggregating data
-            node_id: Optional ID for the node
-
-        Returns:
-            Either a Join instance or a decorator function
-        """
-        if reducer_factory is None:
-            return join(node_id=node_id)
-        else:
-            return join(reducer_type=reducer_factory, node_id=node_id)
+        return Join[StateT, DepsT, InputT, OutputT](
+            id=JoinID(NodeID(node_id)),
+            reducer=reducer,
+            initial_factory=cast(Callable[[], OutputT], initial_factory),
+            joins=joins,
+        )
 
     # Edge building
     def add(self, *edges: EdgePath[StateT, DepsT]) -> None:  # noqa C901

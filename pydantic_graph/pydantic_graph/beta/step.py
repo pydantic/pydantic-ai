@@ -26,9 +26,7 @@ OutputT = TypeVar('OutputT', infer_variance=True)
 class StepContext(Generic[StateT, DepsT, InputT]):
     """Context information passed to step functions during graph execution.
 
-    The step context provides access to the current graph state, dependencies,
-    and input data for a step. This class uses manual property definitions
-    instead of dataclass to maintain proper type variance.
+    The step context provides access to the current graph state, dependencies, and input data for a step.
 
     Type Parameters:
         StateT: The type of the graph state

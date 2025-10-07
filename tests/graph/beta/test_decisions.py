@@ -7,8 +7,8 @@ from typing import Any, Literal
 
 import pytest
 
-from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext, TypeExpression
-from pydantic_graph.beta.join import SumReducer
+from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph.beta.join import reduce_list_append, reduce_sum
 
 pytestmark = pytest.mark.anyio
 
@@ -351,7 +351,7 @@ async def test_decision_branch_last_fork_id_with_map():
     async def process_item(ctx: StepContext[DecisionState, None, int]) -> int:
         return ctx.inputs * 2
 
-    sum_results = g.join(SumReducer[int])
+    sum_results = g.join(reduce_sum, initial=0)
 
     def is_list_int(x: Any) -> bool:
         return isinstance(x, list) and all(isinstance(y, int) for y in x)  # pyright: ignore[reportUnknownVariableType]
@@ -451,7 +451,7 @@ async def test_decision_branch_fork():
     async def path_2(ctx: StepContext[DecisionState, None, object]) -> str:
         return 'Path 2'
 
-    collect = g.join(ListAppendReducer[str])
+    collect = g.join(reduce_list_append, initial_factory=list[str])
 
     g.add(
         g.edge_from(g.start_node).to(choose_option),

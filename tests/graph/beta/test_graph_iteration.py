@@ -10,6 +10,7 @@ import pytest
 from pydantic_graph.beta import GraphBuilder, StepContext
 from pydantic_graph.beta.graph import EndMarker, GraphTask, JoinItem
 from pydantic_graph.beta.id_types import NodeID
+from pydantic_graph.beta.join import reduce_list_append
 
 pytestmark = pytest.mark.anyio
 
@@ -129,9 +130,7 @@ async def test_iter_with_broadcast():
     async def add_two(ctx: StepContext[IterState, None, int]) -> int:
         return ctx.inputs + 2
 
-    from pydantic_graph.beta import ListAppendReducer
-
-    collect = g.join(ListAppendReducer[int])
+    collect = g.join(reduce_list_append, initial_factory=list[int])
 
     g.add(
         g.edge_from(g.start_node).to(source),
@@ -224,9 +223,7 @@ async def test_iter_with_map():
     async def square(ctx: StepContext[IterState, None, int]) -> int:
         return ctx.inputs * ctx.inputs
 
-    from pydantic_graph.beta import ListAppendReducer
-
-    collect = g.join(ListAppendReducer[int])
+    collect = g.join(reduce_list_append, initial_factory=list[int])
 
     g.add(
         g.edge_from(g.start_node).to(generate),

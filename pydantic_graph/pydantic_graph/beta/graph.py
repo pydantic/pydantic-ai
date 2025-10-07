@@ -22,7 +22,7 @@ from pydantic_graph import exceptions
 from pydantic_graph._utils import AbstractSpan, get_traceparent, logfire_span
 from pydantic_graph.beta.decision import Decision
 from pydantic_graph.beta.id_types import ForkStack, ForkStackItem, GraphRunID, JoinID, NodeID, NodeRunID, TaskID
-from pydantic_graph.beta.join import Join, JoinNode, Reducer
+from pydantic_graph.beta.join import Join, JoinNode, JoinState, ReducerContext
 from pydantic_graph.beta.node import (
     EndNode,
     Fork,
@@ -351,7 +351,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         self.inputs = inputs
         """The initial input data."""
 
-        self._active_reducers: dict[tuple[JoinID, NodeRunID], tuple[Reducer[Any, Any, Any, Any], ForkStack]] = {}
+        self._active_reducers: dict[tuple[JoinID, NodeRunID], JoinState] = {}
         """Active reducers for join operations."""
 
         self._next: EndMarker[OutputT] | JoinItem | Sequence[GraphTask] | None = None
@@ -482,18 +482,18 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                 else:
                     raise RuntimeError('Parent fork run not found')
 
-                reducer_and_fork_stack = self._active_reducers.get((result.join_id, fork_run_id))
-                if reducer_and_fork_stack is None:
-                    join_node = self.graph.nodes[result.join_id]
-                    assert isinstance(join_node, Join)
-                    reducer = join_node.create_reducer()
-                    self._active_reducers[(result.join_id, fork_run_id)] = reducer, downstream_fork_stack
-                else:
-                    reducer, _ = reducer_and_fork_stack
+                join_node = self.graph.nodes[result.join_id]
+                assert isinstance(join_node, Join), f'Expected a `Join` but got {join_node}'
+                join_state = self._active_reducers.get((result.join_id, fork_run_id))
+                if join_state is None:
+                    current = join_node.initial_factory()
+                    join_state = self._active_reducers[(result.join_id, fork_run_id)] = JoinState(
+                        current, downstream_fork_stack
+                    )
 
-                try:
-                    reducer.reduce(StepContext(state=self.state, deps=self.deps, inputs=result.inputs))
-                except StopIteration:
+                context = ReducerContext(state=self.state, deps=self.deps, _join_state=join_state)
+                join_state.current = join_node.reduce(context, join_state.current, result.inputs)
+                if join_state.cancelled_sibling_tasks:
                     # cancel all concurrently running tasks with the same fork_run_id of the parent fork
                     task_ids_to_cancel = set[TaskID]()
                     for task_id, t in tasks_by_id.items():
@@ -521,13 +521,10 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                         return
 
                     for join_id, fork_run_id in self._get_completed_fork_runs(source_task, tasks_by_id.values()):
-                        reducer, fork_stack = self._active_reducers.pop((join_id, fork_run_id))
-                        output = reducer.finalize(StepContext(state=self.state, deps=self.deps, inputs=None))
+                        join_state = self._active_reducers.pop((join_id, fork_run_id))
                         join_node = self.graph.nodes[join_id]
-                        assert isinstance(
-                            join_node, Join
-                        )  # We could drop this but if it fails it means there is a bug.
-                        new_tasks = self._handle_edges(join_node, output, fork_stack)
+                        assert isinstance(join_node, Join), f'Expected a `Join` but got {join_node}'
+                        new_tasks = self._handle_edges(join_node, join_state.current, join_state.downstream_fork_stack)
                         maybe_overridden_result = yield new_tasks  # give an opportunity to override these
                         if _handle_result(maybe_overridden_result):
                             return
@@ -536,19 +533,18 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                 # In this case, there are no pending tasks. We can therefore finalize all active reducers whose
                 # downstream fork stacks are not a strict "prefix" of another active reducer. (If it was, finalizing the
                 # deeper reducer could produce new tasks in the "prefix" reducer.)
-                active_fork_stacks = [fork_stack for _, fork_stack in self._active_reducers.values()]
-                for (join_id, fork_run_id), (reducer, fork_stack) in list(self._active_reducers.items()):
+                active_fork_stacks = [join_state.downstream_fork_stack for join_state in self._active_reducers.values()]
+                for (join_id, fork_run_id), join_state in list(self._active_reducers.items()):
+                    fork_stack = join_state.downstream_fork_stack
                     if any(
                         len(afs) > len(fork_stack) and fork_stack == afs[: len(fork_stack)]
                         for afs in active_fork_stacks
                     ):
-                        continue  # this reducer is a strict prefix for one of the other active reducers
-
-                    self._active_reducers.pop((join_id, fork_run_id))  # we're finalizing it now
-                    output = reducer.finalize(StepContext(state=self.state, deps=self.deps, inputs=None))
+                        continue  # this join_state is a strict prefix for one of the other active join_states
+                    self._active_reducers.pop((join_id, fork_run_id))  # we're handling it now, so we can pop it
                     join_node = self.graph.nodes[join_id]
-                    assert isinstance(join_node, Join)  # We could drop this but if it fails it means there is a bug.
-                    new_tasks = self._handle_edges(join_node, output, fork_stack)
+                    assert isinstance(join_node, Join), f'Expected a `Join` but got {join_node}'
+                    new_tasks = self._handle_edges(join_node, join_state.current, join_state.downstream_fork_stack)
                     maybe_overridden_result = yield new_tasks  # give an opportunity to override these
                     if _handle_result(maybe_overridden_result):
                         return
@@ -668,11 +664,13 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
 
             node_run_id = NodeRunID(str(uuid.uuid4()))
 
-            # If the map specifies a downstream join id, eagerly create a reducer for it
+            # If the map specifies a downstream join id, eagerly create a join state for it
             if item.downstream_join_id is not None:
                 join_node = self.graph.nodes[item.downstream_join_id]
                 assert isinstance(join_node, Join)
-                self._active_reducers[(item.downstream_join_id, node_run_id)] = join_node.create_reducer(), fork_stack
+                self._active_reducers[(item.downstream_join_id, node_run_id)] = JoinState(
+                    join_node.initial_factory(), fork_stack
+                )
 
             map_tasks: list[GraphTask] = []
             for thread_index, input_item in enumerate(inputs):
@@ -709,11 +707,11 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                 except TypeError:
                     raise RuntimeError(f'Cannot map non-iterable value: {inputs!r}')
 
-                # If the map specifies a downstream join id, eagerly create a reducer for it
+                # If the map specifies a downstream join id, eagerly create a join state for it
                 if (join_id := node.downstream_join_id) is not None:
                     join_node = self.graph.nodes[join_id]
                     assert isinstance(join_node, Join)
-                    self._active_reducers[(join_id, node_run_id)] = join_node.create_reducer(), fork_stack
+                    self._active_reducers[(join_id, node_run_id)] = JoinState(join_node.initial_factory(), fork_stack)
 
                 for thread_index, input_item in enumerate(inputs):
                     item_tasks = self._handle_path(

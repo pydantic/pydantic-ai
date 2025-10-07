@@ -7,16 +7,16 @@ sources into a single output.
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from collections.abc import Iterable
+import inspect
+from abc import abstractmethod
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Generic, cast, overload
+from typing import Any, Final, Generic, cast, overload
 
-from typing_extensions import Protocol, Self, TypeVar
+from typing_extensions import Protocol, Self, TypeAliasType, TypeVar
 
 from pydantic_graph import BaseNode, End, GraphRunContext
-from pydantic_graph.beta.id_types import ForkID, JoinID
-from pydantic_graph.beta.step import StepContext
+from pydantic_graph.beta.id_types import ForkID, ForkStack, JoinID
 
 StateT = TypeVar('StateT', infer_variance=True)
 DepsT = TypeVar('DepsT', infer_variance=True)
@@ -27,172 +27,83 @@ K = TypeVar('K', infer_variance=True)
 V = TypeVar('V', infer_variance=True)
 
 
-@dataclass(kw_only=True)
-class Reducer(ABC, Generic[StateT, DepsT, InputT, OutputT]):
-    """An abstract base class for reducing data from parallel execution paths.
+@dataclass
+class JoinState:
+    """The state of a join during graph execution associated to a particular fork run.
 
-    Reducers accumulate input data from multiple sources and produce a single
-    output when finalized. This is the core mechanism for joining parallel
-    execution paths in the graph.
+    TODO: Should probably improve this docstring
+    """
+
+    current: Any
+    downstream_fork_stack: ForkStack
+    cancelled_sibling_tasks: bool = False
+
+
+@dataclass(kw_only=True)
+class ReducerContext(Generic[StateT, DepsT]):
+    """Context information passed to reducer functions during graph execution.
+
+    The reducer context provides access to the current graph state and dependencies.
 
     Type Parameters:
         StateT: The type of the graph state
         DepsT: The type of the dependencies
-        InputT: The type of input data to reduce
-        OutputT: The type of the final output after reduction
     """
 
-    def reduce(self, ctx: StepContext[StateT, DepsT, InputT]) -> None:
-        """Accumulate input data from a step context into the reducer's internal state.
+    state: Final[StateT] = field(repr=False)  # exclude from repr to keep things concise; Final to ensure covariant
+    """The current graph state."""
 
-        This method is called for each input that needs to be reduced. Subclasses
-        should override this method to implement their specific reduction logic.
+    deps: Final[DepsT] = field(repr=False)  # exclude from repr to keep things concise; Final to ensure covariant
+    """The dependencies available to this step."""
 
-        Args:
-            ctx: The step context containing input data to reduce
-        """
-        pass
+    _join_state: JoinState = field(repr=False)
 
-    def finalize(self, ctx: StepContext[StateT, DepsT, None]) -> OutputT:
-        """Finalize the reduction and return the aggregated output.
+    @property
+    def cancelled_sibling_tasks(self):
+        return self._join_state.cancelled_sibling_tasks
 
-        This method is called after all inputs have been reduced to produce
-        the final output value.
-
-        Args:
-            ctx: The step context for finalization (no input data)
-
-        Returns:
-            The final aggregated output from all reduced inputs
-
-        Raises:
-            NotImplementedError: Must be implemented by subclasses
-        """
-        raise NotImplementedError('Finalize method must be implemented in subclasses.')
+    def cancel_sibling_tasks(self):
+        self._join_state.cancelled_sibling_tasks = True
 
 
-@dataclass(kw_only=True)
-class NullReducer(Reducer[object, object, object, None]):
-    """A reducer that discards all input data and returns None.
-
-    This reducer is useful when you need to join parallel execution paths
-    but don't care about collecting their outputs - only about synchronizing
-    their completion.
-    """
-
-    def finalize(self, ctx: StepContext[object, object, object]) -> None:
-        """Return None, ignoring all accumulated inputs.
-
-        Args:
-            ctx: The step context for finalization
-
-        Returns:
-            Always returns None
-        """
-        return None
+PlainReducerFunction = TypeAliasType(
+    'PlainReducerFunction',
+    Callable[[OutputT, InputT], OutputT],
+    type_params=(InputT, OutputT),
+)
+ContextReducerFunction = TypeAliasType(
+    'ContextReducerFunction',
+    Callable[[ReducerContext[StateT, DepsT], OutputT, InputT], OutputT],
+    type_params=(StateT, DepsT, InputT, OutputT),
+)
+ReducerFunction = TypeAliasType(
+    'ReducerFunction',
+    ContextReducerFunction[StateT, DepsT, InputT, OutputT] | PlainReducerFunction[InputT, OutputT],
+    type_params=(StateT, DepsT, InputT, OutputT),
+)
 
 
-@dataclass(kw_only=True)
-class ListAppendReducer(Reducer[object, object, T, list[T]], Generic[T]):
-    """A reducer that collects all input values into a list.
-
-    This reducer accumulates each input value in order and returns them
-    as a list when finalized.
-
-    Type Parameters:
-        T: The type of elements in the resulting list
-    """
-
-    items: list[T] = field(default_factory=list)
-    """The accumulated list of input items."""
-
-    def reduce(self, ctx: StepContext[object, object, T]) -> None:
-        """Append the input value to the list of items.
-
-        Args:
-            ctx: The step context containing the input value to append
-        """
-        self.items.append(ctx.inputs)
-
-    def finalize(self, ctx: StepContext[object, object, None]) -> list[T]:
-        """Return the accumulated list of items.
-
-        Args:
-            ctx: The step context for finalization
-
-        Returns:
-            A list containing all accumulated input values in order
-        """
-        return self.items
+def reduce_null(current: None, inputs: Any) -> None:
+    """A reducer that discards all input data and returns None."""
+    return None
 
 
-@dataclass(kw_only=True)
-class ListExtendReducer(Reducer[object, object, Iterable[T], list[T]], Generic[T]):
-    """A reducer that collects all input values into a list.
-
-    This reducer accumulates each input value in order and returns them
-    as a list when finalized.
-
-    Type Parameters:
-        T: The type of elements in the resulting list
-    """
-
-    items: list[T] = field(default_factory=list)
-    """The accumulated list of input items."""
-
-    def reduce(self, ctx: StepContext[object, object, Iterable[T]]) -> None:
-        """Append the input value to the list of items.
-
-        Args:
-            ctx: The step context containing the input value to append
-        """
-        self.items.extend(ctx.inputs)
-
-    def finalize(self, ctx: StepContext[object, object, None]) -> list[T]:
-        """Return the accumulated list of items.
-
-        Args:
-            ctx: The step context for finalization
-
-        Returns:
-            A list containing all accumulated input values in order
-        """
-        return self.items
+def reduce_list_append(current: list[T], inputs: T) -> list[T]:
+    """A reducer that appends to a list."""
+    current.append(inputs)
+    return current
 
 
-@dataclass(kw_only=True)
-class DictUpdateReducer(Reducer[object, object, dict[K, V], dict[K, V]], Generic[K, V]):
-    """A reducer that merges dictionary inputs into a single dictionary.
+def reduce_list_extend(current: list[T], inputs: Iterable[T]) -> list[T]:
+    """A reducer that extends a list."""
+    current.extend(inputs)
+    return current
 
-    This reducer accumulates dictionary inputs by merging them together,
-    with later inputs overriding earlier ones for duplicate keys.
 
-    Type Parameters:
-        K: The type of dictionary keys
-        V: The type of dictionary values
-    """
-
-    data: dict[K, V] = field(default_factory=dict)
-    """The accumulated dictionary data."""
-
-    def reduce(self, ctx: StepContext[object, object, dict[K, V]]) -> None:
-        """Merge the input dictionary into the accumulated data.
-
-        Args:
-            ctx: The step context containing the dictionary to merge
-        """
-        self.data.update(ctx.inputs)
-
-    def finalize(self, ctx: StepContext[object, object, None]) -> dict[K, V]:
-        """Return the accumulated merged dictionary.
-
-        Args:
-            ctx: The step context for finalization
-
-        Returns:
-            A dictionary containing all merged key-value pairs
-        """
-        return self.data
+def reduce_dict_update(current: dict[K, V], inputs: Mapping[K, V]) -> dict[K, V]:
+    """A reducer that updates a dict."""
+    current.update(inputs)
+    return current
 
 
 class SupportsSum(Protocol):
@@ -206,53 +117,20 @@ class SupportsSum(Protocol):
 NumericT = TypeVar('NumericT', bound=SupportsSum, infer_variance=True)
 
 
-@dataclass(kw_only=True)
-class SumReducer(Reducer[object, object, NumericT, NumericT]):
-    """A reducer that sums numeric values, with initial value zero.
-
-    I don't know of a good way to get type-checking for this, but the value `0` must be valid for any used `NumericT`.
-    """
-
-    value: NumericT = field(default=cast(NumericT, 0))
-
-    def reduce(self, ctx: StepContext[object, object, NumericT]) -> None:
-        self.value += ctx.inputs
-
-    def finalize(self, ctx: StepContext[object, object, None]) -> NumericT:
-        return self.value
+def reduce_sum(current: NumericT, inputs: NumericT) -> NumericT:
+    """A reducer that sums numbers."""
+    return current + inputs
 
 
-@dataclass(kw_only=True)
-class EarlyStoppingReducer(Reducer[object, object, T, T | None], Generic[T]):
-    """A reducer that returns the first encountered value and cancels all other tasks started by its parent fork.
-
-    Type Parameters:
-        T: The type of elements in the resulting list
-    """
-
-    result: T | None = None
-
-    def reduce(self, ctx: StepContext[object, object, T]) -> None:
-        """Append the input value to the list of items.
-
-        Args:
-            ctx: The step context containing the input value to append
-        """
-        self.result = ctx.inputs
-        raise StopIteration
-
-    def finalize(self, ctx: StepContext[object, object, None]) -> T | None:
-        """Return the accumulated list of items.
-
-        Args:
-            ctx: The step context for finalization
-
-        Returns:
-            A list containing all accumulated input values in order
-        """
-        return self.result
+def reduce_first_value(ctx: ReducerContext[object, object], current: T, inputs: T) -> T:
+    """A reducer that returns the first value it encounters, and cancels all other tasks."""
+    if ctx.cancelled_sibling_tasks:
+        return current
+    ctx.cancel_sibling_tasks()
+    return inputs
 
 
+@dataclass(frozen=True)
 class Join(Generic[StateT, DepsT, InputT, OutputT]):
     """A join operation that synchronizes and aggregates parallel execution paths.
 
@@ -267,58 +145,21 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
         OutputT: The type of the final joined output
     """
 
-    def __init__(
-        self, id: JoinID, reducer_type: type[Reducer[StateT, DepsT, InputT, OutputT]], joins: ForkID | None = None
-    ) -> None:
-        """Initialize a join operation.
+    id: JoinID
+    """A unique identifier for this join operation."""
+    reducer: ReducerFunction[StateT, DepsT, InputT, OutputT]
+    """The reducer function this join uses to aggregate inputs."""
+    initial_factory: Callable[[], OutputT]
+    """The value to use as the `current` value during the first call to `reduce`."""
+    joins: ForkID | None
+    """The fork ID this join synchronizes with, if any."""
 
-        Args:
-            id: Unique identifier for this join
-            reducer_type: The type of reducer to use for aggregating inputs
-            joins: The fork ID this join synchronizes with, if any
-        """
-        self.id = id
-        """Unique identifier for this join operation."""
-
-        self._reducer_type = reducer_type
-        """The reducer type used to aggregate inputs."""
-
-        self.joins = joins
-        """The fork ID this join synchronizes with, if any."""
-
-        # self._type_adapter: TypeAdapter[Any] = TypeAdapter(reducer_type)  # needs to be annotated this way for variance
-
-    def create_reducer(self) -> Reducer[StateT, DepsT, InputT, OutputT]:
-        """Create a reducer instance for this join operation.
-
-        Returns:
-            A new reducer instance initialized with the provided context
-        """
-        return self._reducer_type()
-
-    # TODO(P3): If we want the ability to snapshot graph-run state, we'll need a way to
-    #  serialize/deserialize the associated reducers, something like this:
-    # def serialize_reducer(self, instance: Reducer[Any, Any, Any]) -> bytes:
-    #     return to_json(instance)
-    #
-    # def deserialize_reducer(self, serialized: bytes) -> Reducer[InputT, OutputT]:
-    #     return self._type_adapter.validate_json(serialized)
-
-    def _force_covariant(self, inputs: InputT) -> OutputT:  # pragma: no cover
-        """Force covariant typing for generic parameters.
-
-        This method exists solely for typing purposes and should never be called.
-
-        Args:
-            inputs: Input value for typing purposes only
-
-        Returns:
-            Output value for typing purposes only
-
-        Raises:
-            RuntimeError: Always raised as this method should never be called
-        """
-        raise RuntimeError('This method should never be called, it is just defined for typing purposes.')
+    def reduce(self, ctx: ReducerContext[StateT, DepsT], current: OutputT, inputs: InputT) -> OutputT:
+        n_parameters = len(inspect.signature(self.reducer).parameters)
+        if n_parameters == 2:
+            return cast(PlainReducerFunction[InputT, OutputT], self.reducer)(current, inputs)
+        else:
+            return cast(ContextReducerFunction[StateT, DepsT, InputT, OutputT], self.reducer)(ctx, current, inputs)
 
     @overload
     def as_node(self, inputs: None = None) -> JoinNode[StateT, DepsT]: ...

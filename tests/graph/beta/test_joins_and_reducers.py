@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from pydantic_graph.beta import DictUpdateReducer, GraphBuilder, ListAppendReducer, NullReducer, Reducer, StepContext
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import ReducerContext, reduce_dict_update, reduce_list_append, reduce_null
 
 pytestmark = pytest.mark.anyio
 
@@ -29,7 +30,7 @@ async def test_null_reducer():
         ctx.state.value += ctx.inputs
         return ctx.inputs
 
-    null_join = g.join(NullReducer)
+    null_join = g.join(reduce_null, initial=None)
 
     g.add(
         g.edge_from(g.start_node).to(source),
@@ -58,7 +59,7 @@ async def test_list_append_reducer():
     async def to_string(ctx: StepContext[SimpleState, None, int]) -> str:
         return f'item-{ctx.inputs}'
 
-    list_join = g.join(ListAppendReducer[str])
+    list_join = g.join(reduce_list_append, initial_factory=list[str])
 
     g.add(
         g.edge_from(g.start_node).to(generate_numbers),
@@ -85,7 +86,7 @@ async def test_dict_reducer():
     async def create_dict(ctx: StepContext[SimpleState, None, str]) -> dict[str, int]:
         return {ctx.inputs: len(ctx.inputs)}
 
-    dict_join = g.join(DictUpdateReducer[str, int])
+    dict_join = g.join(reduce_dict_update, initial_factory=dict[str, int])
 
     g.add(
         g.edge_from(g.start_node).to(generate_keys),
@@ -99,56 +100,20 @@ async def test_dict_reducer():
     assert result == {'a': 1, 'b': 1, 'c': 1}
 
 
-async def test_custom_reducer():
-    """Test a custom reducer implementation."""
-
-    @dataclass(init=False)
-    class SumReducer(Reducer[SimpleState, None, int, int]):
-        total: int = 0
-
-        def reduce(self, ctx: StepContext[SimpleState, None, int]) -> None:
-            self.total += ctx.inputs
-
-        def finalize(self, ctx: StepContext[SimpleState, None, None]) -> int:
-            return self.total
-
-    g = GraphBuilder(state_type=SimpleState, output_type=int)
-
-    @g.step
-    async def generate_numbers(ctx: StepContext[SimpleState, None, None]) -> list[int]:
-        return [5, 10, 15, 20]
-
-    @g.step
-    async def identity(ctx: StepContext[SimpleState, None, int]) -> int:
-        return ctx.inputs
-
-    sum_join = g.join(SumReducer)
-
-    g.add(
-        g.edge_from(g.start_node).to(generate_numbers),
-        g.edge_from(generate_numbers).map().to(identity),
-        g.edge_from(identity).to(sum_join),
-        g.edge_from(sum_join).to(g.end_node),
-    )
-
-    graph = g.build()
-    result = await graph.run(state=SimpleState())
-    assert result == 50
-
-
 async def test_reducer_with_state_access():
     """Test that reducers can access and modify graph state."""
 
-    @dataclass(init=False)
-    class StateAwareReducer(Reducer[SimpleState, None, int, int]):
-        count: int = 0
+    # Note: doing this means the `count` will be shared across _all_ fork runs.
+    def get_state_aware_reducer():
+        count = 0
 
-        def reduce(self, ctx: StepContext[SimpleState, None, int]) -> None:
-            self.count += 1
-            ctx.state.value += ctx.inputs
+        def reduce_state_aware(ctx: ReducerContext[SimpleState, None], current: int, inputs: int) -> int:
+            nonlocal count
+            ctx.state.value += inputs
+            count += 1
+            return count
 
-        def finalize(self, ctx: StepContext[SimpleState, None, None]) -> int:
-            return self.count
+        return reduce_state_aware
 
     g = GraphBuilder(state_type=SimpleState, output_type=int)
 
@@ -160,7 +125,7 @@ async def test_reducer_with_state_access():
     async def process(ctx: StepContext[SimpleState, None, int]) -> int:
         return ctx.inputs * 10
 
-    aware_join = g.join(StateAwareReducer)
+    aware_join = g.join(get_state_aware_reducer(), initial=0)
 
     g.add(
         g.edge_from(g.start_node).to(generate),
@@ -188,7 +153,7 @@ async def test_join_with_custom_id():
     async def process(ctx: StepContext[SimpleState, None, int]) -> int:
         return ctx.inputs
 
-    custom_join = g.join(ListAppendReducer[int], node_id='my_custom_join')
+    custom_join = g.join(reduce_list_append, initial_factory=list[int], node_id='my_custom_join')
 
     g.add(
         g.edge_from(g.start_node).to(source),
@@ -226,8 +191,8 @@ async def test_multiple_joins():
     async def process_b(ctx: StepContext[MultiState, None, int]) -> int:
         return ctx.inputs * 3
 
-    join_a = g.join(ListAppendReducer[int], node_id='join_a')
-    join_b = g.join(ListAppendReducer[int], node_id='join_b')
+    join_a = g.join(reduce_list_append, initial_factory=list[int], node_id='join_a')
+    join_b = g.join(reduce_list_append, initial_factory=list[int], node_id='join_b')
 
     @g.step
     async def combine(ctx: StepContext[MultiState, None, None]) -> dict[str, list[int]]:
@@ -273,7 +238,7 @@ async def test_dict_reducer_with_overlapping_keys():
         # All create the same key
         return {'key': ctx.inputs}
 
-    dict_join = g.join(DictUpdateReducer[str, int])
+    dict_join = g.join(reduce_dict_update, initial_factory=dict[str, int])
 
     g.add(
         g.edge_from(g.start_node).to(generate),

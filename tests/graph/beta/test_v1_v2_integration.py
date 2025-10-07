@@ -9,7 +9,7 @@ import pytest
 
 from pydantic_graph import BaseNode, End, GraphRunContext
 from pydantic_graph.beta import GraphBuilder, StepContext, StepNode
-from pydantic_graph.beta.join import JoinNode
+from pydantic_graph.beta.join import JoinNode, reduce_list_append
 
 pytestmark = pytest.mark.anyio
 
@@ -145,9 +145,7 @@ async def test_v1_node_returning_v1_node():
 async def test_mixed_v1_v2_with_broadcast():
     """Test broadcasting with mixed v1 and v2 nodes."""
     g = GraphBuilder(state_type=IntegrationState, output_type=list[int])
-    from pydantic_graph.beta import ListAppendReducer
-
-    collect = g.join(ListAppendReducer[int])
+    collect = g.join(reduce_list_append, initial_factory=list[int])
 
     @dataclass
     class ProcessNode(BaseNode[IntegrationState, None, Any]):

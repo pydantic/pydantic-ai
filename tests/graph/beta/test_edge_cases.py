@@ -7,7 +7,8 @@ from typing import Any
 
 import pytest
 
-from pydantic_graph.beta import GraphBuilder, NullReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import reduce_list_append, reduce_null
 
 pytestmark = pytest.mark.anyio
 
@@ -113,9 +114,7 @@ async def test_map_single_item():
     async def process(ctx: StepContext[EdgeCaseState, None, int]) -> int:
         return ctx.inputs * 2
 
-    from pydantic_graph.beta import ListAppendReducer
-
-    collect = g.join(ListAppendReducer[int])
+    collect = g.join(reduce_list_append, initial_factory=list[int])
 
     g.add(
         g.edge_from(g.start_node).to(single_item),
@@ -153,9 +152,7 @@ async def test_deeply_nested_broadcasts():
     async def level2_b(ctx: StepContext[EdgeCaseState, None, int]) -> int:
         return ctx.inputs + 20
 
-    from pydantic_graph.beta import ListAppendReducer
-
-    collect = g.join(ListAppendReducer[int])
+    collect = g.join(reduce_list_append, initial_factory=list[int])
 
     g.add(
         g.edge_from(g.start_node).to(start),
@@ -207,9 +204,7 @@ async def test_join_with_single_input():
     async def single_source(ctx: StepContext[EdgeCaseState, None, None]) -> int:
         return 42
 
-    from pydantic_graph.beta import ListAppendReducer
-
-    collect = g.join(ListAppendReducer[int])
+    collect = g.join(reduce_list_append, initial_factory=list[int])
 
     g.add(
         g.edge_from(g.start_node).to(single_source),
@@ -234,7 +229,7 @@ async def test_null_reducer_with_no_inputs():
     async def process(ctx: StepContext[EdgeCaseState, None, int]) -> int:
         return ctx.inputs
 
-    null_join = g.join(NullReducer)
+    null_join = g.join(reduce_null, initial=None)
 
     g.add(
         g.edge_from(g.start_node).to(empty_list),
@@ -292,10 +287,8 @@ async def test_multiple_joins_same_fork():
     async def path_b(ctx: StepContext[EdgeCaseState, None, int]) -> int:
         return ctx.inputs * 3
 
-    from pydantic_graph.beta import ListAppendReducer
-
-    join_a = g.join(ListAppendReducer[int], node_id='join_a')
-    join_b = g.join(ListAppendReducer[int], node_id='join_b')
+    join_a = g.join(reduce_list_append, initial_factory=list[int], node_id='join_a')
+    join_b = g.join(reduce_list_append, initial_factory=list[int], node_id='join_b')
 
     @g.step
     async def combine(ctx: StepContext[EdgeCaseState, None, None]) -> tuple[list[int], list[int]]:
@@ -329,9 +322,7 @@ async def test_state_with_mutable_collections():
         ctx.state.items.append(ctx.inputs * 10)
         return ctx.inputs
 
-    from pydantic_graph.beta import ListAppendReducer
-
-    collect = g.join(ListAppendReducer[int])
+    collect = g.join(reduce_list_append, initial_factory=list[int])
 
     @g.step
     async def get_state_items(ctx: StepContext[MutableState, None, list[int]]) -> list[int]:

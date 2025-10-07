@@ -10,7 +10,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import Reducer, SumReducer
+from pydantic_graph.beta.join import ReducerContext, reduce_sum
 
 pytestmark = pytest.mark.anyio
 
@@ -165,7 +165,7 @@ async def test_map_non_iterable():
     async def process_item(ctx: StepContext[MyState, None, int]) -> int:
         return ctx.inputs
 
-    sum_items = g.join(SumReducer[int])
+    sum_items = g.join(reduce_sum, initial=0)
 
     # This will fail at runtime because we're trying to map over a non-iterable
     # We have a `# type: ignore` below because we are testing behavior when you ignore the type error
@@ -200,36 +200,28 @@ async def test_reducer_stop_iteration():
         # Simulate some processing
         return ctx.inputs * 2
 
-    @g.join
-    class EarlyStopReducer(Reducer[EarlyStopState, None, int, int]):
-        def __init__(self):
-            self.total = 0
-            self.count = 0
-            self.stopped = False
+    def get_early_stopping_reducer():
+        count = 0
 
-        def reduce(self, ctx: StepContext[EarlyStopState, None, int]):
-            if self.stopped:
-                # Cancelled tasks don't necessarily stop immediately, so we add handling here
-                # to prevent the reduce method from doing anything in concurrent tasks that
-                # haven't been immediately cancelled
-                raise StopIteration
+        def reduce(ctx: ReducerContext[EarlyStopState, object], current: int, inputs: int) -> int:
+            nonlocal count
+            if not ctx.cancelled_sibling_tasks:
+                count += 1
+                current += inputs
+                if count >= 2:
+                    ctx.state.stopped = True  # update the state so we can assert on it later
+                    ctx.cancel_sibling_tasks()
+            return current
 
-            self.count += 1
-            self.total += ctx.inputs
-            # Stop after receiving 2 items
-            if self.count >= 2:
-                self.stopped = True
-                ctx.state.stopped = True  # set it on the state so we can assert after the run completes
-                raise StopIteration
+        return reduce
 
-        def finalize(self, ctx: StepContext[EarlyStopState, None, None]) -> int:
-            return self.total
+    stop_early = g.join(get_early_stopping_reducer(), initial=0)
 
     g.add(
         g.edge_from(g.start_node).to(generate_numbers),
         g.edge_from(generate_numbers).map().to(slow_process),
-        g.edge_from(slow_process).to(EarlyStopReducer),
-        g.edge_from(EarlyStopReducer).to(g.end_node),
+        g.edge_from(slow_process).to(stop_early),
+        g.edge_from(stop_early).to(g.end_node),
     )
 
     graph = g.build()
@@ -341,7 +333,7 @@ async def test_nested_reducers_with_prefix():
     # actually will join all forks from the initial outer_list, therefore summing everything, rather
     # than _only_ summing the inner loops. If/when we add more control over the parent fork calculation, we can
     # test that it's possible to use separate logic for the inside vs. the outside.
-    sum_join = g.join(SumReducer[int])
+    sum_join = g.join(reduce_sum, initial=0)
 
     # Create nested map operations
     g.add(
