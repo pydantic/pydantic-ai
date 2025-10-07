@@ -251,7 +251,7 @@ class MCPServerTool(AbstractBuiltinTool):
     server_label: str
     """The label of the MCP server to use."""
 
-    require_approval: Literal['never', 'always'] | TypedDict[Literal['never', 'always'], TypedDict[Literal['tool_names'], str]] | None = None
+    require_approval: Literal['never', 'always'] | None = None
     """Whether to require approval before using the MCP server."""
 
     server_url: str | None = None
