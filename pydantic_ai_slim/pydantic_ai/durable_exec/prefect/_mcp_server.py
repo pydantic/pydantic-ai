@@ -10,7 +10,6 @@ from typing_extensions import Self
 from pydantic_ai import AbstractToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from ._run_context import SerializableRunContext
 from ._types import TaskConfig, default_task_config
 
 if TYPE_CHECKING:
@@ -55,8 +54,6 @@ class PrefectMCPServer(WrapperToolset[AgentDepsT], ABC):
         tool: ToolsetTool[AgentDepsT],
     ) -> ToolResult:
         """Call an MCP tool, wrapped as a Prefect task with a descriptive name."""
-        # Wrap ctx in SerializableRunContext for proper cache key serialization
-        serializable_ctx = SerializableRunContext.wrap(ctx)
 
         @task(
             name=f'Call MCP Tool: {name}',
@@ -65,16 +62,14 @@ class PrefectMCPServer(WrapperToolset[AgentDepsT], ABC):
         async def call_tool_task(
             tool_name: str,
             args: dict[str, Any],
-            serializable_ctx: SerializableRunContext,
+            run_ctx: RunContext[AgentDepsT],
         ) -> ToolResult:
             logger = get_run_logger()
             logger.info(f'Calling MCP tool: {tool_name}')
 
-            # Unwrap to get the original RunContext
             # Note: We don't include 'tool' parameter as it contains non-serializable objects
-            unwrapped_ctx: RunContext[AgentDepsT] = serializable_ctx.unwrap()
-            result = await super(PrefectMCPServer, self).call_tool(tool_name, args, unwrapped_ctx, tool)
+            result = await super(PrefectMCPServer, self).call_tool(tool_name, args, run_ctx, tool)
             logger.info(f'MCP tool call completed: {tool_name}')
             return result
 
-        return await call_tool_task(name, tool_args, serializable_ctx)
+        return await call_tool_task(name, tool_args, ctx)

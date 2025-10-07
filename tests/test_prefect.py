@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Literal
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel
@@ -701,9 +702,6 @@ async def test_cache_policy_custom():
         ),
     ]
 
-    # Create a mock task context - we need this for the cache policy
-    from unittest.mock import MagicMock
-
     mock_task_ctx = MagicMock()
 
     # Compute hashes using the cache policy
@@ -743,6 +741,57 @@ async def test_cache_policy_custom():
     assert hash3 != hash1
 
 
+async def test_cache_policy_with_tuples():
+    """Test that cache policy handles tuples with timestamps correctly."""
+    cache_policy = InputsWithoutTimestamps()
+    mock_task_ctx = MagicMock()
+
+    time1 = datetime.now()
+    time2 = time1 + timedelta(minutes=5)
+
+    time3 = time2 + timedelta(minutes=5)
+    time4 = time3 + timedelta(minutes=5)
+
+    # Create a tuple with timestamps
+    data_with_tuple_1 = (
+        UserPromptPart(content='Question', timestamp=time1),
+        TextPart(content='Answer'),
+        UserPromptPart(content='Follow-up', timestamp=time2),
+    )
+
+    data_with_tuple_2 = (
+        UserPromptPart(content='Question', timestamp=time3),
+        TextPart(content='Answer'),
+        UserPromptPart(content='Follow-up', timestamp=time4),
+    )
+
+    assert cache_policy.compute_key(
+        task_ctx=mock_task_ctx,
+        inputs={'messages': data_with_tuple_1},
+        flow_parameters={},
+    ) == cache_policy.compute_key(
+        task_ctx=mock_task_ctx,
+        inputs={'messages': data_with_tuple_2},
+        flow_parameters={},
+    )
+
+
+async def test_cache_policy_empty_inputs():
+    """Test that cache policy returns None for empty inputs."""
+    cache_policy = InputsWithoutTimestamps()
+
+    mock_task_ctx = MagicMock()
+
+    # Test with empty inputs
+    result = cache_policy.compute_key(
+        task_ctx=mock_task_ctx,
+        inputs={},
+        flow_parameters={},
+    )
+
+    assert result is None
+
+
 # Test custom model settings
 class CustomModelSettings(ModelSettings, total=False):
     custom_setting: str
@@ -763,3 +812,52 @@ async def test_custom_model_settings(allow_model_requests: None):
     """Test that custom model settings are passed through correctly."""
     result = await settings_prefect_agent.run('Give me those settings')
     assert result.output == snapshot("{'max_tokens': 123, 'custom_setting': 'custom_value'}")
+
+
+@dataclass
+class SimpleDeps:
+    value: str
+
+
+async def test_tool_call_outside_flow():
+    """Test that tools work when called outside a Prefect flow."""
+
+    # Create an agent with a simple tool
+    test_agent = Agent(TestModel(), deps_type=SimpleDeps, name='test_outside_flow')
+
+    @test_agent.tool
+    def simple_tool(ctx: RunContext[SimpleDeps]) -> str:
+        return f'Tool called with: {ctx.deps.value}'
+
+    test_prefect_agent = PrefectAgent(test_agent)
+
+    # Call run() outside a flow - tools should still work
+    result = await test_prefect_agent.run('Call the tool', deps=SimpleDeps(value='test'))
+    # Check that the tool was actually called by looking at the messages
+    messages = result.all_messages()
+    assert any('simple_tool' in str(msg) for msg in messages)
+
+
+async def test_disabled_tool():
+    """Test that tools can be disabled via tool_task_config_by_name."""
+
+    # Create an agent with a tool
+    test_agent = Agent(TestModel(), name='test_disabled_tool')
+
+    @test_agent.tool_plain
+    def my_tool() -> str:
+        return 'Tool executed'
+
+    # Create PrefectAgent with the tool disabled
+    test_prefect_agent = PrefectAgent(
+        test_agent,
+        tool_task_config_by_name={
+            'my_tool': None,  # Disable task wrapping for this tool
+        },
+    )
+
+    # The tool should still work, just not wrapped as a Prefect task
+    result = await test_prefect_agent.run('Call my_tool')
+    # Check that the tool was actually called
+    messages = result.all_messages()
+    assert any('my_tool' in str(msg) for msg in messages)

@@ -20,7 +20,6 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
-from ._run_context import SerializableRunContext
 from ._types import TaskConfig, default_task_config
 
 
@@ -127,29 +126,23 @@ class PrefectModel(WrapperModel):
         # Get model name for task description
         model_name = getattr(self.wrapped, 'model_name', 'unknown')
 
-        # Wrap run_context in SerializableRunContext for proper cache key serialization
-        serializable_ctx = SerializableRunContext.wrap(run_context) if run_context is not None else None
-
         @task(
             name=f'Model Request (Streaming): {model_name}',
             **self.task_config,
         )
-        async def request_stream_task(ctx: SerializableRunContext | None) -> ModelResponse:
+        async def request_stream_task(ctx: RunContext[Any] | None) -> ModelResponse:
             logger = get_run_logger()
             logger.info(f'Making streaming model request to {model_name} with {len(messages)} messages')
 
-            # Unwrap to get the original RunContext
-            unwrapped_ctx = ctx.unwrap() if ctx is not None else None
-
             async with super(PrefectModel, self).request_stream(
-                messages, model_settings, model_request_parameters, unwrapped_ctx
+                messages, model_settings, model_request_parameters, ctx
             ) as streamed_response:
                 if self.event_stream_handler is not None:
-                    assert unwrapped_ctx is not None, (
+                    assert ctx is not None, (
                         'A Prefect model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. '
                         'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
                     )
-                    await self.event_stream_handler(unwrapped_ctx, streamed_response)
+                    await self.event_stream_handler(ctx, streamed_response)
 
                 # Consume the entire stream
                 async for _ in streamed_response:
@@ -158,5 +151,5 @@ class PrefectModel(WrapperModel):
             logger.info(f'Streaming model request completed. Tokens: {response.usage.total_tokens}')
             return response
 
-        response = await request_stream_task(serializable_ctx)
+        response = await request_stream_task(run_context)
         yield PrefectStreamedResponse(model_request_parameters, response)
