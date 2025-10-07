@@ -1725,21 +1725,22 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
             snapshot(RequestUsage(input_tokens=1, output_tokens=1, details={'input_tokens': 1, 'output_tokens': 1})),
             id='RawMessageStartEvent',
         ),
-        # pytest.param(
-        #     lambda: BetaRawMessageDeltaEvent(
-        #         delta=Delta(),
-        #         usage=BetaMessageDeltaUsage(output_tokens=5),
-        #         type='message_delta',
-        #     ),
-        #     snapshot(RequestUsage(output_tokens=5, details={'output_tokens': 5})),
-        #     id='RawMessageDeltaEvent',
-        # ),
     ],
 )
 def test_usage(
     message_callback: Callable[[], BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent], usage: RunUsage
 ):
     assert _map_usage(message_callback()) == usage
+
+
+def test_streaming_usage():
+    start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
+    initial_usage = _map_usage(start)
+    delta = BetaRawMessageDeltaEvent(delta=Delta(), usage=BetaMessageDeltaUsage(output_tokens=5), type='message_delta')
+    final_usage = _map_usage(delta, existing_usage=initial_usage)
+    assert final_usage == snapshot(
+        RequestUsage(input_tokens=1, output_tokens=5, details={'input_tokens': 1, 'output_tokens': 5})
+    )
 
 
 async def test_anthropic_model_empty_message_on_history(allow_model_requests: None, anthropic_api_key: str):
