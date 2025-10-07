@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from abc import ABC
 from dataclasses import dataclass
-from typing import Literal, Dict
+from typing import Literal
 
 from typing_extensions import TypedDict
 
@@ -254,19 +254,19 @@ class MCPServerTool(AbstractBuiltinTool):
     require_approval: Literal['never', 'always'] | None = None
     """Whether to require approval before using the MCP server."""
 
-    server_url: str | None = None
+    server_url: str
     """The URL of the MCP server to use."""
 
-    server_description: str | None = None
+    server_description: str
     """A description of the MCP server."""
 
     allowed_tools: list[str] | None = None
     """A list of tools that the MCP server can use."""
 
-    authorization: str | None = None
+    authorization: str
     """Authorization header to use when making requests to the MCP server."""
 
-    headers: Dict[str, str] | None = None
+    headers: dict[str, str] | None = None
     """Optional HTTP headers to send to the MCP server.
 
     Use for authentication or other purposes.
@@ -274,7 +274,7 @@ class MCPServerTool(AbstractBuiltinTool):
 
     connector_id: str | None = None
     """The ID of the connector to use.
-    
+
     Supported by:
 
     * OpenAI Responses
