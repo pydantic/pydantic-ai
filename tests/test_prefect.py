@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    AgentRunResult,
     AgentStreamEvent,
     ExternalToolset,
     FunctionToolset,
@@ -28,7 +29,6 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, U
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -514,7 +514,6 @@ hitl_prefect_agent = PrefectAgent(hitl_agent)
 
 async def test_prefect_agent_with_hitl_tool(allow_model_requests: None) -> None:
     """Test human-in-the-loop with deferred tool calls and approvals."""
-    # Use TestModel to avoid real API calls
 
     @flow(name='test_hitl_tool')
     async def hitl_main_loop(prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
@@ -524,7 +523,7 @@ async def test_prefect_agent_with_hitl_tool(allow_model_requests: None) -> None:
         result = await hitl_prefect_agent.run(message_history=messages, deferred_tool_results=deferred_tool_results)
         messages = result.all_messages()
 
-        if isinstance(result.output, DeferredToolRequests):
+        if isinstance(result.output, DeferredToolRequests):  # pragma: no branch
             # Handle deferred requests
             results = DeferredToolResults()
             for tool_call in result.output.approvals:
@@ -553,7 +552,7 @@ def test_prefect_agent_with_hitl_tool_sync(allow_model_requests: None) -> None:
         result = hitl_prefect_agent.run_sync(message_history=messages, deferred_tool_results=deferred_tool_results)
         messages = result.all_messages()
 
-        if isinstance(result.output, DeferredToolRequests):
+        if isinstance(result.output, DeferredToolRequests):  # pragma: no branch
             results = DeferredToolResults()
             for tool_call in result.output.approvals:
                 results.approvals[tool_call.tool_call_id] = True
@@ -856,8 +855,17 @@ async def test_disabled_tool():
         },
     )
 
-    # The tool should still work, just not wrapped as a Prefect task
+    # Test outside a flow
     result = await test_prefect_agent.run('Call my_tool')
-    # Check that the tool was actually called
     messages = result.all_messages()
     assert any('my_tool' in str(msg) for msg in messages)
+
+    # Test inside a flow to ensure disabled tools work there too
+    @flow
+    async def test_flow():
+        result = await test_prefect_agent.run('Call my_tool')
+        return result
+
+    flow_result = await test_flow()
+    flow_messages = flow_result.all_messages()
+    assert any('my_tool' in str(msg) for msg in flow_messages)

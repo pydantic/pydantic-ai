@@ -1,7 +1,7 @@
 from dataclasses import fields, is_dataclass
 from typing import Any, TypeGuard
 
-from prefect.cache_policies import INPUTS, RUN_ID, TASK_SOURCE, CachePolicy
+from prefect.cache_policies import RUN_ID, TASK_SOURCE, CachePolicy, Inputs
 from prefect.context import TaskRunContext
 
 
@@ -58,7 +58,8 @@ class InputsWithoutTimestamps(CachePolicy):
 
         filtered_inputs = _strip_timestamps(inputs)
 
-        return INPUTS.compute_key(task_ctx, filtered_inputs, flow_parameters, **kwargs)
+        # Exclude run_ctx from inputs as it contains non-hashable objects
+        return Inputs(exclude=['run_ctx']).compute_key(task_ctx, filtered_inputs, flow_parameters, **kwargs)
 
 
 DEFAULT_PYDANTIC_AI_CACHE_POLICY = InputsWithoutTimestamps() + TASK_SOURCE + RUN_ID
