@@ -8,8 +8,8 @@ the v1 and v2 graph execution systems.
 from __future__ import annotations
 
 from collections.abc import Awaitable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, Protocol, cast, get_origin, overload
+from dataclasses import dataclass, field
+from typing import Any, Generic, Protocol, cast, get_origin, overload
 
 from typing_extensions import TypeVar
 
@@ -22,6 +22,7 @@ InputT = TypeVar('InputT', infer_variance=True)
 OutputT = TypeVar('OutputT', infer_variance=True)
 
 
+@dataclass(kw_only=True, frozen=True)
 class StepContext(Generic[StateT, DepsT, InputT]):
     """Context information passed to step functions during graph execution.
 
@@ -35,49 +36,14 @@ class StepContext(Generic[StateT, DepsT, InputT]):
         InputT: The type of the input data
     """
 
-    if TYPE_CHECKING:
+    state: StateT = field(repr=False)  # exclude from repr to keep things concise
+    """The current graph state."""
 
-        def __init__(self, state: StateT, deps: DepsT, inputs: InputT):
-            self._state = state
-            self._deps = deps
-            self._inputs = inputs
+    deps: DepsT = field(repr=False)  # exclude from repr to keep things concise
+    """The dependencies available to this step."""
 
-        @property
-        def state(self) -> StateT:
-            """The current graph state."""
-            return self._state
-
-        @property
-        def deps(self) -> DepsT:
-            """The dependencies available to this step."""
-            return self._deps
-
-        @property
-        def inputs(self) -> InputT:
-            """The input data for this step."""
-            return self._inputs
-    else:
-        state: StateT
-        """The current graph state."""
-
-        deps: DepsT
-        """The dependencies available to this step."""
-
-        inputs: InputT
-        """The input data for this step."""
-
-    def __repr__(self) -> str:
-        """Return a string representation of the step context.
-
-        Returns:
-            A string showing the class name and inputs
-        """
-        return f'{self.__class__.__name__}(inputs={self.inputs})'
-
-
-if not TYPE_CHECKING:
-    # TODO: Try dropping inputs from StepContext, it would make for fewer generic params, could help
-    StepContext = dataclass(StepContext)
+    inputs: InputT
+    """The input data for this step."""
 
 
 class StepFunction(Protocol[StateT, DepsT, InputT, OutputT]):

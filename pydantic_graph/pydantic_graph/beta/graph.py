@@ -492,7 +492,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                     reducer, _ = reducer_and_fork_stack
 
                 try:
-                    reducer.reduce(StepContext(self.state, self.deps, result.inputs))
+                    reducer.reduce(StepContext(state=self.state, deps=self.deps, inputs=result.inputs))
                 except StopIteration:
                     # cancel all concurrently running tasks with the same fork_run_id of the parent fork
                     task_ids_to_cancel = set[TaskID]()
@@ -522,7 +522,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
 
                     for join_id, fork_run_id in self._get_completed_fork_runs(source_task, tasks_by_id.values()):
                         reducer, fork_stack = self._active_reducers.pop((join_id, fork_run_id))
-                        output = reducer.finalize(StepContext(self.state, self.deps, None))
+                        output = reducer.finalize(StepContext(state=self.state, deps=self.deps, inputs=None))
                         join_node = self.graph.nodes[join_id]
                         assert isinstance(
                             join_node, Join
@@ -545,7 +545,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                         continue  # this reducer is a strict prefix for one of the other active reducers
 
                     self._active_reducers.pop((join_id, fork_run_id))  # we're finalizing it now
-                    output = reducer.finalize(StepContext(self.state, self.deps, None))
+                    output = reducer.finalize(StepContext(state=self.state, deps=self.deps, inputs=None))
                     join_node = self.graph.nodes[join_id]
                     assert isinstance(join_node, Join)  # We could drop this but if it fails it means there is a bug.
                     new_tasks = self._handle_edges(join_node, output, fork_stack)
@@ -576,7 +576,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                 if self.graph.auto_instrument:
                     stack.enter_context(logfire_span('run node {node_id}', node_id=node.id, node=node))
 
-                step_context = StepContext[StateT, DepsT, Any](state, deps, inputs)
+                step_context = StepContext[StateT, DepsT, Any](state=state, deps=deps, inputs=inputs)
                 output = await node.call(step_context)
             if isinstance(node, NodeStep):
                 return self._handle_node(output, fork_stack)
@@ -684,7 +684,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         elif isinstance(item, BroadcastMarker):
             return [GraphTask(item.fork_id, inputs, fork_stack)]
         elif isinstance(item, TransformMarker):
-            inputs = item.transform(StepContext(self.state, self.deps, inputs))
+            inputs = item.transform(StepContext(state=self.state, deps=self.deps, inputs=inputs))
             return self._handle_path(path.next_path, inputs, fork_stack)
         elif isinstance(item, LabelMarker):
             return self._handle_path(path.next_path, inputs, fork_stack)
