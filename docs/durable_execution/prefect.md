@@ -249,6 +249,7 @@ To deploy and schedule a `PrefectAgent`, wrap it in a Prefect flow and use the f
 
 ```python {title="serve_agent.py" test="skip"}
 from prefect import flow
+
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectAgent
 

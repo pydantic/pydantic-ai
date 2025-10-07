@@ -187,7 +187,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -205,7 +205,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -222,7 +222,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -309,7 +309,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -327,7 +327,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -344,7 +344,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -434,7 +434,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -443,7 +443,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -452,7 +451,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -461,7 +460,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -470,7 +468,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -479,7 +477,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        **_deprecated_kwargs: Never,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -574,7 +571,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 usage=usage,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                **_deprecated_kwargs,
             ) as run:
                 yield run
 
@@ -582,6 +578,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def override(
         self,
         *,
+        name: str | _utils.Unset = _utils.UNSET,
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
@@ -594,6 +591,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
 
         Args:
+            name: The name to use instead of the name passed to the agent constructor and agent run.
             deps: The dependencies to use instead of the dependencies passed to the agent run.
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
@@ -605,5 +603,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 'Non-Prefect model cannot be contextually overridden inside a Prefect flow, it must be set at agent creation time.'
             )
 
-        with super().override(deps=deps, model=model, toolsets=toolsets, tools=tools, instructions=instructions):
+        with super().override(
+            name=name, deps=deps, model=model, toolsets=toolsets, tools=tools, instructions=instructions
+        ):
             yield
