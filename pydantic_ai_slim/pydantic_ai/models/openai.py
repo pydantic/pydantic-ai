@@ -776,6 +776,9 @@ class OpenAIChatModel(Model):
                     image_url: ImageURL = {'url': item.url}
                     if metadata := item.vendor_metadata:
                         image_url['detail'] = metadata.get('detail', 'auto')
+                    if item.force_download:
+                        image_content = await download_item(item, data_format='base64_uri', type_format='extension')
+                        image_url['url'] = image_content['data']
                     content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
                     if self._is_text_like_media_type(item.media_type):
