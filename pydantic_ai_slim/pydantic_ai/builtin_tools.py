@@ -243,7 +243,6 @@ class MCPServerTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses
-    * Anthropic
     """
 
     kind: str = 'mcp_server'
@@ -273,9 +272,4 @@ class MCPServerTool(AbstractBuiltinTool):
     """
 
     connector_id: str | None = None
-    """The ID of the connector to use.
-
-    Supported by:
-
-    * OpenAI Responses
-    """
+    """The ID of the connector to use."""
