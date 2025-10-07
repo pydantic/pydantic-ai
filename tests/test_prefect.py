@@ -851,7 +851,7 @@ async def test_disabled_tool():
     test_prefect_agent = PrefectAgent(
         test_agent,
         tool_task_config_by_name={
-            'my_tool': None,  # Disable task wrapping for this tool
+            'my_tool': None,
         },
     )
 
