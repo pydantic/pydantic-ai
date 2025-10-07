@@ -623,19 +623,18 @@ def _map_usage(
     existing_usage: usage.RequestUsage | None = None,
 ) -> usage.RequestUsage:
     if isinstance(message, BetaMessage):
-        response_message = message
+        response_usage = message.usage
     elif isinstance(message, BetaRawMessageStartEvent):
-        response_message = message.message
+        response_usage = message.message.usage
     elif isinstance(message, BetaRawMessageDeltaEvent):
-        response_message = message
+        response_usage = message.usage
     else:
         assert_never(message)
 
-    response_data = response_message.model_dump()
     # Store all integer-typed usage values in the details, except 'output_tokens' which is represented exactly by
     # `response_tokens`
     details: dict[str, int] = (existing_usage.details if existing_usage else {}) | {
-        key: value for key, value in response_data['usage'].items() if isinstance(value, int)
+        key: value for key, value in response_usage.model_dump().items() if isinstance(value, int)
     }
 
     extracted_usage = extract_usage(dict(model='claude-sonnet-4-5', usage=details), provider_id=provider)
