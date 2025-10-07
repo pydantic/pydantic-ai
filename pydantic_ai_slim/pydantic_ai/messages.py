@@ -129,7 +129,7 @@ class FileUrl(ABC):
     """
 
     force_download: bool = False
-    """If the model supports it:
+    """For OpenAI and Google APIs it:
 
     * If True, the file is downloaded and the data is sent to the model as bytes.
     * If False, the URL is sent directly to the model and no download is performed.
