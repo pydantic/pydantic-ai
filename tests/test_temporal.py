@@ -14,7 +14,9 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    AgentRunResultEvent,
     AgentStreamEvent,
+    BinaryImage,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -29,6 +31,7 @@ from pydantic_ai import (
     RetryPromptPart,
     RunContext,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
@@ -423,7 +426,7 @@ async def test_complex_agent_run_in_workflow(
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
                                                     content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
+                                                        regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
                                                     )
                                                 ),
                                             ],
@@ -452,7 +455,7 @@ async def test_complex_agent_run_in_workflow(
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
                                                     content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
+                                                        regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
                                                     )
                                                 ),
                                             ],
@@ -543,7 +546,7 @@ async def test_complex_agent_run_in_workflow(
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
                                                     content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
+                                                        regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
                                                     )
                                                 ),
                                             ],
@@ -1123,6 +1126,25 @@ async def test_temporal_agent_run_stream(allow_model_requests: None):
         )
 
 
+async def test_temporal_agent_run_stream_events(allow_model_requests: None):
+    events = [event async for event in simple_temporal_agent.run_stream_events('What is the capital of Mexico?')]
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='The')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' capital')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' Mexico')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' Mexico')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' City')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='.')),
+            AgentRunResultEvent(result=AgentRunResult(output='The capital of Mexico is Mexico City.')),
+        ]
+    )
+
+
 async def test_temporal_agent_iter(allow_model_requests: None):
     output: list[str] = []
     async with simple_temporal_agent.iter('What is the capital of Mexico?') as run:
@@ -1191,13 +1213,41 @@ async def test_temporal_agent_run_stream_in_workflow(allow_model_requests: None,
         with workflow_raises(
             UserError,
             snapshot(
-                '`agent.run_stream()` cannot currently be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead. Please file an issue if this is not sufficient for your use case.'
+                '`agent.run_stream()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             ),
         ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
                 SimpleAgentWorkflowWithRunStream.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunStream.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+
+@workflow.defn
+class SimpleAgentWorkflowWithRunStreamEvents:
+    @workflow.run
+    async def run(self, prompt: str) -> list[AgentStreamEvent | AgentRunResultEvent]:
+        return [event async for event in simple_temporal_agent.run_stream_events(prompt)]
+
+
+async def test_temporal_agent_run_stream_events_in_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SimpleAgentWorkflowWithRunStreamEvents],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                '`agent.run_stream_events()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+            ),
+        ):
+            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+                SimpleAgentWorkflowWithRunStreamEvents.run,
+                args=['What is the capital of Mexico?'],
+                id=SimpleAgentWorkflowWithRunStreamEvents.__name__,
                 task_queue=TASK_QUEUE,
             )
 
@@ -1222,7 +1272,7 @@ async def test_temporal_agent_iter_in_workflow(allow_model_requests: None, clien
         with workflow_raises(
             UserError,
             snapshot(
-                '`agent.iter()` cannot currently be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead. Please file an issue if this is not sufficient for your use case.'
+                '`agent.iter()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             ),
         ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
@@ -1946,9 +1996,9 @@ def return_settings(messages: list[ModelMessage], agent_info: AgentInfo) -> Mode
 
 
 model_settings = CustomModelSettings(max_tokens=123, custom_setting='custom_value')
-model = FunctionModel(return_settings, settings=model_settings)
+return_settings_model = FunctionModel(return_settings, settings=model_settings)
 
-settings_agent = Agent(model, name='settings_agent')
+settings_agent = Agent(return_settings_model, name='settings_agent')
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
 settings_temporal_agent = TemporalAgent(settings_agent, activity_config=BASE_ACTIVITY_CONFIG)
@@ -1976,3 +2026,36 @@ async def test_custom_model_settings(allow_model_requests: None, client: Client)
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot("{'max_tokens': 123, 'custom_setting': 'custom_value'}")
+
+
+image_agent = Agent(model, name='image_agent', output_type=BinaryImage)
+
+# This needs to be done before the `TemporalAgent` is bound to the workflow.
+image_temporal_agent = TemporalAgent(image_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class ImageAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> BinaryImage:
+        result = await image_temporal_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_image_agent(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ImageAgentWorkflow],
+        plugins=[AgentPlugin(image_temporal_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot('Image output is not supported with Temporal because of the 2MB payload size limit.'),
+        ):
+            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+                ImageAgentWorkflow.run,
+                args=['Generate an image of an axolotl.'],
+                id=ImageAgentWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )

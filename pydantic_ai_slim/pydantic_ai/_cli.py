@@ -18,7 +18,7 @@ from . import __version__
 from ._run_context import AgentDepsT
 from .agent import AbstractAgent, Agent
 from .exceptions import UserError
-from .messages import ModelMessage, TextPart
+from .messages import ModelMessage, ModelResponse
 from .models import KnownModelName, infer_model
 from .output import OutputDataT
 
@@ -228,7 +228,7 @@ async def run_chat(
     prog_name: str,
     config_dir: Path | None = None,
     deps: AgentDepsT = None,
-    message_history: list[ModelMessage] | None = None,
+    message_history: Sequence[ModelMessage] | None = None,
 ) -> int:
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -236,7 +236,7 @@ async def run_chat(
     session: PromptSession[Any] = PromptSession(history=FileHistory(str(prompt_history_path)))
 
     multiline = False
-    messages: list[ModelMessage] = message_history[:] if message_history else []
+    messages: list[ModelMessage] = list(message_history) if message_history else []
 
     while True:
         try:
@@ -272,7 +272,7 @@ async def ask_agent(
     console: Console,
     code_theme: str,
     deps: AgentDepsT = None,
-    messages: list[ModelMessage] | None = None,
+    messages: Sequence[ModelMessage] | None = None,
 ) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
 
@@ -351,14 +351,11 @@ def handle_slash_command(
         console.print('[dim]Exiting…[/dim]')
         return 0, multiline
     elif ident_prompt == '/cp':
-        try:
-            parts = messages[-1].parts
-        except IndexError:
+        if not messages or not isinstance(messages[-1], ModelResponse):
             console.print('[dim]No output available to copy.[/dim]')
         else:
-            text_to_copy = ''.join(part.content for part in parts if isinstance(part, TextPart))
-            text_to_copy = text_to_copy.strip()
-            if text_to_copy:
+            text_to_copy = messages[-1].text
+            if text_to_copy and (text_to_copy := text_to_copy.strip()):
                 pyperclip.copy(text_to_copy)
                 console.print('[dim]Copied last output to clipboard.[/dim]')
             else:
