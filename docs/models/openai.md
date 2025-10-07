@@ -608,35 +608,3 @@ print(result.output)
 #> The capital of France is Paris.
 ...
 ```
-
-### Nebius AI Studio
-
-Go to [Nebius AI Studio](https://studio.nebius.com/) and create an API key.
-
-Once you've set the `NEBIUS_API_KEY` environment variable, you can run the following:
-
-```python
-from pydantic_ai import Agent
-
-agent = Agent('nebius:Qwen/Qwen3-32B-fast')
-result = agent.run_sync('What is the capital of France?')
-print(result.output)
-#> The capital of France is Paris.
-```
-
-If you need to configure the provider, you can use the [`NebiusProvider`][pydantic_ai.providers.nebius.NebiusProvider] class:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.nebius import NebiusProvider
-
-model = OpenAIChatModel(
-    'Qwen/Qwen3-32B-fast',
-    provider=NebiusProvider(api_key='your-nebius-api-key'),
-)
-agent = Agent(model)
-result = agent.run_sync('What is the capital of France?')
-print(result.output)
-#> The capital of France is Paris.
-```

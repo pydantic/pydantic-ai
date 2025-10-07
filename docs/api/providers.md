@@ -41,5 +41,3 @@
 ::: pydantic_ai.providers.ollama.OllamaProvider
 
 ::: pydantic_ai.providers.litellm.LiteLLMProvider
-
-::: pydantic_ai.providers.nebius.NebiusProvider

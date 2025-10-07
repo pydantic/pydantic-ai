@@ -1052,13 +1052,6 @@ class BaseToolCallPart:
     In case the tool call id is not provided by the model, Pydantic AI will generate a random one.
     """
 
-    _: KW_ONLY
-
-    id: str | None = None
-    """An optional identifier of the tool call part, separate from the tool call ID.
-
-    This is used by some APIs like OpenAI Responses."""
-
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
 

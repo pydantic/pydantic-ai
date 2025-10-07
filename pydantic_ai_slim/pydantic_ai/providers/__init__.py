@@ -142,10 +142,6 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .litellm import LiteLLMProvider
 
         return LiteLLMProvider
-    elif provider == 'nebius':
-        from .nebius import NebiusProvider
-
-        return NebiusProvider
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
 

@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from abc import ABC
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal, Dict
 
 from typing_extensions import TypedDict
 
@@ -17,6 +17,7 @@ __all__ = (
     'UrlContextTool',
     'ImageGenerationTool',
     'MemoryTool',
+    'MCPServerTool',
 )
 
 
@@ -237,3 +238,63 @@ class MemoryTool(AbstractBuiltinTool):
 
     kind: str = 'memory'
     """The kind of tool."""
+
+
+@dataclass(kw_only=True)
+class MCPServerTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to use MCP servers.
+
+    Supported by:
+
+    * OpenAI Responses
+    * Anthropic
+    """
+
+    LIST_TOOLS_KIND: str = 'mcp_list_tools'
+    CALL_KIND: str = 'mcp_call'
+
+    kind: str = 'mcp_server'
+
+    id: str
+    """The id of the MCP server to use."""
+
+    authorization_token: str
+    """Authorization header to use when making requests to the MCP server."""
+
+    url: str | None = None
+    """The URL of the MCP server to use.
+
+    For OpenAI Responses, one of `url` or `connector_id` must be provided.
+    """
+
+    description: str | None = None
+    """A description of the MCP server."""
+
+    allowed_tools: list[str] | None = None
+    """A list of tools that the MCP server can use.
+
+    Supported by:
+
+    * OpenAI Responses
+    * Anthropic
+    """
+
+    headers: dict[str, str] | None = None
+    """Optional HTTP headers to send to the MCP server.
+
+    Use for authentication or other purposes.
+
+    Supported by:
+
+    * OpenAI Responses
+    """
+
+    provider_metadata: dict[str, Any] | None = None
+    """Extra data to send to the model.
+
+    Supported by:
+
+    Supported by:
+
+    * OpenAI Responses
+    """
