@@ -1,19 +1,13 @@
 from __future__ import annotations
 
-import inspect
 from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from datetime import timedelta
-from typing import TYPE_CHECKING, Any, overload
+from typing import Any, overload
 
 from prefect import flow, get_run_logger, task
 from prefect.context import FlowRunContext
-from prefect.runner import Runner
-from prefect.settings import get_current_settings
-from prefect.types.entrypoint import EntrypointType
 from prefect.utilities.asyncutils import run_coro_as_sync
-from prefect.utilities.slugify import slugify
 from typing_extensions import Never
 
 from pydantic_ai import (
@@ -613,145 +607,3 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         with super().override(deps=deps, model=model, toolsets=toolsets, tools=tools, instructions=instructions):
             yield
-
-    async def serve(
-        self,
-        *,
-        name: str | None = None,
-        interval: int | float | timedelta | None = None,
-        cron: str | None = None,
-        rrule: str | None = None,
-        paused: bool | None = None,
-        triggers: list[Any] | None = None,
-        parameters: dict[str, Any] | None = None,
-        description: str | None = None,
-        tags: list[str] | None = None,
-        version: str | None = None,
-        enforce_parameter_schema: bool = True,
-        pause_on_shutdown: bool = True,
-        print_starting_message: bool = True,
-        limit: int | None = None,
-        webserver: bool = False,
-    ) -> None:
-        """Serve the agent as a Prefect deployment.
-
-        This method creates a Prefect deployment for the agent's run flow and starts
-        a long-running process that monitors for scheduled work from the Prefect server.
-
-        Example:
-        ```python {title="prefect_agent_serve.py" test="skip"}
-        from pydantic_ai import Agent
-        from pydantic_ai.durable_exec.prefect import PrefectAgent
-
-        agent = Agent('openai:gpt-4o', name='my_agent')
-        prefect_agent = PrefectAgent(agent)
-
-        # Serve with a schedule
-        prefect_agent.serve(
-            name='my-agent-deployment',
-            cron='0 9 * * *',  # Run daily at 9am
-            tags=['production', 'daily'],
-        )
-        ```
-
-        Args:
-            name: Name for the created deployment.
-            interval: Schedule interval in seconds, or as a timedelta.
-            cron: Cron schedule string (e.g., '0 9 * * *' for daily at 9am).
-            rrule: iCalendar RRule schedule string.
-            paused: Whether the schedule should be paused initially.
-            triggers: Event triggers for the deployment.
-            parameters: Default parameters to pass to agent runs (e.g., {'user_prompt': 'default prompt'}).
-            description: Description for the deployment. Defaults to the agent's docstring.
-            tags: Tags for the deployment for filtering and organization.
-            version: Version identifier for the deployment.
-            enforce_parameter_schema: Whether to validate parameters against the flow's schema.
-            pause_on_shutdown: Whether to pause the schedule when the serve process is stopped.
-            print_starting_message: Whether to print a message when the server starts.
-            limit: Maximum number of concurrent runs for this deployment.
-            webserver: Whether to start a webserver for the deployment.
-
-        Returns:
-            None. This method blocks indefinitely until interrupted.
-        """
-        if TYPE_CHECKING:
-            assert self._name is not None
-
-        # Serve the flow with the provided configuration
-        runner = Runner(
-            name=f'{self._name} Runner',
-            limit=limit,
-            webserver=webserver,
-            pause_on_shutdown=pause_on_shutdown,
-        )
-
-        # validate parameters is False because the type definitions get lost during serialization, which
-        # we'll need to fix on the Prefect side.
-        @flow(name=f'run-{slugify(self._name)}', validate_parameters=False)
-        # we can't support all `.run` args because Prefect needs to be able to generate a static schema
-        # for parameters at runtime (doesn't work for generic types) and all parameters need to be JSON
-        # serializable to allow providing them via the REST API
-        async def served_run(
-            user_prompt: str,
-            *,
-            model: str | None = None,
-            model_settings: ModelSettings | None = None,
-            usage_limits: _usage.UsageLimits | None = None,
-        ):
-            logger = get_run_logger()
-            prompt_str = str(user_prompt)
-            logger.info(f'Starting agent run with prompt: {prompt_str}')
-
-            with self._prefect_overrides():
-                # Mark that we're inside a PrefectAgent flow
-                token = self._in_prefect_agent_flow.set(True)
-                try:
-                    result = await super(WrapperAgent, self).run(
-                        user_prompt,
-                        deps=None,  # type: ignore[arg-type]
-                        model=model,
-                        model_settings=model_settings,
-                        usage_limits=usage_limits,
-                    )
-                    logger.info(
-                        f'Agent run completed. Requests: {result.usage().requests}, Tool calls: {result.usage().tool_calls}'
-                    )
-                finally:
-                    self._in_prefect_agent_flow.reset(token)
-                logger.info('Result: %s', result.output)
-
-        deployment_name = name or served_run.name
-        maybe_coro = runner.add_flow(
-            served_run,
-            name=deployment_name,
-            interval=interval,
-            cron=cron,
-            rrule=rrule,
-            paused=paused,
-            triggers=triggers,
-            parameters=parameters,
-            description=description,
-            tags=tags,
-            version=version,
-            enforce_parameter_schema=enforce_parameter_schema,
-            entrypoint_type=EntrypointType.MODULE_PATH,
-        )
-        if inspect.isawaitable(maybe_coro):
-            await maybe_coro
-
-        if print_starting_message:
-            from rich.console import Console, Group
-
-            help_message_top = '[green]Your agent is ready for requests!\n[/]'
-
-            help_message_bottom = (
-                '\nTo start an agent run, run:\n[blue]\n\t$ prefect deployment run'
-                f' "{served_run.name}/{deployment_name}" -p user_prompt="your prompt"\n[/]'
-            )
-            if prefect_ui_url := get_current_settings().ui_url:
-                help_message_bottom += f'\nYou can also trigger your deployments via the Prefect UI: [blue]{prefect_ui_url}/deployments[/]\n'
-
-            console = Console()
-            console.print(Group(help_message_top, help_message_bottom), soft_wrap=True)
-
-        await runner.start()

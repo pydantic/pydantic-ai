@@ -101,7 +101,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-For more information on how to use Prefect in Python applications, see their [Python documentation](https://docs.prefect.io/v3/develop/write-flows).
+For more information on how to use Prefect in Python applications, see their [Python documentation](https://docs.prefect.io/v3/how-to-guides/workflows/write-and-run).
 
 ## Prefect Integration Considerations
 
@@ -143,10 +143,6 @@ prefect_agent = PrefectAgent(
 ```
 
 Set a tool's config to `None` in `tool_task_config_by_name` to disable task wrapping for that specific tool.
-
-### Agent Run Context and Dependencies
-
-Prefect persists task results using [Pydantic's serialization](https://docs.pydantic.dev/latest/concepts/serialization/). This means the [dependencies](../dependencies.md) object provided to [`PrefectAgent.run()`][pydantic_ai.durable_exec.prefect.PrefectAgent.run] or [`PrefectAgent.run_sync()`][pydantic_ai.durable_exec.prefect.PrefectAgent.run_sync], and tool outputs should be serializable using Pydantic's `TypeAdapter`. You may also want to keep the inputs and outputs reasonably sized for optimal performance.
 
 ### Streaming
 
@@ -238,7 +234,7 @@ Prefect provides a built-in UI for monitoring flow runs, task executions, and fa
 To access the Prefect UI, you can either:
 
 1. Use [Prefect Cloud](https://www.prefect.io/cloud) (managed service)
-2. Run a local [Prefect server](https://docs.prefect.io/v3/manage/self-host) with `prefect server start`
+2. Run a local [Prefect server](https://docs.prefect.io/v3/how-to-guides/self-hosted/server-cli) with `prefect server start`
 
 You can also use [Pydantic Logfire](../logfire.md) for detailed observability. When using both Prefect and Logfire, you'll get complementary views:
 
@@ -249,9 +245,11 @@ For more information about Prefect monitoring, see the [Prefect documentation](h
 
 ## Deployments and Scheduling
 
-`PrefectAgent` provides a [`serve()`][pydantic_ai.durable_exec.prefect.PrefectAgent.serve] method that creates a Prefect deployment and starts a long-running process to monitor for scheduled work:
+To deploy and schedule a `PrefectAgent`, wrap it in a Prefect flow and use the flow's [`serve()`](https://docs.prefect.io/v3/how-to-guides/deployments/create-deployments#create-a-deployment-with-serve) or [`deploy()`](https://docs.prefect.io/v3/how-to-guides/deployments/deploy-via-python) methods:
 
 ```python {title="serve_agent.py" test="skip"}
+from prefect import flow
+from prefect.deployments import run_deployment
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectAgent
 
@@ -263,19 +261,26 @@ agent = Agent(
 
 prefect_agent = PrefectAgent(agent)
 
-# Serve the agent with a daily schedule
-prefect_agent.serve(
-    name='daily-report-deployment',
-    cron='0 9 * * *',  # Run daily at 9am
-    parameters={'user_prompt': "Generate today's report"},
-    tags=['production', 'reports'],
-)
+@flow
+async def daily_report_flow(user_prompt: str):
+    """Generate a daily report using the agent."""
+    result = await prefect_agent.run(user_prompt)
+    return result.output
+
+# Serve the flow with a daily schedule
+if __name__ == '__main__':
+    daily_report_flow.serve(
+        name='daily-report-deployment',
+        cron='0 9 * * *',  # Run daily at 9am
+        parameters={'user_prompt': "Generate today's report"},
+        tags=['production', 'reports'],
+    )
 ```
 
-This method accepts scheduling options:
+The `serve()` method accepts scheduling options:
 
 - **`cron`**: Cron schedule string (e.g., `'0 9 * * *'` for daily at 9am)
 - **`interval`**: Schedule interval in seconds or as a timedelta
 - **`rrule`**: iCalendar RRule schedule string
 
-For more advanced deployment patterns, see the [Prefect deployment documentation](https://docs.prefect.io/v3/deploy/infrastructure-examples/docker).
+For production deployments with Docker, Kubernetes, or other infrastructure, use the flow's [`deploy()`](https://docs.prefect.io/v3/how-to-guides/deployments/deploy-via-python) method. See the [Prefect deployment documentation](https://docs.prefect.io/v3/how-to-guides/deployments/create-deploymentsy) for more information.

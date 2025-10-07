@@ -6,7 +6,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Literal
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
@@ -35,7 +34,6 @@ from pydantic_ai.usage import RequestUsage
 try:
     from prefect import flow, task
     from prefect.testing.utilities import prefect_test_harness
-    from prefect.types.entrypoint import EntrypointType
 
     from pydantic_ai.durable_exec.prefect import (
         DEFAULT_PYDANTIC_AI_CACHE_POLICY,
@@ -759,84 +757,6 @@ async def test_cache_policy_custom():
 
     # This hash should be different from the others
     assert hash3 != hash1
-
-
-# Test serve method
-@patch('pydantic_ai.durable_exec.prefect._agent.Runner')
-async def test_serve(mock_runner_class: MagicMock) -> None:
-    """Test that serve() creates a deployment with basic config."""
-    mock_runner = MagicMock()
-    mock_runner.add_flow = MagicMock(return_value=None)
-    mock_runner.start = AsyncMock()
-    mock_runner_class.return_value = mock_runner
-
-    await simple_prefect_agent.serve(
-        name='test-deployment',
-        cron='0 9 * * *',
-        parameters={'user_prompt': 'default prompt'},
-        tags=['test', 'foo'],
-        description='Test deployment',
-        paused=False,
-        webserver=True,
-        pause_on_shutdown=False,
-        limit=10,
-    )
-
-    # Verify Runner was started
-    assert mock_runner_class.call_args[1] == snapshot(
-        {
-            'name': 'simple_agent Runner',
-            'limit': 10,
-            'webserver': True,
-            'pause_on_shutdown': False,
-        }
-    )
-    mock_runner.start.assert_called_once()
-    assert mock_runner.add_flow.call_args[1] == snapshot(
-        {
-            'name': 'test-deployment',
-            'interval': None,
-            'cron': '0 9 * * *',
-            'rrule': None,
-            'parameters': {'user_prompt': 'default prompt'},
-            'triggers': None,
-            'tags': ['test', 'foo'],
-            'description': 'Test deployment',
-            'paused': False,
-            'version': None,
-            'enforce_parameter_schema': True,
-            'entrypoint_type': EntrypointType.MODULE_PATH,
-        }
-    )
-
-
-@patch('pydantic_ai.durable_exec.prefect._agent.Runner')
-async def test_serve_with_schedule_interval(mock_runner_class: MagicMock) -> None:
-    """Test that serve() works with interval schedule."""
-    mock_runner = MagicMock()
-    mock_runner.add_flow = MagicMock(return_value=None)
-    mock_runner.start = AsyncMock()
-    mock_runner_class.return_value = mock_runner
-
-    await simple_prefect_agent.serve(name='interval-deployment', interval=60)
-
-    # Verify add_flow was called with interval
-    mock_runner.add_flow.assert_called_once()
-    assert mock_runner.add_flow.call_args[1]['interval'] == 60
-
-
-@patch('pydantic_ai.durable_exec.prefect._agent.Runner')
-async def test_serve_with_parameters(mock_runner_class: MagicMock) -> None:
-    """Test that serve() accepts default parameters."""
-    mock_runner = MagicMock()
-    mock_runner.add_flow = MagicMock(return_value=None)
-    mock_runner.start = AsyncMock()
-    mock_runner_class.return_value = mock_runner
-
-    await simple_prefect_agent.serve(name='params-deployment', parameters={'user_prompt': 'default prompt'})
-
-    # Verify add_flow was called with parameters
-    mock_runner.add_flow.assert_called_once()
 
 
 # Test custom model settings
