@@ -12,7 +12,7 @@ from . import ModelRequestParameters
 from .openai import OpenAIChatModel, OpenAIChatModelSettings
 
 
-class OpenRouterMaxprice(TypedDict, total=False):
+class OpenRouterMaxPrice(TypedDict, total=False):
     """The object specifying the maximum price you want to pay for this request. USD price per million tokens, for prompt and completion."""
 
     prompt: int
