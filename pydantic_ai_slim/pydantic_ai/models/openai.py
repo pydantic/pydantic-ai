@@ -17,7 +17,7 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, WebSearchTool, MCPServerTool
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
@@ -1226,6 +1226,19 @@ class OpenAIResponsesModel(Model):
             elif isinstance(tool, CodeExecutionTool):
                 has_image_generating_tool = True
                 tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
+            elif isinstance(tool, MCPServerTool):
+                tools.append(
+                    responses.tool_param.Mcp(
+                        type='mcp',
+                        server_url=tool.server_url,
+                        server_label=tool.server_label,
+                        server_description=tool.server_description,
+                        allowed_tools=tool.allowed_tools,
+                        authorization=tool.authorization,
+                        require_approval=tool.require_approval,
+                        headers=tool.headers,
+                    )
+                )
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                 has_image_generating_tool = True
                 tools.append(
