@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 
+from genai_prices import extract_usage
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
@@ -351,7 +352,7 @@ class AnthropicModel(Model):
 
         return ModelResponse(
             parts=items,
-            usage=_map_usage(response),
+            usage=_map_usage(response, self._provider.name),
             model_name=response.model,
             provider_response_id=response.id,
             provider_name=self._provider.name,
@@ -616,34 +617,31 @@ class AnthropicModel(Model):
         }
 
 
-def _map_usage(message: BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent) -> usage.RequestUsage:
+def _map_usage(
+    message: BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent,
+    provider: str = 'anthropic',
+    existing_usage: usage.RequestUsage | None = None,
+) -> usage.RequestUsage:
     if isinstance(message, BetaMessage):
-        response_usage = message.usage
+        response_message = message
     elif isinstance(message, BetaRawMessageStartEvent):
-        response_usage = message.message.usage
+        response_message = message.message
     elif isinstance(message, BetaRawMessageDeltaEvent):
-        response_usage = message.usage
+        response_message = message
     else:
         assert_never(message)
 
+    response_data = response_message.model_dump()
     # Store all integer-typed usage values in the details, except 'output_tokens' which is represented exactly by
     # `response_tokens`
-    details: dict[str, int] = {
-        key: value for key, value in response_usage.model_dump().items() if isinstance(value, int)
+    details: dict[str, int] = (existing_usage.details if existing_usage else {}) | {
+        key: value for key, value in response_data['usage'].items() if isinstance(value, int)
     }
 
-    # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence using `get`
-    # Tokens are only counted once between input_tokens, cache_creation_input_tokens, and cache_read_input_tokens
-    # This approach maintains request_tokens as the count of all input tokens, with cached counts as details
-    cache_write_tokens = details.get('cache_creation_input_tokens', 0)
-    cache_read_tokens = details.get('cache_read_input_tokens', 0)
-    request_tokens = details.get('input_tokens', 0) + cache_write_tokens + cache_read_tokens
+    extracted_usage = extract_usage(dict(model='claude-sonnet-4-5', usage=details), provider_id=provider)
 
     return usage.RequestUsage(
-        input_tokens=request_tokens,
-        cache_read_tokens=cache_read_tokens,
-        cache_write_tokens=cache_write_tokens,
-        output_tokens=response_usage.output_tokens,
+        **{key: value for key, value in extracted_usage.usage.__dict__.items() if isinstance(value, int)},
         details=details,
     )
 
@@ -662,7 +660,7 @@ class AnthropicStreamedResponse(StreamedResponse):
 
         async for event in self._response:
             if isinstance(event, BetaRawMessageStartEvent):
-                self._usage = _map_usage(event)
+                self._usage = _map_usage(event, self._provider_name)
                 self.provider_response_id = event.message.id
 
             elif isinstance(event, BetaRawContentBlockStartEvent):
@@ -743,7 +741,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                     pass
 
             elif isinstance(event, BetaRawMessageDeltaEvent):
-                self._usage = _map_usage(event)
+                self._usage = _map_usage(event, self._provider_name, self._usage)
                 if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
                     self.provider_details = {'finish_reason': raw_finish_reason}
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
