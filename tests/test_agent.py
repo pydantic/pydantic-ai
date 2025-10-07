@@ -2537,6 +2537,14 @@ async def test_agent_name_changes():
     assert new_agent.name == 'my_agent'
 
 
+def test_agent_name_override():
+    agent = Agent('test', name='custom_name')
+
+    with agent.override(name='overridden_name'):
+        agent.run_sync('Hello')
+        assert agent.name == 'overridden_name'
+
+
 def test_name_from_global(create_module: Callable[[str], Any]):
     module_code = """
 from pydantic_ai import Agent

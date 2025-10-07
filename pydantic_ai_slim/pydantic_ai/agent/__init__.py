@@ -344,6 +344,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._event_stream_handler = event_stream_handler
 
+        self._override_name: ContextVar[_utils.Option[str]] = ContextVar('_override_name', default=None)
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
         self._override_model: ContextVar[_utils.Option[models.Model]] = ContextVar('_override_model', default=None)
         self._override_toolsets: ContextVar[_utils.Option[Sequence[AbstractToolset[AgentDepsT]]]] = ContextVar(
@@ -384,7 +385,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         If `None`, we try to infer the agent name from the call frame when the agent is first run.
         """
-        return self._name
+        name_ = self._override_name.get()
+        return name_.value if name_ else self._name
 
     @name.setter
     def name(self, value: str | None) -> None:
@@ -712,24 +714,31 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def override(
         self,
         *,
+        name: str | _utils.Unset = _utils.UNSET,
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
-        """Context manager to temporarily override agent dependencies, model, toolsets, tools, or instructions.
+        """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
 
         Args:
+            name: The name to use instead of the name passed to the agent constructor and agent run.
             deps: The dependencies to use instead of the dependencies passed to the agent run.
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
             instructions: The instructions to use instead of the instructions registered with the agent.
         """
+        if _utils.is_set(name):
+            name_token = self._override_name.set(_utils.Some(name))
+        else:
+            name_token = None
+
         if _utils.is_set(deps):
             deps_token = self._override_deps.set(_utils.Some(deps))
         else:
@@ -759,6 +768,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         try:
             yield
         finally:
+            if name_token is not None:
+                self._override_name.reset(name_token)
             if deps_token is not None:
                 self._override_deps.reset(deps_token)
             if model_token is not None:
