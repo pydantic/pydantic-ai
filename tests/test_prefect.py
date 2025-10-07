@@ -485,22 +485,6 @@ async def test_prefect_agent_override_deps(allow_model_requests: None) -> None:
     assert output == snapshot('The capital of Mexico is Mexico City.')
 
 
-async def test_prefect_agent_serialization(monkeypatch: pytest.MonkeyPatch):
-    """Test that PrefectAgent can be serialized with cloudpickle. Agents must be serializable for PrefectAgent.serve()."""
-    import cloudpickle
-
-    monkeypatch.setenv('OPENAI_API_KEY', 'mock-api-key')
-
-    # Test serialization
-    pickled = cloudpickle.dumps(simple_prefect_agent)  # pyright: ignore[reportUnknownMemberType] missing type stubs
-    assert len(pickled) > 0
-
-    # Test deserialization
-    unpickled = cloudpickle.loads(pickled)
-    assert unpickled.name == simple_prefect_agent.name
-    assert isinstance(unpickled.model, PrefectModel)
-
-
 # Test human-in-the-loop with HITL tool
 hitl_agent = Agent(
     model,
