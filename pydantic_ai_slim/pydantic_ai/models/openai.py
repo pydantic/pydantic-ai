@@ -1040,7 +1040,7 @@ class OpenAIResponsesModel(Model):
                 call_part, return_part = _map_mcp_list_tools(item, self.system)
                 items.append(call_part)
                 items.append(return_part)
-            elif isinstance(item, responses.response_output_item.McpApprovalRequest):
+            elif isinstance(item, responses.response_output_item.McpApprovalRequest):  # pragma: no cover
                 # Pydantic AI doesn't yet support McpApprovalRequest (explicit tool usage approval)
                 pass
 
@@ -1943,10 +1943,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseMcpCallInProgressEvent):
                 pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseMcpCallFailedEvent):
+            elif isinstance(chunk, responses.ResponseMcpCallFailedEvent):  # pragma: no cover
                 pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseMcpCallCompletedEvent):
+            elif isinstance(chunk, responses.ResponseMcpCallCompletedEvent):  # pragma: no cover
                 pass  # there's nothing we need to do here
 
             else:  # pragma: no cover
