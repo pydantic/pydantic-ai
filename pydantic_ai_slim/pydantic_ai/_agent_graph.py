@@ -12,6 +12,7 @@ from copy import deepcopy
 from dataclasses import field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
+import anyio
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
@@ -643,32 +644,47 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         tool_calls: list[_messages.ToolCallPart],
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
+        send_stream, receive_stream = anyio.create_memory_object_stream[_messages.HandleResponseEvent]()
+
         run_context = build_run_context(ctx)
 
-        # This will raise errors for any tool name conflicts
-        ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+        async def _run_tool_calls() -> tuple[list[_messages.ModelRequestPart], result.FinalResult[NodeRunEndT] | None]:
+            async with send_stream:
+                tool_run_context = replace(run_context, event_stream=send_stream)
 
-        output_parts: list[_messages.ModelRequestPart] = []
-        output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
+                # This will raise errors for any tool name conflicts
+                ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(tool_run_context)
 
-        async for event in process_tool_calls(
-            tool_manager=ctx.deps.tool_manager,
-            tool_calls=tool_calls,
-            tool_call_results=self.tool_call_results,
-            final_result=None,
-            ctx=ctx,
-            output_parts=output_parts,
-            output_final_result=output_final_result,
-        ):
-            yield event
+                output_parts: list[_messages.ModelRequestPart] = []
+                output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
 
-        if output_final_result:
-            final_result = output_final_result[0]
-            self._next_node = self._handle_final_result(ctx, final_result, output_parts)
+                async for event in process_tool_calls(
+                    tool_manager=ctx.deps.tool_manager,
+                    tool_calls=tool_calls,
+                    tool_call_results=self.tool_call_results,
+                    final_result=None,
+                    ctx=ctx,
+                    output_parts=output_parts,
+                    output_final_result=output_final_result,
+                ):
+                    await send_stream.send(event)
+
+                return output_parts, output_final_result[0] if output_final_result else None
+
+        task = asyncio.create_task(_run_tool_calls())
+
+        async with receive_stream:
+            async for message in receive_stream:
+                yield message
+
+        parts, final_result = await task
+
+        if final_result:
+            self._next_node = self._handle_final_result(ctx, final_result, parts)
         else:
             instructions = await ctx.deps.get_instructions(run_context)
             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
-                _messages.ModelRequest(parts=output_parts, instructions=instructions)
+                _messages.ModelRequest(parts=parts, instructions=instructions)
             )
 
     async def _handle_text_response(

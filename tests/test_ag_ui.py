@@ -192,6 +192,20 @@ async def send_custom() -> ToolReturn:
     )
 
 
+async def yield_custom() -> AsyncIterator[CustomEvent | ToolReturn]:
+    yield CustomEvent(
+        type=EventType.CUSTOM,
+        name='custom_event1',
+        value={'key1': 'value1'},
+    )
+    yield CustomEvent(
+        type=EventType.CUSTOM,
+        name='custom_event2',
+        value={'key2': 'value2'},
+    )
+    yield ToolReturn('Done')
+
+
 def uuid_str() -> str:
     """Generate a random UUID string."""
     return uuid.uuid4().hex
@@ -804,6 +818,73 @@ async def test_tool_local_multiple_events() -> None:
                 'type': 'TEXT_MESSAGE_CONTENT',
                 'messageId': message_id,
                 'delta': 'success send_custom called',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+    )
+
+
+async def test_tool_local_yield_events() -> None:
+    """Test local tool call that yields multiple events."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            # First call - make a tool call
+            yield {0: DeltaToolCall(name='yield_custom')}
+            yield {0: DeltaToolCall(json_args='{}')}
+        else:
+            # Second call - return text result
+            yield 'success yield_custom called'
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function),
+        tools=[yield_custom],
+    )
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Please call yield_custom',
+        ),
+    )
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'yield_custom',
+                'parentMessageId': IsStr(),
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': tool_call_id, 'delta': '{}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
+            {'type': 'CUSTOM', 'name': 'custom_event1', 'value': {'key1': 'value1'}},
+            {'type': 'CUSTOM', 'name': 'custom_event2', 'value': {'key2': 'value2'}},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'messageId': '8dd33273-d2f5-4e02-8483-8311f0a1cafe',
+                'toolCallId': 'pyd_ai_219dd870d6e94958a1fca56df511fba4',
+                'content': 'Done',
+                'role': 'tool',
+            },
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': 'success yield_custom called',
             },
             {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
             {

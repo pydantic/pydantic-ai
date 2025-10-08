@@ -19,9 +19,17 @@ from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, TypeIs, TypeVar
 
+from pydantic_ai.messages import CustomEvent, ToolReturn
+
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
-from ._utils import check_object_json_schema, is_async_callable, is_model_like, run_in_executor
+from ._utils import (
+    check_object_json_schema,
+    is_async_callable,
+    is_async_iterator_callable,
+    is_model_like,
+    run_in_executor,
+)
 
 if TYPE_CHECKING:
     from .tools import DocstringFormat, ObjectJsonSchema
@@ -41,13 +49,31 @@ class FunctionSchema:
     # if not None, the function takes a single by that name (besides potentially `info`)
     takes_ctx: bool
     is_async: bool
+    is_async_iterator: bool
     single_arg_name: str | None = None
     positional_fields: list[str] = field(default_factory=list)
     var_positional_field: str | None = None
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
-        if self.is_async:
+        if self.is_async_iterator:
+            assert ctx.event_stream is not None, (
+                'RunContext.event_stream needs to be set to use FunctionSchema.call with async iterators'
+            )
+
+            async for event_payload in self.function(*args, **kwargs):
+                if isinstance(event_payload, ToolReturn):
+                    return event_payload
+
+                event = (
+                    cast(CustomEvent, event_payload)
+                    if isinstance(event_payload, CustomEvent)
+                    else CustomEvent(payload=event_payload)
+                )
+                await ctx.event_stream.send(event)
+            # TODO (DouweM): Raise if events are yielded after ToolReturn
+            return None
+        elif self.is_async:
             function = cast(Callable[[Any], Awaitable[str]], self.function)
             return await function(*args, **kwargs)
         else:
@@ -221,6 +247,7 @@ def function_schema(  # noqa: C901
         var_positional_field=var_positional_field,
         takes_ctx=takes_ctx,
         is_async=is_async_callable(function),
+        is_async_iterator=is_async_iterator_callable(function),
         function=function,
     )
 
