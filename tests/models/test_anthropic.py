@@ -3078,7 +3078,7 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                 parts=[
                     ThinkingPart(
                         content='The user is asking what games they have. I have a function available called "test-server_get_my_games" that returns a list of the user\'s favorite games. This seems like the appropriate function to call to answer their question. The function doesn\'t require any parameters according to the schema, so I can call it directly.',
-                        signature=IsStr(),
+                        signature='EuwDCkYICBgCKkCNx3nUT7+tZhbzb0XgVYmWnCsR6L6sNy1kFWTGK6zyRD4Q8mMkrHJDXlxBw8C0p9NdyjmxgdPSbGoK0RzdrnFcEgzkzU9fCjHfzcnpbH8aDLMRKiFFZQsGs+oA9SIwMeS/AQFnsCJYn0ktKRRJe1lgXQugxIcXy4wufUx7rnLFBlkGv2nFbJCQ6m8nPM9JKtMCpptItrWIURJ1H4OSKrkULa3/x6u223x592H0EV48cBtB4zRFvK8y6M3JvMH0TXwsGw5dGw0j4oFWJZVi6RDGCzM4A0B6FExufgdqulZEPXwzOmRdT9+6YwhP934ECVkXXrnjkEOQBYR6WoYLJafsnAt6IrFjdpRqQx3GyHxnlGn5Yikmnp3jvOX/rUwBq4qaGV3GYv7K6er4eM+7E5+wBDeLCloauX1Sng+4+hrW9voWGVW/Y27YHtQ13/abLViZDJLS+hSYQzQQMI7lMkV+Ht44e3Vh2UioUVFqwmFkl0N3fn0WO+p1aDoktlN2sLRkg6ybP1S95spT+XZI21KHuASCHZ0pZKUlml1tb4BVxDdGjGC31NrBczoV/TlpyWZCrzMeoOx81vAiUAKHwQD+JdY7Xyw/UCPOSu7OzEkywKHEwcSW5qgAZHVSAZFQu+iE6uG9GAE=',
                         provider_name='anthropic',
                     ),
                     TextPart(content="I'll check what games you have by looking up your game list."),
@@ -3152,7 +3152,7 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                 parts=[
                     ThinkingPart(
                         content="The user is asking about their games. I have a function called `test-server_get_my_games` that returns a list of the user's favorite games. This function doesn't require any parameters, so I can call it directly.",
-                        signature=IsStr(),
+                        signature='Ev4CCkYICBgCKkC2CV8NXGK/AuQ4/m1/1qE91t9kn26YXfJqV4GLu+pQ5arslF66ul0lb2tjDaq6jEoScCgXONCbjVTTGXRgL31OEgz6Hf2+sxQphfOM0NsaDAGUIjrX8JtDLUHYCSIwDiCjhcg4JzBLobWmlquAlva+JlrB3yUlyWBCOe3z0GBxqs9MGtaEsmROBfy9w5bVKuUBPWfEKKcSIj57MWaQKquRHrl+EaaTVI2/dS3fU0opvd7HTbJ647RvWIKatcw1u3Q9WlNuGhts2TzwpqvzliIkheOjbv3URnfdW2vjka5WN6sntwoqdMrmmJTMD33PLXs2PZlnFUJ2BAS0lglihGbrOrIE1gRsTjZVrhXI8ZpJWPMYJ07FdtLwd+v0F3gf32z282QuQdNlaVliNjdcV+IvfJJL8BCF7coL+fKahuu8GCLVCjwmitJEIgC3ykzuVxCGT7U6hCuEM3Oe7UcLlay9n89O2jmW/FbQIuUpNmVFrrmM3Mn1GBgB',
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(

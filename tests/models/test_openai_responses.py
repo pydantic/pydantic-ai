@@ -6240,7 +6240,6 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                     BuiltinToolReturnPart(
                         tool_name='mcp_server',
                         content={
-                            'status': 'completed',
                             'name': IsStr(),
                             'server_label': 'test_server',
                             'arguments': '{}',
@@ -6337,7 +6336,6 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                     BuiltinToolReturnPart(
                         tool_name='mcp_server',
                         content={
-                            'status': 'completed',
                             'name': 'get_my_games',
                             'server_label': 'test_server',
                             'arguments': '{}',
@@ -6413,7 +6411,6 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                 part=BuiltinToolReturnPart(
                     tool_name='mcp_server',
                     content={
-                        'status': 'completed',
                         'name': 'get_my_games',
                         'server_label': 'test_server',
                         'arguments': '{}',
@@ -6481,7 +6478,6 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                 result=BuiltinToolReturnPart(
                     tool_name='mcp_server',
                     content={
-                        'status': 'completed',
                         'name': 'get_my_games',
                         'server_label': 'test_server',
                         'arguments': '{}',

@@ -874,10 +874,13 @@ def _map_mcp_server_use_block(item: BetaMCPToolUseBlock, provider_name: str) -> 
     )
 
 
+mcp_server_result_content_ta: TypeAdapter[Any] = TypeAdapter(Any)
+
+
 def _map_mcp_server_result_block(item: BetaMCPToolResultBlock, provider_name: str) -> BuiltinToolReturnPart:
     return BuiltinToolReturnPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
-        content=item.content,
+        content=mcp_server_result_content_ta.dump_python(item.content, mode='json'),
         tool_call_id=item.tool_use_id,
     )
