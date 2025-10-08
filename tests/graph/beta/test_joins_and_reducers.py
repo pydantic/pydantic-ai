@@ -47,8 +47,8 @@ async def test_null_reducer():
     assert state.value == 6
 
 
-async def test_list_append_reducer():
-    """Test ListAppendReducer that collects all inputs into a list."""
+async def test_reduce_list_append():
+    """Test reduce_list_append that collects all inputs into a list."""
     g = GraphBuilder(state_type=SimpleState, output_type=list[str])
 
     @g.step
@@ -74,8 +74,8 @@ async def test_list_append_reducer():
     assert sorted(result) == ['item-1', 'item-2', 'item-3', 'item-4']
 
 
-async def test_dict_reducer():
-    """Test DictReducer that merges dictionaries."""
+async def test_reduce_dict_update():
+    """Test reduce_dict_update that merges dictionaries."""
     g = GraphBuilder(state_type=SimpleState, output_type=dict[str, int])
 
     @g.step
@@ -225,8 +225,8 @@ async def test_multiple_joins():
     assert sorted(result['b']) == [30, 60]
 
 
-async def test_dict_reducer_with_overlapping_keys():
-    """Test that DictReducer properly handles overlapping keys (later values win)."""
+async def test_reduce_dict_update_with_overlapping_keys():
+    """Test that reduce_dict_update properly handles overlapping keys (later values win)."""
     g = GraphBuilder(state_type=SimpleState, output_type=dict[str, int])
 
     @g.step

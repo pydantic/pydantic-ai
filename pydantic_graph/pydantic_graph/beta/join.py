@@ -81,6 +81,9 @@ ReducerFunction = TypeAliasType(
     ContextReducerFunction[StateT, DepsT, InputT, OutputT] | PlainReducerFunction[InputT, OutputT],
     type_params=(StateT, DepsT, InputT, OutputT),
 )
+"""
+A function used for reducing inputs to a join node.
+"""
 
 
 def reduce_null(current: None, inputs: Any) -> None:
@@ -135,8 +138,8 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
     """A join operation that synchronizes and aggregates parallel execution paths.
 
     A join defines how to combine outputs from multiple parallel execution paths
-    using a [`Reducer`][pydantic_graph.beta.join.Reducer]. It specifies which fork
-    it joins (if any) and manages the creation of reducer instances.
+    using a [`ReducerFunction`][pydantic_graph.beta.join.ReducerFunction]. It specifies which fork
+    it joins (if any) and manages the initialization of reducers.
 
     Type Parameters:
         StateT: The type of the graph state

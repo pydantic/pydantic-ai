@@ -173,7 +173,7 @@ In this example:
 
 1. The start node receives a list of integers
 2. The `.map()` operation fans out each item to a separate parallel execution of the `square` step
-3. All results are collected back together using a [`ListAppendReducer`][pydantic_graph.beta.join.ListAppendReducer]
+3. All results are collected back together using [`reduce_list_append`][pydantic_graph.beta.join.reduce_list_append]
 4. The joined results flow to the end node
 
 ## Next Steps

@@ -9,12 +9,12 @@ Join nodes synchronize and aggregate data from parallel execution paths. They us
 When you use [parallel execution](parallel.md) (broadcasting or mapping), you often need to collect and combine the results. Join nodes serve this purpose by:
 
 1. Waiting for all parallel tasks to complete
-2. Aggregating their outputs using a [`Reducer`][pydantic_graph.beta.join.Reducer]
+2. Aggregating their outputs using a [`ReducerFunction`][pydantic_graph.beta.join.ReducerFunction]
 3. Passing the aggregated result to the next node
 
 ## Creating Joins
 
-Create a join using [`g.join()`][pydantic_graph.beta.graph_builder.GraphBuilder.join] with a reducer function and initial value or factory:
+Create a join using `GraphBuilder.join` with a reducer function and initial value or factory:
 
 ```python {title="basic_join.py"}
 from dataclasses import dataclass
@@ -62,9 +62,9 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 Pydantic Graph provides several common reducer types out of the box:
 
-### ListAppendReducer
+### `reduce_list_append`
 
-[`ListAppendReducer`][pydantic_graph.beta.join.ListAppendReducer] collects all inputs into a list:
+[`reduce_list_append`][pydantic_graph.beta.join.reduce_list_append] collects all inputs into a list:
 
 ```python {title="list_reducer.py"}
 from dataclasses import dataclass
@@ -106,9 +106,9 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
 
-### DictReducer
+### `reduce_dict_update`
 
-[`DictReducer`][pydantic_graph.beta.join.DictReducer] merges dictionaries together:
+[`reduce_dict_update`][pydantic_graph.beta.join.reduce_dict_update] merges dictionaries together:
 
 ```python {title="dict_reducer.py"}
 from dataclasses import dataclass
@@ -151,9 +151,9 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
 
-### NullReducer
+### `reduce_null`
 
-[`NullReducer`][pydantic_graph.beta.join.NullReducer] discards all inputs and returns `None`. Useful when you only care about side effects:
+[`reduce_null`][pydantic_graph.beta.join.reduce_null] discards all inputs and returns `None`. Useful when you only care about side effects:
 
 ```python {title="null_reducer.py"}
 from dataclasses import dataclass
