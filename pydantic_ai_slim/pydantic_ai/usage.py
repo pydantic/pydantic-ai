@@ -123,15 +123,36 @@ class RequestUsage(UsageBase):
 
     @classmethod
     def extract(
-        cls, data: Any, *, provider_id: str, api_flavor: str | None = None, details: dict[str, Any] | None = None
+        cls,
+        data: Any,
+        *,
+        provider: str,
+        provider_url: str,
+        provider_fallback: str,
+        api_flavor: str | None = None,
+        details: dict[str, Any] | None = None,
     ) -> RequestUsage:
+        """Extract usage information from the response data using genai-prices.
+
+        Args:
+            data: The response data from the model API.
+            provider: The actual provider ID
+            provider_url: The provider base_url
+            provider_fallback: The fallback provider ID to use if the actual provider is not found in genai-prices.
+                For example, an OpenAI model should set this to "openai" in case it has an obscure provider ID.
+            api_flavor: The API flavor to use when extracting usage information,
+                e.g. 'chat' or 'responses' for OpenAI.
+            details: Becomes the `details` field on the returned `RequestUsage` for convenience.
+        """
         details = details or {}
-        try:
-            provider = get_snapshot().find_provider(None, provider_id, None)
-            _model_ref, extracted_usage = provider.extract_usage(data, api_flavor=api_flavor)
-            return cls(**{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details)
-        except Exception:
-            return cls(details=details)
+        for provider_id, provider_api_url in [(None, provider_url), (provider, None), (provider_fallback, None)]:
+            try:
+                provider_obj = get_snapshot().find_provider(None, provider_id, provider_api_url)
+                _model_ref, extracted_usage = provider_obj.extract_usage(data, api_flavor=api_flavor)
+                return cls(**{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details)
+            except Exception:
+                pass
+        return cls(details=details)
 
 
 @dataclass(repr=False, kw_only=True)

@@ -420,4 +420,4 @@ async def test_parallel_tool_calls_limit_enforced():
 
 
 def test_usage_unknown_provider():
-    assert RequestUsage.extract({}, provider_id='unknown') == RequestUsage()
+    assert RequestUsage.extract({}, provider='unknown', provider_url='', provider_fallback='') == RequestUsage()
