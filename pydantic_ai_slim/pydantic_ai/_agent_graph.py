@@ -644,47 +644,31 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         tool_calls: list[_messages.ToolCallPart],
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
-        send_stream, receive_stream = anyio.create_memory_object_stream[_messages.HandleResponseEvent]()
-
         run_context = build_run_context(ctx)
 
-        async def _run_tool_calls() -> tuple[list[_messages.ModelRequestPart], result.FinalResult[NodeRunEndT] | None]:
-            async with send_stream:
-                tool_run_context = replace(run_context, event_stream=send_stream)
+        # This will raise errors for any tool name conflicts
+        ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
-                # This will raise errors for any tool name conflicts
-                ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(tool_run_context)
+        output_parts: list[_messages.ModelRequestPart] = []
+        output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
 
-                output_parts: list[_messages.ModelRequestPart] = []
-                output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
+        async for event in process_tool_calls(
+            tool_manager=ctx.deps.tool_manager,
+            tool_calls=tool_calls,
+            tool_call_results=self.tool_call_results,
+            final_result=None,
+            ctx=ctx,
+            output_parts=output_parts,
+            output_final_result=output_final_result,
+        ):
+            yield event
 
-                async for event in process_tool_calls(
-                    tool_manager=ctx.deps.tool_manager,
-                    tool_calls=tool_calls,
-                    tool_call_results=self.tool_call_results,
-                    final_result=None,
-                    ctx=ctx,
-                    output_parts=output_parts,
-                    output_final_result=output_final_result,
-                ):
-                    await send_stream.send(event)
-
-                return output_parts, output_final_result[0] if output_final_result else None
-
-        task = asyncio.create_task(_run_tool_calls())
-
-        async with receive_stream:
-            async for message in receive_stream:
-                yield message
-
-        parts, final_result = await task
-
-        if final_result:
-            self._next_node = self._handle_final_result(ctx, final_result, parts)
+        if output_final_result:
+            self._next_node = self._handle_final_result(ctx, output_final_result[0], output_parts)
         else:
             instructions = await ctx.deps.get_instructions(run_context)
             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
-                _messages.ModelRequest(parts=parts, instructions=instructions)
+                _messages.ModelRequest(parts=output_parts, instructions=instructions)
             )
 
     async def _handle_text_response(
@@ -898,7 +882,7 @@ async def process_tool_calls(  # noqa: C901
         output_final_result.append(final_result)
 
 
-async def _call_tools(
+async def _call_tools(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult],
@@ -956,30 +940,45 @@ async def _call_tools(
 
                 return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
 
-        if tool_manager.should_call_sequentially(tool_calls):
-            for index, call in enumerate(tool_calls):
-                if event := await handle_call_or_result(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
-                    index,
-                ):
-                    yield event
+        send_stream, receive_stream = anyio.create_memory_object_stream[_messages.HandleResponseEvent]()
 
-        else:
-            tasks = [
-                asyncio.create_task(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
-                    name=call.tool_name,
-                )
-                for call in tool_calls
-            ]
+        async def _run_tools():
+            async with send_stream:
+                assert tool_manager.ctx is not None, 'ToolManager.ctx needs to be set'
+                tool_manager.ctx.event_stream = send_stream
 
-            pending = tasks
-            while pending:
-                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    index = tasks.index(task)
-                    if event := await handle_call_or_result(coro_or_task=task, index=index):
-                        yield event
+                if tool_manager.should_call_sequentially(tool_calls):
+                    for index, call in enumerate(tool_calls):
+                        if event := await handle_call_or_result(
+                            _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
+                            index,
+                        ):
+                            await send_stream.send(event)
+
+                else:
+                    tasks = [
+                        asyncio.create_task(
+                            _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id)),
+                            name=call.tool_name,
+                        )
+                        for call in tool_calls
+                    ]
+
+                    pending = tasks
+                    while pending:
+                        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                        for task in done:
+                            index = tasks.index(task)
+                            if event := await handle_call_or_result(coro_or_task=task, index=index):
+                                await send_stream.send(event)
+
+        task = asyncio.create_task(_run_tools())
+
+        async with receive_stream:
+            async for message in receive_stream:
+                yield message
+
+        await task
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering
     # This is mostly just to simplify testing
