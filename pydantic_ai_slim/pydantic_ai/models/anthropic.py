@@ -631,12 +631,15 @@ def _map_usage(
     else:
         assert_never(message)
 
-    # Store all integer-typed usage values in the details, except 'output_tokens' which is represented exactly by
-    # `response_tokens`
+    # In streaming, usage appears in different events.
+    # The values are cumulative, meaning new values should replace existing ones entirely.
     details: dict[str, int] = (existing_usage.details if existing_usage else {}) | {
         key: value for key, value in response_usage.model_dump().items() if isinstance(value, int)
     }
 
+    # `extract_usage` expects a mapping with a `model` and `usage` key.
+    # Not all the actual types of messages here have a model so we just make a dummy message.
+    # We only care about the numbers of tokens etc.
     extracted_usage = extract_usage(dict(model='claude-sonnet-4-5', usage=details), provider_id=provider)
 
     return usage.RequestUsage(
