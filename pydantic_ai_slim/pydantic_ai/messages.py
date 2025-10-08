@@ -114,20 +114,6 @@ class FileUrl(ABC):
 
     _: KW_ONLY
 
-    identifier: str
-    """The identifier of the file, such as a unique ID. generating one from the url if not explicitly set.
-
-    This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
-    and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
-
-    This identifier is only automatically passed to the model when the `FileUrl` is returned by a tool.
-    If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,
-    e.g. "This is file <identifier>:" preceding the `FileUrl`.
-
-    It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
-    distinguish multiple files.
-    """
-
     force_download: bool = False
     """If the model supports it:
 
@@ -147,26 +133,47 @@ class FileUrl(ABC):
         compare=False, default=None
     )
 
+    _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
+        compare=False, default=None
+    )
+
     def __init__(
         self,
         url: str,
         *,
-        force_download: bool = False,
-        vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         identifier: str | None = None,
+        force_download: bool = False,
+        vendor_metadata: dict[str, Any] | None = None,
     ) -> None:
         self.url = url
+        self._media_type = media_type
+        self._identifier = identifier
         self.force_download = force_download
         self.vendor_metadata = vendor_metadata
-        self._media_type = media_type
-        self.identifier = identifier or _multi_modal_content_identifier(url)
 
     @pydantic.computed_field
     @property
     def media_type(self) -> str:
         """Return the media type of the file, based on the URL or the provided `media_type`."""
         return self._media_type or self._infer_media_type()
+
+    @pydantic.computed_field
+    @property
+    def identifier(self) -> str:
+        """The identifier of the file, such as a unique ID.
+
+        This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+        and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
+
+        This identifier is only automatically passed to the model when the `FileUrl` is returned by a tool.
+        If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,
+        e.g. "This is file <identifier>:" preceding the `FileUrl`.
+
+        It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+        distinguish multiple files.
+        """
+        return self._identifier or _multi_modal_content_identifier(self.url)
 
     @abstractmethod
     def _infer_media_type(self) -> str:
@@ -198,20 +205,21 @@ class VideoUrl(FileUrl):
         self,
         url: str,
         *,
+        media_type: str | None = None,
+        identifier: str | None = None,
         force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
-        media_type: str | None = None,
         kind: Literal['video-url'] = 'video-url',
-        identifier: str | None = None,
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
+        _identifier: str | None = None,
     ) -> None:
         super().__init__(
             url=url,
             force_download=force_download,
             vendor_metadata=vendor_metadata,
             media_type=media_type or _media_type,
-            identifier=identifier,
+            identifier=identifier or _identifier,
         )
         self.kind = kind
 
@@ -273,20 +281,21 @@ class AudioUrl(FileUrl):
         self,
         url: str,
         *,
+        media_type: str | None = None,
+        identifier: str | None = None,
         force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
-        media_type: str | None = None,
         kind: Literal['audio-url'] = 'audio-url',
-        identifier: str | None = None,
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
+        _identifier: str | None = None,
     ) -> None:
         super().__init__(
             url=url,
             force_download=force_download,
             vendor_metadata=vendor_metadata,
             media_type=media_type or _media_type,
-            identifier=identifier,
+            identifier=identifier or _identifier,
         )
         self.kind = kind
 
@@ -335,20 +344,21 @@ class ImageUrl(FileUrl):
         self,
         url: str,
         *,
+        media_type: str | None = None,
+        identifier: str | None = None,
         force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
-        media_type: str | None = None,
         kind: Literal['image-url'] = 'image-url',
-        identifier: str | None = None,
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
+        _identifier: str | None = None,
     ) -> None:
         super().__init__(
             url=url,
             force_download=force_download,
             vendor_metadata=vendor_metadata,
             media_type=media_type or _media_type,
-            identifier=identifier,
+            identifier=identifier or _identifier,
         )
         self.kind = kind
 
@@ -392,20 +402,21 @@ class DocumentUrl(FileUrl):
         self,
         url: str,
         *,
+        media_type: str | None = None,
+        identifier: str | None = None,
         force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
-        media_type: str | None = None,
         kind: Literal['document-url'] = 'document-url',
-        identifier: str | None = None,
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
+        _identifier: str | None = None,
     ) -> None:
         super().__init__(
             url=url,
             force_download=force_download,
             vendor_metadata=vendor_metadata,
             media_type=media_type or _media_type,
-            identifier=identifier,
+            identifier=identifier or _identifier,
         )
         self.kind = kind
 
@@ -460,16 +471,6 @@ class BinaryContent:
     media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str
     """The media type of the binary data."""
 
-    identifier: str
-    """Identifier for the binary content, such as a unique ID.
-    This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
-    and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
-
-    This identifier is only automatically passed to the model when the `BinaryContent` is returned by a tool.
-    If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier,
-    e.g. "This is file <identifier>:" preceding the `BinaryContent`.
-    """
-
     vendor_metadata: dict[str, Any] | None = None
     """Vendor-specific metadata for the file.
 
@@ -477,6 +478,10 @@ class BinaryContent:
     - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     """
+
+    _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
+        compare=False, default=None
+    )
 
     kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
@@ -489,10 +494,12 @@ class BinaryContent:
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['binary'] = 'binary',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _identifier: str | None = None,
     ) -> None:
         self.data = data
         self.media_type = media_type
-        self.identifier = identifier or _multi_modal_content_identifier(data)
+        self._identifier = identifier or _identifier
         self.vendor_metadata = vendor_metadata
         self.kind = kind
 
@@ -517,6 +524,23 @@ class BinaryContent:
             raise ValueError('Data URI must start with "data:"')  # pragma: no cover
         media_type, data = data_uri[len(prefix) :].split(';base64,', 1)
         return cls(data=base64.b64decode(data), media_type=media_type)
+
+    @pydantic.computed_field
+    @property
+    def identifier(self) -> str:
+        """Identifier for the binary content, such as a unique ID.
+
+        This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+        and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
+
+        This identifier is only automatically passed to the model when the `BinaryContent` is returned by a tool.
+        If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier,
+        e.g. "This is file <identifier>:" preceding the `BinaryContent`.
+
+        It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+        distinguish multiple files.
+        """
+        return self._identifier or _multi_modal_content_identifier(self.data)
 
     @property
     def data_uri(self) -> str:
