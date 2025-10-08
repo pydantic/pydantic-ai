@@ -16,7 +16,7 @@ import logfire
 from fastapi import Depends, Request, Response
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.vercel_ai_elements.starlette import StarletteChat
+from pydantic_ai.vercel_ai.starlette import StarletteChat
 
 from .sqlite_database import Database
 

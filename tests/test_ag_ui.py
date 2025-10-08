@@ -1,6 +1,5 @@
 """Tests for AG-UI implementation."""
 
-# pyright: reportPossiblyUnboundVariable=none
 from __future__ import annotations
 
 import contextlib

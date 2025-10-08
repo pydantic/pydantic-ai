@@ -249,15 +249,16 @@ class UIMessage(CamelBaseModel):
     """
 
 
-class SubmitMessage(CamelBaseModel):
+class SubmitMessage(CamelBaseModel, extra='allow'):
     """Submit a message to the agent."""
 
     trigger: Literal['submit-message']
     id: str
     messages: list[UIMessage]
 
-    model: str
-    web_search: bool
+    # TODO (DouweM): Update, make variable? I like `inference_params` from OpenAI ChatKit.
+    # model: str
+    # web_search: bool
 
 
 class RegenerateMessage(CamelBaseModel):
@@ -269,5 +270,5 @@ class RegenerateMessage(CamelBaseModel):
     message_id: str
 
 
-RequestData = SubmitMessage | RegenerateMessage
-request_data_schema: TypeAdapter[RequestData] = TypeAdapter(Annotated[RequestData, Discriminator('trigger')])
+RequestData = Annotated[SubmitMessage | RegenerateMessage, Discriminator('trigger')]
+request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)

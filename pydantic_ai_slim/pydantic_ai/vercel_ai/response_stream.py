@@ -8,34 +8,12 @@ from uuid import uuid4
 from pydantic_core import to_json
 
 from .. import messages
-from ..agent import Agent
-from ..run import AgentRunResultEvent
-from ..tools import AgentDepsT
 from . import response_types as _t
 
-__all__ = 'sse_stream', 'VERCEL_AI_ELEMENTS_HEADERS', 'EventStreamer'
-# no idea if this is important, but vercel sends it, therefore so am I
-VERCEL_AI_ELEMENTS_HEADERS = {'x-vercel-ai-ui-message-stream': 'v1'}
+__all__ = 'VERCEL_AI_DSP_HEADERS', 'EventStreamer'
 
-
-async def sse_stream(agent: Agent[AgentDepsT], user_prompt: str, deps: Any) -> AsyncIterator[str]:
-    """Stream events from an agent run as Vercel AI Elements events.
-
-    Args:
-        agent: The agent to run.
-        user_prompt: The user prompt to run the agent with.
-        deps: The dependencies to pass to the agent.
-
-    Yields:
-        An async iterator text lines to stream over SSE.
-    """
-    event_streamer = EventStreamer()
-    async for event in agent.run_stream_events(user_prompt, deps=deps):
-        if not isinstance(event, AgentRunResultEvent):
-            async for chunk in event_streamer.event_to_chunks(event):
-                yield chunk.sse()
-    async for chunk in event_streamer.finish():
-        yield chunk.sse()
+# See https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol
+VERCEL_AI_DSP_HEADERS = {'x-vercel-ai-ui-message-stream': 'v1'}
 
 
 @dataclass
@@ -135,6 +113,9 @@ class DoneChunk:
 
     def __str__(self) -> str:
         return 'DoneChunk<marker for the end of sse stream message>'
+
+    def __eq__(self, other: Any) -> bool:
+        return isinstance(other, DoneChunk)
 
 
 def _json_dumps(obj: Any) -> str:
