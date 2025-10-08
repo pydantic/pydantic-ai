@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 import pytest
 
 from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
-from pydantic_graph.beta.join import reduce_list_append, reduce_sum
+from pydantic_graph.beta.join import reduce_list_append
 
 pytestmark = pytest.mark.anyio
 
@@ -326,58 +326,6 @@ async def test_decision_with_map():
     assert state.value == 6  # 1 + 2 + 3
 
 
-async def test_decision_branch_last_fork_id_none():
-    """Test DecisionBranchBuilder.last_fork_id when there are no forks."""
-    from pydantic_graph.beta.decision import Decision, DecisionBranchBuilder
-    from pydantic_graph.beta.id_types import NodeID
-    from pydantic_graph.beta.paths import PathBuilder
-
-    decision = Decision[DecisionState, None, int](id=NodeID('test'), branches=[], note=None)
-    path_builder = PathBuilder[DecisionState, None, int](working_items=[])
-    branch_builder = DecisionBranchBuilder(decision=decision, source=int, matches=None, path_builder=path_builder)
-
-    assert branch_builder.last_fork_id is None
-
-
-async def test_decision_branch_last_fork_id_with_map():
-    """Test DecisionBranchBuilder.last_fork_id after a map operation."""
-    g = GraphBuilder(state_type=DecisionState, output_type=int)
-
-    @g.step
-    async def return_list(ctx: StepContext[DecisionState, None, None]) -> list[int]:
-        return [1, 2, 3]
-
-    @g.step
-    async def process_item(ctx: StepContext[DecisionState, None, int]) -> int:
-        return ctx.inputs * 2
-
-    sum_results = g.join(reduce_sum, initial=0)
-
-    def is_list_int(x: Any) -> bool:
-        return isinstance(x, list) and all(isinstance(y, int) for y in x)  # pyright: ignore[reportUnknownVariableType]
-
-    # Use decision with map to test last_fork_id
-    g.add(
-        g.edge_from(g.start_node).to(return_list),
-        g.edge_from(return_list).to(
-            g.decision().branch(
-                g.match(
-                    TypeExpression[list[int]],
-                    matches=is_list_int,
-                )
-                .map()
-                .to(process_item)
-            )
-        ),
-        g.edge_from(process_item).to(sum_results),
-        g.edge_from(sum_results).to(g.end_node),
-    )
-
-    graph = g.build()
-    result = await graph.run(state=DecisionState())
-    assert result == 12  # (1+2+3) * 2
-
-
 async def test_decision_branch_transform():
     """Test DecisionBranchBuilder.transform method."""
     g = GraphBuilder(state_type=DecisionState, output_type=str)
@@ -457,7 +405,7 @@ async def test_decision_branch_fork():
         g.edge_from(g.start_node).to(choose_option),
         g.edge_from(choose_option).to(
             g.decision().branch(
-                g.match(TypeExpression[Literal['fork']]).fork(
+                g.match(TypeExpression[Literal['fork']]).broadcast(
                     lambda b: [
                         b.to(path_1),
                         b.to(path_2),

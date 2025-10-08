@@ -74,12 +74,12 @@ AnyStepFunction = StepFunction[Any, Any, Any, Any]
 """Type alias for a step function with any type parameters."""
 
 
+@dataclass(frozen=True)
 class Step(Generic[StateT, DepsT, InputT, OutputT]):
     """A step in the graph execution that wraps a step function.
 
     Steps represent individual units of execution in the graph, encapsulating
-    a step function along with metadata like ID and label. This class uses
-    manual initialization instead of dataclass to maintain proper type variance.
+    a step function along with metadata like ID and label.
 
     Type Parameters:
         StateT: The type of the graph state
@@ -88,41 +88,14 @@ class Step(Generic[StateT, DepsT, InputT, OutputT]):
         OutputT: The type of the output data
     """
 
-    def __init__(
-        self,
-        id: NodeID,
-        call: StepFunction[StateT, DepsT, InputT, OutputT],
-        user_label: str | None = None,
-    ):
-        """Initialize a step.
+    id: NodeID
+    """Unique identifier for this step."""
+    call: StepFunction[StateT, DepsT, InputT, OutputT]
+    """The step function to execute."""
+    user_label: str | None = None
+    """Optional human-readable label for this step."""
 
-        Args:
-            id: Unique identifier for this step
-            call: The step function to execute
-            user_label: Optional human-readable label for this step
-        """
-        self.id = id
-        """Unique identifier for this step."""
-
-        self._call = call
-        """The step function to execute."""
-
-        self.user_label = user_label
-        """Optional human-readable label for this step."""
-
-    # TODO(P3): Consider replacing this with __call__, so the decorated object can still be called with the same signature
-    @property
-    def call(self) -> StepFunction[StateT, DepsT, InputT, OutputT]:
-        """The step function to execute.
-
-        This property is necessary to ensure that Step maintains proper
-        covariance/contravariance in its type parameters.
-
-        Returns:
-            The wrapped step function
-        """
-        return self._call
-
+    # TODO(P3): Consider defining __call__, so a decorated step can still be called with the same signature
     # TODO(P3): Consider adding a `bind` method that returns an object that can be used to get something you can return from a BaseNode that allows you to transition to nodes using "new"-form edges
 
     @property
@@ -150,14 +123,6 @@ class Step(Generic[StateT, DepsT, InputT, OutputT]):
             A [`StepNode`][pydantic_graph.beta.step.StepNode] with this step and the bound inputs
         """
         return StepNode(self, inputs)
-
-    def __repr__(self) -> str:
-        """Return a string representation of the step context.
-
-        Returns:
-            A string showing the class name and inputs
-        """
-        return f'Step(id={self.id!r}, call={self._call!r}, user_label={self.user_label!r})'
 
 
 @dataclass
@@ -193,7 +158,7 @@ class StepNode(BaseNode[StateT, DepsT, Any]):
         )
 
 
-@dataclass
+@dataclass(frozen=True, init=False)
 class NodeStep(Step[StateT, DepsT, Any, BaseNode[StateT, DepsT, Any] | End[Any]]):
     """A step that wraps a BaseNode type for execution.
 
@@ -201,6 +166,9 @@ class NodeStep(Step[StateT, DepsT, Any, BaseNode[StateT, DepsT, Any] | End[Any]]
     v2 graph execution system. It validates that the input is of the expected
     node type and runs it with the appropriate graph context.
     """
+
+    node_type: type[BaseNode[StateT, DepsT, Any]]
+    """The BaseNode type this step executes."""
 
     def __init__(
         self,
@@ -223,8 +191,9 @@ class NodeStep(Step[StateT, DepsT, Any, BaseNode[StateT, DepsT, Any] | End[Any]]
         )
         # `type[BaseNode[StateT, DepsT, Any]]` could actually be a `typing._GenericAlias` like `pydantic_ai._agent_graph.UserPromptNode[~DepsT, ~OutputT]`,
         # so we get the origin to get to the actual class
-        self.node_type = get_origin(node_type) or node_type
-        """The BaseNode type this step executes."""
+        object.__setattr__(
+            self, 'node_type', get_origin(node_type) or node_type
+        )  # have to use object.__setattr__ because this class is frozen
 
     async def _call(self, ctx: StepContext[StateT, DepsT, Any]) -> BaseNode[StateT, DepsT, Any] | End[Any]:
         """Execute the wrapped node with the step context.

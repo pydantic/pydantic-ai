@@ -8,9 +8,10 @@ decisions, and edge routing.
 from __future__ import annotations
 
 import inspect
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, replace
 from types import NoneType
 from typing import Any, Generic, cast, get_origin, get_type_hints, overload
 
@@ -20,7 +21,7 @@ from pydantic_graph import _utils, exceptions
 from pydantic_graph._utils import UNSET, Unset
 from pydantic_graph.beta.decision import Decision, DecisionBranch, DecisionBranchBuilder
 from pydantic_graph.beta.graph import Graph
-from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID
+from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID, is_placeholder_node_id
 from pydantic_graph.beta.join import Join, JoinNode, ReducerFunction
 from pydantic_graph.beta.node import (
     EndNode,
@@ -59,6 +60,7 @@ GraphOutputT = TypeVar('GraphOutputT', infer_variance=True)
 T = TypeVar('T', infer_variance=True)
 
 
+# TODO: Make this kw-only and drop init=False..?
 @dataclass(init=False)
 class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
     """A builder for constructing executable graph definitions.
@@ -440,7 +442,9 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         node_id = NodeID(self._get_new_decision_id())
         decision = Decision[StateT, DepsT, Never](node_id, branches=[], note=None)
         new_path_builder = PathBuilder[StateT, DepsT, SourceT](working_items=[])
-        return DecisionBranchBuilder(decision=decision, source=source, matches=matches, path_builder=new_path_builder)
+        return DecisionBranchBuilder(
+            _decision=decision, _source=source, _matches=matches, _path_builder=new_path_builder
+        )
 
     def match_node(
         self,
@@ -663,8 +667,11 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         # TODO(P2): Allow the user to specify the parent forks; only infer them if _not_ specified
         # TODO(P2): Verify that any user-specified parent forks are _actually_ valid parent forks, and if not, generate a helpful error message
         # TODO(P3): Consider doing a deepcopy here to prevent modifications to the underlying nodes and edges
-        nodes = self._nodes
-        edges_by_source = self._edges_by_source
+
+        nodes = deepcopy(self._nodes)
+        edges_by_source = deepcopy(self._edges_by_source)
+
+        nodes, edges_by_source = _replace_placeholder_node_ids(nodes, edges_by_source)
         nodes, edges_by_source = _flatten_paths(nodes, edges_by_source)
         nodes, edges_by_source = _normalize_forks(nodes, edges_by_source)
         parent_forks = _collect_dominating_forks(nodes, edges_by_source)
@@ -843,3 +850,81 @@ def _collect_dominating_forks(
         dominating_forks[join_id] = dominating_fork
 
     return dominating_forks
+
+
+def _replace_placeholder_node_ids(nodes: dict[NodeID, AnyNode], edges_by_source: dict[NodeID, list[Path]]):
+    node_id_remapping = _build_placeholder_node_id_remapping(nodes)
+    replaced_nodes = {
+        node_id_remapping.get(name, name): _update_node_with_id_remapping(node, node_id_remapping)
+        for name, node in nodes.items()
+    }
+    replaced_edges_by_source = {
+        node_id_remapping.get(source, source): [_update_path_with_id_remapping(p, node_id_remapping) for p in paths]
+        for source, paths in edges_by_source.items()
+    }
+    return replaced_nodes, replaced_edges_by_source
+
+
+def _build_placeholder_node_id_remapping(nodes: dict[NodeID, AnyNode]) -> dict[NodeID, NodeID]:
+    """The determinism of the generated remapping here is dependent on the determinism of the ordering of the `nodes` dict.
+
+    Note: If we want to generate more interesting names, we could try to make use of information about the edges
+    into/out of the relevant nodes. I'm not sure if there's a good use case for that though so I didn't bother for now.
+    """
+    counter = Counter[str]()
+    remapping: dict[NodeID, NodeID] = {}
+    for node_id, node in nodes.items():
+        if not is_placeholder_node_id(node_id):
+            continue
+        label = type(node).__name__.lower()
+        counter[label] = count = counter[label] + 1
+        remapping[node_id] = NodeID(f'{label}_{count}')
+    return remapping
+
+
+def _update_node_with_id_remapping(node: AnyNode, node_id_remapping: dict[NodeID, NodeID]) -> AnyNode:
+    if isinstance(node, Step):
+        # Even though steps are frozen, we use object.__setattr__ to overrule that and change the id value to make it
+        # work with NodeStep.
+        # Note: we have already deepcopied the inputs to this function so it should be okay to make mutations,
+        # this could change if we change the code surrounding the code paths leading to this function call though.
+        object.__setattr__(node, 'id', node_id_remapping.get(node.id, node.id))
+    elif isinstance(node, Join):
+        node = replace(node, id=JoinID(node_id_remapping.get(node.id, node.id)))
+    elif isinstance(node, Fork):
+        node = replace(node, id=ForkID(node_id_remapping.get(node.id, node.id)))
+    elif isinstance(node, Decision):
+        node = replace(
+            node,
+            id=node_id_remapping.get(node.id, node.id),
+            branches=[
+                replace(branch, path=_update_path_with_id_remapping(branch.path, node_id_remapping))
+                for branch in node.branches
+            ],
+        )
+    return node
+
+
+def _update_path_with_id_remapping(path: Path, node_id_remapping: dict[NodeID, NodeID]) -> Path:
+    path = replace(path)  # prevent mutating the input; not technically necessary but could make debugging easier later
+    for i, item in enumerate(path.items):
+        if isinstance(item, MapMarker):
+            downstream_join_id = item.downstream_join_id
+            if downstream_join_id is not None:
+                downstream_join_id = JoinID(node_id_remapping.get(downstream_join_id, downstream_join_id))
+            path.items[i] = replace(
+                item,
+                fork_id=ForkID(node_id_remapping.get(item.fork_id, item.fork_id)),
+                downstream_join_id=downstream_join_id,
+            )
+        elif isinstance(item, BroadcastMarker):
+            path.items[i] = replace(
+                item,
+                fork_id=ForkID(node_id_remapping.get(item.fork_id, item.fork_id)),
+                paths=[_update_path_with_id_remapping(p, node_id_remapping) for p in item.paths],
+            )
+        elif isinstance(item, DestinationMarker):
+            path.items[i] = replace(
+                item, destination_id=node_id_remapping.get(item.destination_id, item.destination_id)
+            )
+    return path

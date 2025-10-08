@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, Generic
+from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import Never, Self, TypeVar
 
@@ -123,39 +123,28 @@ NewOutputT = TypeVar('NewOutputT', infer_variance=True)
 """Type variable for transformed output."""
 
 
-@dataclass(kw_only=True)
+@dataclass(kw_only=True, frozen=True)
 class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
     """Builder for constructing decision branches with fluent API.
 
     This builder provides methods to configure branches with destinations,
     forks, and transformations in a type-safe manner.
+
+    Instances of this class should be created using [`GraphBuilder.match`][pydantic_graph.beta.graph_builder.GraphBuilder],
+    not created directly.
     """
 
-    # The use of `Final` on these attributes is necessary for them to be treated as read-only for purposes
-    # of variance-inference. This could be done with `frozen` but that
-    decision: Final[Decision[StateT, DepsT, HandledT]]
+    _decision: Decision[StateT, DepsT, HandledT]
     """The parent decision node."""
 
-    source: Final[TypeOrTypeExpression[SourceT]]
+    _source: TypeOrTypeExpression[SourceT]
     """The expected source type for this branch."""
 
-    matches: Final[Callable[[Any], bool] | None]
+    _matches: Callable[[Any], bool] | None
     """Optional matching predicate."""
 
-    path_builder: Final[PathBuilder[StateT, DepsT, OutputT]]
+    _path_builder: PathBuilder[StateT, DepsT, OutputT]
     """Builder for the execution path."""
-
-    @property
-    def last_fork_id(self) -> ForkID | None:
-        """Get the ID of the last fork in the path.
-
-        Returns:
-            The fork ID if a fork exists, None otherwise.
-        """
-        last_fork = self.path_builder.last_fork
-        if last_fork is None:
-            return None
-        return last_fork.fork_id
 
     def to(
         self,
@@ -173,25 +162,25 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
             A completed DecisionBranch with the specified destinations.
         """
         return DecisionBranch(
-            source=self.source, matches=self.matches, path=self.path_builder.to(destination, *extra_destinations)
+            source=self._source, matches=self._matches, path=self._path_builder.to(destination, *extra_destinations)
         )
 
-    def fork(
+    def broadcast(
         self,
         get_forks: Callable[[Self], Sequence[DecisionBranch[SourceT]]],
         /,
     ) -> DecisionBranch[SourceT]:
-        """Create a fork in the execution path.
+        """Create a broadcast fork in the execution path.
 
         Args:
-            get_forks: Function that generates forked decision branches.
+            get_forks: Function (typically a lambda) that returns the broadcast forks downstream of this decision branch.
 
         Returns:
-            A completed DecisionBranch with forked execution paths.
+            A completed DecisionBranch with broadcast-forked execution paths.
         """
         fork_decision_branches = get_forks(self)
         new_paths = [b.path for b in fork_decision_branches]
-        return DecisionBranch(source=self.source, matches=self.matches, path=self.path_builder.fork(new_paths))
+        return DecisionBranch(source=self._source, matches=self._matches, path=self._path_builder.broadcast(new_paths))
 
     def transform(
         self, func: TransformFunction[StateT, DepsT, OutputT, NewOutputT], /
@@ -205,10 +194,10 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
             A new DecisionBranchBuilder where the provided transform is applied prior to generating the final output.
         """
         return DecisionBranchBuilder(
-            decision=self.decision,
-            source=self.source,
-            matches=self.matches,
-            path_builder=self.path_builder.transform(func),
+            _decision=self._decision,
+            _source=self._source,
+            _matches=self._matches,
+            _path_builder=self._path_builder.transform(func),
         )
 
     def map(
@@ -230,10 +219,10 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
             A new DecisionBranchBuilder where mapping is performed prior to generating the final output.
         """
         return DecisionBranchBuilder(
-            decision=self.decision,
-            source=self.source,
-            matches=self.matches,
-            path_builder=self.path_builder.map(fork_id=fork_id, downstream_join_id=downstream_join_id),
+            _decision=self._decision,
+            _source=self._source,
+            _matches=self._matches,
+            _path_builder=self._path_builder.map(fork_id=fork_id, downstream_join_id=downstream_join_id),
         )
 
     def label(self, label: str) -> DecisionBranchBuilder[StateT, DepsT, OutputT, SourceT, HandledT]:
@@ -248,8 +237,8 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
             A new DecisionBranchBuilder where the label has been applied at the end of the current path being built.
         """
         return DecisionBranchBuilder(
-            decision=self.decision,
-            source=self.source,
-            matches=self.matches,
-            path_builder=self.path_builder.label(label),
+            _decision=self._decision,
+            _source=self._source,
+            _matches=self._matches,
+            _path_builder=self._path_builder.label(label),
         )

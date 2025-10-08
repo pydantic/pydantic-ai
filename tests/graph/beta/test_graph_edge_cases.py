@@ -347,3 +347,18 @@ async def test_nested_reducers_with_prefix():
     result = await graph.run(state=MyState())
     # (1+2+3+4) * 2 = 20
     assert result == 20
+    assert str(graph) == snapshot("""\
+stateDiagram-v2
+  outer_list
+  state fork_1 <<fork>>
+  state fork_2 <<fork>>
+  inner_process
+  state reduce_sum <<join>>
+
+  [*] --> outer_list
+  outer_list --> fork_1
+  fork_1 --> fork_2
+  fork_2 --> inner_process
+  inner_process --> reduce_sum
+  reduce_sum --> [*]\
+""")

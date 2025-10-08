@@ -15,6 +15,7 @@ from pydantic_graph.beta.paths import (
     MapMarker,
     Path,
     PathBuilder,
+    PathItem,
     TransformMarker,
 )
 
@@ -99,36 +100,6 @@ async def test_edge_path_builder_transform():
     assert result == 60  # 10 * 2 * 3
 
 
-async def test_edge_path_builder_last_fork_id_none():
-    """Test EdgePathBuilder.last_fork_id when there are no forks."""
-    g = GraphBuilder(state_type=MyState, output_type=int)
-
-    @g.step
-    async def step_a(ctx: StepContext[MyState, None, None]) -> int:
-        return 10
-
-    edge_builder = g.edge_from(g.start_node)
-    # Access internal path_builder to test last_fork_id
-    assert edge_builder.last_fork_id is None
-
-
-async def test_edge_path_builder_last_fork_id_with_map():
-    """Test EdgePathBuilder.last_fork_id after a map operation."""
-    g = GraphBuilder(state_type=MyState, output_type=int)
-
-    @g.step
-    async def list_step(ctx: StepContext[MyState, None, None]) -> list[int]:
-        return [1, 2, 3]
-
-    @g.step
-    async def process_item(ctx: StepContext[MyState, None, int]) -> int:
-        return ctx.inputs * 2
-
-    edge_builder = g.edge_from(list_step).map()
-    fork_id = edge_builder.last_fork_id
-    assert fork_id is not None
-
-
 async def test_path_builder_label():
     """Test PathBuilder.label method."""
     builder = PathBuilder[MyState, None, int](working_items=[])
@@ -141,7 +112,7 @@ async def test_path_builder_label():
 
 async def test_path_next_path():
     """Test Path.next_path removes first item."""
-    items = [LabelMarker('first'), LabelMarker('second'), DestinationMarker(NodeID('dest'))]
+    items: list[PathItem] = [LabelMarker('first'), LabelMarker('second'), DestinationMarker(NodeID('dest'))]
     path = Path(items=items)
 
     next_path = path.next_path

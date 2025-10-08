@@ -131,7 +131,8 @@ class MermaidGraph:
         if direction is not None:
             lines.append(f'  direction {direction}')
 
-        for node in self.nodes:
+        nodes, edges = _topological_sort(self.nodes, self.edges)
+        for node in nodes:
             # List all nodes in order they were created
             node_lines: list[str] = []
             if node.kind == 'start' or node.kind == 'end':
@@ -156,7 +157,7 @@ class MermaidGraph:
 
         lines.append('')
 
-        for edge in self.edges:
+        for edge in edges:
             # Use special [*] syntax for start/end nodes
             render_start_id = '[*]' if edge.start_id == StartNode.id else edge.start_id
             render_end_id = '[*]' if edge.end_id == EndNode.id else edge.end_id
@@ -167,3 +168,48 @@ class MermaidGraph:
             # TODO(P3): Support node notes/highlighting
 
         return '\n'.join(lines)
+
+
+def _topological_sort(
+    nodes: list[MermaidNode], edges: list[MermaidEdge]
+) -> tuple[list[MermaidNode], list[MermaidEdge]]:
+    """Sort nodes and edges in a logical topological order.
+
+    Uses BFS from the start node to assign depths, then sorts:
+    - Nodes by their distance from start
+    - Edges by the distance of their source and target nodes
+    """
+    # Build adjacency list for BFS
+    adjacency: dict[str, list[str]] = defaultdict(list)
+    for edge in edges:
+        adjacency[edge.start_id].append(edge.end_id)
+
+    # BFS to assign depth to each node (distance from start)
+    depths: dict[str, int] = {}
+    queue: list[tuple[str, int]] = [(StartNode.id, 0)]
+    depths[StartNode.id] = 0
+
+    while queue:
+        node_id, depth = queue.pop(0)
+        for next_id in adjacency[node_id]:
+            if next_id not in depths:
+                depths[next_id] = depth + 1
+                queue.append((next_id, depth + 1))
+
+    # Sort nodes by depth (distance from start), then by id for stability
+    # Nodes not reachable from start get infinity depth (sorted to end)
+    sorted_nodes = sorted(nodes, key=lambda n: (depths.get(n.id, float('inf')), n.id))
+
+    # Sort edges by source depth, then target depth
+    # This ensures edges closer to start come first, edges closer to end come last
+    sorted_edges = sorted(
+        edges,
+        key=lambda e: (
+            depths.get(e.start_id, float('inf')),
+            depths.get(e.end_id, float('inf')),
+            e.start_id,
+            e.end_id,
+        ),
+    )
+
+    return sorted_nodes, sorted_edges

@@ -8,7 +8,6 @@ Paths enable complex data flow patterns in graph execution.
 from __future__ import annotations
 
 import inspect
-import secrets
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, get_origin, overload
@@ -16,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Generic, get_origin, overload
 from typing_extensions import Protocol, Self, TypeAliasType, TypeVar
 
 from pydantic_graph import BaseNode
-from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID
+from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID, generate_placeholder_node_id
 from pydantic_graph.beta.step import NodeStep, StepContext
 
 StateT = TypeVar('StateT', infer_variance=True)
@@ -134,9 +133,8 @@ class Path:
     transformations, forks, and routing decisions.
     """
 
-    items: Sequence[PathItem]
+    items: list[PathItem]
     """The sequence of path items that define this path."""
-    # TODO: Change items to be Sequence[TransformMarker | MapMarker | LabelMarker] and add field `destination: BroadcastMarker | DestinationMarker`
 
     @property
     def last_fork(self) -> BroadcastMarker | MapMarker | None:
@@ -208,13 +206,13 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
         if extra_destinations:
             next_item = BroadcastMarker(
                 paths=[Path(items=[DestinationMarker(d.id)]) for d in (destination,) + extra_destinations],
-                fork_id=ForkID(NodeID(fork_id or 'extra_broadcast_' + secrets.token_hex(8))),
+                fork_id=ForkID(NodeID(fork_id or generate_placeholder_node_id('PathBuilder.to'))),
             )
         else:
             next_item = DestinationMarker(destination.id)
         return Path(items=[*self.working_items, next_item])
 
-    def fork(self, forks: Sequence[Path], /, *, fork_id: str | None = None) -> Path:
+    def broadcast(self, forks: Sequence[Path], /, *, fork_id: str | None = None) -> Path:
         """Create a fork that broadcasts data to multiple parallel paths.
 
         Args:
@@ -224,7 +222,9 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
         Returns:
             A complete Path that forks to the specified parallel paths
         """
-        next_item = BroadcastMarker(paths=forks, fork_id=ForkID(NodeID(fork_id or 'broadcast_' + secrets.token_hex(8))))
+        next_item = BroadcastMarker(
+            paths=forks, fork_id=ForkID(NodeID(fork_id or generate_placeholder_node_id('PathBuilder.broadcast')))
+        )
         return Path(items=[*self.working_items, next_item])
 
     def transform(self, func: TransformFunction[StateT, DepsT, OutputT, T], /) -> PathBuilder[StateT, DepsT, T]:
@@ -258,7 +258,8 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
             A new PathBuilder that operates on individual items from the iterable
         """
         next_item = MapMarker(
-            fork_id=NodeID(fork_id or 'map_' + secrets.token_hex(8)), downstream_join_id=downstream_join_id
+            fork_id=NodeID(fork_id or generate_placeholder_node_id('PathBuilder.map')),
+            downstream_join_id=downstream_join_id,
         )
         return PathBuilder[StateT, DepsT, T](working_items=[*self.working_items, next_item])
 
@@ -321,27 +322,6 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
         self.sources = sources
         self._path_builder = path_builder
 
-    @property
-    def path_builder(self) -> PathBuilder[StateT, DepsT, OutputT]:
-        """Get the underlying path builder.
-
-        Returns:
-            The PathBuilder instance for this edge
-        """
-        return self._path_builder
-
-    @property
-    def last_fork_id(self) -> ForkID | None:
-        """Get the ID of the most recent fork in the path.
-
-        Returns:
-            The ForkId of the last fork, or None if no forks exist
-        """
-        last_fork = self._path_builder.last_fork
-        if last_fork is None:
-            return None
-        return last_fork.fork_id
-
     @overload
     def to(
         self, get_forks: Callable[[Self], Sequence[EdgePath[StateT, DepsT]]], /, *, fork_id: str | None = None
@@ -381,7 +361,7 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
 
         if callable(first_item) and not inspect.isclass(first_item):
             new_edge_paths = first_item(self)
-            path = self.path_builder.fork([Path(x.path.items) for x in new_edge_paths], fork_id=fork_id)
+            path = self._path_builder.broadcast([Path(x.path.items) for x in new_edge_paths], fork_id=fork_id)
             destinations = [d for ep in new_edge_paths for d in ep.destinations]
             return EdgePath(
                 sources=self.sources,
@@ -392,7 +372,7 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
             destinations = [(NodeStep(d) if inspect.isclass(d) else d) for d in (first_item, *extra_destinations)]
             return EdgePath(
                 sources=self.sources,
-                path=self.path_builder.to(*destinations, fork_id=fork_id),
+                path=self._path_builder.to(*destinations, fork_id=fork_id),
                 destinations=destinations,
             )
 
@@ -413,7 +393,7 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
         """
         return EdgePathBuilder(
             sources=self.sources,
-            path_builder=self.path_builder.map(fork_id=fork_id, downstream_join_id=downstream_join_id),
+            path_builder=self._path_builder.map(fork_id=fork_id, downstream_join_id=downstream_join_id),
         )
 
     def transform(self, func: TransformFunction[StateT, DepsT, OutputT, T], /) -> EdgePathBuilder[StateT, DepsT, T]:
@@ -425,7 +405,7 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
         Returns:
             A new EdgePathBuilder with the transformation added
         """
-        return EdgePathBuilder(sources=self.sources, path_builder=self.path_builder.transform(func))
+        return EdgePathBuilder(sources=self.sources, path_builder=self._path_builder.transform(func))
 
     def label(self, label: str) -> EdgePathBuilder[StateT, DepsT, OutputT]:
         """Add a human-readable label to this point in the edge path.
@@ -436,4 +416,4 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
         Returns:
             A new EdgePathBuilder with the label added
         """
-        return EdgePathBuilder(sources=self.sources, path_builder=self.path_builder.label(label))
+        return EdgePathBuilder(sources=self.sources, path_builder=self._path_builder.label(label))

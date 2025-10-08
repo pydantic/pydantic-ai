@@ -6,6 +6,7 @@ providing type safety and clarity when working with different kinds of identifie
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from typing import NewType
 
@@ -53,4 +54,25 @@ ForkStack = tuple[ForkStackItem, ...]
 
 The fork stack tracks the complete path through nested parallel executions,
 allowing the system to coordinate and join parallel branches correctly.
+"""
+
+
+def generate_placeholder_node_id(debug_label: str) -> str:
+    """Generate a placeholder node ID, to be replaced during graph building."""
+    return f'{_NODE_ID_PLACEHOLDER_PREFIX}:{debug_label}:{uuid.uuid4()}'
+
+
+def is_placeholder_node_id(node_id: NodeID) -> bool:
+    """Returns whether a given NodeID is a placeholder node ID which should be replaced during graph building."""
+    return node_id.startswith(_NODE_ID_PLACEHOLDER_PREFIX)
+
+
+_NODE_ID_PLACEHOLDER_PREFIX = '__placeholder__:'
+"""
+When Node IDs are required but not specified when building a graph, we generate placeholder values
+using this prefix followed by a random string.
+
+During graph building, we replace these with simpler and deterministically-selected values.
+This ensures that the node IDs are stable when rebuilding the graph, and makes the generated mermaid diagrams etc.
+easier to read.
 """
