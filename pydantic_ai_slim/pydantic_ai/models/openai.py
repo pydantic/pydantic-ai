@@ -1945,13 +1945,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseMcpListToolsCompletedEvent):
                 pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseMcpListToolsFailedEvent):
+            elif isinstance(chunk, responses.ResponseMcpListToolsFailedEvent):  # pragma: no cover
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseMcpCallInProgressEvent):
                 pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseMcpCallFailedEvent):
+            elif isinstance(chunk, responses.ResponseMcpCallFailedEvent):  # pragma: no cover
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseMcpCallCompletedEvent):  # pragma: no cover
