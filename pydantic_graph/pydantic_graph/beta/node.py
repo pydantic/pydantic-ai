@@ -27,10 +27,9 @@ class StartNode(Generic[OutputT]):
     """Entry point node for graph execution.
 
     The StartNode represents the beginning of a graph execution flow.
-    It acts as a fork node since it initiates the execution path(s).
     """
 
-    id = ForkID(NodeID('__start__'))
+    id = NodeID('__start__')
     """Fixed identifier for the start node."""
 
 
