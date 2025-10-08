@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, TypeAlias, cast, overload
 
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
@@ -874,7 +874,9 @@ def _map_mcp_server_use_block(item: BetaMCPToolUseBlock, provider_name: str) -> 
     )
 
 
-mcp_server_result_content_ta: TypeAdapter[Any] = TypeAdapter(Any)
+BetaMCPToolResultBlockContent: TypeAlias = str | list[BetaTextBlock]
+
+mcp_server_result_content_ta: TypeAdapter[BetaMCPToolResultBlockContent] = TypeAdapter(BetaMCPToolResultBlockContent)
 
 
 def _map_mcp_server_result_block(item: BetaMCPToolResultBlock, provider_name: str) -> BuiltinToolReturnPart:
