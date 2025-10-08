@@ -22,6 +22,7 @@ from pydantic_ai import (
     AgentStreamEvent,
     AudioUrl,
     BinaryContent,
+    BinaryImage,
     CombinedToolset,
     DocumentUrl,
     FunctionToolset,
@@ -53,7 +54,6 @@ from pydantic_ai._output import (
     OutputSpec,
     PromptedOutput,
     TextOutput,
-    TextOutputSchema,
     ToolOutputSchema,
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
@@ -80,6 +80,14 @@ def test_result_tuple():
 
     result = agent.run_sync('Hello')
     assert result.output == ('foo', 'bar')
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())],
+            usage=RequestUsage(input_tokens=51, output_tokens=7),
+            model_name='function:return_tuple:',
+            timestamp=IsDatetime(),
+        )
+    )
 
 
 class Person(BaseModel):
@@ -341,7 +349,7 @@ def test_plain_response_then_tuple():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Plain text responses are not permitted, please include your response in a tool call',
+                        content='Please include your response in a tool call.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     )
@@ -351,7 +359,7 @@ def test_plain_response_then_tuple():
                 parts=[
                     ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())
                 ],
-                usage=RequestUsage(input_tokens=74, output_tokens=8),
+                usage=RequestUsage(input_tokens=68, output_tokens=8),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -396,6 +404,14 @@ def test_output_tool_return_content_str_return():
 
     result = agent.run_sync('Hello')
     assert result.output == 'success (no tool calls)'
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='success (no tool calls)')],
+            usage=RequestUsage(input_tokens=51, output_tokens=4),
+            model_name='test',
+            timestamp=IsDatetime(),
+        )
+    )
 
     msg = re.escape('Cannot set output tool return content when the return type is `str`.')
     with pytest.raises(ValueError, match=msg):
@@ -491,7 +507,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
         got_tool_call_name = ctx.tool_name
         return o
 
-    assert isinstance(agent._output_schema, TextOutputSchema)  # pyright: ignore[reportPrivateUsage]
+    assert agent._output_schema.allows_text  # pyright: ignore[reportPrivateUsage]
 
     result = agent.run_sync('Hello')
     assert isinstance(result.output, str)
@@ -1006,7 +1022,7 @@ def test_output_type_text_output_invalid():
     def int_func(x: int) -> str:
         return str(int)  # pragma: no cover
 
-    with pytest.raises(UserError, match='TextOutput must take a function taking a `str`'):
+    with pytest.raises(UserError, match='TextOutput must take a function taking a single `str` argument'):
         output_type: TextOutput[str] = TextOutput(int_func)  # type: ignore
         Agent('test', output_type=output_type)
 
@@ -2522,6 +2538,14 @@ async def test_agent_name_changes():
     assert new_agent.name == 'my_agent'
 
 
+def test_agent_name_override():
+    agent = Agent('test', name='custom_name')
+
+    with agent.override(name='overridden_name'):
+        agent.run_sync('Hello')
+        assert agent.name == 'overridden_name'
+
+
 def test_name_from_global(create_module: Callable[[str], Any]):
     module_code = """
 from pydantic_ai import Agent
@@ -3522,18 +3546,17 @@ def test_tool_return_part_binary_content_serialization():
 
     tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
 
-    response_str = tool_return.model_response_str()
-
-    assert '"kind":"binary"' in response_str
-    assert '"media_type":"image/png"' in response_str
-    assert '"data":"' in response_str
-    assert '"identifier":"14a01a"' in response_str
-
-    response_obj = tool_return.model_response_object()
-    assert response_obj['return_value']['kind'] == 'binary'
-    assert response_obj['return_value']['media_type'] == 'image/png'
-    assert response_obj['return_value']['identifier'] == '14a01a'
-    assert 'data' in response_obj['return_value']
+    assert tool_return.model_response_object() == snapshot(
+        {
+            'return_value': {
+                'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzgAAAAASUVORK5CYII=',
+                'media_type': 'image/png',
+                'vendor_metadata': None,
+                '_identifier': None,
+                'kind': 'binary',
+            }
+        }
+    )
 
 
 def test_tool_returning_binary_content_directly():
@@ -3925,12 +3948,17 @@ def test_unsupported_output_mode():
 
     agent = Agent(model, output_type=NativeOutput(Foo))
 
-    with pytest.raises(UserError, match='Native structured output is not supported by the model.'):
+    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
         agent.run_sync('Hello')
 
     agent = Agent(model, output_type=ToolOutput(Foo))
 
-    with pytest.raises(UserError, match='Output tools are not supported by the model.'):
+    with pytest.raises(UserError, match='Tool output is not supported by this model.'):
+        agent.run_sync('Hello')
+
+    agent = Agent(model, output_type=BinaryImage)
+
+    with pytest.raises(UserError, match='Image output is not supported by this model.'):
         agent.run_sync('Hello')
 
 
@@ -4746,7 +4774,7 @@ async def test_thinking_only_response_retry():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Responses without text or tool calls are not permitted.',
+                        content='Please return text or call a tool.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -4754,7 +4782,7 @@ async def test_thinking_only_response_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Final answer')],
-                usage=RequestUsage(input_tokens=75, output_tokens=8),
+                usage=RequestUsage(input_tokens=73, output_tokens=8),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
