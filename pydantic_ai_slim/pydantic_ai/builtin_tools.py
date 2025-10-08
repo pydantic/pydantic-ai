@@ -243,15 +243,13 @@ class MCPServerTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses
+    * Anthropic
     """
 
     kind: str = 'mcp_server'
 
     server_label: str
     """The label of the MCP server to use."""
-
-    require_approval: Literal['never', 'always'] | None = None
-    """Whether to require approval before using the MCP server."""
 
     server_url: str
     """The URL of the MCP server to use."""
@@ -272,4 +270,9 @@ class MCPServerTool(AbstractBuiltinTool):
     """
 
     connector_id: str | None = None
-    """The ID of the connector to use."""
+    """The ID of the connector to use.
+
+    Supported by:
+
+    * OpenAI Responses
+    """

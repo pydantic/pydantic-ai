@@ -1032,13 +1032,16 @@ class OpenAIResponsesModel(Model):
             elif isinstance(item, responses.ResponseFileSearchToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the FileSearch built-in tool
                 pass
-            elif isinstance(  # pragma: no cover
-                item,
-                responses.response_output_item.McpCall
-                | responses.response_output_item.McpListTools
-                | responses.response_output_item.McpApprovalRequest,
-            ):
-                # Pydantic AI supports MCP natively
+            elif isinstance(item, responses.response_output_item.McpCall):
+                call_part, return_part = _map_mcp_call(item, self.system)
+                items.append(call_part)
+                items.append(return_part)
+            elif isinstance(item, responses.response_output_item.McpListTools):
+                call_part, return_part = _map_mcp_list_tools(item, self.system)
+                items.append(call_part)
+                items.append(return_part)
+            elif isinstance(item, responses.response_output_item.McpApprovalRequest):
+                # Pydantic AI doesn't yet support McpApprovalRequest (explicit tool usage approval)
                 pass
 
         finish_reason: FinishReason | None = None
@@ -1235,7 +1238,7 @@ class OpenAIResponsesModel(Model):
                         server_description=tool.server_description,
                         allowed_tools=tool.allowed_tools,
                         authorization=tool.authorization,
-                        require_approval=tool.require_approval,
+                        require_approval='never',
                         headers=tool.headers,
                     )
                 )
@@ -1760,7 +1763,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk.item, responses.response_output_item.ImageGenerationCall):
                     call_part, _, _ = _map_image_generation_tool_call(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
-
+                elif isinstance(chunk.item, responses.response_output_item.McpCall):
+                    call_part, _ = _map_mcp_call(chunk.item, self.provider_name)
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
+                elif isinstance(chunk.item, responses.response_output_item.McpListTools):
+                    call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
                 else:
                     warnings.warn(  # pragma: no cover
                         f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -1799,6 +1807,25 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     _, return_part, file_part = _map_image_generation_tool_call(chunk.item, self.provider_name)
                     if file_part:  # pragma: no branch
                         yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-file', part=file_part)
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
+
+                elif isinstance(chunk.item, responses.response_output_item.McpCall):
+                    call_part, return_part = _map_mcp_call(chunk.item, self.provider_name)
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=f'{chunk.item.id}-call',
+                        args=call_part.args,
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
+                elif isinstance(chunk.item, responses.response_output_item.McpListTools):
+                    call_part, return_part = _map_mcp_list_tools(chunk.item, self.provider_name)
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=f'{chunk.item.id}-call',
+                        args=call_part.args,
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
@@ -1894,6 +1921,33 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     id=chunk.item_id,
                 )
                 yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item_id}-file', part=file_part)
+
+            elif isinstance(chunk, responses.ResponseMcpCallArgumentsDeltaEvent):
+                maybe_event = self._parts_manager.handle_text_delta(
+                    vendor_part_id=chunk.item_id, content=chunk.delta, id=chunk.item_id
+                )
+                if maybe_event is not None:  # pragma: no branch
+                    yield maybe_event
+            elif isinstance(chunk, responses.ResponseMcpCallArgumentsDoneEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseMcpListToolsInProgressEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseMcpListToolsCompletedEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseMcpListToolsFailedEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseMcpCallInProgressEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseMcpCallFailedEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseMcpCallCompletedEvent):
+                pass  # there's nothing we need to do here
 
             else:  # pragma: no cover
                 warnings.warn(
@@ -2105,4 +2159,60 @@ def _map_image_generation_tool_call(
             provider_name=provider_name,
         ),
         file_part,
+    )
+
+
+def _map_mcp_list_tools(
+    item: responses.response_output_item.McpListTools, provider_name: str
+) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
+    result = {
+        'server_label': item.server_label,
+        'tools': [
+            {
+                'name': tool.name,
+                'description': tool.description,
+                'input_schema': tool.input_schema,
+            }
+            for tool in item.tools
+        ],
+    }
+
+    return (
+        BuiltinToolCallPart(
+            tool_name=MCPServerTool.kind,
+            tool_call_id=item.id,
+            provider_name=provider_name,
+        ),
+        BuiltinToolReturnPart(
+            tool_name=MCPServerTool.kind,
+            tool_call_id=item.id,
+            content=result,
+            provider_name=provider_name,
+        ),
+    )
+
+
+def _map_mcp_call(
+    item: responses.response_output_item.McpCall, provider_name: str
+) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
+    result = {
+        'name': item.name,
+        'server_label': item.server_label,
+        'arguments': item.arguments,
+        'error': item.error,
+        'output': item.output,
+    }
+
+    return (
+        BuiltinToolCallPart(
+            tool_name=MCPServerTool.kind,
+            tool_call_id=item.id,
+            provider_name=provider_name,
+        ),
+        BuiltinToolReturnPart(
+            tool_name=MCPServerTool.kind,
+            tool_call_id=item.id,
+            content=result,
+            provider_name=provider_name,
+        ),
     )

@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
-from ..builtin_tools import CodeExecutionTool, MemoryTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
@@ -82,6 +82,8 @@ try:
         BetaRawMessageStreamEvent,
         BetaRedactedThinkingBlock,
         BetaRedactedThinkingBlockParam,
+        BetaRequestMCPServerToolConfigurationParam,
+        BetaRequestMCPServerURLDefinitionParam,
         BetaServerToolUseBlock,
         BetaServerToolUseBlockParam,
         BetaSignatureDelta,
@@ -265,6 +267,7 @@ class AnthropicModel(Model):
         # standalone function to make it easier to override
         tools = self._get_tools(model_request_parameters)
         tools, beta_features = self._add_builtin_tools(tools, model_request_parameters)
+        mcp_servers = self._get_mcp_servers(model_request_parameters)
 
         tool_choice: BetaToolChoiceParam | None
 
@@ -300,6 +303,7 @@ class AnthropicModel(Model):
                 model=self._model_name,
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
+                mcp_servers=mcp_servers or OMIT,
                 stream=stream,
                 thinking=model_settings.get('anthropic_thinking', OMIT),
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
@@ -407,11 +411,39 @@ class AnthropicModel(Model):
                 tools = [tool for tool in tools if tool['name'] != 'memory']
                 tools.append(BetaMemoryTool20250818Param(name='memory', type='memory_20250818'))
                 beta_features.append('context-management-2025-06-27')
+            elif isinstance(tool, MCPServerTool):
+                # Anthropic MCP servers are a separate parameter in the API call
+                pass
             else:  # pragma: no cover
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
         return tools, beta_features
+
+    def _get_mcp_servers(
+        self, model_request_parameters: ModelRequestParameters
+    ) -> list[BetaRequestMCPServerURLDefinitionParam]:
+        mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, MCPServerTool):
+                tool_configuration = (
+                    BetaRequestMCPServerToolConfigurationParam(
+                        enabled=True,
+                        allowed_tools=tool.allowed_tools,
+                    )
+                    if tool.allowed_tools
+                    else None
+                )
+                mcp_servers.append(
+                    BetaRequestMCPServerURLDefinitionParam(
+                        type='url',
+                        name=tool.server_label,
+                        url=tool.server_url,
+                        authorization_token=tool.authorization,
+                        tool_configuration=tool_configuration,
+                    )
+                )
+        return mcp_servers
 
     async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[BetaMessageParam]]:  # noqa: C901
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
