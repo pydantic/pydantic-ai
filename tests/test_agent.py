@@ -3545,18 +3545,17 @@ def test_tool_return_part_binary_content_serialization():
 
     tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
 
-    response_str = tool_return.model_response_str()
-
-    assert '"kind":"binary"' in response_str
-    assert '"media_type":"image/png"' in response_str
-    assert '"data":"' in response_str
-    assert '"identifier":"14a01a"' in response_str
-
-    response_obj = tool_return.model_response_object()
-    assert response_obj['return_value']['kind'] == 'binary'
-    assert response_obj['return_value']['media_type'] == 'image/png'
-    assert response_obj['return_value']['identifier'] == '14a01a'
-    assert 'data' in response_obj['return_value']
+    assert tool_return.model_response_object() == snapshot(
+        {
+            'return_value': {
+                'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzgAAAAASUVORK5CYII=',
+                'media_type': 'image/png',
+                'vendor_metadata': None,
+                '_identifier': None,
+                'kind': 'binary',
+            }
+        }
+    )
 
 
 def test_tool_returning_binary_content_directly():
