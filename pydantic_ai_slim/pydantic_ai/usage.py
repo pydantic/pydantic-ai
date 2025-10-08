@@ -3,8 +3,9 @@ from __future__ import annotations as _annotations
 import dataclasses
 from copy import copy
 from dataclasses import dataclass, fields
-from typing import Annotated
+from typing import Annotated, Any
 
+from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field
 from typing_extensions import deprecated, overload
 
@@ -119,6 +120,14 @@ class RequestUsage(UsageBase):
         new_usage = copy(self)
         new_usage.incr(other)
         return new_usage
+
+    @classmethod
+    def extract(
+        cls, data: Any, *, provider_id: str, api_flavor: str | None = None, details: dict[str, Any] | None = None
+    ) -> RequestUsage:
+        provider = get_snapshot().find_provider(None, provider_id, None)
+        _model_ref, extracted_usage = provider.extract_usage(data, api_flavor=api_flavor)
+        return cls(**{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details or {})
 
 
 @dataclass(repr=False, kw_only=True)

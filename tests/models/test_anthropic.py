@@ -1730,14 +1730,14 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
 def test_usage(
     message_callback: Callable[[], BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent], usage: RunUsage
 ):
-    assert _map_usage(message_callback(), 'anthropic', 'claude-sonnet-4-5') == usage
+    assert _map_usage(message_callback(), 'anthropic', 'unknown') == usage
 
 
 def test_streaming_usage():
     start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
-    initial_usage = _map_usage(start, 'anthropic', 'claude-sonnet-4-5')
+    initial_usage = _map_usage(start, 'anthropic', 'unknown')
     delta = BetaRawMessageDeltaEvent(delta=Delta(), usage=BetaMessageDeltaUsage(output_tokens=5), type='message_delta')
-    final_usage = _map_usage(delta, 'anthropic', 'claude-sonnet-4-5', existing_usage=initial_usage)
+    final_usage = _map_usage(delta, 'anthropic', 'unknown', existing_usage=initial_usage)
     assert final_usage == snapshot(
         RequestUsage(input_tokens=1, output_tokens=5, details={'input_tokens': 1, 'output_tokens': 5})
     )

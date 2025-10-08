@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 
-from genai_prices import extract_usage
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
@@ -638,12 +637,7 @@ def _map_usage(
         key: value for key, value in response_usage.model_dump().items() if isinstance(value, int)
     }
 
-    extracted_usage = extract_usage(dict(model=model, usage=details), provider_id=provider)
-
-    return usage.RequestUsage(
-        **{key: value for key, value in extracted_usage.usage.__dict__.items() if isinstance(value, int)},
-        details=details,
-    )
+    return usage.RequestUsage.extract(dict(model=model, usage=details), provider_id=provider, details=details)
 
 
 @dataclass
