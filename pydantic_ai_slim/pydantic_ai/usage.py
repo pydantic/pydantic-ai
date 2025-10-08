@@ -125,9 +125,13 @@ class RequestUsage(UsageBase):
     def extract(
         cls, data: Any, *, provider_id: str, api_flavor: str | None = None, details: dict[str, Any] | None = None
     ) -> RequestUsage:
-        provider = get_snapshot().find_provider(None, provider_id, None)
-        _model_ref, extracted_usage = provider.extract_usage(data, api_flavor=api_flavor)
-        return cls(**{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details or {})
+        details = details or {}
+        try:
+            provider = get_snapshot().find_provider(None, provider_id, None)
+            _model_ref, extracted_usage = provider.extract_usage(data, api_flavor=api_flavor)
+            return cls(**{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details)
+        except Exception:
+            return cls(details=details)
 
 
 @dataclass(repr=False, kw_only=True)
