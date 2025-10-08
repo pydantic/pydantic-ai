@@ -123,7 +123,8 @@ Here's an example showcasing parallel execution with a map operation:
 ```python {title="parallel_processing.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import reduce_list_append
 
 
 @dataclass
@@ -147,7 +148,7 @@ async def main():
         return ctx.inputs * ctx.inputs
 
     # Create a join to collect results
-    collect_results = g.join(ListAppendReducer[int])
+    collect_results = g.join(reduce_list_append, initial_factory=list[int])
 
     # Build the graph with map operation
     g.add(

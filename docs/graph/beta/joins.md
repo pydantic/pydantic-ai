@@ -1,3 +1,5 @@
+from mypyc.primitives.float_ops import int_to_float_op
+
 # Joins and Reducers
 
 Join nodes synchronize and aggregate data from parallel execution paths. They use **Reducers** to combine multiple inputs into a single output.
@@ -12,12 +14,13 @@ When you use [parallel execution](parallel.md) (broadcasting or mapping), you of
 
 ## Creating Joins
 
-Create a join using [`g.join()`][pydantic_graph.beta.graph_builder.GraphBuilder.join] with a reducer type:
+Create a join using [`g.join()`][pydantic_graph.beta.graph_builder.GraphBuilder.join] with a reducer function and initial value or factory:
 
 ```python {title="basic_join.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import reduce_list_append
 
 
 @dataclass
@@ -36,7 +39,7 @@ async def square(ctx: StepContext[SimpleState, None, int]) -> int:
     return ctx.inputs * ctx.inputs
 
 # Create a join to collect all squared values
-collect = g.join(ListAppendReducer[int])
+collect = g.join(reduce_list_append, initial_factory=list[int])
 
 g.add(
     g.edge_from(g.start_node).to(generate_numbers),
@@ -66,7 +69,8 @@ Pydantic Graph provides several common reducer types out of the box:
 ```python {title="list_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import reduce_list_append
 
 
 @dataclass
@@ -85,7 +89,7 @@ async def main():
     async def to_string(ctx: StepContext[SimpleState, None, int]) -> str:
         return f'value-{ctx.inputs}'
 
-    collect = g.join(ListAppendReducer[str])
+    collect = g.join(reduce_list_append, initial_factory=list[str])
 
     g.add(
         g.edge_from(g.start_node).to(generate),
@@ -109,7 +113,8 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 ```python {title="dict_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import DictUpdateReducer, GraphBuilder, StepContext
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import reduce_dict_update
 
 
 @dataclass
@@ -128,7 +133,7 @@ async def main():
     async def create_entry(ctx: StepContext[SimpleState, None, str]) -> dict[str, int]:
         return {ctx.inputs: len(ctx.inputs)}
 
-    merge = g.join(DictUpdateReducer[str, int])
+    merge = g.join(reduce_dict_update, initial_factory=dict[str, int])
 
     g.add(
         g.edge_from(g.start_node).to(generate_keys),
@@ -153,7 +158,8 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 ```python {title="null_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, NullReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import reduce_null
 
 
 @dataclass
@@ -174,7 +180,7 @@ async def main():
         return ctx.inputs
 
     # We don't care about the outputs, only the side effect on state
-    ignore = g.join(NullReducer)
+    ignore = g.join(reduce_null, initial=None)
 
     @g.step
     async def get_total(ctx: StepContext[CounterState, None, None]) -> int:
@@ -199,46 +205,30 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 ## Custom Reducers
 
-Create custom reducers by subclassing [`Reducer`][pydantic_graph.beta.join.Reducer]:
+Create custom reducers by defining a [`ReducerFunction`][pydantic_graph.beta.join.ReducerFunction]:
 
 ```python {title="custom_reducer.py"}
-from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, Reducer, StepContext
-
-
-@dataclass
-class SimpleState:
-    pass
+from pydantic_graph.beta import GraphBuilder, StepContext
 
 
-@dataclass(init=False)
-class SumReducer(Reducer[SimpleState, None, int, int]):
-    """Reducer that sums all input values."""
-
-    total: int = 0
-
-    def reduce(self, ctx: StepContext[SimpleState, None, int]) -> None:
-        """Called for each input - accumulate the sum."""
-        self.total += ctx.inputs
-
-    def finalize(self, ctx: StepContext[SimpleState, None, None]) -> int:
-        """Called after all inputs - return the final result."""
-        return self.total
+def reduce_sum(current: int, inputs: int) -> int:
+    """A reducer that sums numbers."""
+    return current + inputs
 
 
 async def main():
-    g = GraphBuilder(state_type=SimpleState, output_type=int)
+    g = GraphBuilder(output_type=int)
 
     @g.step
-    async def generate(ctx: StepContext[SimpleState, None, None]) -> list[int]:
+    async def generate(ctx: StepContext[None, None, None]) -> list[int]:
         return [5, 10, 15, 20]
 
     @g.step
-    async def identity(ctx: StepContext[SimpleState, None, int]) -> int:
+    async def identity(ctx: StepContext[None, None, int]) -> int:
         return ctx.inputs
 
-    sum_join = g.join(SumReducer)
+    sum_join = g.join(reduce_sum, initial=0)
 
     g.add(
         g.edge_from(g.start_node).to(generate),
@@ -248,19 +238,12 @@ async def main():
     )
 
     graph = g.build()
-    result = await graph.run(state=SimpleState())
+    result = await graph.run()
     print(result)
     #> 50
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
-
-### Reducer Lifecycle
-
-Reducers have two key methods:
-
-1. **`reduce(ctx)`** - Called for each input from parallel paths. Use this to accumulate data.
-2. **`finalize(ctx)`** - Called once after all inputs are received. Return the final aggregated value.
 
 ## Reducers with State Access
 
@@ -269,53 +252,66 @@ Reducers can access and modify the graph state:
 ```python {title="stateful_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, Reducer, StepContext
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import ReducerContext
 
 
 @dataclass
 class MetricsState:
-    items_processed: int = 0
-    sum_total: int = 0
+    total_count: int = 0
+    total_sum: int = 0
 
 
-@dataclass(init=False)
-class MetricsReducer(Reducer[MetricsState, None, int, dict[str, int]]):
-    """Reducer that tracks processing metrics in state."""
-
+@dataclass
+class ReducedMetrics:
     count: int = 0
-    total: int = 0
+    sum: int = 0
 
-    def reduce(self, ctx: StepContext[MetricsState, None, int]) -> None:
-        self.count += 1
-        self.total += ctx.inputs
-        ctx.state.items_processed += 1
-        ctx.state.sum_total += ctx.inputs
 
-    def finalize(self, ctx: StepContext[MetricsState, None, None]) -> dict[str, int]:
-        return {
-            'count': self.count,
-            'total': self.total,
-        }
+def reduce_metrics_sum(ctx: ReducerContext[MetricsState, None], current: ReducedMetrics, inputs: int) -> ReducedMetrics:
+    ctx.state.total_count += 1
+    ctx.state.total_sum += inputs
+    return ReducedMetrics(count=current.count + 1, sum=current.sum + inputs)
+
+def reduce_metrics_max(current: ReducedMetrics, inputs: ReducedMetrics) -> ReducedMetrics:
+    return ReducedMetrics(count=max(current.count, inputs.count), sum=max(current.sum, inputs.sum))
 
 
 async def main():
     g = GraphBuilder(state_type=MetricsState, output_type=dict[str, int])
 
     @g.step
-    async def generate(ctx: StepContext[MetricsState, None, None]) -> list[int]:
-        return [10, 20, 30, 40]
+    async def generate(ctx: StepContext[object, None, None]) -> list[int]:
+        return [1, 3, 5, 7, 9, 10, 20, 30, 40]
 
     @g.step
-    async def process(ctx: StepContext[MetricsState, None, int]) -> int:
+    async def process_even(ctx: StepContext[MetricsState, None, int]) -> int:
         return ctx.inputs * 2
 
-    metrics = g.join(MetricsReducer)
+    @g.step
+    async def process_odd(ctx: StepContext[MetricsState, None, int]) -> int:
+        return ctx.inputs * 3
+
+    metrics_even = g.join(reduce_metrics_sum, initial_factory=ReducedMetrics, node_id='metrics_even')
+    metrics_odd = g.join(reduce_metrics_sum, initial_factory=ReducedMetrics, node_id='metrics_odd')
+    metrics_max = g.join(reduce_metrics_max, initial_factory=ReducedMetrics, node_id='metrics_max')
 
     g.add(
         g.edge_from(g.start_node).to(generate),
-        g.edge_from(generate).map().to(process),
-        g.edge_from(process).to(metrics),
-        g.edge_from(metrics).to(g.end_node),
+        # Send even and odd numbers to their respective `process` steps
+        g.edge_from(generate).map().to(
+            g.decision()
+            .branch(g.match(int, matches=lambda x: x % 2 == 0).label('even').to(process_even))
+            .branch(g.match(int, matches=lambda x: x % 2 == 1).label('odd').to(process_odd))
+        ),
+        # Reduce metrics for even and odd numbers separately
+        g.edge_from(process_even).to(metrics_even),
+        g.edge_from(process_odd).to(metrics_odd),
+        # Aggregate the max values for each field
+        g.edge_from(metrics_even).to(metrics_max),
+        g.edge_from(metrics_odd).to(metrics_max),
+        # Finish the graph run with the final reduced value
+        g.edge_from(metrics_max).to(g.end_node),
     )
 
     graph = g.build()
@@ -323,11 +319,14 @@ async def main():
     result = await graph.run(state=state)
 
     print(f'Result: {result}')
-    #> Result: {'count': 4, 'total': 200}
-    print(f'State items_processed: {state.items_processed}')
-    #> State items_processed: 4
-    print(f'State sum_total: {state.sum_total}')
-    #> State sum_total: 200
+    #> Result: ReducedMetrics(count=5, sum=200)
+    # > Result: {'count': 4, 'total': 200}
+    print(f'State total_count: {state.total_count}')
+    #> State total_count: 9
+    # > State items_processed: 4
+    print(f'State total_sum: {state.total_sum}')
+    #> State total_sum: 275
+    # > State sum_total: 200
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
@@ -339,7 +338,8 @@ A graph can have multiple independent joins:
 ```python {title="multiple_joins.py"}
 from dataclasses import dataclass, field
 
-from pydantic_graph.beta import GraphBuilder, ListAppendReducer, StepContext
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import reduce_list_append
 
 
 @dataclass
@@ -366,8 +366,8 @@ async def main():
     async def process_b(ctx: StepContext[MultiState, None, int]) -> int:
         return ctx.inputs * 3
 
-    join_a = g.join(ListAppendReducer[int], node_id='join_a')
-    join_b = g.join(ListAppendReducer[int], node_id='join_b')
+    join_a = g.join(reduce_list_append, initial_factory=list[int], node_id='join_a')
+    join_b = g.join(reduce_list_append, initial_factory=list[int], node_id='join_b')
 
     @g.step
     async def store_a(ctx: StepContext[MultiState, None, list[int]]) -> None:
@@ -412,11 +412,11 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 Like steps, joins can have custom IDs:
 
 ```python {title="join_custom_id.py" requires="basic_join.py"}
-from pydantic_graph.beta import ListAppendReducer
+from pydantic_graph.beta.join import reduce_list_append
 
 from basic_join import g
 
-my_join = g.join(ListAppendReducer[int], node_id='my_custom_join_id')
+my_join = g.join(reduce_list_append, initial_factory=list[int], node_id='my_custom_join_id')
 ```
 
 ## How Joins Work
