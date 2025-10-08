@@ -875,8 +875,8 @@ async def test_tool_local_yield_events() -> None:
             {'type': 'CUSTOM', 'name': 'custom_event2', 'value': {'key2': 'value2'}},
             {
                 'type': 'TOOL_CALL_RESULT',
-                'messageId': '8dd33273-d2f5-4e02-8483-8311f0a1cafe',
-                'toolCallId': 'pyd_ai_219dd870d6e94958a1fca56df511fba4',
+                'messageId': IsStr(),
+                'toolCallId': tool_call_id,
                 'content': 'Done',
                 'role': 'tool',
             },
