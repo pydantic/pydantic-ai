@@ -936,12 +936,11 @@ async def test_early_strategy_with_deferred_tool_call():
     )
 
     @agent.tool_plain
-    def deferred_tool() -> int:  # pragma: no cover
+    def deferred_tool() -> int:
         raise CallDeferred
 
     @agent.tool_plain
-    def regular_tool(x: int) -> int:  # pragma: no cover
-        """A regular tool that should not be called."""
+    def regular_tool(x: int) -> int:
         tool_called.append('regular_tool')
         return x
 
