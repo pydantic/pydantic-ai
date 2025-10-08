@@ -417,3 +417,7 @@ async def test_parallel_tool_calls_limit_enforced():
 
     # Only the first batch of 5 tools should have executed
     assert len(executed_tools) == 5
+
+
+def test_usage_unknown_provider():
+    assert RequestUsage.extract({}, provider='unknown', provider_url='', provider_fallback='') == RequestUsage()
