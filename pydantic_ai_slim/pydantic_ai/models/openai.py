@@ -1928,19 +1928,19 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
-            elif isinstance(chunk, responses.ResponseMcpCallArgumentsDoneEvent):
+            elif isinstance(chunk, responses.ResponseMcpCallArgumentsDoneEvent):  # pragma: no cover
                 pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseMcpListToolsInProgressEvent):
+            elif isinstance(chunk, responses.ResponseMcpListToolsInProgressEvent):  # pragma: no cover
                 pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseMcpListToolsCompletedEvent):
+            elif isinstance(chunk, responses.ResponseMcpListToolsCompletedEvent):  # pragma: no cover
                 pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseMcpListToolsFailedEvent):
+            elif isinstance(chunk, responses.ResponseMcpListToolsFailedEvent):  # pragma: no cover
                 pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseMcpCallInProgressEvent):
+            elif isinstance(chunk, responses.ResponseMcpCallInProgressEvent):  # pragma: no cover
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseMcpCallFailedEvent):  # pragma: no cover
