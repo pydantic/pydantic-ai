@@ -41,7 +41,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.builtin_tools import CodeExecutionTool, MemoryTool, WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -3046,6 +3046,225 @@ So for today, you can expect partly sunny to sunny skies with a\
                         },
                     ],
                     tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                )
+            ),
+        ]
+    )
+
+
+async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    agent = Agent(
+        m,
+        builtin_tools=[
+            MCPServerTool(
+                server_label='test-server',
+                server_url='https://example.com/mcp',
+                server_description='Game registry server',
+                authorization='',
+            )
+        ],
+        model_settings=settings,
+    )
+
+    result = await agent.run('What games do I have?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='What games do I have?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user is asking what games they have. I have a function available called "test-server_get_my_games" that returns a list of the user\'s favorite games. This seems like the appropriate function to call to answer their question. The function doesn\'t require any parameters according to the schema, so I can call it directly.',
+                        signature=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content="I'll check what games you have by looking up your game list."),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server',
+                        tool_call_id='mcptoolu_01TwwBu8ALMaffJS5riJmE8r',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content=[{'citations': None, 'text': '["Lies of P","Bloodborne","Sekiro"]', 'type': 'text'}],
+                        tool_call_id='mcptoolu_01TwwBu8ALMaffJS5riJmE8r',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content="Based on your game library, you have these games:\n\n1. **Lies of P** - A dark fantasy soulslike game inspired by Pinocchio\n2. **Bloodborne** - FromSoftware's gothic horror action RPG\n3. **Sekiro** - FromSoftware's ninja-themed action-adventure game\n\nIt looks like you have a great collection of challenging action games, particularly from the soulslike genre!"
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=965,
+                    output_tokens=234,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 965,
+                        'output_tokens': 234,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01T1PQHnUHVDevzQSm91GmVP',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    agent = Agent(
+        m,
+        builtin_tools=[
+            MCPServerTool(
+                server_label='test-server',
+                server_url='https://example.com/mcp',
+                server_description='Game registry server',
+                authorization='',
+            )
+        ],
+        model_settings=settings,
+    )
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='What games do I have?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    messages = agent_run.result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='What games do I have?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="The user is asking about their games. I have a function called `test-server_get_my_games` that returns a list of the user's favorite games. This function doesn't require any parameters, so I can call it directly.",
+                        signature=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server',
+                        args='',
+                        tool_call_id='mcptoolu_01WaYLgtwyroxT1CQWGFfTTy',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content=[{'citations': None, 'text': '["Lies of P","Bloodborne","Sekiro"]', 'type': 'text'}],
+                        tool_call_id='mcptoolu_01WaYLgtwyroxT1CQWGFfTTy',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content='You have the following games:\n1. Lies of P\n2. Bloodborne\n3. Sekiro\n\nThese are all excellent action games known for their challenging combat! It looks like you have a strong preference for souls-like and FromSoftware titles.'
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=1297,
+                    output_tokens=161,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 1297,
+                        'output_tokens': 161,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_012dGSyGXMqFnc6yNfYPq9Qe',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta='The user is asking about their games', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta='. I have a function called `test-server_', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta='get_my_games` that returns', provider_name='anthropic')
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta=" a list of the user's favorite games. This function doesn't require any parameters,",
+                    provider_name='anthropic',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' so I can call it directly.', provider_name='anthropic')
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta=IsStr(), provider_name='anthropic')),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server', tool_call_id='mcptoolu_01WaYLgtwyroxT1CQWGFfTTy', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='mcptoolu_01WaYLgtwyroxT1CQWGFfTTy')
+            ),
+            PartStartEvent(
+                index=2,
+                part=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content=[{'citations': None, 'text': '["Lies of P","Bloodborne","Sekiro"]', 'type': 'text'}],
+                    tool_call_id='mcptoolu_01WaYLgtwyroxT1CQWGFfTTy',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                ),
+            ),
+            PartStartEvent(index=3, part=TextPart(content='You')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' have the following games:\n1. Lies')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' of P\n2. Bloodborne')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='\n3. Sekiro\n\nThese')),
+            PartDeltaEvent(
+                index=3,
+                delta=TextPartDelta(content_delta=' are all excellent action games known for their challenging combat'),
+            ),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='! It looks like you have a strong preference')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' for souls-like and FromSoftware titles')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='.')),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server',
+                    args='',
+                    tool_call_id='mcptoolu_01WaYLgtwyroxT1CQWGFfTTy',
+                    provider_name='anthropic',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content=[{'citations': None, 'text': '["Lies of P","Bloodborne","Sekiro"]', 'type': 'text'}],
+                    tool_call_id='mcptoolu_01WaYLgtwyroxT1CQWGFfTTy',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )

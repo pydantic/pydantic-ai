@@ -68,6 +68,8 @@ try:
         BetaContentBlockParam,
         BetaImageBlockParam,
         BetaInputJSONDelta,
+        BetaMCPToolResultBlock,
+        BetaMCPToolUseBlock,
         BetaMemoryTool20250818Param,
         BetaMessage,
         BetaMessageParam,
@@ -267,7 +269,7 @@ class AnthropicModel(Model):
         # standalone function to make it easier to override
         tools = self._get_tools(model_request_parameters)
         tools, beta_features = self._add_builtin_tools(tools, model_request_parameters)
-        mcp_servers = self._get_mcp_servers(model_request_parameters)
+        mcp_servers, beta_features = self._get_mcp_servers(model_request_parameters, beta_features)
 
         tool_choice: BetaToolChoiceParam | None
 
@@ -323,6 +325,8 @@ class AnthropicModel(Model):
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
         for item in response.content:
+            from anthropic.types.beta import BetaMCPToolUseBlock
+
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
             elif isinstance(item, BetaServerToolUseBlock):
@@ -337,6 +341,10 @@ class AnthropicModel(Model):
                 )
             elif isinstance(item, BetaThinkingBlock):
                 items.append(ThinkingPart(content=item.thinking, signature=item.signature, provider_name=self.system))
+            elif isinstance(item, BetaMCPToolUseBlock):
+                items.append(_map_mcp_server_use_block(item, self.system))
+            elif isinstance(item, BetaMCPToolResultBlock):
+                items.append(_map_mcp_server_result_block(item, self.system))
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
                 items.append(
@@ -421,18 +429,14 @@ class AnthropicModel(Model):
         return tools, beta_features
 
     def _get_mcp_servers(
-        self, model_request_parameters: ModelRequestParameters
-    ) -> list[BetaRequestMCPServerURLDefinitionParam]:
+        self, model_request_parameters: ModelRequestParameters, beta_features: list[str]
+    ) -> tuple[list[BetaRequestMCPServerURLDefinitionParam], list[str]]:
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, MCPServerTool):
-                tool_configuration = (
-                    BetaRequestMCPServerToolConfigurationParam(
-                        enabled=True,
-                        allowed_tools=tool.allowed_tools,
-                    )
-                    if tool.allowed_tools
-                    else None
+                tool_configuration = BetaRequestMCPServerToolConfigurationParam(
+                    enabled=True,
+                    allowed_tools=tool.allowed_tools,
                 )
                 mcp_servers.append(
                     BetaRequestMCPServerURLDefinitionParam(
@@ -443,7 +447,8 @@ class AnthropicModel(Model):
                         tool_configuration=tool_configuration,
                     )
                 )
-        return mcp_servers
+                beta_features.append('mcp-client-2025-04-04')
+        return mcp_servers, beta_features
 
     async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[BetaMessageParam]]:  # noqa: C901
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
@@ -743,6 +748,16 @@ class AnthropicStreamedResponse(StreamedResponse):
                         vendor_part_id=event.index,
                         part=_map_code_execution_tool_result_block(current_block, self.provider_name),
                     )
+                elif isinstance(current_block, BetaMCPToolUseBlock):
+                    yield self._parts_manager.handle_part(
+                        vendor_part_id=event.index,
+                        part=_map_mcp_server_use_block(current_block, self.provider_name),
+                    )
+                elif isinstance(current_block, BetaMCPToolResultBlock):
+                    yield self._parts_manager.handle_part(
+                        vendor_part_id=event.index,
+                        part=_map_mcp_server_result_block(current_block, self.provider_name),
+                    )
 
             elif isinstance(event, BetaRawContentBlockDeltaEvent):
                 if isinstance(event.delta, BetaTextDelta):
@@ -846,5 +861,23 @@ def _map_code_execution_tool_result_block(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
         content=code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
+        tool_call_id=item.tool_use_id,
+    )
+
+
+def _map_mcp_server_use_block(item: BetaMCPToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
+    return BuiltinToolCallPart(
+        provider_name=provider_name,
+        tool_name=MCPServerTool.kind,
+        args=cast(dict[str, Any], item.input) or None,
+        tool_call_id=item.id,
+    )
+
+
+def _map_mcp_server_result_block(item: BetaMCPToolResultBlock, provider_name: str) -> BuiltinToolReturnPart:
+    return BuiltinToolReturnPart(
+        provider_name=provider_name,
+        tool_name=CodeExecutionTool.kind,
+        content=item.content,
         tool_call_id=item.tool_use_id,
     )
