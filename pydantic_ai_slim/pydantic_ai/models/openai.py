@@ -597,7 +597,7 @@ class OpenAIChatModel(Model):
 
         return ModelResponse(
             parts=items,
-            usage=_map_usage(response),
+            usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
             model_name=response.model,
             timestamp=timestamp,
             provider_details=vendor_details or None,
@@ -628,6 +628,7 @@ class OpenAIChatModel(Model):
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.created),
             _provider_name=self._provider.name,
+            _provider_url=self._provider.base_url,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -1053,7 +1054,7 @@ class OpenAIResponsesModel(Model):
 
         return ModelResponse(
             parts=items,
-            usage=_map_usage(response),
+            usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
             model_name=response.model,
             provider_response_id=response.id,
             timestamp=timestamp,
@@ -1080,6 +1081,7 @@ class OpenAIResponsesModel(Model):
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.response.created_at),
             _provider_name=self._provider.name,
+            _provider_url=self._provider.base_url,
         )
 
     @overload
@@ -1580,10 +1582,11 @@ class OpenAIStreamedResponse(StreamedResponse):
     _response: AsyncIterable[ChatCompletionChunk]
     _timestamp: datetime
     _provider_name: str
+    _provider_url: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
-            self._usage += _map_usage(chunk)
+            self._usage += _map_usage(chunk, self.provider_name, 'TODO', self._model_name)
 
             if chunk.id:  # pragma: no branch
                 self.provider_response_id = chunk.id
@@ -1674,12 +1677,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _response: AsyncIterable[responses.ResponseStreamEvent]
     _timestamp: datetime
     _provider_name: str
+    _provider_url: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for chunk in self._response:
             # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
             if isinstance(chunk, responses.ResponseCompletedEvent):
-                self._usage += _map_usage(chunk.response)
+                self._usage += self._map_usage(chunk.response)
 
                 raw_finish_reason = (
                     details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
@@ -1699,7 +1703,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     self.provider_response_id = chunk.response.id
 
             elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover
-                self._usage += _map_usage(chunk.response)
+                self._usage += self._map_usage(chunk.response)
 
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -1713,10 +1717,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
-                self._usage += _map_usage(chunk.response)
+                self._usage += self._map_usage(chunk.response)
 
             elif isinstance(chunk, responses.ResponseInProgressEvent):
-                self._usage += _map_usage(chunk.response)
+                self._usage += self._map_usage(chunk.response)
 
             elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):
                 if isinstance(chunk.item, responses.ResponseFunctionToolCall):
@@ -1896,6 +1900,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     UserWarning,
                 )
 
+    def _map_usage(self, response: responses.Response):
+        return _map_usage(response, self.provider_name, self._provider_url, self._model_name)
+
     @property
     def model_name(self) -> OpenAIModelName:
         """Get the model name of the response."""
@@ -1912,55 +1919,45 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.Response) -> usage.RequestUsage:
+def _map_usage(
+    response: chat.ChatCompletion | ChatCompletionChunk | responses.Response,
+    provider: str,
+    provider_url: str,
+    model: str,
+) -> usage.RequestUsage:
     response_usage = response.usage
     if response_usage is None:
         return usage.RequestUsage()
-    elif isinstance(response_usage, responses.ResponseUsage):
-        details: dict[str, int] = {
-            key: value
-            for key, value in response_usage.model_dump(
-                exclude={'input_tokens', 'output_tokens', 'total_tokens'}
-            ).items()
-            if isinstance(value, int)
-        }
-        # Handle vLLM compatibility - some providers don't include token details
-        if getattr(response_usage, 'input_tokens_details', None) is not None:
-            cache_read_tokens = response_usage.input_tokens_details.cached_tokens
-        else:
-            cache_read_tokens = 0
+
+    usage_data = {key: value for key, value in response_usage.model_dump(exclude_none=True).items()}
+    details = {
+        k: v
+        for k, v in usage_data.items()
+        if k not in {'prompt_tokens', 'completion_tokens', 'input_tokens', 'output_tokens', 'total_tokens'}
+        if isinstance(v, int)
+    }
+    response_data = dict(model=model, usage=usage_data)
+    if isinstance(response_usage, responses.ResponseUsage):
+        api_flavor = 'responses'
 
         if getattr(response_usage, 'output_tokens_details', None) is not None:
             details['reasoning_tokens'] = response_usage.output_tokens_details.reasoning_tokens
         else:
             details['reasoning_tokens'] = 0
-
-        return usage.RequestUsage(
-            input_tokens=response_usage.input_tokens,
-            output_tokens=response_usage.output_tokens,
-            cache_read_tokens=cache_read_tokens,
-            details=details,
-        )
     else:
-        details = {
-            key: value
-            for key, value in response_usage.model_dump(
-                exclude_none=True, exclude={'prompt_tokens', 'completion_tokens', 'total_tokens'}
-            ).items()
-            if isinstance(value, int)
-        }
-        u = usage.RequestUsage(
-            input_tokens=response_usage.prompt_tokens,
-            output_tokens=response_usage.completion_tokens,
-            details=details,
-        )
+        api_flavor = 'chat'
+
         if response_usage.completion_tokens_details is not None:
             details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
-            u.output_audio_tokens = response_usage.completion_tokens_details.audio_tokens or 0
-        if response_usage.prompt_tokens_details is not None:
-            u.input_audio_tokens = response_usage.prompt_tokens_details.audio_tokens or 0
-            u.cache_read_tokens = response_usage.prompt_tokens_details.cached_tokens or 0
-        return u
+
+    return usage.RequestUsage.extract(
+        response_data,
+        provider=provider,
+        provider_url=provider_url,
+        provider_fallback='openai',
+        api_flavor=api_flavor,
+        details=details,
+    )
 
 
 def _combine_tool_call_ids(call_id: str, id: str | None) -> str:
