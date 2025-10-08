@@ -62,6 +62,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import StructuredDict, ToolOutput
 from pydantic_ai.result import RunUsage
+from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
@@ -5620,6 +5621,31 @@ def test_agent_builtin_tools_runtime_additional():
 
     with pytest.raises(Exception, match='TestModel does not support built-in tools'):
         agent.run_sync('Hello', builtin_tools=[web_search_tool])
+
+    assert model.last_model_request_parameters is not None
+    assert len(model.last_model_request_parameters.builtin_tools) == 1
+    assert model.last_model_request_parameters.builtin_tools[0] == web_search_tool
+
+
+async def test_agent_builtin_tools_run_stream_events():
+    """Test that Agent.run_stream_events accepts builtin_tools parameter."""
+    model = TestModel()
+    agent = Agent(model=model, builtin_tools=[])
+
+    # Test with empty builtin_tools
+    events = [event async for event in agent.run_stream_events('Hello', builtin_tools=[])]
+
+    assert len(events) >= 2
+    assert isinstance(events[-1], AgentRunResultEvent)
+    assert events[-1].result.output == 'success (no tool calls)'
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.builtin_tools == []
+
+    # Test with builtin tool
+    web_search_tool = WebSearchTool()
+    with pytest.raises(Exception, match='TestModel does not support built-in tools'):
+        events = [event async for event in agent.run_stream_events('Hello', builtin_tools=[web_search_tool])]
 
     assert model.last_model_request_parameters is not None
     assert len(model.last_model_request_parameters.builtin_tools) == 1
