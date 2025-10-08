@@ -20,7 +20,7 @@ from ..tools import (
     ToolFuncEither,
 )
 from ..toolsets import AbstractToolset
-from .abstract import AbstractAgent, EventStreamHandler, RunOutputDataT
+from .abstract import AbstractAgent, EventStreamHandler, Instructions, RunOutputDataT
 
 
 class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
@@ -72,7 +72,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -89,7 +89,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -106,7 +106,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -210,21 +210,32 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
     def override(
         self,
         *,
+        name: str | _utils.Unset = _utils.UNSET,
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
-        """Context manager to temporarily override agent dependencies, model, toolsets, or tools.
+        """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
 
         Args:
+            name: The name to use instead of the name passed to the agent constructor and agent run.
             deps: The dependencies to use instead of the dependencies passed to the agent run.
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
+            instructions: The instructions to use instead of the instructions registered with the agent.
         """
-        with self.wrapped.override(deps=deps, model=model, toolsets=toolsets, tools=tools):
+        with self.wrapped.override(
+            name=name,
+            deps=deps,
+            model=model,
+            toolsets=toolsets,
+            tools=tools,
+            instructions=instructions,
+        ):
             yield

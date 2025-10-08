@@ -7,8 +7,8 @@ from asgi_lifespan import LifespanManager
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -86,12 +86,11 @@ async def test_a2a_pydantic_model_output():
             task_id = result['id']
 
             # Wait for completion
-            await anyio.sleep(0.1)
-            task = await a2a_client.get_task(task_id)
-
-            assert 'result' in task
-            result = task['result']
-            assert result['status']['state'] == 'completed'
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] == 'completed':
+                    result = task['result']
+                    break
+                await anyio.sleep(0.1)
 
             # Check artifacts
             assert 'artifacts' in result
@@ -198,6 +197,7 @@ async def test_a2a_simple():
                 if 'result' in task and task['result']['status']['state'] == 'completed':
                     break
                 await anyio.sleep(0.1)
+
             assert task == snapshot(
                 {
                     'jsonrpc': '2.0',

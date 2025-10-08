@@ -19,6 +19,7 @@ from typing import Any
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    BuiltinToolCallPart,
     ModelResponsePart,
     ModelResponseStreamEvent,
     PartDeltaEvent,
@@ -226,11 +227,11 @@ class ModelResponsePartsManager:
         self,
         *,
         vendor_part_id: Hashable | None,
-        tool_name: str | None,
-        args: str | dict[str, Any] | None,
-        tool_call_id: str | None,
+        tool_name: str | None = None,
+        args: str | dict[str, Any] | None = None,
+        tool_call_id: str | None = None,
     ) -> ModelResponseStreamEvent | None:
-        """Handle or update a tool call, creating or updating a `ToolCallPart` or `ToolCallPartDelta`.
+        """Handle or update a tool call, creating or updating a `ToolCallPart`, `BuiltinToolCallPart`, or `ToolCallPartDelta`.
 
         Managed items remain as `ToolCallPartDelta`s until they have at least a tool_name, at which
         point they are upgraded to `ToolCallPart`s.
@@ -247,15 +248,17 @@ class ModelResponsePartsManager:
             tool_call_id: An optional string representing an identifier for this tool call.
 
         Returns:
-            - A `PartStartEvent` if a new ToolCallPart is created.
+            - A `PartStartEvent` if a new ToolCallPart or BuiltinToolCallPart is created.
             - A `PartDeltaEvent` if an existing part is updated.
             - `None` if no new event is emitted (e.g., the part is still incomplete).
 
         Raises:
             UnexpectedModelBehavior: If attempting to apply a tool call delta to a part that is not
-                a ToolCallPart or ToolCallPartDelta.
+                a ToolCallPart, BuiltinToolCallPart, or ToolCallPartDelta.
         """
-        existing_matching_part_and_index: tuple[ToolCallPartDelta | ToolCallPart, int] | None = None
+        existing_matching_part_and_index: tuple[ToolCallPartDelta | ToolCallPart | BuiltinToolCallPart, int] | None = (
+            None
+        )
 
         if vendor_part_id is None:
             # vendor_part_id is None, so check if the latest part is a matching tool call or delta to update
@@ -264,14 +267,14 @@ class ModelResponsePartsManager:
             if tool_name is None and self._parts:
                 part_index = len(self._parts) - 1
                 latest_part = self._parts[part_index]
-                if isinstance(latest_part, ToolCallPart | ToolCallPartDelta):  # pragma: no branch
+                if isinstance(latest_part, ToolCallPart | BuiltinToolCallPart | ToolCallPartDelta):  # pragma: no branch
                     existing_matching_part_and_index = latest_part, part_index
         else:
             # vendor_part_id is provided, so look up the corresponding part or delta
             part_index = self._vendor_id_to_part_index.get(vendor_part_id)
             if part_index is not None:
                 existing_part = self._parts[part_index]
-                if not isinstance(existing_part, ToolCallPartDelta | ToolCallPart):
+                if not isinstance(existing_part, ToolCallPartDelta | ToolCallPart | BuiltinToolCallPart):
                     raise UnexpectedModelBehavior(f'Cannot apply a tool call delta to {existing_part=}')
                 existing_matching_part_and_index = existing_part, part_index
 
@@ -284,7 +287,7 @@ class ModelResponsePartsManager:
             new_part_index = len(self._parts)
             self._parts.append(part)
             # Only emit a PartStartEvent if we have enough information to produce a full ToolCallPart
-            if isinstance(part, ToolCallPart):
+            if isinstance(part, ToolCallPart | BuiltinToolCallPart):
                 return PartStartEvent(index=new_part_index, part=part)
         else:
             # Update the existing part or delta with the new information
@@ -292,7 +295,7 @@ class ModelResponsePartsManager:
             delta = ToolCallPartDelta(tool_name_delta=tool_name, args_delta=args, tool_call_id=tool_call_id)
             updated_part = delta.apply(existing_part)
             self._parts[part_index] = updated_part
-            if isinstance(updated_part, ToolCallPart):
+            if isinstance(updated_part, ToolCallPart | BuiltinToolCallPart):
                 if isinstance(existing_part, ToolCallPartDelta):
                     # We just upgraded a delta to a full part, so emit a PartStartEvent
                     return PartStartEvent(index=part_index, part=updated_part)
@@ -337,7 +340,7 @@ class ModelResponsePartsManager:
         else:
             # vendor_part_id is provided, so find and overwrite or create a new ToolCallPart.
             maybe_part_index = self._vendor_id_to_part_index.get(vendor_part_id)
-            if maybe_part_index is not None:
+            if maybe_part_index is not None and isinstance(self._parts[maybe_part_index], ToolCallPart):
                 new_part_index = maybe_part_index
                 self._parts[new_part_index] = new_part
             else:
@@ -345,3 +348,36 @@ class ModelResponsePartsManager:
                 self._parts.append(new_part)
             self._vendor_id_to_part_index[vendor_part_id] = new_part_index
         return PartStartEvent(index=new_part_index, part=new_part)
+
+    def handle_part(
+        self,
+        *,
+        vendor_part_id: Hashable | None,
+        part: ModelResponsePart,
+    ) -> ModelResponseStreamEvent:
+        """Create or overwrite a ModelResponsePart.
+
+        Args:
+            vendor_part_id: The vendor's ID for this tool call part. If not
+                None and an existing part is found, that part is overwritten.
+            part: The ModelResponsePart.
+
+        Returns:
+            ModelResponseStreamEvent: A `PartStartEvent` indicating that a new part
+            has been added to the manager, or replaced an existing part.
+        """
+        if vendor_part_id is None:
+            # vendor_part_id is None, so we unconditionally append a new part to the end of the list
+            new_part_index = len(self._parts)
+            self._parts.append(part)
+        else:
+            # vendor_part_id is provided, so find and overwrite or create a new part.
+            maybe_part_index = self._vendor_id_to_part_index.get(vendor_part_id)
+            if maybe_part_index is not None and isinstance(self._parts[maybe_part_index], type(part)):
+                new_part_index = maybe_part_index
+                self._parts[new_part_index] = part
+            else:
+                new_part_index = len(self._parts)
+                self._parts.append(part)
+            self._vendor_id_to_part_index[vendor_part_id] = new_part_index
+        return PartStartEvent(index=new_part_index, part=part)

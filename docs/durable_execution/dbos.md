@@ -123,11 +123,11 @@ Other than that, any agent and toolset will just work!
 
 ### Agent Run Context and Dependencies
 
-DBOS checkpoints workflow inputs/outputs and step outputs into a database using `jsonpickle`. This means you need to make sure [dependencies](../dependencies.md) object provided to [`DBOSAgent.run()`][pydantic_ai.durable_exec.dbos.DBOSAgent.run] or [`DBOSAgent.run_sync()`][pydantic_ai.durable_exec.dbos.DBOSAgent.run_sync], and tool outputs can be serialized using jsonpickle. You may also want to keep the inputs and outputs small (under \~2 MB). PostgreSQL and SQLite support up to 1 GB per field, but large objects may impact performance.
+DBOS checkpoints workflow inputs/outputs and step outputs into a database using [`pickle`](https://docs.python.org/3/library/pickle.html). This means you need to make sure [dependencies](../dependencies.md) object provided to [`DBOSAgent.run()`][pydantic_ai.durable_exec.dbos.DBOSAgent.run] or [`DBOSAgent.run_sync()`][pydantic_ai.durable_exec.dbos.DBOSAgent.run_sync], and tool outputs can be serialized using pickle. You may also want to keep the inputs and outputs small (under \~2 MB). PostgreSQL and SQLite support up to 1 GB per field, but large objects may impact performance.
 
 ### Streaming
 
-Because DBOS cannot stream output directly to the workflow or step call site, [`Agent.run_stream()`][pydantic_ai.Agent.run_stream] is not supported when running inside of a DBOS workflow.
+Because DBOS cannot stream output directly to the workflow or step call site, [`Agent.run_stream()`][pydantic_ai.Agent.run_stream] and [`Agent.run_stream_events()`][pydantic_ai.Agent.run_stream_events] are not supported when running inside of a DBOS workflow.
 
 Instead, you can implement streaming by setting an [`event_stream_handler`][pydantic_ai.agent.EventStreamHandler] on the `Agent` or `DBOSAgent` instance and using [`DBOSAgent.run()`][pydantic_ai.durable_exec.dbos.DBOSAgent.run].
 The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agents.md#streaming-all-events).
@@ -153,21 +153,6 @@ You can customize DBOS's retry policy using [step configuration](#step-configura
 
 ## Observability with Logfire
 
-When using [Pydantic Logfire](../logfire.md), we **recommend disabling DBOS's built-in OpenTelemetry tracing**.
-DBOS automatically wraps workflow and step execution in spans, while Pydantic AI and Logfire already emit spans for the same function calls, model requests, and tool invocations. Without disabling DBOS tracing, these operations may appear twice in your trace tree.
+DBOS can be configured to generate OpenTelemetry spans for each workflow and step execution, and Pydantic AI emits spans for each agent run, model request, and tool invocation. You can send these spans to [Pydantic Logfire](../logfire.md) to get a full, end-to-end view of what's happening in your application.
 
-To disable DBOS traces and logs, you can set `disable_otlp=True` in `DBOSConfig`. For example:
-
-
-```python {title="dbos_no_traces.py" test="skip"}
-from dbos import DBOS, DBOSConfig
-
-dbos_config: DBOSConfig = {
-    'name': 'pydantic_dbos_agent',
-    'system_database_url': 'sqlite:///dbostest.sqlite',
-    'disable_otlp': True  # (1)!
-}
-DBOS(config=dbos_config)
-```
-
-1. If `True`, disables OpenTelemetry tracing and logging for DBOS. Default is `False`.
+For more information about DBOS logging and tracing, please see the [DBOS docs](https://docs.dbos.dev/python/tutorials/logging-and-tracing) for details.

@@ -148,8 +148,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
         Example:
         ```python
-        from pydantic_ai import Agent, RunContext
-        from pydantic_ai.toolsets.function import FunctionToolset
+        from pydantic_ai import Agent, FunctionToolset, RunContext
 
         toolset = FunctionToolset()
 
@@ -309,7 +308,13 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for original_name, tool in self.tools.items():
-            run_context = replace(ctx, tool_name=original_name, retry=ctx.retries.get(original_name, 0))
+            max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
+            run_context = replace(
+                ctx,
+                tool_name=original_name,
+                retry=ctx.retries.get(original_name, 0),
+                max_retries=max_retries,
+            )
             tool_def = await tool.prepare_tool_def(run_context)
             if not tool_def:
                 continue
@@ -324,7 +329,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tools[new_name] = FunctionToolsetTool(
                 toolset=self,
                 tool_def=tool_def,
-                max_retries=tool.max_retries if tool.max_retries is not None else self.max_retries,
+                max_retries=max_retries,
                 args_validator=tool.function_schema.validator,
                 call_func=tool.function_schema.call,
                 is_async=tool.function_schema.is_async,

@@ -10,20 +10,23 @@ import pytest
 from inline_snapshot import snapshot
 from typing_extensions import Self
 
+from pydantic_ai import (
+    AbstractToolset,
+    CombinedToolset,
+    FilteredToolset,
+    FunctionToolset,
+    PrefixedToolset,
+    PreparedToolset,
+    ToolCallPart,
+    ToolsetTool,
+    WrapperToolset,
+)
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
-from pydantic_ai.toolsets.combined import CombinedToolset
-from pydantic_ai.toolsets.filtered import FilteredToolset
-from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.toolsets.prefixed import PrefixedToolset
-from pydantic_ai.toolsets.prepared import PreparedToolset
-from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio

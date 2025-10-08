@@ -13,27 +13,31 @@ from inline_snapshot import snapshot
 from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict
 
-from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior, UserError
-from pydantic_ai.builtin_tools import WebSearchTool
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     AudioUrl,
     BinaryContent,
     DocumentUrl,
     ImageUrl,
+    ModelHTTPError,
+    ModelProfile,
     ModelRequest,
     ModelResponse,
+    ModelRetry,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UnexpectedModelBehavior,
+    UserError,
     UserPromptPart,
 )
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
@@ -170,6 +174,27 @@ async def test_request_simple_usage(allow_model_requests: None):
             output_tokens=1,
         )
     )
+
+
+async def test_openai_chat_image_detail_vendor_metadata(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionMessage(content='done', role='assistant'),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    image_url = ImageUrl('https://example.com/image.png', vendor_metadata={'detail': 'high'})
+    binary_image = BinaryContent(b'\x89PNG', media_type='image/png', vendor_metadata={'detail': 'high'})
+
+    await agent.run(['Describe these inputs.', image_url, binary_image])
+
+    request_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    image_parts = [
+        item['image_url'] for item in request_kwargs[0]['messages'][0]['content'] if item['type'] == 'image_url'
+    ]
+    assert image_parts
+    assert all(part['detail'] == 'high' for part in image_parts)
 
 
 async def test_request_structured_response(allow_model_requests: None):
@@ -397,8 +422,11 @@ async def test_stream_text(allow_model_requests: None):
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
+    first_chunk = text_chunk('hello ')
+    # Test that we get the model name from a later chunk if it is not set on the first one, like on Azure OpenAI with content filter enabled.
+    first_chunk.model = ''
     stream = [
-        text_chunk('hello '),
+        first_chunk,
         text_chunk('world'),
         text_chunk('.', finish_reason='stop'),
     ]
@@ -603,17 +631,6 @@ async def test_stream_text_empty_think_tag_and_text_before_tool_call(allow_model
     assert await result.get_output() == snapshot({'first': 'One', 'second': 'Two'})
 
 
-async def test_no_content(allow_model_requests: None):
-    stream = [chunk([ChoiceDelta()]), chunk([ChoiceDelta()])]
-    mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
-        async with agent.run_stream(''):
-            pass
-
-
 async def test_no_delta(allow_model_requests: None):
     stream = [
         chunk([]),
@@ -785,6 +802,40 @@ async def test_image_url_input(allow_model_requests: None):
             }
         ]
     )
+
+
+async def test_image_url_input_force_download(allow_model_requests: None, openai_api_key: str):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIChatModel('gpt-4.1-nano', provider=provider)
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'What is this vegetable?',
+            ImageUrl(
+                force_download=True,
+                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+            ),
+        ]
+    )
+    assert result.output == snapshot('This vegetable is a potato.')
+
+
+async def test_image_url_input_force_download_response_api(allow_model_requests: None, openai_api_key: str):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIResponsesModel('gpt-4.1-nano', provider=provider)
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'What is this vegetable?',
+            ImageUrl(
+                force_download=True,
+                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+            ),
+        ]
+    )
+    assert result.output == snapshot('This is a potato.')
 
 
 async def test_openai_audio_url_input(allow_model_requests: None, openai_api_key: str):
@@ -1027,6 +1078,30 @@ async def test_document_as_binary_content_input(
 
     result = await agent.run(['What is the main content on this document?', document_content])
     assert result.output == snapshot('The main content of the document is "Dummy PDF file."')
+
+
+async def test_text_document_url_input(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    document_url = DocumentUrl(url='https://www.w3.org/TR/2003/REC-PNG-20031110/iso_8859-1.txt')
+
+    result = await agent.run(['What is the main content on this document, in one sentence?', document_url])
+    assert result.output == snapshot(
+        'The document lists the graphical characters defined by ISO 8859-1 (1987) with their hexadecimal codes and descriptions.'
+    )
+
+
+async def test_text_document_as_binary_content_input(
+    allow_model_requests: None, text_document_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['What is the main content on this document?', text_document_content])
+    assert result.output == snapshot(
+        'The main content of the document is simply the text "Dummy TXT file." It does not appear to contain any other detailed information.'
+    )
 
 
 async def test_document_as_binary_content_input_with_tool(
@@ -2867,6 +2942,22 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     response_message = messages[1]
     assert isinstance(response_message, ModelResponse)
     assert response_message.timestamp == IsNow(tz=timezone.utc)
+
+
+async def test_process_response_no_finish_reason(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionMessage(content='world', role='assistant'),
+    )
+    c.choices[0].finish_reason = None  # type: ignore
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+    result = await agent.run('Hello')
+    messages = result.all_messages()
+    response_message = messages[1]
+    assert isinstance(response_message, ModelResponse)
+    assert response_message.finish_reason == 'stop'
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:

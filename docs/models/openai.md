@@ -112,36 +112,45 @@ agent = Agent(model)
 ...
 ```
 
+You can learn more about the differences between the Responses API and Chat Completions API in the [OpenAI API docs](https://platform.openai.com/docs/guides/migrate-to-responses).
+
+### Built-in tools
+
 The Responses API has built-in tools that you can use instead of building your own:
 
 - [Web search](https://platform.openai.com/docs/guides/tools-web-search): allow models to search the web for the latest information before generating a response.
+- [Code interpreter](https://platform.openai.com/docs/guides/tools-code-interpreter): allow models to write and run Python code in a sandboxed environment before generating a response.
 - [File search](https://platform.openai.com/docs/guides/tools-file-search): allow models to search your files for relevant information before generating a response.
 - [Computer use](https://platform.openai.com/docs/guides/tools-computer-use): allow models to use a computer to perform tasks on your behalf.
+- [Image generation](https://platform.openai.com/docs/guides/tools-image-generation): allow models to generate images based on a text prompt.
 
-You can use the `OpenAIResponsesModelSettings` class to make use of those built-in tools:
+Web search and Code interpreter are natively supported through the [Built-in tools](../builtin-tools.md) feature.
 
-```python
-from openai.types.responses import WebSearchToolParam  # (1)!
+Image generation is not currently supported. If you need this feature, please comment on [this issue](https://github.com/pydantic/pydantic-ai/issues/2140).
+
+File search and Computer use can be enabled by passing an [`openai.types.responses.FileSearchToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/file_search_tool_param.py) or [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_builtin_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. They don't currently generate [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for these built-in tools.
+
+```python {title="file_search_tool.py"}
+from openai.types.responses import FileSearchToolParam
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 model_settings = OpenAIResponsesModelSettings(
-    openai_builtin_tools=[WebSearchToolParam(type='web_search_preview')],
+    openai_builtin_tools=[
+        FileSearchToolParam(
+            type='file_search',
+            vector_store_ids=['your-history-book-vector-store-id']
+        )
+    ],
 )
 model = OpenAIResponsesModel('gpt-4o')
 agent = Agent(model=model, model_settings=model_settings)
 
-result = agent.run_sync('What is the weather in Tokyo?')
+result = agent.run_sync('Who was Albert Einstein?')
 print(result.output)
-"""
-As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloudy with a temperature of 53°F (12°C).
-"""
+#> Albert Einstein was a German-born theoretical physicist.
 ```
-
-1. The file search tool and computer use tool can also be imported from `openai.types.responses`.
-
-You can learn more about the differences between the Responses API and Chat Completions API in the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
 
 #### Referencing earlier responses
 
@@ -226,9 +235,8 @@ When using an alternative provider class provided by Pydantic AI, an appropriate
 If the model you're using is not working correctly out of the box, you can tweak various aspects of how model requests are constructed by providing your own [`ModelProfile`][pydantic_ai.profiles.ModelProfile] (for behaviors shared among all model classes) or [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (for behaviors specific to `OpenAIChatModel`):
 
 ```py
-from pydantic_ai import Agent
+from pydantic_ai import Agent, InlineDefsJsonSchemaTransformer
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -285,23 +293,11 @@ agent = Agent(model)
 
 ### Ollama
 
-To use [Ollama](https://ollama.com/), you must first download the Ollama client, and then download a model using the [Ollama model library](https://ollama.com/library).
+Pydantic AI supports both self-hosted [Ollama](https://ollama.com/) servers (running locally or remotely) and [Ollama Cloud](https://ollama.com/cloud) through the [`OllamaProvider`][pydantic_ai.providers.ollama.OllamaProvider].
 
-You must also ensure the Ollama server is running when trying to make requests to it. For more information, please see the [Ollama documentation](https://github.com/ollama/ollama/tree/main/docs).
+The API URL and optional API key can be provided to the `OllamaProvider` using the `base_url` and `api_key` arguments, or the `OLLAMA_BASE_URL` and `OLLAMA_API_KEY` environment variables.
 
-You can then use the model with the [`OllamaProvider`][pydantic_ai.providers.ollama.OllamaProvider].
-
-#### Example local usage
-
-With `ollama` installed, you can run the server with the model you want to use:
-
-```bash
-ollama run llama3.2
-```
-
-(this will pull the `llama3.2` model if you don't already have it downloaded)
-
-Then run your code, here's a minimal example:
+For servers running locally, use the `http://localhost:11434/v1` base URL. For Ollama Cloud, use `https://ollama.com/v1` and ensure an API key is set.
 
 ```python
 from pydantic import BaseModel
@@ -317,8 +313,8 @@ class CityLocation(BaseModel):
 
 
 ollama_model = OpenAIChatModel(
-    model_name='llama3.2',
-    provider=OllamaProvider(base_url='http://localhost:11434/v1'),
+    model_name='gpt-oss:20b',
+    provider=OllamaProvider(base_url='http://localhost:11434/v1'),  # (1)!
 )
 agent = Agent(ollama_model, output_type=CityLocation)
 
@@ -329,37 +325,8 @@ print(result.usage())
 #> RunUsage(input_tokens=57, output_tokens=8, requests=1)
 ```
 
-#### Example using a remote server
+1. For Ollama Cloud, use the `base_url='https://ollama.com/v1'` and set the `OLLAMA_API_KEY` environment variable.
 
-```python
-from pydantic import BaseModel
-
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.ollama import OllamaProvider
-
-ollama_model = OpenAIChatModel(
-    model_name='qwen2.5-coder:7b',  # (1)!
-    provider=OllamaProvider(base_url='http://192.168.1.74:11434/v1'),  # (2)!
-)
-
-
-class CityLocation(BaseModel):
-    city: str
-    country: str
-
-
-agent = Agent(model=ollama_model, output_type=CityLocation)
-
-result = agent.run_sync('Where were the olympics held in 2012?')
-print(result.output)
-#> city='London' country='United Kingdom'
-print(result.usage())
-#> RunUsage(input_tokens=57, output_tokens=8, requests=1)
-```
-
-1. The name of the model running on the remote server
-2. The url of the remote server
 
 ### Azure AI Foundry
 
