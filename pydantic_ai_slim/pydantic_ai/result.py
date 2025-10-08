@@ -67,12 +67,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 except ValidationError:
                     pass
         if self._raw_stream_response.final_result_event is not None:  # pragma: no branch
-            yield await self.validate_response_output(self._raw_stream_response.get())
+            yield await self.validate_response_output(self.response)
 
     async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
         """Asynchronously stream the (unvalidated) model responses for the agent."""
         # if the message currently has any parts with content, yield before streaming
-        msg = self._raw_stream_response.get()
+        msg = self.response
         for part in msg.parts:
             if part.has_content():
                 yield msg
@@ -80,7 +80,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         async with _utils.group_by_temporal(self, debounce_by) as group_iter:
             async for _items in group_iter:
-                yield self._raw_stream_response.get()  # current state of the response
+                yield self.response  # current state of the response
 
     async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
@@ -136,7 +136,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         async for _ in self:
             pass
 
-        return await self.validate_response_output(self._raw_stream_response.get())
+        return await self.validate_response_output(self.response)
 
     async def validate_response_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
@@ -201,7 +201,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             # yields tuples of (text_content, part_index)
             # we don't currently make use of the part_index, but in principle this may be useful
             # so we retain it here for now to make possible future refactors simpler
-            msg = self._raw_stream_response.get()
+            msg = self.response
             for i, part in enumerate(msg.parts):
                 if isinstance(part, _messages.TextPart) and part.content:
                     yield part.content, i

@@ -148,6 +148,10 @@ class DeferredToolRequests:
     approvals: list[ToolCallPart] = field(default_factory=list)
     """Tool calls that require human-in-the-loop approval."""
 
+    @property
+    def tool_call_ids(self) -> list[str]:
+        return [call.tool_call_id for call in [*self.calls, *self.approvals]]
+
 
 @dataclass(kw_only=True)
 class ToolApproved:

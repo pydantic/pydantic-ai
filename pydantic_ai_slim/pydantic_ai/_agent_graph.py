@@ -795,16 +795,21 @@ async def process_tool_calls(  # noqa: C901
     # Then, we handle function tool calls
     calls_to_run: list[_messages.ToolCallPart] = []
     if final_result and ctx.deps.end_strategy == 'early':
-        output_parts.extend(
-            [
+        for call in tool_calls_by_kind['function']:
+            # If the run was already determined to end on deferred tool calls,
+            # we shouldn't insert a return part if this tool was deferred, as it will still get a real result.
+            if (
+                isinstance(final_result.output, _output.DeferredToolRequests)
+                and call.tool_call_id in final_result.output.tool_call_ids
+            ):
+                continue
+            output_parts.append(
                 _messages.ToolReturnPart(
                     tool_name=call.tool_name,
                     content='Tool not executed - a final result was already processed.',
                     tool_call_id=call.tool_call_id,
                 )
-                for call in tool_calls_by_kind['function']
-            ]
-        )
+            )
     else:
         calls_to_run.extend(tool_calls_by_kind['function'])
 
@@ -850,14 +855,17 @@ async def process_tool_calls(  # noqa: C901
     if tool_call_results is None:
         calls = [*tool_calls_by_kind['external'], *tool_calls_by_kind['unapproved']]
         if final_result:
-            for call in calls:
-                output_parts.append(
-                    _messages.ToolReturnPart(
-                        tool_name=call.tool_name,
-                        content='Tool not executed - a final result was already processed.',
-                        tool_call_id=call.tool_call_id,
+            # If the run was already determined to end on deferred tool calls,
+            # we shouldn't insert return parts as the deferred tools will still get a real result.
+            if not isinstance(final_result.output, _output.DeferredToolRequests):
+                for call in calls:
+                    output_parts.append(
+                        _messages.ToolReturnPart(
+                            tool_name=call.tool_name,
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=call.tool_call_id,
+                        )
                     )
-                )
         elif calls:
             deferred_calls['external'].extend(tool_calls_by_kind['external'])
             deferred_calls['unapproved'].extend(tool_calls_by_kind['unapproved'])

@@ -489,7 +489,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
                         if final_result_event is not None:
                             final_result = FinalResult(
-                                stream, final_result_event.tool_name, final_result_event.tool_call_id
+                                None, final_result_event.tool_name, final_result_event.tool_call_id
                             )
                             if yielded:
                                 raise exceptions.AgentRunError('Agent run produced final results')  # pragma: no cover
@@ -503,16 +503,15 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 The model response will have been added to messages by now
                                 by `StreamedRunResult._marked_completed`.
                                 """
-                                last_message = messages[-1]
-                                assert isinstance(last_message, _messages.ModelResponse)
-                                tool_calls = [
-                                    part for part in last_message.parts if isinstance(part, _messages.ToolCallPart)
-                                ]
+                                nonlocal final_result
+                                final_result = FinalResult(
+                                    await stream.get_output(), final_result.tool_name, final_result.tool_call_id
+                                )
 
                                 parts: list[_messages.ModelRequestPart] = []
                                 async for _event in _agent_graph.process_tool_calls(
                                     tool_manager=graph_ctx.deps.tool_manager,
-                                    tool_calls=tool_calls,
+                                    tool_calls=stream.response.tool_calls,
                                     tool_call_results=None,
                                     final_result=final_result,
                                     ctx=graph_ctx,
