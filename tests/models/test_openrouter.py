@@ -2,8 +2,6 @@ from typing import cast
 
 import pytest
 from inline_snapshot import snapshot
-from openai.types.chat import ChatCompletion
-from openai.types.chat.chat_completion import Choice
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRequest, TextPart, ThinkingPart, UnexpectedModelBehavior
 from pydantic_ai.direct import model_request
@@ -11,6 +9,9 @@ from pydantic_ai.direct import model_request
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from openai.types.chat import ChatCompletion
+    from openai.types.chat.chat_completion import Choice
+
     from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -127,7 +128,7 @@ async def test_openrouter_validate_non_json_response(openrouter_api_key: str) ->
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
 
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
-        model._process_response('This is not JSON!')
+        model._process_response('This is not JSON!')  # type: ignore[reportPrivateUsage]
 
     assert str(exc_info.value) == snapshot(
         'Invalid response from OpenRouter chat completions endpoint, expected JSON data'
@@ -139,10 +140,10 @@ async def test_openrouter_validate_error_response(openrouter_api_key: str) -> No
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
 
     response = ChatCompletion.model_construct(model='test')
-    response.error = {'message': 'This response has an error attribute', 'code': 200}
+    response.error = {'message': 'This response has an error attribute', 'code': 200}  # type: ignore[reportAttributeAccessIssue]
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        model._process_response(response)
+        model._process_response(response)  # type: ignore[reportPrivateUsage]
 
     assert str(exc_info.value) == snapshot(
         'status_code: 200, model_name: test, body: This response has an error attribute'
@@ -157,7 +158,7 @@ async def test_openrouter_validate_error_finish_reason(openrouter_api_key: str) 
     response = ChatCompletion.model_construct(choices=[choice])
 
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
-        model._process_response(response)
+        model._process_response(response)  # type: ignore[reportPrivateUsage]
 
     assert str(exc_info.value) == snapshot(
         'Invalid response from OpenRouter chat completions endpoint, error finish_reason without error data'

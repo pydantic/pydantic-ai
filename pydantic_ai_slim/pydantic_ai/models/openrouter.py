@@ -249,7 +249,7 @@ def _verify_response_is_not_error(response: ChatCompletion) -> ChatCompletion:
     else:
         choice = response.choices[0]
 
-        if choice.finish_reason == 'error':
+        if choice.finish_reason == 'error':  # type: ignore[reportUnnecessaryComparison]
             raise UnexpectedModelBehavior(
                 'Invalid response from OpenRouter chat completions endpoint, error finish_reason without error data'
             )
