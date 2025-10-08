@@ -1,0 +1,103 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '92'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Who are you
+        role: user
+      model: z-ai/glm-4.6
+      stream: false
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      content-length:
+      - '3750'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: |2-
+
+
+            I'm GLM, a large language model developed by Zhipu AI. I'm designed to have natural conversations, answer questions, and assist with various tasks through text-based interactions. I've been trained on a diverse range of data to help users with information and creative tasks.
+
+            I continuously learn to improve my capabilities, though I don't store your personal data. Is there something specific you'd like to know about me or how I can help you today?
+          reasoning: |-
+            Let me process this query about who I am. First, I should consider what the user really wants to know - they're likely seeking to understand my identity and capabilities as an AI assistant.
+
+            I need to be clear and accurate about my nature. I'm a GLM large language model developed by Zhipu AI, not a human. This distinction is fundamental to our interaction.
+
+            Looking at my core functions, I should highlight my ability to engage in natural conversations, answer questions, and assist with various tasks. My training involves processing vast amounts of text data, which enables me to understand and generate human-like responses.
+
+            It's important to mention my commitment to being helpful, harmless, and honest. These principles guide my interactions and ensure I provide appropriate assistance.
+
+            I should also emphasize my continuous learning aspect. While I don't store personal data, I'm regularly updated to improve my capabilities and knowledge base.
+
+            The response should be welcoming and encourage further questions about specific areas where I can help. This creates an open dialogue and shows my willingness to assist with various topics.
+
+            Let me structure this information in a clear, friendly manner that addresses the user's question while inviting further interaction.
+          reasoning_details:
+          - format: unknown
+            index: 0
+            text: |-
+              Let me process this query about who I am. First, I should consider what the user really wants to know - they're likely seeking to understand my identity and capabilities as an AI assistant.
+
+              I need to be clear and accurate about my nature. I'm a GLM large language model developed by Zhipu AI, not a human. This distinction is fundamental to our interaction.
+
+              Looking at my core functions, I should highlight my ability to engage in natural conversations, answer questions, and assist with various tasks. My training involves processing vast amounts of text data, which enables me to understand and generate human-like responses.
+
+              It's important to mention my commitment to being helpful, harmless, and honest. These principles guide my interactions and ensure I provide appropriate assistance.
+
+              I should also emphasize my continuous learning aspect. While I don't store personal data, I'm regularly updated to improve my capabilities and knowledge base.
+
+              The response should be welcoming and encourage further questions about specific areas where I can help. This creates an open dialogue and shows my willingness to assist with various topics.
+
+              Let me structure this information in a clear, friendly manner that addresses the user's question while inviting further interaction.
+            type: reasoning.text
+          refusal: null
+          role: assistant
+        native_finish_reason: stop
+      created: 1759944663
+      id: gen-1759944663-AyClfEwG6WFB1puHZNXg
+      model: z-ai/glm-4.6
+      object: chat.completion
+      provider: GMICloud
+      usage:
+        completion_tokens: 331
+        prompt_tokens: 8
+        prompt_tokens_details: null
+        total_tokens: 339
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -2,8 +2,10 @@ from typing import Any, Literal, cast
 
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
+from pydantic import BaseModel
 from typing_extensions import TypedDict
 
+from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
 from ..messages import ModelResponse
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
@@ -104,7 +106,7 @@ Currently only supports 'middle-out', but is expected to grow in the future.
 """
 
 
-class OpenRouterPreferences(TypedDict, total=False):
+class OpenRouterProvider(TypedDict, total=False):
     """Represents the 'Provider' object from the OpenRouter API."""
 
     order: list[OpenRouterSlug]
@@ -134,7 +136,7 @@ class OpenRouterPreferences(TypedDict, total=False):
     sort: Literal['price', 'throughput', 'latency']
     """Sort providers by price or throughput. (e.g. "price" or "throughput"). [See details](https://openrouter.ai/docs/features/provider-routing#provider-sorting)"""
 
-    max_price: OpenRouterMaxprice
+    max_price: OpenRouterMaxPrice
     """The maximum pricing you want to pay for this request. [See details](https://openrouter.ai/docs/features/provider-routing#max-price)"""
 
 
@@ -170,7 +172,7 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     These models will be tried, in order, if the main model returns an error. [See details](https://openrouter.ai/docs/features/model-routing#the-models-parameter)
     """
 
-    openrouter_preferences: OpenRouterPreferences
+    openrouter_provider: OpenRouterProvider
     """OpenRouter routes requests to the best available providers for your model. By default, requests are load balanced across the top providers to maximize uptime.
 
     You can customize how your requests are routed using the provider object. [See more](https://openrouter.ai/docs/features/provider-routing)"""
@@ -193,6 +195,13 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     """
 
 
+class OpenRouterError(BaseModel):
+    """Utility class to validate error messages from OpenRouter."""
+
+    code: int
+    message: str
+
+
 def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSettings) -> OpenAIChatModelSettings:
     """Transforms a 'OpenRouterModelSettings' object into an 'OpenAIChatModelSettings' object.
 
@@ -206,7 +215,7 @@ def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSetti
 
     if models := model_settings.get('openrouter_models'):
         extra_body['models'] = models
-    if provider := model_settings.get('openrouter_preferences'):
+    if provider := model_settings.get('openrouter_provider'):
         extra_body['provider'] = provider
     if preset := model_settings.get('openrouter_preset'):
         extra_body['preset'] = preset
@@ -219,6 +228,33 @@ def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSetti
     new_settings = OpenAIChatModelSettings(**base_data, extra_body=extra_body)
 
     return new_settings
+
+
+def _verify_response_is_not_error(response: ChatCompletion) -> ChatCompletion:
+    """Checks a pre-validation 'ChatCompletion' object for the error attribute.
+
+    Args:
+        response: The 'ChatCompletion' object to validate.
+
+    Returns:
+        The same 'ChatCompletion' object.
+
+    Raises:
+        ModelHTTPError: If the response contains an error attribute.
+        UnexpectedModelBehavior: If the response does not contain an error attribute but contains an 'error' finish_reason.
+    """
+    if openrouter_error := getattr(response, 'error', None):
+        error = OpenRouterError.model_validate(openrouter_error)
+        raise ModelHTTPError(status_code=error.code, model_name=response.model, body=error.message)
+    else:
+        choice = response.choices[0]
+
+        if choice.finish_reason == 'error':
+            raise UnexpectedModelBehavior(
+                'Invalid response from OpenRouter chat completions endpoint, error finish_reason without error data'
+            )
+
+        return response
 
 
 class OpenRouterModel(OpenAIChatModel):
@@ -254,13 +290,27 @@ class OpenRouterModel(OpenAIChatModel):
         return new_settings, customized_parameters
 
     def _process_response(self, response: ChatCompletion | str) -> ModelResponse:
-        model_response = super()._process_response(response=response)
-        response = cast(ChatCompletion, response)  # If above did not raise an error, we can assume response != str
+        if not isinstance(response, ChatCompletion):
+            raise UnexpectedModelBehavior(
+                'Invalid response from OpenRouter chat completions endpoint, expected JSON data'
+            )
 
-        provider_details: dict[str, str] = {}
+        response = _verify_response_is_not_error(response)
+
+        model_response = super()._process_response(response=response)
+
+        provider_details: dict[str, Any] = {}
 
         if openrouter_provider := getattr(response, 'provider', None):  # pragma: lax no cover
             provider_details['downstream_provider'] = openrouter_provider
+
+        choice = response.choices[0]
+
+        if native_finish_reason := getattr(choice, 'native_finish_reason', None):  # pragma: lax no cover
+            provider_details['native_finish_reason'] = native_finish_reason
+
+        if reasoning_details := getattr(choice.message, 'reasoning_details', None):
+            provider_details['reasoning_details'] = reasoning_details
 
         model_response.provider_details = provider_details
 
