@@ -352,7 +352,7 @@ class AnthropicModel(Model):
 
         return ModelResponse(
             parts=items,
-            usage=_map_usage(response, self._provider.name),
+            usage=_map_usage(response, self._provider.name, self._model_name),
             model_name=response.model,
             provider_response_id=response.id,
             provider_name=self._provider.name,
@@ -619,7 +619,8 @@ class AnthropicModel(Model):
 
 def _map_usage(
     message: BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent,
-    provider: str = 'anthropic',
+    provider: str,
+    model: str,
     existing_usage: usage.RequestUsage | None = None,
 ) -> usage.RequestUsage:
     if isinstance(message, BetaMessage):
@@ -637,10 +638,7 @@ def _map_usage(
         key: value for key, value in response_usage.model_dump().items() if isinstance(value, int)
     }
 
-    # `extract_usage` expects a mapping with a `model` and `usage` key.
-    # Not all the actual types of messages here have a model so we just make a dummy message.
-    # We only care about the numbers of tokens etc.
-    extracted_usage = extract_usage(dict(model='claude-sonnet-4-5', usage=details), provider_id=provider)
+    extracted_usage = extract_usage(dict(model=model, usage=details), provider_id=provider)
 
     return usage.RequestUsage(
         **{key: value for key, value in extracted_usage.usage.__dict__.items() if isinstance(value, int)},
@@ -662,7 +660,7 @@ class AnthropicStreamedResponse(StreamedResponse):
 
         async for event in self._response:
             if isinstance(event, BetaRawMessageStartEvent):
-                self._usage = _map_usage(event, self._provider_name)
+                self._usage = _map_usage(event, self._provider_name, self._model_name)
                 self.provider_response_id = event.message.id
 
             elif isinstance(event, BetaRawContentBlockStartEvent):
@@ -743,7 +741,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                     pass
 
             elif isinstance(event, BetaRawMessageDeltaEvent):
-                self._usage = _map_usage(event, self._provider_name, self._usage)
+                self._usage = _map_usage(event, self._provider_name, self._model_name, self._usage)
                 if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
                     self.provider_details = {'finish_reason': raw_finish_reason}
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
