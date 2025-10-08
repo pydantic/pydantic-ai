@@ -7,13 +7,15 @@ from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai.vercel_ai.request_types import (
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+from pydantic_ai.ui.vercel_ai.request_types import (
     SubmitMessage,
     TextUIPart,
     ToolOutputAvailablePart,
     UIMessage,
 )
-from pydantic_ai.vercel_ai.response_types import (
+from pydantic_ai.ui.vercel_ai.response_types import (
+    DoneChunk,
     FinishChunk,
     ReasoningDeltaChunk,
     ReasoningStartChunk,
@@ -23,7 +25,6 @@ from pydantic_ai.vercel_ai.response_types import (
     ToolInputStartChunk,
     ToolOutputAvailableChunk,
 )
-from pydantic_ai.vercel_ai.starlette import DoneChunk, StarletteChat
 
 from .conftest import IsStr
 
@@ -42,7 +43,7 @@ pytestmark = [
 async def test_run(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, builtin_tools=[WebSearchTool()])
-    chat = StarletteChat(agent)
+    adapter = VercelAIAdapter(agent)
 
     data = SubmitMessage(
         trigger='submit-message',
@@ -151,7 +152,7 @@ async def test_run(allow_model_requests: None, openai_api_key: str):
         ],
     )
 
-    events = [event async for event in chat.run(data, None)]
+    events = [event async for event in adapter.run_stream(data, None)]
     assert events == snapshot(
         [
             ReasoningStartChunk(id='d775971d84c848228275a25a097b6409'),

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -47,10 +46,11 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
-from .conftest import IsDatetime, IsSameStr
+from .conftest import IsDatetime, IsSameStr, try_import
 
 has_ag_ui: bool = False
-with contextlib.suppress(ImportError):
+with try_import() as imports_successful:
+    has_ag_ui = imports_successful()
     from ag_ui.core import (
         AssistantMessage,
         CustomEvent,
@@ -72,16 +72,14 @@ with contextlib.suppress(ImportError):
         SSE_CONTENT_TYPE,
         OnCompleteFunc,
         StateDeps,
-        _messages_from_ag_ui,  # type: ignore[reportPrivateUsage]
         run_ag_ui,
     )
-
-    has_ag_ui = True
+    from pydantic_ai.ui.ag_ui.event_stream import protocol_messages_to_pai_messages
 
 
 pytestmark = [
     pytest.mark.anyio,
-    pytest.mark.skipif(not has_ag_ui, reason='ag-ui-protocol not installed'),
+    pytest.mark.skipif(not imports_successful, reason='ag-ui-protocol not installed'),
     pytest.mark.filterwarnings(
         'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
     ),
@@ -1367,7 +1365,7 @@ async def test_callback_with_error() -> None:
     assert any(event['type'] == 'RUN_ERROR' for event in events)
 
 
-async def test_messages_from_ag_ui() -> None:
+async def test_protocol_messages_to_pai_messages() -> None:
     messages = [
         SystemMessage(
             id='msg_1',
@@ -1450,7 +1448,7 @@ async def test_messages_from_ag_ui() -> None:
         ),
     ]
 
-    assert _messages_from_ag_ui(messages) == snapshot(
+    assert protocol_messages_to_pai_messages(messages) == snapshot(
         [
             ModelRequest(
                 parts=[

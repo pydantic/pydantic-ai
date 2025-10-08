@@ -1,19 +1,47 @@
-"""Convert to Python from.
+"""Vercel AI response types (SSE chunks).
 
+Converted to Python from:
 https://github.com/vercel/ai/blob/ai%405.0.34/packages/ai/src/ui/ui-messages.ts
-
-Mostly with Claude.
 """
 
 from typing import Any, Literal
 
 from ._utils import CamelBaseModel, ProviderMetadata
 
+__all__ = [
+    'AbstractSSEChunk',
+    'TextStartChunk',
+    'TextDeltaChunk',
+    'TextEndChunk',
+    'ReasoningStartChunk',
+    'ReasoningDeltaChunk',
+    'ReasoningEndChunk',
+    'ErrorChunk',
+    'ToolInputStartChunk',
+    'ToolInputDeltaChunk',
+    'ToolInputAvailableChunk',
+    'ToolInputErrorChunk',
+    'ToolOutputAvailableChunk',
+    'ToolOutputErrorChunk',
+    'SourceUrlChunk',
+    'SourceDocumentChunk',
+    'FileChunk',
+    'DataUIMessageChunk',
+    'StartStepChunk',
+    'FinishStepChunk',
+    'StartChunk',
+    'FinishChunk',
+    'AbortChunk',
+    'MessageMetadataChunk',
+    'DoneChunk',
+]
+
 
 class AbstractSSEChunk(CamelBaseModel):
-    """Abstract base class for response SSE even."""
+    """Abstract base class for response SSE events."""
 
     def sse(self) -> str:
+        """Encode as SSE format."""
         return self.model_dump_json(exclude_none=True, by_alias=True)
 
 
@@ -74,6 +102,42 @@ class ErrorChunk(AbstractSSEChunk):
     error_text: str
 
 
+class ToolInputStartChunk(AbstractSSEChunk):
+    """Tool input start chunk."""
+
+    type: Literal['tool-input-start'] = 'tool-input-start'
+    tool_call_id: str
+    tool_name: str
+    provider_executed: bool | None = None
+    dynamic: bool | None = None
+
+
+class ToolInputDeltaChunk(AbstractSSEChunk):
+    """Tool input delta chunk."""
+
+    type: Literal['tool-input-delta'] = 'tool-input-delta'
+    tool_call_id: str
+    input_text_delta: str
+
+
+class ToolOutputAvailableChunk(AbstractSSEChunk):
+    """Tool output available chunk."""
+
+    type: Literal['tool-output-available'] = 'tool-output-available'
+    tool_call_id: str
+    output: Any
+    provider_executed: bool | None = None
+    dynamic: bool | None = None
+    preliminary: bool | None = None
+
+
+class FinishChunk(AbstractSSEChunk):
+    """Finish chunk."""
+
+    type: Literal['finish'] = 'finish'
+    message_metadata: Any | None = None
+
+
 class ToolInputAvailableChunk(AbstractSSEChunk):
     """Tool input available chunk."""
 
@@ -99,17 +163,6 @@ class ToolInputErrorChunk(AbstractSSEChunk):
     error_text: str
 
 
-class ToolOutputAvailableChunk(AbstractSSEChunk):
-    """Tool output available chunk."""
-
-    type: Literal['tool-output-available'] = 'tool-output-available'
-    tool_call_id: str
-    output: Any
-    provider_executed: bool | None = None
-    dynamic: bool | None = None
-    preliminary: bool | None = None
-
-
 class ToolOutputErrorChunk(AbstractSSEChunk):
     """Tool output error chunk."""
 
@@ -120,25 +173,6 @@ class ToolOutputErrorChunk(AbstractSSEChunk):
     dynamic: bool | None = None
 
 
-class ToolInputStartChunk(AbstractSSEChunk):
-    """Tool input start chunk."""
-
-    type: Literal['tool-input-start'] = 'tool-input-start'
-    tool_call_id: str
-    tool_name: str
-    provider_executed: bool | None = None
-    dynamic: bool | None = None
-
-
-class ToolInputDeltaChunk(AbstractSSEChunk):
-    """Tool input delta chunk."""
-
-    type: Literal['tool-input-delta'] = 'tool-input-delta'
-    tool_call_id: str
-    input_text_delta: str
-
-
-# Source chunk types
 class SourceUrlChunk(AbstractSSEChunk):
     """Source URL chunk."""
 
@@ -187,19 +221,11 @@ class FinishStepChunk(AbstractSSEChunk):
     type: Literal['finish-step'] = 'finish-step'
 
 
-# Message lifecycle chunk types
 class StartChunk(AbstractSSEChunk):
     """Start chunk."""
 
     type: Literal['start'] = 'start'
     message_id: str | None = None
-    message_metadata: Any | None = None
-
-
-class FinishChunk(AbstractSSEChunk):
-    """Finish chunk."""
-
-    type: Literal['finish'] = 'finish'
     message_metadata: Any | None = None
 
 
@@ -214,3 +240,17 @@ class MessageMetadataChunk(AbstractSSEChunk):
 
     type: Literal['message-metadata'] = 'message-metadata'
     message_metadata: Any
+
+
+class DoneChunk:
+    """Special marker chunk to indicate the end of the SSE stream."""
+
+    def sse(self) -> str:
+        """Encode as SSE done marker."""
+        return '[DONE]'
+
+    def __str__(self) -> str:
+        return 'DoneChunk<marker for the end of sse stream message>'
+
+    def __eq__(self, other: Any) -> bool:
+        return isinstance(other, DoneChunk)
