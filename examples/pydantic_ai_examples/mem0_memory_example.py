@@ -170,7 +170,7 @@ async def example_multi_user():
         'My favorite color is blue and I live in San Francisco.',
         deps=alice,
     )
-    print(f'Alice: My favorite color is blue and I live in San Francisco.')
+    print('Alice: My favorite color is blue and I live in San Francisco.')
     print(f'Agent: {result_alice.output}\n')
 
     # Store Alice's memory
@@ -185,7 +185,7 @@ async def example_multi_user():
         'My favorite color is red and I live in New York.',
         deps=bob,
     )
-    print(f'Bob: My favorite color is red and I live in New York.')
+    print('Bob: My favorite color is red and I live in New York.')
     print(f'Agent: {result_bob.output}\n')
 
     # Store Bob's memory
@@ -199,14 +199,14 @@ async def example_multi_user():
         'What is my favorite color and where do I live?',
         deps=alice,
     )
-    print(f'Alice: What is my favorite color and where do I live?')
+    print('Alice: What is my favorite color and where do I live?')
     print(f'Agent: {result_alice_recall.output}\n')
 
     result_bob_recall = await agent.run(
         'What is my favorite color and where do I live?',
         deps=bob,
     )
-    print(f'Bob: What is my favorite color and where do I live?')
+    print('Bob: What is my favorite color and where do I live?')
     print(f'Agent: {result_bob_recall.output}\n')
 
 
@@ -236,7 +236,7 @@ async def example_session_memory():
         'I want to buy a laptop. My budget is $1500.',
         deps=session1,
     )
-    print(f'[Session 1] User: I want to buy a laptop. My budget is $1500.')
+    print('[Session 1] User: I want to buy a laptop. My budget is $1500.')
     print(f'[Session 1] Agent: {result1.output}\n')
 
     # Store session memory
@@ -251,7 +251,7 @@ async def example_session_memory():
         'What was my budget again?',
         deps=session1,
     )
-    print(f'[Session 1] User: What was my budget again?')
+    print('[Session 1] User: What was my budget again?')
     print(f'[Session 1] Agent: {result2.output}\n')
 
     # Session 2 - different context
@@ -261,7 +261,7 @@ async def example_session_memory():
         'I want to plan a vacation to Japan.',
         deps=session2,
     )
-    print(f'[Session 2] User: I want to plan a vacation to Japan.')
+    print('[Session 2] User: I want to plan a vacation to Japan.')
     print(f'[Session 2] Agent: {result3.output}\n')
 
 
