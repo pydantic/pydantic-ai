@@ -284,6 +284,7 @@ class OpenAIChatModel(Model):
             'together',
             'vercel',
             'litellm',
+            'nebius',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -312,6 +313,7 @@ class OpenAIChatModel(Model):
             'together',
             'vercel',
             'litellm',
+            'nebius',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -339,6 +341,7 @@ class OpenAIChatModel(Model):
             'together',
             'vercel',
             'litellm',
+            'nebius',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -899,7 +902,7 @@ class OpenAIResponsesModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together']
+        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'nebius']
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
