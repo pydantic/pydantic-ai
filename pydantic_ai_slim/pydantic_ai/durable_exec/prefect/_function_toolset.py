@@ -1,21 +1,17 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from prefect import task
 
-from pydantic_ai import FunctionToolset, ToolsetTool, WrapperToolset
+from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai.tools import AgentDepsT, RunContext
 
+from ._toolset import PrefectWrapperToolset
 from ._types import TaskConfig, default_task_config
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
-    from pydantic_ai import AbstractToolset
-
-
-class PrefectFunctionToolset(WrapperToolset[AgentDepsT]):
+class PrefectFunctionToolset(PrefectWrapperToolset[AgentDepsT]):
     """A wrapper for FunctionToolset that integrates with Prefect, turning tool calls into Prefect tasks."""
 
     def __init__(
@@ -39,12 +35,6 @@ class PrefectFunctionToolset(WrapperToolset[AgentDepsT]):
             return await super(PrefectFunctionToolset, self).call_tool(tool_name, tool_args, ctx, tool)
 
         self._call_tool_task = _call_tool_task
-
-    def visit_and_replace(
-        self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
-    ) -> AbstractToolset[AgentDepsT]:
-        # Prefect-ified toolsets cannot be swapped out after the fact.
-        return self
 
     async def call_tool(
         self,

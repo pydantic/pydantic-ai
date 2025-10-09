@@ -227,7 +227,6 @@ Prefect 3.0 provides built-in caching and transactional semantics. Tasks with id
 Prefect provides a built-in UI for monitoring flow runs, task executions, and failures. You can:
 
 * View real-time flow run status
-* Inspect task execution history and outputs
 * Debug failures with full stack traces
 * Set up alerts and notifications
 
@@ -240,6 +239,8 @@ You can also use [Pydantic Logfire](../logfire.md) for detailed observability. W
 
 * **Prefect**: Workflow-level orchestration, task status, and retry history
 * **Logfire**: Fine-grained tracing of agent runs, model requests, and tool invocations
+
+When using Logfire with Prefect, you can enable distributed tracing to see spans for your Prefect runs included with your agent runs, model requests, and tool invocations.
 
 For more information about Prefect monitoring, see the [Prefect documentation](https://docs.prefect.io/).
 

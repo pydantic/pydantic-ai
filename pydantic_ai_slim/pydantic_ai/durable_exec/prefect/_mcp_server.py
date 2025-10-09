@@ -1,22 +1,22 @@
 from __future__ import annotations
 
 from abc import ABC
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from prefect import task
 from typing_extensions import Self
 
-from pydantic_ai import AbstractToolset, ToolsetTool, WrapperToolset
+from pydantic_ai import ToolsetTool
 from pydantic_ai.tools import AgentDepsT, RunContext
 
+from ._toolset import PrefectWrapperToolset
 from ._types import TaskConfig, default_task_config
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPServer, ToolResult
 
 
-class PrefectMCPServer(WrapperToolset[AgentDepsT], ABC):
+class PrefectMCPServer(PrefectWrapperToolset[AgentDepsT], ABC):
     """A wrapper for MCPServer that integrates with Prefect, turning call_tool and get_tools into Prefect tasks."""
 
     def __init__(
@@ -40,22 +40,12 @@ class PrefectMCPServer(WrapperToolset[AgentDepsT], ABC):
 
         self._call_tool_task = _call_tool_task
 
-    @property
-    def id(self) -> str | None:
-        return self.wrapped.id
-
     async def __aenter__(self) -> Self:
         await self.wrapped.__aenter__()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
         return await self.wrapped.__aexit__(*args)
-
-    def visit_and_replace(
-        self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
-    ) -> AbstractToolset[AgentDepsT]:
-        # Prefect-ified toolsets cannot be swapped out after the fact.
-        return self
 
     async def call_tool(
         self,

@@ -4,6 +4,7 @@ from typing import Any, TypeGuard
 from prefect.cache_policies import INPUTS, RUN_ID, TASK_SOURCE, CachePolicy
 from prefect.context import TaskRunContext
 
+from pydantic_ai import ToolsetTool
 from pydantic_ai.tools import RunContext
 
 
@@ -19,11 +20,14 @@ def _is_tuple(obj: Any) -> TypeGuard[tuple[Any, ...]]:
     return isinstance(obj, tuple)
 
 
+def _is_toolset_tool(obj: Any) -> TypeGuard[ToolsetTool]:
+    return isinstance(obj, ToolsetTool)
+
+
 def _replace_run_context(
     inputs: dict[str, Any],
 ) -> Any:
     """Replace RunContext objects with a dict containing only hashable fields."""
-    inputs = inputs.copy()
     for key, value in inputs.items():
         if isinstance(value, RunContext):
             inputs[key] = {
@@ -59,6 +63,17 @@ def _strip_timestamps(
     return obj
 
 
+def _replace_toolsets(
+    inputs: dict[str, Any],
+) -> Any:
+    """Replace Toolset objects with a dict containing only hashable fields."""
+    inputs = inputs.copy()
+    for key, value in inputs.items():
+        if _is_toolset_tool(value):
+            inputs[key] = {field.name: getattr(value, field.name) for field in fields(value) if field.name != 'toolset'}
+    return inputs
+
+
 class PrefectAgentInputs(CachePolicy):
     """Cache policy designed to handle input hashing for PrefectAgent cache keys.
 
@@ -77,7 +92,8 @@ class PrefectAgentInputs(CachePolicy):
         if not inputs:
             return None
 
-        inputs_with_hashable_context = _replace_run_context(inputs)
+        inputs_without_toolsets = _replace_toolsets(inputs)
+        inputs_with_hashable_context = _replace_run_context(inputs_without_toolsets)
         filtered_inputs = _strip_timestamps(inputs_with_hashable_context)
 
         return INPUTS.compute_key(task_ctx, filtered_inputs, flow_parameters, **kwargs)
