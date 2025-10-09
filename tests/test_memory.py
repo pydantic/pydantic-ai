@@ -343,4 +343,3 @@ async def test_memory_provider_protocol():
 
     # Verify it's recognized as a MemoryProvider
     assert isinstance(provider, MemoryProvider)
-
