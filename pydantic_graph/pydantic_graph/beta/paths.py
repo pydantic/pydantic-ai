@@ -277,7 +277,7 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
         return PathBuilder[StateT, DepsT, OutputT](working_items=[*self.working_items, next_item])
 
 
-@dataclass
+@dataclass(init=False)
 class EdgePath(Generic[StateT, DepsT]):
     """A complete edge connecting source nodes to destinations via a path.
 
@@ -285,14 +285,23 @@ class EdgePath(Generic[StateT, DepsT]):
     source nodes, the path that data follows, and the destination nodes.
     """
 
-    sources: Sequence[SourceNode[StateT, DepsT, Any]]
+    _sources: Sequence[SourceNode[StateT, DepsT, Any]]
     """The source nodes that provide data to this edge."""
-
     path: Path
     """The path that data follows through the graph."""
-
     destinations: list[AnyDestinationNode]
     """The destination nodes that can be referenced by DestinationMarker in the path."""
+
+    def __init__(
+        self, sources: Sequence[SourceNode[StateT, DepsT, Any]], path: Path, destinations: list[AnyDestinationNode]
+    ):
+        self._sources = sources
+        self.path = path
+        self.destinations = destinations
+
+    @property
+    def sources(self) -> Sequence[SourceNode[StateT, DepsT, Any]]:
+        return self._sources
 
 
 class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
@@ -308,16 +317,13 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
         OutputT: The type of the current data in the path
     """
 
-    sources: Sequence[SourceNode[StateT, DepsT, Any]]
-    """The source nodes for this edge path."""
-
     def __init__(
         self, sources: Sequence[SourceNode[StateT, DepsT, Any]], path_builder: PathBuilder[StateT, DepsT, OutputT]
     ):
         """Initialize an edge path builder.
 
         Args:
-            sources: The source nodes that provide data
+            sources: The source nodes for this edge path
             path_builder: The path builder for defining the data flow
         """
         self.sources = sources

@@ -59,7 +59,7 @@ OutputT = TypeVar('OutputT', infer_variance=True)
 """Type variable for graph outputs."""
 
 
-@dataclass
+@dataclass(init=False)
 class EndMarker(Generic[OutputT]):
     """A marker indicating the end of graph execution with a final value.
 
@@ -70,8 +70,16 @@ class EndMarker(Generic[OutputT]):
         OutputT: The type of the final output value
     """
 
-    value: OutputT
+    _value: OutputT
     """The final output value from the graph execution."""
+
+    def __init__(self, value: OutputT):
+        # This manually-defined initializer is necessary due to https://github.com/python/mypy/issues/17623.
+        self._value = value
+
+    @property
+    def value(self) -> OutputT:
+        return self._value
 
 
 @dataclass
@@ -491,7 +499,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                         current, downstream_fork_stack
                     )
 
-                context = ReducerContext(state=self.state, deps=self.deps, _join_state=join_state)
+                context = ReducerContext(state=self.state, deps=self.deps, join_state=join_state)
                 join_state.current = join_node.reduce(context, join_state.current, result.inputs)
                 if join_state.cancelled_sibling_tasks:
                     # cancel all concurrently running tasks with the same fork_run_id of the parent fork

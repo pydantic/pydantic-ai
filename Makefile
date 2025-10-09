@@ -34,7 +34,7 @@ lint: ## Lint the code
 	uv run ruff format --check
 	uv run ruff check
 
-PYRIGHT_PYTHON ?= 3.13
+PYRIGHT_PYTHON ?= 3.10
 
 .PHONY: typecheck-pyright
 typecheck-pyright:

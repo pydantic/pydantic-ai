@@ -22,8 +22,7 @@ InputT = TypeVar('InputT', infer_variance=True)
 OutputT = TypeVar('OutputT', infer_variance=True)
 
 
-# Note: we should make this into a frozen dataclass if https://github.com/python/mypy/issues/17623 gets resolved
-# Right now, it cannot be because that breaks variance inference in Python 3.13 due to __replace__
+@dataclass(init=False)
 class StepContext(Generic[StateT, DepsT, InputT]):
     """Context information passed to step functions during graph execution.
 
@@ -35,15 +34,25 @@ class StepContext(Generic[StateT, DepsT, InputT]):
         InputT: The type of the input data
     """
 
+    _state: StateT
+    """The current graph state."""
+    _deps: DepsT
+    """The graph run dependencies."""
+    _inputs: InputT
+    """The input data for this step."""
+
     def __init__(self, *, state: StateT, deps: DepsT, inputs: InputT):
-        """Arguments:
-        state: The current graph state
-        deps: The graph run dependencies
-        inputs: The input data for this step
-        """
-        self.state = state
-        self.deps = deps
+        self._state = state
+        self._deps = deps
         self._inputs = inputs
+
+    @property
+    def state(self) -> StateT:
+        return self._state
+
+    @property
+    def deps(self) -> DepsT:
+        return self._deps
 
     @property
     def inputs(self) -> InputT:
@@ -52,9 +61,6 @@ class StepContext(Generic[StateT, DepsT, InputT]):
         This must be a property to ensure correct variance behavior
         """
         return self._inputs
-
-    def __repr__(self):
-        return f'{type(self).__name__}(inputs={self.inputs!r})'
 
 
 class StepFunction(Protocol[StateT, DepsT, InputT, OutputT]):
@@ -87,8 +93,7 @@ AnyStepFunction = StepFunction[Any, Any, Any, Any]
 """Type alias for a step function with any type parameters."""
 
 
-# Note: we should make this into a frozen dataclass if https://github.com/python/mypy/issues/17623 gets resolved
-# Right now, it cannot be because that breaks variance inference in Python 3.13 due to __replace__
+@dataclass(init=False)
 class Step(Generic[StateT, DepsT, InputT, OutputT]):
     """A step in the graph execution that wraps a step function.
 
@@ -102,12 +107,14 @@ class Step(Generic[StateT, DepsT, InputT, OutputT]):
         OutputT: The type of the output data
     """
 
+    id: NodeID
+    """Unique identifier for this step."""
+    _call: StepFunction[StateT, DepsT, InputT, OutputT]
+    """The step function to execute."""
+    label: str | None
+    """Optional human-readable label for this step."""
+
     def __init__(self, *, id: NodeID, call: StepFunction[StateT, DepsT, InputT, OutputT], label: str | None = None):
-        """Arguments:
-        id: Unique identifier for this step
-        call: The step function to execute
-        label: Optional human-readable label for this step
-        """
         self.id = id
         self._call = call
         self.label = label

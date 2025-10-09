@@ -33,7 +33,7 @@ T = TypeVar('T', infer_variance=True)
 """Generic type variable."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class Decision(Generic[StateT, DepsT, HandledT]):
     """Decision node for conditional branching in graph execution.
 
@@ -89,6 +89,10 @@ class DecisionBranch(Generic[SourceT]):
 
     Each branch defines the conditions under which it should be taken
     and the path to follow when those conditions are met.
+
+    Note: with the current design, it is actually _critical_ that this class is invariant in SourceT for the sake
+    of type-checking that inputs to a Decision are actually handled. See the `# type: ignore` comment in
+    `tests.graph.beta.test_graph_edge_cases.test_decision_no_matching_branch` for an example of how this works.
     """
 
     source: TypeOrTypeExpression[SourceT]
@@ -123,7 +127,7 @@ NewOutputT = TypeVar('NewOutputT', infer_variance=True)
 """Type variable for transformed output."""
 
 
-@dataclass(kw_only=True, frozen=True)
+@dataclass(init=False)
 class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
     """Builder for constructing decision branches with fluent API.
 
@@ -136,15 +140,26 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
 
     _decision: Decision[StateT, DepsT, HandledT]
     """The parent decision node."""
-
     _source: TypeOrTypeExpression[SourceT]
     """The expected source type for this branch."""
-
     _matches: Callable[[Any], bool] | None
     """Optional matching predicate."""
-
     _path_builder: PathBuilder[StateT, DepsT, OutputT]
     """Builder for the execution path."""
+
+    def __init__(
+        self,
+        *,
+        decision: Decision[StateT, DepsT, HandledT],
+        source: TypeOrTypeExpression[SourceT],
+        matches: Callable[[Any], bool] | None,
+        path_builder: PathBuilder[StateT, DepsT, OutputT],
+    ):
+        # This manually-defined initializer is necessary due to https://github.com/python/mypy/issues/17623.
+        self._decision = decision
+        self._source = source
+        self._matches = matches
+        self._path_builder = path_builder
 
     def to(
         self,
@@ -194,10 +209,10 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
             A new DecisionBranchBuilder where the provided transform is applied prior to generating the final output.
         """
         return DecisionBranchBuilder(
-            _decision=self._decision,
-            _source=self._source,
-            _matches=self._matches,
-            _path_builder=self._path_builder.transform(func),
+            decision=self._decision,
+            source=self._source,
+            matches=self._matches,
+            path_builder=self._path_builder.transform(func),
         )
 
     def map(
@@ -219,10 +234,10 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
             A new DecisionBranchBuilder where mapping is performed prior to generating the final output.
         """
         return DecisionBranchBuilder(
-            _decision=self._decision,
-            _source=self._source,
-            _matches=self._matches,
-            _path_builder=self._path_builder.map(fork_id=fork_id, downstream_join_id=downstream_join_id),
+            decision=self._decision,
+            source=self._source,
+            matches=self._matches,
+            path_builder=self._path_builder.map(fork_id=fork_id, downstream_join_id=downstream_join_id),
         )
 
     def label(self, label: str) -> DecisionBranchBuilder[StateT, DepsT, OutputT, SourceT, HandledT]:
@@ -237,8 +252,11 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
             A new DecisionBranchBuilder where the label has been applied at the end of the current path being built.
         """
         return DecisionBranchBuilder(
-            _decision=self._decision,
-            _source=self._source,
-            _matches=self._matches,
-            _path_builder=self._path_builder.label(label),
+            decision=self._decision,
+            source=self._source,
+            matches=self._matches,
+            path_builder=self._path_builder.label(label),
         )
+
+    def __repr__(self):
+        return f'{type(self).__name__}(decision={self._decision!r}, source={self._source!r}, matches={self._matches!r}, path_builder={self._path_builder!r})'

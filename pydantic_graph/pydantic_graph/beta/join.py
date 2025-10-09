@@ -10,8 +10,8 @@ from __future__ import annotations
 import inspect
 from abc import abstractmethod
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
-from typing import Any, Final, Generic, cast, overload
+from dataclasses import dataclass
+from typing import Any, Generic, cast, overload
 
 from typing_extensions import Protocol, Self, TypeAliasType, TypeVar
 
@@ -39,7 +39,7 @@ class JoinState:
     cancelled_sibling_tasks: bool = False
 
 
-@dataclass(kw_only=True)
+@dataclass(init=False)
 class ReducerContext(Generic[StateT, DepsT]):
     """Context information passed to reducer functions during graph execution.
 
@@ -50,13 +50,25 @@ class ReducerContext(Generic[StateT, DepsT]):
         DepsT: The type of the dependencies
     """
 
-    state: Final[StateT] = field(repr=False)  # exclude from repr to keep things concise; Final to ensure covariant
+    _state: StateT
     """The current graph state."""
+    _deps: DepsT
+    """The dependencies of the current graph run."""
+    _join_state: JoinState
+    """The JoinState for this reducer context."""
 
-    deps: Final[DepsT] = field(repr=False)  # exclude from repr to keep things concise; Final to ensure covariant
-    """The dependencies available to this step."""
+    def __init__(self, *, state: StateT, deps: DepsT, join_state: JoinState):
+        self._state = state
+        self._deps = deps
+        self._join_state = join_state
 
-    _join_state: JoinState = field(repr=False)
+    @property
+    def state(self) -> StateT:
+        return self._state
+
+    @property
+    def deps(self) -> DepsT:
+        return self._deps
 
     @property
     def cancelled_sibling_tasks(self):
@@ -64,6 +76,9 @@ class ReducerContext(Generic[StateT, DepsT]):
 
     def cancel_sibling_tasks(self):
         self._join_state.cancelled_sibling_tasks = True
+
+    def __repr__(self):
+        return f'{type(self).__name__}(state={self.state!r}, deps={self.deps!r}, join_state={self._join_state!r})'
 
 
 PlainReducerFunction = TypeAliasType(
@@ -133,8 +148,7 @@ def reduce_first_value(ctx: ReducerContext[object, object], current: T, inputs: 
     return inputs
 
 
-# Note: we should make this into a frozen dataclass if https://github.com/python/mypy/issues/17623 gets resolved
-# Right now, it cannot be because that breaks variance inference in Python 3.13 due to __replace__
+@dataclass(init=False)
 class Join(Generic[StateT, DepsT, InputT, OutputT]):
     """A join operation that synchronizes and aggregates parallel execution paths.
 
@@ -149,6 +163,11 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
         OutputT: The type of the final joined output
     """
 
+    id: JoinID
+    _reducer: ReducerFunction[StateT, DepsT, InputT, OutputT]
+    _initial_factory: Callable[[], OutputT]
+    joins: ForkID | None
+
     def __init__(
         self,
         *,
@@ -157,15 +176,9 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
         initial_factory: Callable[[], OutputT],
         joins: ForkID | None = None,
     ):
-        """Arguments:
-        id: A unique identifier for this join operation
-        reducer: The reducer function this join uses to aggregate inputs
-        initial_factory: The value to use as the `current` value during the first call to `reduce`
-        joins: The fork ID this join synchronizes with, if any
-        """
         self.id = id
-        self._initial_factory = initial_factory
         self._reducer = reducer
+        self._initial_factory = initial_factory
         self.joins = joins
 
     @property
@@ -199,9 +212,6 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
             A [`StepNode`][pydantic_graph.beta.step.StepNode] with this step and the bound inputs
         """
         return JoinNode(self, inputs)
-
-    def __repr__(self):
-        return f'{type(self).__name__}(id={self.id!r}, reducer={self.reducer!r}, initial_factory={self.initial_factory!r} joins={self.joins!r})'
 
 
 @dataclass

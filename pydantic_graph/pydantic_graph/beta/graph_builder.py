@@ -60,7 +60,6 @@ GraphOutputT = TypeVar('GraphOutputT', infer_variance=True)
 T = TypeVar('T', infer_variance=True)
 
 
-# TODO: Make this kw-only and drop init=False..?
 @dataclass(init=False)
 class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
     """A builder for constructing executable graph definitions.
@@ -440,11 +439,9 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             A DecisionBranchBuilder for constructing the branch
         """
         node_id = NodeID(self._get_new_decision_id())
-        decision = Decision[StateT, DepsT, Never](node_id, branches=[], note=None)
+        decision = Decision[StateT, DepsT, Never](id=node_id, branches=[], note=None)
         new_path_builder = PathBuilder[StateT, DepsT, SourceT](working_items=[])
-        return DecisionBranchBuilder(
-            _decision=decision, _source=source, _matches=matches, _path_builder=new_path_builder
-        )
+        return DecisionBranchBuilder(decision=decision, source=source, matches=matches, path_builder=new_path_builder)
 
     def match_node(
         self,
