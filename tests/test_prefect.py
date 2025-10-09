@@ -216,7 +216,8 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
 
     # Prefect sets the `traceparent` header, so we explicitly disable distributed tracing for the tests to avoid the warning,
     # but we can't set that configuration for the capfire fixture, so we ignore the warning here.
-    with warnings.catch_warnings(action='ignore', category=RuntimeWarning):
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', category=RuntimeWarning)
         output = await run_complex_agent()
     assert output == snapshot(
         Response(
