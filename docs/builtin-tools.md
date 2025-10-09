@@ -448,20 +448,17 @@ agent = Agent(
     'anthropic:claude-sonnet-4-0',
     builtin_tools=[
         MCPServerTool(
-            server_label="your-mcp-server",
-            server_url="https://example.com/mcp-server",
-            server_description="Your MCP Server",
-            authorization="$YOUR_AUTHORIZATION_TOKEN",
+            server_label='your-mcp-server',
+            server_url='https://example.com/mcp-server',
+            server_description='Your MCP Server',
+            authorization='$YOUR_AUTHORIZATION_TOKEN',
         )
     ]
 )
 
 result = agent.run_sync('Give me some examples of my products.')
 print(result.output)
-#> Here are some examples of my data:
-#> - 1: Pen
-#> - 2: Paper
-#> - 3: Pencil
+#> Here are some examples of my data: Pen, Paper, Pencil.
 ```
 
 _(This example is complete, it can be run "as is")_
@@ -475,20 +472,17 @@ agent = Agent(
     'openai-responses:gpt-4o',
     builtin_tools=[
         MCPServerTool(
-            server_label="your-mcp-server",
-            server_url="https://example.com/mcp-server",
-            server_description="Your MCP Server",
-            authorization="$YOUR_AUTHORIZATION_TOKEN",
+            server_label='your-mcp-server',
+            server_url='https://example.com/mcp-server',
+            server_description='Your MCP Server',
+            authorization='$YOUR_AUTHORIZATION_TOKEN',
         )
     ]
 )
 
 result = agent.run_sync('Give me some examples of my products.')
 print(result.output)
-#> Here are some examples of my data:
-#> - 1: Pen
-#> - 2: Paper
-#> - 3: Pencil
+#> Here are some examples of my data: Pen, Paper, Pencil.
 ```
 
 _(This example is complete, it can be run "as is")_
@@ -504,23 +498,20 @@ agent = Agent(
     'openai-responses:gpt-4o',
     builtin_tools=[
         MCPServerTool(
-            server_label="your-mcp-server",
-            server_url="https://example.com/mcp-server",
-            server_description="Your MCP Server",
-            authorization="$YOUR_AUTHORIZATION_TOKEN",
-            allowed_tools=["tool-1", "tool-2"],
-            headers={"X-CUSTOM-HEADER": "custom-value"},
-            connector_id="valid-openai-connector-id",
+            server_label='your-mcp-server',
+            server_url='https://example.com/mcp-server',
+            server_description='Your MCP Server',
+            authorization='$YOUR_AUTHORIZATION_TOKEN',
+            allowed_tools=['tool-1', 'tool-2'],
+            headers={'X-CUSTOM-HEADER': 'custom-value'},
+            connector_id='valid-openai-connector-id',
         )
     ]
 )
 
 result = agent.run_sync('Give me some examples of my products.')
 print(result.output)
-#> Here are some examples of my data:
-#> - 1: Pen
-#> - 2: Paper
-#> - 3: Pencil
+#> Here are some examples of my data: Pen, Paper, Pencil.
 ```
 
 _(This example is complete, it can be run "as is")_
