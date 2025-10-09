@@ -1586,7 +1586,7 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
-            self._usage += _map_usage(chunk, self.provider_name, 'TODO', self._model_name)
+            self._usage += _map_usage(chunk, self._provider_name, self._provider_url, self._model_name)
 
             if chunk.id:  # pragma: no branch
                 self.provider_response_id = chunk.id
@@ -1901,7 +1901,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
 
     def _map_usage(self, response: responses.Response):
-        return _map_usage(response, self.provider_name, self._provider_url, self._model_name)
+        return _map_usage(response, self._provider_name, self._provider_url, self._model_name)
 
     @property
     def model_name(self) -> OpenAIModelName:
@@ -1929,7 +1929,7 @@ def _map_usage(
     if response_usage is None:
         return usage.RequestUsage()
 
-    usage_data = {key: value for key, value in response_usage.model_dump(exclude_none=True).items()}
+    usage_data = response_usage.model_dump(exclude_none=True)
     details = {
         k: v
         for k, v in usage_data.items()
