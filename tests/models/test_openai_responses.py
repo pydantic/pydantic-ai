@@ -6213,20 +6213,38 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='mcp_server',
+                        args={
+                            'id': 'mcpl_0c3be32e7b19011f0068e6366acbc08197bdaac474f6888ab5',
+                            'server_label': 'test_server',
+                            'tools': [
+                                {
+                                    'input_schema': {'properties': {}, 'type': 'object'},
+                                    'name': 'get_my_games',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns a list of my favorite games.',
+                                }
+                            ],
+                            'type': 'mcp_list_tools',
+                            'error': None,
+                        },
                         tool_call_id='mcpl_0c3be32e7b19011f0068e6366acbc08197bdaac474f6888ab5',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server',
                         content={
+                            'id': 'mcpl_0c3be32e7b19011f0068e6366acbc08197bdaac474f6888ab5',
                             'server_label': 'test_server',
                             'tools': [
                                 {
-                                    'name': IsStr(),
-                                    'description': IsStr(),
                                     'input_schema': {'properties': {}, 'type': 'object'},
+                                    'name': 'get_my_games',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns a list of my favorite games.',
                                 }
                             ],
+                            'type': 'mcp_list_tools',
+                            'error': None,
                         },
                         tool_call_id='mcpl_0c3be32e7b19011f0068e6366acbc08197bdaac474f6888ab5',
                         timestamp=IsDatetime(),
@@ -6234,24 +6252,39 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                     ),
                     BuiltinToolCallPart(
                         tool_name='mcp_server',
+                        args={
+                            'id': 'mcp_0c3be32e7b19011f0068e6366da4988197a325bc65a409fc2b',
+                            'arguments': '{}',
+                            'name': 'get_my_games',
+                            'server_label': 'test_server',
+                            'type': 'mcp_call',
+                            'error': None,
+                            'output': '["Lies of P", "Bloodborne", "Sekiro"]',
+                            'approval_request_id': None,
+                            'status': 'completed',
+                        },
                         tool_call_id='mcp_0c3be32e7b19011f0068e6366da4988197a325bc65a409fc2b',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server',
                         content={
-                            'name': IsStr(),
-                            'server_label': 'test_server',
+                            'id': 'mcp_0c3be32e7b19011f0068e6366da4988197a325bc65a409fc2b',
                             'arguments': '{}',
+                            'name': 'get_my_games',
+                            'server_label': 'test_server',
+                            'type': 'mcp_call',
                             'error': None,
-                            'output': IsStr(),
+                            'output': '["Lies of P", "Bloodborne", "Sekiro"]',
+                            'approval_request_id': None,
+                            'status': 'completed',
                         },
                         tool_call_id='mcp_0c3be32e7b19011f0068e6366da4988197a325bc65a409fc2b',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     TextPart(
-                        content=IsStr(),
+                        content='You have the following games:\n\n1. Lies of P\n2. Bloodborne\n3. Sekiro',
                         id='msg_0c3be32e7b19011f0068e6366ff684819791c8feff975b6f28',
                     ),
                 ],
@@ -6308,20 +6341,31 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='mcp_server',
+                        args={
+                            'id': 'mcpl_064f1d59f12b340a0068e64bff3f2881a0b78ef57fd1c76f32',
+                            'server_label': 'test_server',
+                            'tools': [],
+                            'type': 'mcp_list_tools',
+                            'error': None,
+                        },
                         tool_call_id='mcpl_064f1d59f12b340a0068e64bff3f2881a0b78ef57fd1c76f32',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server',
                         content={
+                            'id': 'mcpl_064f1d59f12b340a0068e64bff3f2881a0b78ef57fd1c76f32',
                             'server_label': 'test_server',
                             'tools': [
                                 {
-                                    'name': 'get_my_games',
-                                    'description': 'Returns a list of my favorite games.',
                                     'input_schema': {'properties': {}, 'type': 'object'},
+                                    'name': 'get_my_games',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns a list of my favorite games.',
                                 }
                             ],
+                            'type': 'mcp_list_tools',
+                            'error': None,
                         },
                         tool_call_id='mcpl_064f1d59f12b340a0068e64bff3f2881a0b78ef57fd1c76f32',
                         timestamp=IsDatetime(),
@@ -6329,24 +6373,41 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                     ),
                     BuiltinToolCallPart(
                         tool_name='mcp_server',
+                        args={
+                            'id': 'mcp_064f1d59f12b340a0068e64c01557881a0ad7e41daf9c7a8b7',
+                            'arguments': '',
+                            'name': 'get_my_games',
+                            'server_label': 'test_server',
+                            'type': 'mcp_call',
+                            'error': None,
+                            'output': None,
+                            'status': 'in_progress',
+                            'approval_request_id': None,
+                        },
                         tool_call_id='mcp_064f1d59f12b340a0068e64c01557881a0ad7e41daf9c7a8b7',
                         provider_name='openai',
                     ),
-                    TextPart(content='{}', id='mcp_064f1d59f12b340a0068e64c01557881a0ad7e41daf9c7a8b7'),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server',
                         content={
+                            'id': 'mcp_064f1d59f12b340a0068e64c01557881a0ad7e41daf9c7a8b7',
+                            'arguments': '{}',
                             'name': 'get_my_games',
                             'server_label': 'test_server',
-                            'arguments': '{}',
+                            'type': 'mcp_call',
                             'error': None,
-                            'output': IsStr(),
+                            'output': '["Lies of P", "Bloodborne", "Sekiro"]',
+                            'status': 'completed',
+                            'approval_request_id': None,
                         },
                         tool_call_id='mcp_064f1d59f12b340a0068e64c01557881a0ad7e41daf9c7a8b7',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    TextPart(content=IsStr(), id='msg_064f1d59f12b340a0068e64c03133881a09eacd8edc4030c85'),
+                    TextPart(
+                        content='You have the following games:\n\n- Lies of P\n- Bloodborne\n- Sekiro',
+                        id='msg_064f1d59f12b340a0068e64c03133881a09eacd8edc4030c85',
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=107, output_tokens=34, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
@@ -6365,26 +6426,34 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                 index=0,
                 part=BuiltinToolCallPart(
                     tool_name='mcp_server',
+                    args={
+                        'id': 'mcpl_064f1d59f12b340a0068e64bff3f2881a0b78ef57fd1c76f32',
+                        'server_label': 'test_server',
+                        'tools': [],
+                        'type': 'mcp_list_tools',
+                        'error': None,
+                    },
                     tool_call_id='mcpl_064f1d59f12b340a0068e64bff3f2881a0b78ef57fd1c76f32',
                     provider_name='openai',
                 ),
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(tool_call_id='mcpl_064f1d59f12b340a0068e64bff3f2881a0b78ef57fd1c76f32')
             ),
             PartStartEvent(
                 index=1,
                 part=BuiltinToolReturnPart(
                     tool_name='mcp_server',
                     content={
+                        'id': 'mcpl_064f1d59f12b340a0068e64bff3f2881a0b78ef57fd1c76f32',
                         'server_label': 'test_server',
                         'tools': [
                             {
-                                'name': 'get_my_games',
-                                'description': 'Returns a list of my favorite games.',
                                 'input_schema': {'properties': {}, 'type': 'object'},
+                                'name': 'get_my_games',
+                                'annotations': {'read_only': False},
+                                'description': 'Returns a list of my favorite games.',
                             }
                         ],
+                        'type': 'mcp_list_tools',
+                        'error': None,
                     },
                     tool_call_id='mcpl_064f1d59f12b340a0068e64bff3f2881a0b78ef57fd1c76f32',
                     timestamp=IsDatetime(),
@@ -6395,27 +6464,38 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                 index=2,
                 part=BuiltinToolCallPart(
                     tool_name='mcp_server',
+                    args={
+                        'id': 'mcp_064f1d59f12b340a0068e64c01557881a0ad7e41daf9c7a8b7',
+                        'arguments': '',
+                        'name': 'get_my_games',
+                        'server_label': 'test_server',
+                        'type': 'mcp_call',
+                        'error': None,
+                        'output': None,
+                        'status': 'in_progress',
+                        'approval_request_id': None,
+                    },
                     tool_call_id='mcp_064f1d59f12b340a0068e64c01557881a0ad7e41daf9c7a8b7',
                     provider_name='openai',
                 ),
             ),
-            PartStartEvent(
-                index=3, part=TextPart(content='{}', id='mcp_064f1d59f12b340a0068e64c01557881a0ad7e41daf9c7a8b7')
-            ),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
                 index=2, delta=ToolCallPartDelta(tool_call_id='mcp_064f1d59f12b340a0068e64c01557881a0ad7e41daf9c7a8b7')
             ),
             PartStartEvent(
-                index=4,
+                index=3,
                 part=BuiltinToolReturnPart(
                     tool_name='mcp_server',
                     content={
+                        'id': 'mcp_064f1d59f12b340a0068e64c01557881a0ad7e41daf9c7a8b7',
+                        'arguments': '{}',
                         'name': 'get_my_games',
                         'server_label': 'test_server',
-                        'arguments': '{}',
+                        'type': 'mcp_call',
                         'error': None,
                         'output': '["Lies of P", "Bloodborne", "Sekiro"]',
+                        'status': 'completed',
+                        'approval_request_id': None,
                     },
                     tool_call_id='mcp_064f1d59f12b340a0068e64c01557881a0ad7e41daf9c7a8b7',
                     timestamp=IsDatetime(),
@@ -6423,28 +6503,36 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                 ),
             ),
             PartStartEvent(
-                index=5, part=TextPart(content='You', id='msg_064f1d59f12b340a0068e64c03133881a09eacd8edc4030c85')
+                index=4, part=TextPart(content='You', id='msg_064f1d59f12b340a0068e64c03133881a09eacd8edc4030c85')
             ),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' have')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' the')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' following')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' games')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=':\n\n')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='-')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' Lies')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' of')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' P')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='\n')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='-')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' Blood')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='borne')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='\n')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='-')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' Sek')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='iro')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' have')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' following')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' games')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=':\n\n')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Lies')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' P')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='\n')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Blood')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='borne')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='\n')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Sek')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='iro')),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='mcp_server',
+                    args={
+                        'id': 'mcpl_064f1d59f12b340a0068e64bff3f2881a0b78ef57fd1c76f32',
+                        'server_label': 'test_server',
+                        'tools': [],
+                        'type': 'mcp_list_tools',
+                        'error': None,
+                    },
                     tool_call_id='mcpl_064f1d59f12b340a0068e64bff3f2881a0b78ef57fd1c76f32',
                     provider_name='openai',
                 ),
@@ -6453,14 +6541,18 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                 result=BuiltinToolReturnPart(
                     tool_name='mcp_server',
                     content={
+                        'id': 'mcpl_064f1d59f12b340a0068e64bff3f2881a0b78ef57fd1c76f32',
                         'server_label': 'test_server',
                         'tools': [
                             {
-                                'name': 'get_my_games',
-                                'description': 'Returns a list of my favorite games.',
                                 'input_schema': {'properties': {}, 'type': 'object'},
+                                'name': 'get_my_games',
+                                'annotations': {'read_only': False},
+                                'description': 'Returns a list of my favorite games.',
                             }
                         ],
+                        'type': 'mcp_list_tools',
+                        'error': None,
                     },
                     tool_call_id='mcpl_064f1d59f12b340a0068e64bff3f2881a0b78ef57fd1c76f32',
                     timestamp=IsDatetime(),
@@ -6470,6 +6562,17 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='mcp_server',
+                    args={
+                        'id': 'mcp_064f1d59f12b340a0068e64c01557881a0ad7e41daf9c7a8b7',
+                        'arguments': '',
+                        'name': 'get_my_games',
+                        'server_label': 'test_server',
+                        'type': 'mcp_call',
+                        'error': None,
+                        'output': None,
+                        'status': 'in_progress',
+                        'approval_request_id': None,
+                    },
                     tool_call_id='mcp_064f1d59f12b340a0068e64c01557881a0ad7e41daf9c7a8b7',
                     provider_name='openai',
                 ),
@@ -6478,11 +6581,15 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                 result=BuiltinToolReturnPart(
                     tool_name='mcp_server',
                     content={
+                        'id': 'mcp_064f1d59f12b340a0068e64c01557881a0ad7e41daf9c7a8b7',
+                        'arguments': '{}',
                         'name': 'get_my_games',
                         'server_label': 'test_server',
-                        'arguments': '{}',
+                        'type': 'mcp_call',
                         'error': None,
                         'output': '["Lies of P", "Bloodborne", "Sekiro"]',
+                        'status': 'completed',
+                        'approval_request_id': None,
                     },
                     tool_call_id='mcp_064f1d59f12b340a0068e64c01557881a0ad7e41daf9c7a8b7',
                     timestamp=IsDatetime(),

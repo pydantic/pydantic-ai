@@ -419,21 +419,21 @@ class AnthropicModel(Model):
                 tools = [tool for tool in tools if tool['name'] != 'memory']
                 tools.append(BetaMemoryTool20250818Param(name='memory', type='memory_20250818'))
                 beta_features.append('context-management-2025-06-27')
-                if isinstance(tool, MCPServerTool) and tool.url:
-                    tool_configuration = BetaRequestMCPServerToolConfigurationParam(
-                        enabled=True,
-                        allowed_tools=tool.allowed_tools,
+            elif isinstance(tool, MCPServerTool) and tool.url:
+                tool_configuration = BetaRequestMCPServerToolConfigurationParam(
+                    enabled=True,
+                    allowed_tools=tool.allowed_tools,
+                )
+                mcp_servers.append(
+                    BetaRequestMCPServerURLDefinitionParam(
+                        type='url',
+                        name=tool.label,
+                        url=tool.url,
+                        authorization_token=tool.authorization,
+                        tool_configuration=tool_configuration,
                     )
-                    mcp_servers.append(
-                        BetaRequestMCPServerURLDefinitionParam(
-                            type='url',
-                            name=tool.label,
-                            url=tool.url,
-                            authorization_token=tool.authorization,
-                            tool_configuration=tool_configuration,
-                        )
-                    )
-                    beta_features.append('mcp-client-2025-04-04')
+                )
+                beta_features.append('mcp-client-2025-04-04')
             else:  # pragma: no cover
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
@@ -545,13 +545,12 @@ class AnthropicModel(Model):
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name == MCPServerTool.kind:  # pragma: no branch
-                                args = response_part.args_as_dict()
                                 mcp_tool_use_block_param = BetaMCPToolUseBlockParam(
                                     id=tool_use_id,
                                     type='mcp_tool_use',
-                                    name=response_part.tool_name,
-                                    server_name=cast(str, args.get('server_name')),
-                                    input=args.get('input'),
+                                    name='mcp_server',
+                                    server_name=response_part.tool_name,
+                                    input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(mcp_tool_use_block_param)
                     elif isinstance(response_part, BuiltinToolReturnPart):
@@ -886,7 +885,7 @@ def _map_mcp_server_use_block(item: BetaMCPToolUseBlock, provider_name: str) -> 
     return BuiltinToolCallPart(
         provider_name=provider_name,
         tool_name=MCPServerTool.kind,
-        args=cast(dict[str, Any], {'input': item.input, 'server_name': item.server_name}) or None,
+        args=cast(dict[str, Any], item.input) or None,
         tool_call_id=item.id,
     )
 

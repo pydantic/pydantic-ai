@@ -3098,7 +3098,7 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='code_execution',
+                        tool_name='mcp_server',
                         content=[{'citations': None, 'text': '["Lies of P","Bloodborne","Sekiro"]', 'type': 'text'}],
                         tool_call_id='mcptoolu_01TwwBu8ALMaffJS5riJmE8r',
                         timestamp=IsDatetime(),
@@ -3172,7 +3172,7 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='code_execution',
+                        tool_name='mcp_server',
                         content=[{'citations': None, 'text': '["Lies of P","Bloodborne","Sekiro"]', 'type': 'text'}],
                         tool_call_id='mcptoolu_01WaYLgtwyroxT1CQWGFfTTy',
                         timestamp=IsDatetime(),
@@ -3230,7 +3230,13 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
             PartDeltaEvent(
                 index=0, delta=ThinkingPartDelta(content_delta=' so I can call it directly.', provider_name='anthropic')
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta=IsStr(), provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    signature_delta='Ev4CCkYICBgCKkC2CV8NXGK/AuQ4/m1/1qE91t9kn26YXfJqV4GLu+pQ5arslF66ul0lb2tjDaq6jEoScCgXONCbjVTTGXRgL31OEgz6Hf2+sxQphfOM0NsaDAGUIjrX8JtDLUHYCSIwDiCjhcg4JzBLobWmlquAlva+JlrB3yUlyWBCOe3z0GBxqs9MGtaEsmROBfy9w5bVKuUBPWfEKKcSIj57MWaQKquRHrl+EaaTVI2/dS3fU0opvd7HTbJ647RvWIKatcw1u3Q9WlNuGhts2TzwpqvzliIkheOjbv3URnfdW2vjka5WN6sntwoqdMrmmJTMD33PLXs2PZlnFUJ2BAS0lglihGbrOrIE1gRsTjZVrhXI8ZpJWPMYJ07FdtLwd+v0F3gf32z282QuQdNlaVliNjdcV+IvfJJL8BCF7coL+fKahuu8GCLVCjwmitJEIgC3ykzuVxCGT7U6hCuEM3Oe7UcLlay9n89O2jmW/FbQIuUpNmVFrrmM3Mn1GBgB',
+                    provider_name='anthropic',
+                ),
+            ),
             PartStartEvent(
                 index=1,
                 part=BuiltinToolCallPart(
@@ -3243,7 +3249,7 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
             PartStartEvent(
                 index=2,
                 part=BuiltinToolReturnPart(
-                    tool_name='code_execution',
+                    tool_name='mcp_server',
                     content=[{'citations': None, 'text': '["Lies of P","Bloodborne","Sekiro"]', 'type': 'text'}],
                     tool_call_id='mcptoolu_01WaYLgtwyroxT1CQWGFfTTy',
                     timestamp=IsDatetime(),
@@ -3268,16 +3274,16 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                     args='',
                     tool_call_id='mcptoolu_01WaYLgtwyroxT1CQWGFfTTy',
                     provider_name='anthropic',
-                )
+                ),
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
-                    tool_name='code_execution',
+                    tool_name='mcp_server',
                     content=[{'citations': None, 'text': '["Lies of P","Bloodborne","Sekiro"]', 'type': 'text'}],
                     tool_call_id='mcptoolu_01WaYLgtwyroxT1CQWGFfTTy',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
-                )
+                ),
             ),
         ]
     )
