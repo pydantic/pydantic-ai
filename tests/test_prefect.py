@@ -39,12 +39,12 @@ try:
 
     from pydantic_ai.durable_exec.prefect import (
         DEFAULT_PYDANTIC_AI_CACHE_POLICY,
-        InputsWithoutTimestamps,
         PrefectAgent,
         PrefectFunctionToolset,
         PrefectMCPServer,
         PrefectModel,
     )
+    from pydantic_ai.durable_exec.prefect._cache_policies import PrefectAgentInputs
 except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
 
@@ -92,7 +92,7 @@ async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
 def setup_logfire_instrumentation() -> Iterator[None]:
     # Set up logfire for the tests. Prefect sets the `traceparent` header, so we explicitly enable
     # distributed tracing the tests to avoid the warning.
-    logfire.configure(metrics=False, distributed_tracing=True)
+    logfire.configure(metrics=False, distributed_tracing=False)
 
     yield
 
@@ -214,9 +214,9 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
         )
         return result.output
 
-    # TODO: Find a better way to handle propagated trace context warning.
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', RuntimeWarning)
+    # Prefect sets the `traceparent` header, so we explicitly disable distributed tracing for the tests to avoid the warning,
+    # but we can't set that configuration for the capfire fixture, so we ignore the warning here.
+    with warnings.catch_warnings(action='ignore', category=RuntimeWarning):
         output = await run_complex_agent()
     assert output == snapshot(
         Response(
@@ -1025,11 +1025,11 @@ async def test_cache_policy_default():
 
 async def test_cache_policy_custom():
     """
-    Test that custom cache policy InputsWithoutTimestamps works.
+    Test that custom cache policy PrefectAgentInputs works.
     Timestamps must be excluded from computed cache keys to avoid
     duplicate calls when runs are restarted.
     """
-    cache_policy = InputsWithoutTimestamps()
+    cache_policy = PrefectAgentInputs()
 
     # Create two sets of messages with same content but different timestamps
     time1 = datetime.now()
@@ -1098,7 +1098,7 @@ async def test_cache_policy_custom():
 
 async def test_cache_policy_with_tuples():
     """Test that cache policy handles tuples with timestamps correctly."""
-    cache_policy = InputsWithoutTimestamps()
+    cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()
 
     time1 = datetime.now()
@@ -1133,7 +1133,7 @@ async def test_cache_policy_with_tuples():
 
 async def test_cache_policy_empty_inputs():
     """Test that cache policy returns None for empty inputs."""
-    cache_policy = InputsWithoutTimestamps()
+    cache_policy = PrefectAgentInputs()
 
     mock_task_ctx = MagicMock()
 

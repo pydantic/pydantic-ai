@@ -1,8 +1,10 @@
 from dataclasses import fields, is_dataclass
 from typing import Any, TypeGuard
 
-from prefect.cache_policies import RUN_ID, TASK_SOURCE, CachePolicy, Inputs
+from prefect.cache_policies import INPUTS, RUN_ID, TASK_SOURCE, CachePolicy
 from prefect.context import TaskRunContext
+
+from pydantic_ai.tools import RunContext
 
 
 def _is_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
@@ -15,6 +17,26 @@ def _is_list(obj: Any) -> TypeGuard[list[Any]]:
 
 def _is_tuple(obj: Any) -> TypeGuard[tuple[Any, ...]]:
     return isinstance(obj, tuple)
+
+
+def _replace_run_context(
+    inputs: dict[str, Any],
+) -> Any:
+    """Replace RunContext objects with a dict containing only hashable fields."""
+    inputs = inputs.copy()
+    for key, value in inputs.items():
+        if isinstance(value, RunContext):
+            inputs[key] = {
+                'retries': value.retries,
+                'tool_call_id': value.tool_call_id,
+                'tool_name': value.tool_name,
+                'tool_call_approved': value.tool_call_approved,
+                'retry': value.retry,
+                'max_retries': value.max_retries,
+                'run_step': value.run_step,
+            }
+
+    return inputs
 
 
 def _strip_timestamps(
@@ -37,12 +59,11 @@ def _strip_timestamps(
     return obj
 
 
-class InputsWithoutTimestamps(CachePolicy):
-    """Cache policy that computes a cache key based on inputs, ignoring nested 'timestamp' fields.
+class PrefectAgentInputs(CachePolicy):
+    """Cache policy designed to handle input hashing for PrefectAgent cache keys.
 
-    This is similar to the INPUTS cache policy, but recursively removes all 'timestamp'
-    fields from the messages inputs before computing the hash. This is useful when you want to
-    cache based on the content of inputs but not their timestamps.
+    Computes a cache key based on inputs, ignoring nested 'timestamp' fields
+    and serializing RunContext objects to only include hashable fields.
     """
 
     def compute_key(
@@ -52,14 +73,14 @@ class InputsWithoutTimestamps(CachePolicy):
         flow_parameters: dict[str, Any],
         **kwargs: Any,
     ) -> str | None:
-        """Compute cache key from inputs with timestamps removed."""
+        """Compute cache key from inputs with timestamps removed and RunContext serialized."""
         if not inputs:
             return None
 
-        filtered_inputs = _strip_timestamps(inputs)
+        inputs_with_hashable_context = _replace_run_context(inputs)
+        filtered_inputs = _strip_timestamps(inputs_with_hashable_context)
 
-        # Exclude run_ctx from inputs as it contains non-hashable objects
-        return Inputs(exclude=['run_ctx']).compute_key(task_ctx, filtered_inputs, flow_parameters, **kwargs)
+        return INPUTS.compute_key(task_ctx, filtered_inputs, flow_parameters, **kwargs)
 
 
-DEFAULT_PYDANTIC_AI_CACHE_POLICY = InputsWithoutTimestamps() + TASK_SOURCE + RUN_ID
+DEFAULT_PYDANTIC_AI_CACHE_POLICY = PrefectAgentInputs() + TASK_SOURCE + RUN_ID

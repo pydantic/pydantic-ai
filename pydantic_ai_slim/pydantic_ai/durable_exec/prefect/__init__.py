@@ -1,5 +1,5 @@
 from ._agent import PrefectAgent
-from ._cache_policies import DEFAULT_PYDANTIC_AI_CACHE_POLICY, InputsWithoutTimestamps
+from ._cache_policies import DEFAULT_PYDANTIC_AI_CACHE_POLICY
 from ._function_toolset import PrefectFunctionToolset
 from ._mcp_server import PrefectMCPServer
 from ._model import PrefectModel
@@ -11,6 +11,5 @@ __all__ = [
     'PrefectMCPServer',
     'PrefectFunctionToolset',
     'TaskConfig',
-    'InputsWithoutTimestamps',
     'DEFAULT_PYDANTIC_AI_CACHE_POLICY',
 ]
