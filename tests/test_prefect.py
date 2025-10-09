@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     AgentRunResult,
+    AgentRunResultEvent,
     AgentStreamEvent,
     ExternalToolset,
     FunctionToolset,
@@ -704,6 +705,14 @@ async def test_prefect_agent_run_stream(allow_model_requests: None):
                 'The capital of Mexico is Mexico City.',
             ]
         )
+
+
+async def test_prefect_agent_run_stream_events(allow_model_requests: None):
+    """Test that agent.run_stream_events() works."""
+    events = [event async for event in simple_prefect_agent.run_stream_events('What is the capital of Mexico?')]
+    assert events == snapshot(
+        [AgentRunResultEvent(result=AgentRunResult(output='The capital of Mexico is Mexico City.'))]
+    )
 
 
 async def test_prefect_agent_iter(allow_model_requests: None):
