@@ -17,6 +17,7 @@ from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 __all__ = (
     'AgentDepsT',
     'DocstringFormat',
+    'DescriptionFormat',
     'RunContext',
     'SystemPromptFunc',
     'ToolFuncContext',
@@ -129,6 +130,13 @@ DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 * `'numpy'` — [Numpy-style](https://numpydoc.readthedocs.io/en/latest/format.html) docstrings.
 * `'sphinx'` — [Sphinx-style](https://sphinx-rtd-tutorial.readthedocs.io/en/latest/docstrings.html#the-sphinx-docstring-format) docstrings.
 * `'auto'` — Automatically infer the format based on the structure of the docstring.
+"""
+
+DescriptionFormat: TypeAlias = Literal['xml', 'markdown']
+"""Supported description output formats.
+
+* `'xml'` — Format tool descriptions with XML tags (default).
+* `'markdown'` — Format tool descriptions with markdown formatting.
 """
 
 
@@ -251,6 +259,7 @@ class Tool(Generic[AgentDepsT]):
     description: str | None
     prepare: ToolPrepareFunc[AgentDepsT] | None
     docstring_format: DocstringFormat
+    description_format: DescriptionFormat
     require_parameter_descriptions: bool
     strict: bool | None
     sequential: bool
@@ -273,6 +282,7 @@ class Tool(Generic[AgentDepsT]):
         description: str | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
+        description_format: DescriptionFormat = 'xml',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
@@ -327,6 +337,8 @@ class Tool(Generic[AgentDepsT]):
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
+            description_format: The format for the tool description output, see [`DescriptionFormat`][pydantic_ai.tools.DescriptionFormat].
+                Defaults to `'xml'`. Use `'markdown'` for markdown-formatted tool descriptions.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
@@ -343,6 +355,7 @@ class Tool(Generic[AgentDepsT]):
             schema_generator,
             takes_ctx=takes_ctx,
             docstring_format=docstring_format,
+            description_format=description_format,
             require_parameter_descriptions=require_parameter_descriptions,
         )
         self.takes_ctx = self.function_schema.takes_ctx
@@ -351,6 +364,7 @@ class Tool(Generic[AgentDepsT]):
         self.description = description or self.function_schema.description
         self.prepare = prepare
         self.docstring_format = docstring_format
+        self.description_format = description_format
         self.require_parameter_descriptions = require_parameter_descriptions
         self.strict = strict
         self.sequential = sequential

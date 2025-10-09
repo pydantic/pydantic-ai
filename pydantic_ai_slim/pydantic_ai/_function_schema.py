@@ -24,7 +24,7 @@ from ._run_context import RunContext
 from ._utils import check_object_json_schema, is_async_callable, is_model_like, run_in_executor
 
 if TYPE_CHECKING:
-    from .tools import DocstringFormat, ObjectJsonSchema
+    from .tools import DescriptionFormat, DocstringFormat, ObjectJsonSchema
 
 
 __all__ = ('function_schema',)
@@ -76,16 +76,18 @@ def function_schema(  # noqa: C901
     schema_generator: type[GenerateJsonSchema],
     takes_ctx: bool | None = None,
     docstring_format: DocstringFormat = 'auto',
+    description_format: DescriptionFormat = 'xml',
     require_parameter_descriptions: bool = False,
 ) -> FunctionSchema:
     """Build a Pydantic validator and JSON schema from a tool function.
 
     Args:
         function: The function to build a validator and JSON schema for.
+        schema_generator: The JSON schema generator class to use.
         takes_ctx: Whether the function takes a `RunContext` first argument.
         docstring_format: The docstring format to use.
+        description_format: The output format for the description ('xml' or 'markdown').
         require_parameter_descriptions: Whether to require descriptions for all tool function parameters.
-        schema_generator: The JSON schema generator class to use.
 
     Returns:
         A `FunctionSchema` instance.
@@ -112,7 +114,9 @@ def function_schema(  # noqa: C901
     var_positional_field: str | None = None
     decorators = _decorators.DecoratorInfos()
 
-    description, field_descriptions = doc_descriptions(function, sig, docstring_format=docstring_format)
+    description, field_descriptions = doc_descriptions(
+        function, sig, docstring_format=docstring_format, description_format=description_format
+    )
 
     if require_parameter_descriptions:
         if takes_ctx:
