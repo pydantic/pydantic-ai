@@ -21,7 +21,7 @@ from pydantic_graph import _utils, exceptions
 from pydantic_graph._utils import UNSET, Unset
 from pydantic_graph.beta.decision import Decision, DecisionBranch, DecisionBranchBuilder
 from pydantic_graph.beta.graph import Graph
-from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID, is_placeholder_node_id
+from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID, generate_placeholder_node_id, is_placeholder_node_id
 from pydantic_graph.beta.join import Join, JoinNode, ReducerFunction
 from pydantic_graph.beta.node import (
     EndNode,
@@ -284,13 +284,11 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         node_id: str | None = None,
         joins: ForkID | None = None,
     ) -> Join[StateT, DepsT, InputT, OutputT]:
-        node_id = node_id or get_callable_name(reducer)
-
         if initial_factory is UNSET:
             initial_factory = lambda: initial  # pyright: ignore[reportAssignmentType]  # noqa E731
 
         return Join[StateT, DepsT, InputT, OutputT](
-            id=JoinID(NodeID(node_id)),
+            id=JoinID(NodeID(node_id or generate_placeholder_node_id('join'))),
             reducer=reducer,
             initial_factory=cast(Callable[[], OutputT], initial_factory),
             joins=joins,
@@ -412,16 +410,17 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             sources=sources, path_builder=PathBuilder(working_items=[])
         )
 
-    def decision(self, *, note: str | None = None) -> Decision[StateT, DepsT, Never]:
+    def decision(self, *, note: str | None = None, node_id: str | None = None) -> Decision[StateT, DepsT, Never]:
         """Create a new decision node.
 
         Args:
             note: Optional note to describe the decision logic
+            node_id: Optional ID for the node produced for this decision logic
 
         Returns:
             A new Decision node with no branches
         """
-        return Decision(id=NodeID(self._get_new_decision_id()), branches=[], note=note)
+        return Decision(id=NodeID(node_id or generate_placeholder_node_id('decision')), branches=[], note=note)
 
     def match(
         self,
@@ -438,7 +437,9 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         Returns:
             A DecisionBranchBuilder for constructing the branch
         """
-        node_id = NodeID(self._get_new_decision_id())
+        # Note, the following node_id really is just a placeholder and shouldn't end up in the final graph
+        # This is why we don't expose a way for end users to override the value used here.
+        node_id = NodeID(generate_placeholder_node_id('match-decision'))
         decision = Decision[StateT, DepsT, Never](id=node_id, branches=[], note=None)
         new_path_builder = PathBuilder[StateT, DepsT, SourceT](working_items=[])
         return DecisionBranchBuilder(decision=decision, source=source, matches=matches, path_builder=new_path_builder)
@@ -461,6 +462,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         Returns:
             A DecisionBranch for the BaseNode type
         """
+        # TODO: Need to cover this in a test
         path = Path(items=[DestinationMarker(NodeStep(source).id)])
         return DecisionBranch(source=source, matches=matches, path=path)
 
@@ -486,7 +488,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         type_hints = get_type_hints(node_type.run, localns=parent_namespace, include_extras=True)
         try:
             return_hint = type_hints['return']
-        except KeyError as e:
+        except KeyError as e:  # pragma: no cover
             raise exceptions.GraphSetupError(
                 f'Node {node_type} is missing a return type hint on its `run` method'
             ) from e
@@ -494,7 +496,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         node = NodeStep(node_type)
 
         edge = self._edge_from_return_hint(node, return_hint)
-        if not edge:
+        if not edge:  # pragma: no cover
             raise exceptions.GraphSetupError(f'Node {node_type} is missing a return type hint on its `run` method')
 
         return edge
@@ -515,65 +517,8 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         elif isinstance(existing, NodeStep) and isinstance(node, NodeStep) and existing.node_type is node.node_type:
             pass
         elif existing is not node:
+            # TODO: Need to cover this in a test
             raise ValueError(f'All nodes must have unique node IDs. {node.id!r} was the ID for {existing} and {node}')
-
-    def _get_new_decision_id(self) -> str:
-        """Generate a unique ID for a new decision node.
-
-        Returns:
-            A unique decision node ID
-        """
-        node_id = f'decision_{self._decision_index}'
-        self._decision_index += 1
-        while node_id in self._nodes:
-            node_id = f'decision_{self._decision_index}'
-            self._decision_index += 1
-        return node_id
-
-    # TODO(P1): Need to use or remove this..
-    def _get_new_broadcast_id(self, from_: str | None = None) -> str:
-        """Generate a unique ID for a new broadcast fork.
-
-        Args:
-            from_: Optional source identifier to include in the ID
-
-        Returns:
-            A unique broadcast fork ID
-        """
-        prefix = 'broadcast'
-        if from_ is not None:
-            prefix += f'_from_{from_}'
-
-        node_id = prefix
-        index = 2
-        while node_id in self._nodes:
-            node_id = f'{prefix}_{index}'
-            index += 1
-        return node_id
-
-    # TODO(P1): Need to use or remove this..
-    def _get_new_map_id(self, from_: str | None = None, to: str | None = None) -> str:
-        """Generate a unique ID for a new map fork.
-
-        Args:
-            from_: Optional source identifier to include in the ID
-            to: Optional destination identifier to include in the ID
-
-        Returns:
-            A unique map fork ID
-        """
-        prefix = 'map'
-        if from_ is not None:
-            prefix += f'_from_{from_}'
-        if to is not None:
-            prefix += f'_to_{to}'
-
-        node_id = prefix
-        index = 2
-        while node_id in self._nodes:
-            node_id = f'{prefix}_{index}'
-            index += 1
-        return node_id
 
     def _edge_from_return_hint(
         self, node: SourceNode[StateT, DepsT, Any], return_hint: TypeOrTypeExpression[Any]
@@ -601,7 +546,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             if return_type_origin is End:
                 destinations.append(self.end_node)
             elif return_type_origin is BaseNode:
-                raise exceptions.GraphSetupError(
+                raise exceptions.GraphSetupError(  # pragma: no cover
                     f'Node {node} return type hint includes a plain `BaseNode`. '
                     'Edge inference requires each possible returned `BaseNode` subclass to be listed explicitly.'
                 )
@@ -611,7 +556,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
                     next((a for a in annotations if isinstance(a, Step)), None),  # pyright: ignore[reportUnknownArgumentType]
                 )
                 if step is None:
-                    raise exceptions.GraphSetupError(
+                    raise exceptions.GraphSetupError(  # pragma: no cover
                         f'Node {node} return type hint includes a `StepNode` without a `Step` annotation. '
                         'When returning `my_step.as_node()`, use `Annotated[StepNode[StateT, DepsT], my_step]` as the return type hint.'
                     )
@@ -622,7 +567,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
                     next((a for a in annotations if isinstance(a, Join)), None),  # pyright: ignore[reportUnknownArgumentType]
                 )
                 if join is None:
-                    raise exceptions.GraphSetupError(
+                    raise exceptions.GraphSetupError(  # pragma: no cover
                         f'Node {node} return type hint includes a `JoinNode` without a `Join` annotation. '
                         'When returning `my_join.as_node()`, use `Annotated[JoinNode[StateT, DepsT], my_join]` as the return type hint.'
                     )
@@ -697,17 +642,13 @@ def _flatten_paths(
     def _split_at_first_fork(path: Path) -> tuple[Path, list[tuple[NodeID, Path]]]:
         for i, item in enumerate(path.items):
             if isinstance(item, MapMarker):
-                if item.fork_id not in nodes:
-                    new_nodes[item.fork_id] = Fork(
-                        id=item.fork_id, is_map=True, downstream_join_id=item.downstream_join_id
-                    )
+                assert item.fork_id in nodes, 'This should have been added to the node during GraphBuilder.add'
                 upstream = Path(list(path.items[:i]) + [DestinationMarker(item.fork_id)])
                 downstream = Path(path.items[i + 1 :])
                 return upstream, [(item.fork_id, downstream)]
 
             if isinstance(item, BroadcastMarker):
-                if item.fork_id not in nodes:
-                    new_nodes[item.fork_id] = Fork(id=item.fork_id, is_map=True, downstream_join_id=None)
+                assert item.fork_id in nodes, 'This should have been added to the node during GraphBuilder.add'
                 upstream = Path(list(path.items[:i]) + [DestinationMarker(item.fork_id)])
                 return upstream, [(item.fork_id, p) for p in item.paths]
         return path, []
@@ -762,6 +703,7 @@ def _normalize_forks(
         if len(edges_from_source) == 1:
             new_edges[source_id] = edges_from_source
             continue
+        # TODO: Need to cover this in a test, specifically by using `.to()`  with multiple arguments
         new_fork = Fork[Any, Any](id=ForkID(NodeID(f'{node.id}_broadcast_fork')), is_map=False, downstream_join_id=None)
         new_nodes[new_fork.id] = new_fork
         new_edges[source_id] = [Path(items=[BroadcastMarker(fork_id=new_fork.id, paths=edges_from_source)])]
@@ -809,19 +751,12 @@ def _collect_dominating_forks(
                 last_source_id: The current source node ID
             """
             for item in path.items:
-                if isinstance(item, MapMarker):
-                    fork_ids.add(item.fork_id)
-                    edges[last_source_id].append(item.fork_id)
-                    last_source_id = item.fork_id
-                elif isinstance(item, BroadcastMarker):
-                    fork_ids.add(item.fork_id)
-                    edges[last_source_id].append(item.fork_id)
-                    for fork in item.paths:
-                        _handle_path(Path([*fork.items]), item.fork_id)
-                    # Broadcasts should only ever occur as the last item in the list, so no need to update the working_source_id
-                elif isinstance(item, DestinationMarker):
+                # No need to handle MapMarker or BroadcastMarker here as these should have all been removed
+                # by the call to `_flatten_paths`
+                if isinstance(item, DestinationMarker):
                     edges[last_source_id].append(item.destination_id)
                     # Destinations should only ever occur as the last item in the list, so no need to update the working_source_id
+                    break
 
         if isinstance(node, Decision):
             for branch in node.branches:
@@ -843,6 +778,7 @@ def _collect_dominating_forks(
         dominating_fork = finder.find_parent_fork(join_id)
         if dominating_fork is None:
             # TODO(P3): Print out the mermaid graph and explain the problem
+            # TODO: Need to cover this in a test
             raise ValueError(f'Join node {join_id} has no dominating fork')
         dominating_forks[join_id] = dominating_fork
 

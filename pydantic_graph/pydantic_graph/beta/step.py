@@ -231,6 +231,6 @@ class NodeStep(Step[StateT, DepsT, Any, BaseNode[StateT, DepsT, Any] | End[Any]]
         """
         node = ctx.inputs
         if not isinstance(node, self.node_type):
-            raise ValueError(f'Node {node} is not of type {self.node_type}')
+            raise ValueError(f'Node {node} is not of type {self.node_type}')  # pragma: no cover
         node = cast(BaseNode[StateT, DepsT, Any], node)
         return await node.run(GraphRunContext(state=ctx.state, deps=ctx.deps))

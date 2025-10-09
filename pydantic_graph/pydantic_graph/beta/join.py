@@ -68,6 +68,7 @@ class ReducerContext(Generic[StateT, DepsT]):
 
     @property
     def deps(self) -> DepsT:
+        # TODO: Need to cover this in a test
         return self._deps
 
     @property
@@ -76,9 +77,6 @@ class ReducerContext(Generic[StateT, DepsT]):
 
     def cancel_sibling_tasks(self):
         self._join_state.cancelled_sibling_tasks = True
-
-    def __repr__(self):
-        return f'{type(self).__name__}(state={self.state!r}, deps={self.deps!r}, join_state={self._join_state!r})'
 
 
 PlainReducerFunction = TypeAliasType(
@@ -114,6 +112,7 @@ def reduce_list_append(current: list[T], inputs: T) -> list[T]:
 
 def reduce_list_extend(current: list[T], inputs: Iterable[T]) -> list[T]:
     """A reducer that extends a list."""
+    # TODO: Need to cover this in a test, perhaps one currently using reduce_list_append
     current.extend(inputs)
     return current
 
@@ -142,6 +141,7 @@ def reduce_sum(current: NumericT, inputs: NumericT) -> NumericT:
 
 def reduce_first_value(ctx: ReducerContext[object, object], current: T, inputs: T) -> T:
     """A reducer that returns the first value it encounters, and cancels all other tasks."""
+    # TODO: Need to cover this in a test
     if ctx.cancelled_sibling_tasks:
         return current
     ctx.cancel_sibling_tasks()

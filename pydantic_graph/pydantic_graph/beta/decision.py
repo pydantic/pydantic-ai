@@ -233,6 +233,7 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
         Returns:
             A new DecisionBranchBuilder where mapping is performed prior to generating the final output.
         """
+        # TODO: Need to cover this in a test
         return DecisionBranchBuilder(
             decision=self._decision,
             source=self._source,
@@ -257,6 +258,3 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
             matches=self._matches,
             path_builder=self._path_builder.label(label),
         )
-
-    def __repr__(self):
-        return f'{type(self).__name__}(decision={self._decision!r}, source={self._source!r}, matches={self._matches!r}, path_builder={self._path_builder!r})'

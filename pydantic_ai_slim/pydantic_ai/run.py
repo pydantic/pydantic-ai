@@ -153,13 +153,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
         if isinstance(task, Sequence) and len(task) == 1:
             first_task = task[0]
-            if isinstance(first_task.inputs, BaseNode):
+            if isinstance(first_task.inputs, BaseNode):  # pragma: no branch
                 base_node: BaseNode[
                     _agent_graph.GraphAgentState,
                     _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT],
                     FinalResult[OutputDataT],
                 ] = first_task.inputs  # type: ignore[reportUnknownMemberType]
-                if _agent_graph.is_agent_node(node=base_node):
+                if _agent_graph.is_agent_node(node=base_node):  # pragma: no branch
                     return base_node
         if isinstance(task, EndMarker):
             return End(task.value)

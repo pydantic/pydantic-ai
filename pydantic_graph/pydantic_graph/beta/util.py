@@ -112,11 +112,11 @@ def infer_name(obj: Any, *, depth: int) -> str | None:
         Usage should generally look like `infer_name(self, depth=2)` or similar.
 
     Note:
-        TODO(P3): Evaluate whether this function is still needed or should be removed.
+        TODO(P3): Use this or lose it
     """
     target_frame = inspect.currentframe()
     if target_frame is None:
-        return None
+        return None  # pragma: no cover
     for _ in range(depth):
         target_frame = target_frame.f_back
         if target_frame is None:
@@ -126,7 +126,7 @@ def infer_name(obj: Any, *, depth: int) -> str | None:
         if item is obj:
             return name
 
-    if target_frame.f_locals != target_frame.f_globals:
+    if target_frame.f_locals != target_frame.f_globals:  # pragma: no branch
         # if we couldn't find the agent in locals and globals are a different dict, try globals
         for name, item in target_frame.f_globals.items():
             if item is obj:

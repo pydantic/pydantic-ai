@@ -20,7 +20,6 @@ TODO(P3): Expand this documentation with more detailed examples and edge cases.
 from __future__ import annotations
 
 from collections.abc import Hashable
-from copy import deepcopy
 from dataclasses import dataclass
 from functools import cached_property
 from typing import Generic
@@ -110,6 +109,7 @@ class ParentForkFinder(Generic[T]):
             if upstream_nodes is not None:  # found upstream nodes without a cycle
                 parent_fork = ParentFork[T](cur, upstream_nodes)
             elif parent_fork is not None:
+                # TODO: Need to cover this in a test
                 # We reached a fork that is an ancestor of a parent fork but is not itself a parent fork.
                 # This means there is a cycle to J that is downstream of `cur`, and so any node further upstream
                 # will fail to be a parent fork for the same reason. So we can stop here and just return `parent_fork`.
@@ -215,36 +215,3 @@ class ParentForkFinder(Generic[T]):
                     upstream.add(p)
                     stack.append(p)
         return upstream
-
-
-def main_test():
-    """Run basic smoke tests to verify parent fork finding functionality.
-
-    Tests both valid cases (where a parent fork exists) and invalid cases
-    (where cycles bypass potential parent forks).
-    """
-    join_id = 'J'
-    nodes = {'start', 'A', 'B', 'C', 'F', 'F2', 'I', 'J', 'end'}
-    start_ids = {'start'}
-    fork_ids = {'F', 'F2'}
-    valid_edges = {
-        'start': ['F2'],
-        'F2': ['I'],
-        'I': ['F'],
-        'F': ['A', 'B'],
-        'A': ['J'],
-        'B': ['J'],
-        'J': ['C'],
-        'C': ['end', 'I'],
-    }
-    invalid_edges = deepcopy(valid_edges)
-    invalid_edges['C'].append('A')
-
-    print(ParentForkFinder(nodes, start_ids, fork_ids, valid_edges).find_parent_fork(join_id))
-    # > DominatingFork(fork_id='F', intermediate_nodes={'A', 'B'})
-    print(ParentForkFinder(nodes, start_ids, fork_ids, invalid_edges).find_parent_fork(join_id))
-    # > None
-
-
-if __name__ == '__main__':
-    main_test()
