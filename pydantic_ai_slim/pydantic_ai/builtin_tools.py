@@ -251,28 +251,53 @@ class MCPServerTool(AbstractBuiltinTool):
 
     kind: str = 'mcp_server'
 
-    server_label: str
+    label: str
     """The label of the MCP server to use."""
 
-    server_url: str
-    """The URL of the MCP server to use."""
-
-    server_description: str
+    description: str
     """A description of the MCP server."""
-
-    allowed_tools: list[str] | None = None
-    """A list of tools that the MCP server can use."""
 
     authorization: str
     """Authorization header to use when making requests to the MCP server."""
+
+    url: str | None = None
+    """The URL of the MCP server to use.
+
+    For OpenAI Responses, one of `url` or `connector_id` must be provided.
+    """
+
+    allowed_tools: list[str] | None = None
+    """A list of tools that the MCP server can use.
+
+    Supported by:
+
+    * OpenAI Responses
+    * Anthropic
+    """
 
     headers: dict[str, str] | None = None
     """Optional HTTP headers to send to the MCP server.
 
     Use for authentication or other purposes.
+
+    Supported by:
+
+    * OpenAI Responses
     """
 
-    connector_id: str | None = None
+    connector_id: (
+        Literal[
+            'connector_dropbox',
+            'connector_gmail',
+            'connector_googlecalendar',
+            'connector_googledrive',
+            'connector_microsoftteams',
+            'connector_outlookcalendar',
+            'connector_outlookemail',
+            'connector_sharepoint',
+        ]
+        | None
+    ) = None
     """The ID of the connector to use.
 
     Supported by:

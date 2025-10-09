@@ -6189,9 +6189,9 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
         instructions='You are a helpful assistant.',
         builtin_tools=[
             MCPServerTool(
-                server_label='test_server',
-                server_url='https://example.com/mcp',
-                server_description='Game registry server',
+                label='test_server',
+                url='https://example.com/mcp',
+                description='Game registry server',
                 authorization='x-api-key',
             )
         ],
@@ -6274,9 +6274,9 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
         instructions='You are a helpful assistant.',
         builtin_tools=[
             MCPServerTool(
-                server_label='test_server',
-                server_url='https://example.com/mcp',
-                server_description='Game registry server',
+                label='test_server',
+                url='https://example.com/mcp',
+                description='Game registry server',
                 authorization='x-api-key',
             )
         ],

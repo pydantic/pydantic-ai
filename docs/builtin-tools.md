@@ -448,9 +448,9 @@ agent = Agent(
     'anthropic:claude-sonnet-4-0',
     builtin_tools=[
         MCPServerTool(
-            server_label='your-mcp-server',
-            server_url='https://example.com/mcp-server',
-            server_description='Your MCP Server',
+            label='your-mcp-server',
+            url='https://example.com/mcp-server',
+            description='Your MCP Server',
             authorization='$YOUR_AUTHORIZATION_TOKEN',
         )
     ]
@@ -472,9 +472,9 @@ agent = Agent(
     'openai-responses:gpt-4o',
     builtin_tools=[
         MCPServerTool(
-            server_label='your-mcp-server',
-            server_url='https://example.com/mcp-server',
-            server_description='Your MCP Server',
+            label='your-mcp-server',
+            url='https://example.com/mcp-server',
+            description='Your MCP Server',
             authorization='$YOUR_AUTHORIZATION_TOKEN',
         )
     ]
@@ -498,9 +498,9 @@ agent = Agent(
     'openai-responses:gpt-4o',
     builtin_tools=[
         MCPServerTool(
-            server_label='your-mcp-server',
-            server_url='https://example.com/mcp-server',
-            server_description='Your MCP Server',
+            label='your-mcp-server',
+            url='https://example.com/mcp-server',
+            description='Your MCP Server',
             authorization='$YOUR_AUTHORIZATION_TOKEN',
             allowed_tools=['tool-1', 'tool-2'],
             headers={'X-CUSTOM-HEADER': 'custom-value'},

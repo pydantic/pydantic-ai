@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import assert_never, deprecated
 
@@ -1232,19 +1232,21 @@ class OpenAIResponsesModel(Model):
             elif isinstance(tool, CodeExecutionTool):
                 has_image_generating_tool = True
                 tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
-            elif isinstance(tool, MCPServerTool):
-                tools.append(
-                    responses.tool_param.Mcp(
-                        type='mcp',
-                        server_url=tool.server_url,
-                        server_label=tool.server_label,
-                        server_description=tool.server_description,
-                        allowed_tools=tool.allowed_tools,
-                        authorization=tool.authorization,
-                        require_approval='never',
-                        headers=tool.headers,
-                    )
+            elif isinstance(tool, MCPServerTool):  # pragma: no branch
+                mcp_tool = responses.tool_param.Mcp(
+                    type='mcp',
+                    server_label=tool.label,
+                    server_description=tool.description,
+                    allowed_tools=tool.allowed_tools,
+                    authorization=tool.authorization,
+                    require_approval='never',
+                    headers=tool.headers,
                 )
+                if tool.url:
+                    mcp_tool['server_url'] = tool.url
+                if tool.connector_id:
+                    mcp_tool['connector_id'] = tool.connector_id
+                tools.append(mcp_tool)
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                 has_image_generating_tool = True
                 tools.append(
@@ -1426,6 +1428,33 @@ class OpenAIResponsesModel(Model):
                                     },
                                 )
                                 openai_messages.append(image_generation_item)
+                            elif (
+                                item.tool_name == MCPServerTool.kind
+                                and item.tool_call_id
+                                and (args := item.args_as_dict())
+                                and (server_label := args.get('server_label'))
+                            ):  # pragma: no branch
+                                if tools := args.get('tools'):
+                                    mcp_list_tools_item = responses.response_input_item_param.McpListTools(
+                                        id=item.tool_call_id,
+                                        tools=cast(list[responses.response_input_item_param.McpListToolsTool], tools),
+                                        server_label=server_label,
+                                        error=args.get('error'),
+                                        type='mcp_list_tools',
+                                    )
+                                    openai_messages.append(mcp_list_tools_item)
+                                elif (arguments := args.get('arguments')) and (name := args.get('name')):
+                                    mcp_call_item = responses.response_input_item_param.McpCall(
+                                        id=item.tool_call_id,
+                                        name=name,
+                                        arguments=arguments,
+                                        server_label=server_label,
+                                        error=cast(str | None, args.get('error')),
+                                        output=cast(str | None, args.get('output')),
+                                        type='mcp_call',
+                                    )
+                                    openai_messages.append(mcp_call_item)
+
                     elif isinstance(item, BuiltinToolReturnPart):
                         if item.provider_name == self.system and send_item_ids:
                             if (
@@ -1446,6 +1475,9 @@ class OpenAIResponsesModel(Model):
                                 web_search_item['status'] = status
                             elif item.tool_name == ImageGenerationTool.kind:  # pragma: no branch
                                 # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
+                                pass
+                            elif item.tool_name == MCPServerTool.kind:  # pragma: no branch
+                                # MCP result does not need to be sent back, just the fields off of `BuiltinToolCallPart`.
                                 pass
                     elif isinstance(item, FilePart):
                         # This was generated by the `ImageGenerationTool` or `CodeExecutionTool`,
@@ -1818,22 +1850,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
 
                 elif isinstance(chunk.item, responses.response_output_item.McpCall):
-                    call_part, return_part = _map_mcp_call(chunk.item, self.provider_name)
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=f'{chunk.item.id}-call',
-                        args=call_part.args,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    _, return_part = _map_mcp_call(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
                 elif isinstance(chunk.item, responses.response_output_item.McpListTools):
-                    call_part, return_part = _map_mcp_list_tools(chunk.item, self.provider_name)
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=f'{chunk.item.id}-call',
-                        args=call_part.args,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    _, return_part = _map_mcp_list_tools(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
@@ -1931,8 +1951,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item_id}-file', part=file_part)
 
             elif isinstance(chunk, responses.ResponseMcpCallArgumentsDeltaEvent):
-                maybe_event = self._parts_manager.handle_text_delta(
-                    vendor_part_id=chunk.item_id, content=chunk.delta, id=chunk.item_id
+                maybe_event = self._parts_manager.handle_tool_call_delta(
+                    vendor_part_id=f'{chunk.item_id}-call',
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -2170,57 +2190,51 @@ def _map_image_generation_tool_call(
     )
 
 
+mcp_list_tools_ta: TypeAdapter[responses.response_output_item.McpListTools] = TypeAdapter(
+    responses.response_output_item.McpListTools
+)
+
+
 def _map_mcp_list_tools(
     item: responses.response_output_item.McpListTools, provider_name: str
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
-    result = {
-        'server_label': item.server_label,
-        'tools': [
-            {
-                'name': tool.name,
-                'description': tool.description,
-                'input_schema': tool.input_schema,
-            }
-            for tool in item.tools
-        ],
-    }
+    item_serialized = mcp_list_tools_ta.dump_python(item, mode='json')
 
     return (
         BuiltinToolCallPart(
             tool_name=MCPServerTool.kind,
             tool_call_id=item.id,
+            args=item_serialized,
             provider_name=provider_name,
         ),
         BuiltinToolReturnPart(
             tool_name=MCPServerTool.kind,
             tool_call_id=item.id,
-            content=result,
+            content=item_serialized,
             provider_name=provider_name,
         ),
     )
 
 
+mcp_call_ta: TypeAdapter[responses.response_output_item.McpCall] = TypeAdapter(responses.response_output_item.McpCall)
+
+
 def _map_mcp_call(
     item: responses.response_output_item.McpCall, provider_name: str
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
-    result = {
-        'name': item.name,
-        'server_label': item.server_label,
-        'arguments': item.arguments,
-        'error': item.error,
-        'output': item.output,
-    }
+    item_serialized = mcp_call_ta.dump_python(item, mode='json')
 
     return (
         BuiltinToolCallPart(
             tool_name=MCPServerTool.kind,
             tool_call_id=item.id,
+            args=item_serialized,
             provider_name=provider_name,
         ),
         BuiltinToolReturnPart(
             tool_name=MCPServerTool.kind,
             tool_call_id=item.id,
-            content=result,
+            content=item_serialized,
             provider_name=provider_name,
         ),
     )

@@ -3071,9 +3071,9 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
         m,
         builtin_tools=[
             MCPServerTool(
-                server_label='test-server',
-                server_url='https://example.com/mcp',
-                server_description='Game registry server',
+                label='test-server',
+                url='https://example.com/mcp',
+                description='Game registry server',
                 authorization='',
             )
         ],
@@ -3136,9 +3136,9 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
         m,
         builtin_tools=[
             MCPServerTool(
-                server_label='test-server',
-                server_url='https://example.com/mcp',
-                server_description='Game registry server',
+                label='test-server',
+                url='https://example.com/mcp',
+                description='Game registry server',
                 authorization='',
             )
         ],
