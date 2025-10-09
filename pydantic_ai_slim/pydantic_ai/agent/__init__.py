@@ -426,6 +426,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -443,6 +444,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -460,6 +462,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -532,6 +535,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
+            builtin_tools: Optional additional builtin tools for this run.
 
         Returns:
             The result of the run.
@@ -603,7 +607,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             instrumentation_settings = None
             tracer = NoOpTracer()
-
+        if builtin_tools:
+            # Deduplicate builtin tools passed to the agent and the run based on type
+            builtin_tools = list(
+                {
+                    **({type(tool): tool for tool in self._builtin_tools or []}),
+                    **({type(tool): tool for tool in builtin_tools}),
+                }.values()
+            )
+        else:
+            builtin_tools = list(self._builtin_tools)
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,
             prompt=user_prompt,
@@ -616,7 +629,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_schema=output_schema,
             output_validators=output_validators,
             history_processors=self.history_processors,
-            builtin_tools=list(self._builtin_tools),
+            builtin_tools=builtin_tools,
             tool_manager=tool_manager,
             tracer=tracer,
             get_instructions=get_instructions,
