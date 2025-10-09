@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from prefect.cache_policies import CachePolicy
-from prefect.filesystems import WritableFileSystem
+from prefect.results import ResultStorage
 from typing_extensions import TypedDict
 
 from pydantic_ai.durable_exec.prefect._cache_policies import DEFAULT_PYDANTIC_AI_CACHE_POLICY
@@ -28,8 +28,8 @@ class TaskConfig(TypedDict, total=False):
     persist_result: bool
     """Whether to persist the task result."""
 
-    result_storage: WritableFileSystem | str | None
-    """Prefect result storage for the task. Should be a WritableFileSystem Block or a block slug like `s3-bucket/my-storage`."""
+    result_storage: ResultStorage
+    """Prefect result storage for the task. Should be a storage block or a block slug like `s3-bucket/my-storage`."""
 
     log_prints: bool
     """Whether to log print statements from the task."""

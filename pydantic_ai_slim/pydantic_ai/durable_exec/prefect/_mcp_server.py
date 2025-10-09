@@ -4,7 +4,7 @@ from abc import ABC
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from prefect import get_run_logger, task
+from prefect import task
 from typing_extensions import Self
 
 from pydantic_ai import AbstractToolset, ToolsetTool, WrapperToolset
@@ -28,6 +28,17 @@ class PrefectMCPServer(WrapperToolset[AgentDepsT], ABC):
         super().__init__(wrapped)
         self._task_config = default_task_config | (task_config or {})
         self._mcp_id = wrapped.id
+
+        @task
+        async def _call_tool_task(
+            tool_name: str,
+            tool_args: dict[str, Any],
+            ctx: RunContext[AgentDepsT],
+            tool: ToolsetTool[AgentDepsT],
+        ) -> ToolResult:
+            return await super(PrefectMCPServer, self).call_tool(tool_name, tool_args, ctx, tool)
+
+        self._call_tool_task = _call_tool_task
 
     @property
     def id(self) -> str | None:
@@ -54,22 +65,6 @@ class PrefectMCPServer(WrapperToolset[AgentDepsT], ABC):
         tool: ToolsetTool[AgentDepsT],
     ) -> ToolResult:
         """Call an MCP tool, wrapped as a Prefect task with a descriptive name."""
-
-        @task(
-            name=f'Call MCP Tool: {name}',
-            **self._task_config,
+        return await self._call_tool_task.with_options(name=f'Call MCP Tool: {name}', **self._task_config)(
+            name, tool_args, ctx, tool
         )
-        async def call_tool_task(
-            tool_name: str,
-            args: dict[str, Any],
-            run_ctx: RunContext[AgentDepsT],
-        ) -> ToolResult:
-            logger = get_run_logger()
-            logger.info(f'Calling MCP tool: {tool_name}')
-
-            # Note: We don't include 'tool' parameter as it contains non-serializable objects
-            result = await super(PrefectMCPServer, self).call_tool(tool_name, args, run_ctx, tool)
-            logger.info(f'MCP tool call completed: {tool_name}')
-            return result
-
-        return await call_tool_task(name, tool_args, ctx)

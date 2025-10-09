@@ -5,7 +5,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, context
 from contextvars import ContextVar
 from typing import Any, overload
 
-from prefect import flow, get_run_logger, task
+from prefect import flow, task
 from prefect.context import FlowRunContext
 from prefect.utilities.asyncutils import run_coro_as_sync
 from typing_extensions import Never
@@ -175,10 +175,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     @contextmanager
     def _prefect_overrides(self) -> Iterator[None]:
         # Override with PrefectModel and PrefectMCPServer in the toolsets.
-        with (
-            super().override(model=self._model, toolsets=self._toolsets, tools=[]),
-            self.sequential_tool_calls(),
-        ):
+        with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
             yield
 
     @overload
@@ -272,10 +269,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         @flow(name=f'{self._name} Run')
         async def wrapped_run_flow() -> AgentRunResult[Any]:
-            logger = get_run_logger()
-            prompt_str = str(user_prompt)
-            logger.info(f'Starting agent run with prompt: {prompt_str}')
-
             # Mark that we're inside a PrefectAgent flow
             token = self._in_prefect_agent_flow.set(True)
             try:
@@ -293,9 +286,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                         infer_name=infer_name,
                         toolsets=toolsets,
                         event_stream_handler=event_stream_handler,
-                    )
-                    logger.info(
-                        f'Agent run completed. Requests: {result.usage().requests}, Tool calls: {result.usage().tool_calls}'
                     )
                     return result
             finally:
@@ -393,11 +383,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         @flow(name=f'{self._name} Sync Run')
         def wrapped_run_sync_flow() -> AgentRunResult[Any]:
-            logger = get_run_logger()
-            prompt_str = str(user_prompt)
-            prompt_preview = prompt_str[:100] + '...' if len(prompt_str) > 100 else prompt_str
-            logger.info(f'Starting sync agent run with prompt: {prompt_preview}')
-
             # Mark that we're inside a PrefectAgent flow
             token = self._in_prefect_agent_flow.set(True)
             try:
@@ -418,9 +403,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                             toolsets=toolsets,
                             event_stream_handler=event_stream_handler,
                         )
-                    )
-                    logger.info(
-                        f'Sync agent run completed. Requests: {result.usage().requests}, Tool calls: {result.usage().tool_calls}'
                     )
                     return result
             finally:

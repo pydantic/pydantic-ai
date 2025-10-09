@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from prefect import get_run_logger, task
+from prefect import task
 
 from pydantic_ai import FunctionToolset, ToolsetTool, WrapperToolset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._types import TaskConfig, default_task_config
@@ -30,6 +29,17 @@ class PrefectFunctionToolset(WrapperToolset[AgentDepsT]):
         self._task_config = default_task_config | (task_config or {})
         self._tool_task_config = tool_task_config or {}
 
+        @task
+        async def _call_tool_task(
+            tool_name: str,
+            tool_args: dict[str, Any],
+            ctx: RunContext[AgentDepsT],
+            tool: ToolsetTool[AgentDepsT],
+        ) -> Any:
+            return await super(PrefectFunctionToolset, self).call_tool(tool_name, tool_args, ctx, tool)
+
+        self._call_tool_task = _call_tool_task
+
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
@@ -53,35 +63,6 @@ class PrefectFunctionToolset(WrapperToolset[AgentDepsT]):
         # Merge tool-specific config with default config
         merged_config = self._task_config | tool_specific_config
 
-        @task(
-            name=f'Call Tool: {name}',
-            **merged_config,
+        return await self._call_tool_task.with_options(name=f'Call Tool: {name}', **merged_config)(
+            name, tool_args, ctx, tool
         )
-        async def call_tool_task(
-            tool_name: str,
-            args: dict[str, Any],
-            run_ctx: RunContext[AgentDepsT],
-        ) -> Any:
-            logger = get_run_logger()
-            logger.info(f'Calling tool: {tool_name}')
-
-            # Get the tool (need to fetch it again inside the task)
-            try:
-                tools = await self.wrapped.get_tools(run_ctx)
-                tool_instance = tools[tool_name]
-            except KeyError as e:  # pragma: no cover
-                raise UserError(
-                    f'Tool {tool_name!r} not found in toolset {self.id!r}. '
-                    'Removing or renaming tools during an agent run is not supported with Prefect.'
-                ) from e
-
-            # Call the tool
-            result = await super(PrefectFunctionToolset, self).call_tool(tool_name, args, run_ctx, tool_instance)
-            logger.info(f'Tool call completed: {tool_name}')
-            return result
-
-        try:
-            return await call_tool_task(name, tool_args, ctx)
-        except (ApprovalRequired, CallDeferred, ModelRetry):
-            # Re-raise these exceptions as they're part of the agent control flow
-            raise
