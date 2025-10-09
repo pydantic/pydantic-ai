@@ -747,7 +747,7 @@ async def test_run_stream_in_flow(allow_model_requests: None) -> None:
     @flow(name='test_run_stream_in_flow')
     async def run_stream_workflow():
         async with simple_prefect_agent.run_stream('What is the capital of Mexico?') as result:
-            return await result.get_output()
+            return await result.get_output()  # pragma: no cover
 
     with flow_raises(
         UserError,
@@ -757,6 +757,25 @@ async def test_run_stream_in_flow(allow_model_requests: None) -> None:
         ),
     ):
         await run_stream_workflow()
+
+
+async def test_run_stream_events_in_flow(allow_model_requests: None) -> None:
+    """Test that run_stream_events errors when used inside a Prefect flow."""
+
+    @flow(name='test_run_stream_events_in_flow')
+    async def run_stream_events_workflow():
+        return [
+            event async for event in simple_prefect_agent.run_stream_events('What is the capital of Mexico?')
+        ]  # pragma: no cover
+
+    with flow_raises(
+        UserError,
+        snapshot(
+            '`agent.run_stream_events()` cannot be used inside a Prefect flow. '
+            'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+        ),
+    ):
+        await run_stream_events_workflow()
 
 
 async def test_iter_in_flow(allow_model_requests: None) -> None:
