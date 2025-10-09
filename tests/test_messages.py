@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import TypeAdapter
 
 from pydantic_ai import (
     AudioUrl,
@@ -514,4 +515,72 @@ And then, call the 'hello_world' tool\
                 ),
             )
         ]
+    )
+
+
+def test_image_url_validation_with_optional_identifier():
+    image_url_ta = TypeAdapter(ImageUrl)
+    image = image_url_ta.validate_python({'url': 'https://example.com/image.jpg'})
+    assert image.url == snapshot('https://example.com/image.jpg')
+    assert image.identifier == snapshot('39cfc4')
+    assert image.media_type == snapshot('image/jpeg')
+    assert image_url_ta.dump_python(image) == snapshot(
+        {
+            'url': 'https://example.com/image.jpg',
+            'force_download': False,
+            'vendor_metadata': None,
+            'kind': 'image-url',
+            'media_type': 'image/jpeg',
+            'identifier': '39cfc4',
+        }
+    )
+
+    image = image_url_ta.validate_python(
+        {'url': 'https://example.com/image.jpg', 'identifier': 'foo', 'media_type': 'image/png'}
+    )
+    assert image.url == snapshot('https://example.com/image.jpg')
+    assert image.identifier == snapshot('foo')
+    assert image.media_type == snapshot('image/png')
+    assert image_url_ta.dump_python(image) == snapshot(
+        {
+            'url': 'https://example.com/image.jpg',
+            'force_download': False,
+            'vendor_metadata': None,
+            'kind': 'image-url',
+            'media_type': 'image/png',
+            'identifier': 'foo',
+        }
+    )
+
+
+def test_binary_content_validation_with_optional_identifier():
+    binary_content_ta = TypeAdapter(BinaryContent)
+    binary_content = binary_content_ta.validate_python({'data': b'fake', 'media_type': 'image/jpeg'})
+    assert binary_content.data == b'fake'
+    assert binary_content.identifier == snapshot('c053ec')
+    assert binary_content.media_type == snapshot('image/jpeg')
+    assert binary_content_ta.dump_python(binary_content) == snapshot(
+        {
+            'data': b'fake',
+            'vendor_metadata': None,
+            'kind': 'binary',
+            'media_type': 'image/jpeg',
+            'identifier': 'c053ec',
+        }
+    )
+
+    binary_content = binary_content_ta.validate_python(
+        {'data': b'fake', 'identifier': 'foo', 'media_type': 'image/png'}
+    )
+    assert binary_content.data == b'fake'
+    assert binary_content.identifier == snapshot('foo')
+    assert binary_content.media_type == snapshot('image/png')
+    assert binary_content_ta.dump_python(binary_content) == snapshot(
+        {
+            'data': b'fake',
+            'vendor_metadata': None,
+            'kind': 'binary',
+            'media_type': 'image/png',
+            'identifier': 'foo',
+        }
     )
