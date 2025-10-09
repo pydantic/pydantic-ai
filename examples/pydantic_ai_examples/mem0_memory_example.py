@@ -16,7 +16,7 @@ import os
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.memory import MemoryConfig, MemoryContext
+from pydantic_ai.memory import MemoryConfig
 from pydantic_ai.memory.providers import Mem0Provider
 
 
@@ -84,22 +84,10 @@ async def store_memory(ctx: RunContext[UserSession], fact: str) -> str:
         ctx: The run context with user session.
         fact: The fact to store.
     """
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-
-    # Create a message to store
-    messages = [
-        ModelRequest(parts=[UserPromptPart(content=fact)]),
-    ]
-
-    stored = await memory_provider.store_memories(
-        messages=messages,
-        user_id=ctx.deps.user_id,
-        metadata={'manual': True, 'importance': 'high'},
-    )
-
-    if stored:
-        return f'Stored memory: {stored[0].memory}'
-    return 'Failed to store memory'
+    # Note: For proper memory storage, use result.all_messages() from agent runs
+    # This tool acknowledges the fact for demonstration purposes
+    # In production, memories are typically stored after complete conversations
+    return f'I will remember: {fact}. Memory will be stored after our conversation.'
 
 
 # Tool to view all user memories

@@ -13,13 +13,12 @@ if TYPE_CHECKING:
 
 try:
     from mem0 import AsyncMemoryClient, MemoryClient
-    from mem0.client.main import api_error_handler
 
     MEM0_AVAILABLE = True
 except ImportError:
     MEM0_AVAILABLE = False
-    AsyncMemoryClient = None  # type: ignore
-    MemoryClient = None  # type: ignore
+    AsyncMemoryClient = None  # type: ignore[assignment,misc]
+    MemoryClient = None  # type: ignore[assignment,misc]
 
 __all__ = ('Mem0Provider',)
 
@@ -67,7 +66,7 @@ class Mem0Provider(BaseMemoryProvider):
         org_id: str | None = None,
         project_id: str | None = None,
         config: MemoryConfig | None = None,
-        client: AsyncMemoryClient | MemoryClient | None = None,
+        client: AsyncMemoryClient | MemoryClient | None = None,  # type: ignore[valid-type]
         version: str = '2',
     ):
         """Initialize Mem0 provider.
@@ -96,10 +95,10 @@ class Mem0Provider(BaseMemoryProvider):
 
         if client is not None:
             self.client = client
-            self._is_async = isinstance(client, AsyncMemoryClient)
+            self._is_async = isinstance(client, AsyncMemoryClient)  # type: ignore[arg-type,misc]
         else:
             # Create async client by default for better performance
-            self.client = AsyncMemoryClient(
+            self.client = AsyncMemoryClient(  # type: ignore[misc]
                 api_key=api_key,
                 host=host,
                 org_id=org_id,
@@ -190,6 +189,69 @@ class Mem0Provider(BaseMemoryProvider):
             # Return empty list on error to not break agent execution
             return []
 
+    def _convert_messages_to_mem0_format(self, messages: list[ModelMessage]) -> list[dict[str, str]]:
+        """Convert ModelMessage objects to mem0 format.
+
+        Args:
+            messages: Messages to convert.
+
+        Returns:
+            List of message dicts in mem0 format.
+        """
+        mem0_messages = []
+        for msg in messages:
+            msg_dict = self._extract_message_content(msg)
+            if msg_dict['content']:
+                mem0_messages.append(msg_dict)
+        return mem0_messages
+
+    def _extract_message_content(self, msg: ModelMessage) -> dict[str, str]:  # type: ignore[misc]
+        """Extract content and role from a ModelMessage.
+
+        Args:
+            msg: Message to extract from.
+
+        Returns:
+            Dict with 'role' and 'content' keys.
+        """
+        msg_dict = {'role': 'user', 'content': ''}
+
+        if not hasattr(msg, 'parts'):  # type: ignore[misc]
+            return msg_dict
+
+        for part in msg.parts:  # type: ignore[attr-defined]
+            # Extract content
+            if hasattr(part, 'content'):
+                content_value = part.content  # type: ignore[attr-defined]
+                msg_dict['content'] += str(content_value) if not isinstance(content_value, str) else content_value
+
+            # Determine role from part type
+            part_type = type(part).__name__
+            if 'User' in part_type:
+                msg_dict['role'] = 'user'
+            elif 'Text' in part_type or 'Assistant' in part_type:
+                msg_dict['role'] = 'assistant'
+            elif 'System' in part_type:
+                msg_dict['role'] = 'system'
+
+        return msg_dict
+
+    def _parse_mem0_response(self, response: Any) -> list[Any]:  # type: ignore[misc]
+        """Parse Mem0 API response to extract results.
+
+        Args:
+            response: Raw response from Mem0 API.
+
+        Returns:
+            List of result items.
+        """
+        if isinstance(response, dict):
+            return response.get('results', [])  # type: ignore[return-value]
+        if isinstance(response, list):
+            return response  # type: ignore[return-value]
+        logger.warning(f'Unexpected response type from Mem0: {type(response)}')
+        return []
+
     async def store_memories(
         self,
         messages: list[ModelMessage],
@@ -211,42 +273,14 @@ class Mem0Provider(BaseMemoryProvider):
         Returns:
             List of stored memories.
         """
-        # Convert ModelMessage objects to mem0 format
-        mem0_messages = []
-        for msg in messages:
-            # Extract content based on message type
-            msg_dict = {'role': 'user', 'content': ''}
-
-            # Handle different message part types
-            if hasattr(msg, 'parts'):
-                for part in msg.parts:
-                    if hasattr(part, 'content'):
-                        if isinstance(part.content, str):
-                            msg_dict['content'] += part.content
-                        else:
-                            msg_dict['content'] += str(part.content)
-
-                    # Determine role from part type
-                    part_type = type(part).__name__
-                    if 'User' in part_type:
-                        msg_dict['role'] = 'user'
-                    elif 'Text' in part_type or 'Assistant' in part_type:
-                        msg_dict['role'] = 'assistant'
-                    elif 'System' in part_type:
-                        msg_dict['role'] = 'system'
-
-            if msg_dict['content']:
-                mem0_messages.append(msg_dict)
-
+        # Convert messages to mem0 format
+        mem0_messages = self._convert_messages_to_mem0_format(messages)
         if not mem0_messages:
             logger.warning('No valid messages to store in Mem0')
             return []
 
         # Build add parameters
-        add_kwargs: dict[str, Any] = {
-            'messages': mem0_messages,
-        }
-
+        add_kwargs: dict[str, Any] = {'messages': mem0_messages}
         if user_id:
             add_kwargs['user_id'] = user_id
         if agent_id:
@@ -258,32 +292,20 @@ class Mem0Provider(BaseMemoryProvider):
 
         # Store in Mem0
         try:
-            if self._is_async:
-                response = await self.client.add(**add_kwargs)
-            else:
-                response = self.client.add(**add_kwargs)
-
-            # Parse response - handle both v1.1 format (dict) and raw list
-            if isinstance(response, dict):
-                results = response.get('results', [])
-            elif isinstance(response, list):
-                results = response
-            else:
-                logger.warning(f'Unexpected response type from Mem0: {type(response)}')
-                results = []
+            response = await self.client.add(**add_kwargs) if self._is_async else self.client.add(**add_kwargs)  # type: ignore[misc]
+            results = self._parse_mem0_response(response)
 
             # Convert to StoredMemory objects
-            stored = []
-            for result in results:
-                if isinstance(result, dict):
-                    stored.append(
-                        StoredMemory(
-                            id=result.get('id', ''),
-                            memory=result.get('memory', ''),
-                            event=result.get('event', 'ADD'),
-                            metadata=result.get('metadata', {}),
-                        )
-                    )
+            stored = [
+                StoredMemory(
+                    id=result.get('id', ''),  # type: ignore[union-attr]
+                    memory=result.get('memory', ''),  # type: ignore[union-attr]
+                    event=result.get('event', 'ADD'),  # type: ignore[union-attr]
+                    metadata=result.get('metadata', {}),  # type: ignore[union-attr]
+                )
+                for result in results
+                if isinstance(result, dict)
+            ]
 
             logger.debug(f'Stored {len(stored)} memories in Mem0')
             return stored

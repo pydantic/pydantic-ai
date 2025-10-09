@@ -123,8 +123,8 @@ def test_memory_scope_enum():
 class MockMemoryProvider(BaseMemoryProvider):
     """Mock memory provider for testing."""
 
-    def __init__(self):
-        self.stored_memories: list[tuple] = []
+    def __init__(self) -> None:
+        self.stored_memories: list[tuple[list[object], dict[str, object]]] = []
         self.mock_memories = [
             RetrievedMemory(
                 id='mem_1',
@@ -138,10 +138,10 @@ class MockMemoryProvider(BaseMemoryProvider):
             ),
         ]
 
-    async def retrieve_memories(self, query, **kwargs):
+    async def retrieve_memories(self, query: str, **kwargs: object) -> list[RetrievedMemory]:
         return self.mock_memories
 
-    async def store_memories(self, messages, **kwargs):
+    async def store_memories(self, messages: list[object], **kwargs: object) -> list[StoredMemory]:
         self.stored_memories.append((messages, kwargs))
         return [
             StoredMemory(
@@ -151,10 +151,10 @@ class MockMemoryProvider(BaseMemoryProvider):
             )
         ]
 
-    async def get_all_memories(self, **kwargs):
+    async def get_all_memories(self, **kwargs: object) -> list[RetrievedMemory]:
         return self.mock_memories
 
-    async def delete_memory(self, memory_id):
+    async def delete_memory(self, memory_id: str) -> bool:
         return True
 
 
