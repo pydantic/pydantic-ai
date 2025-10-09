@@ -773,9 +773,7 @@ async def test_run_stream_events_in_flow(allow_model_requests: None) -> None:
 
     @flow(name='test_run_stream_events_in_flow')
     async def run_stream_events_workflow():
-        return [
-            event async for event in simple_prefect_agent.run_stream_events('What is the capital of Mexico?')
-        ]  # pragma: no cover
+        return [event async for event in simple_prefect_agent.run_stream_events('What is the capital of Mexico?')]
 
     with flow_raises(
         UserError,
