@@ -27,16 +27,25 @@ class UserSession:
     session_id: str | None = None
 
 
-# Create Mem0 memory provider
-memory_provider = Mem0Provider(
-    api_key=os.getenv('MEM0_API_KEY'),
-    config=MemoryConfig(
-        auto_store=True,  # Automatically store conversations
-        auto_retrieve=True,  # Automatically retrieve memories
-        top_k=5,  # Retrieve top 5 relevant memories
-        min_relevance_score=0.7,  # Only use highly relevant memories
-    ),
-)
+# Create Mem0 memory provider (only if API key is available)
+# Note: This will be None if MEM0_API_KEY is not set (e.g., in CI import tests)
+# The try-except ensures the example can be imported without errors even without an API key
+memory_provider: Mem0Provider | None = None
+try:
+    if os.getenv('MEM0_API_KEY'):
+        memory_provider = Mem0Provider(
+            api_key=os.getenv('MEM0_API_KEY'),
+            config=MemoryConfig(
+                auto_store=True,  # Automatically store conversations
+                auto_retrieve=True,  # Automatically retrieve memories
+                top_k=5,  # Retrieve top 5 relevant memories
+                min_relevance_score=0.7,  # Only use highly relevant memories
+            ),
+        )
+except Exception:
+    # Gracefully handle initialization errors (e.g., invalid API key or missing env var)
+    # This allows the module to be imported in CI tests without crashing
+    pass
 
 # Create agent with memory (Note: Full integration coming soon!)
 agent = Agent(
@@ -58,6 +67,9 @@ async def search_user_memories(ctx: RunContext[UserSession], query: str) -> str:
         ctx: The run context with user session.
         query: What to search for in memories.
     """
+    if memory_provider is None:
+        return 'Memory provider not initialized. Please set MEM0_API_KEY environment variable.'
+
     # Access mem0 through the memory provider
     memories = await memory_provider.retrieve_memories(
         query=query,
@@ -94,6 +106,9 @@ async def store_memory(ctx: RunContext[UserSession], fact: str) -> str:
 @agent.tool
 async def list_all_memories(ctx: RunContext[UserSession]) -> str:
     """List all memories for the current user."""
+    if memory_provider is None:
+        return 'Memory provider not initialized. Please set MEM0_API_KEY environment variable.'
+
     memories = await memory_provider.get_all_memories(
         user_id=ctx.deps.user_id,
         limit=10,
@@ -111,6 +126,10 @@ async def list_all_memories(ctx: RunContext[UserSession]) -> str:
 
 async def example_conversation():
     """Demonstrate a multi-turn conversation with memory."""
+    if memory_provider is None:
+        print('Error: MEM0_API_KEY environment variable not set.')
+        return
+
     user_session = UserSession(user_id='user_alice', session_id='session_001')
 
     print('=== First Conversation ===\n')
@@ -162,6 +181,10 @@ async def example_conversation():
 
 async def example_multi_user():
     """Demonstrate memory isolation between different users."""
+    if memory_provider is None:
+        print('Error: MEM0_API_KEY environment variable not set.')
+        return
+
     print('=== Multi-User Memory Isolation ===\n')
 
     # User 1
@@ -212,6 +235,10 @@ async def example_multi_user():
 
 async def example_session_memory():
     """Demonstrate session-scoped memories."""
+    if not os.getenv('MEM0_API_KEY'):
+        print('Error: MEM0_API_KEY environment variable not set.')
+        return
+
     print('=== Session-Scoped Memory ===\n')
 
     # Create provider with session scope
