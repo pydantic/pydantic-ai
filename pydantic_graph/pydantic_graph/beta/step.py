@@ -8,7 +8,7 @@ the v1 and v2 graph execution systems.
 from __future__ import annotations
 
 from collections.abc import Awaitable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Generic, Protocol, cast, get_origin, overload
 
 from typing_extensions import TypeVar
@@ -22,7 +22,8 @@ InputT = TypeVar('InputT', infer_variance=True)
 OutputT = TypeVar('OutputT', infer_variance=True)
 
 
-@dataclass(kw_only=True, frozen=True)
+# Note: we should make this into a frozen dataclass if https://github.com/python/mypy/issues/17623 gets resolved
+# Right now, it cannot be because that breaks variance inference in Python 3.13 due to __replace__
 class StepContext(Generic[StateT, DepsT, InputT]):
     """Context information passed to step functions during graph execution.
 
@@ -34,14 +35,26 @@ class StepContext(Generic[StateT, DepsT, InputT]):
         InputT: The type of the input data
     """
 
-    state: StateT = field(repr=False)  # exclude from repr to keep things concise
-    """The current graph state."""
+    def __init__(self, *, state: StateT, deps: DepsT, inputs: InputT):
+        """Arguments:
+        state: The current graph state
+        deps: The graph run dependencies
+        inputs: The input data for this step
+        """
+        self.state = state
+        self.deps = deps
+        self._inputs = inputs
 
-    deps: DepsT = field(repr=False)  # exclude from repr to keep things concise
-    """The dependencies available to this step."""
+    @property
+    def inputs(self) -> InputT:
+        """The input data for this step.
 
-    inputs: InputT
-    """The input data for this step."""
+        This must be a property to ensure correct variance behavior
+        """
+        return self._inputs
+
+    def __repr__(self):
+        return f'{type(self).__name__}(inputs={self.inputs!r})'
 
 
 class StepFunction(Protocol[StateT, DepsT, InputT, OutputT]):
@@ -74,7 +87,8 @@ AnyStepFunction = StepFunction[Any, Any, Any, Any]
 """Type alias for a step function with any type parameters."""
 
 
-@dataclass(frozen=True)
+# Note: we should make this into a frozen dataclass if https://github.com/python/mypy/issues/17623 gets resolved
+# Right now, it cannot be because that breaks variance inference in Python 3.13 due to __replace__
 class Step(Generic[StateT, DepsT, InputT, OutputT]):
     """A step in the graph execution that wraps a step function.
 
@@ -88,24 +102,23 @@ class Step(Generic[StateT, DepsT, InputT, OutputT]):
         OutputT: The type of the output data
     """
 
-    id: NodeID
-    """Unique identifier for this step."""
-    call: StepFunction[StateT, DepsT, InputT, OutputT]
-    """The step function to execute."""
-    user_label: str | None = None
-    """Optional human-readable label for this step."""
+    def __init__(self, *, id: NodeID, call: StepFunction[StateT, DepsT, InputT, OutputT], label: str | None = None):
+        """Arguments:
+        id: Unique identifier for this step
+        call: The step function to execute
+        label: Optional human-readable label for this step
+        """
+        self.id = id
+        self._call = call
+        self.label = label
 
     # TODO(P3): Consider defining __call__, so a decorated step can still be called with the same signature
     # TODO(P3): Consider adding a `bind` method that returns an object that can be used to get something you can return from a BaseNode that allows you to transition to nodes using "new"-form edges
 
     @property
-    def label(self) -> str | None:
-        """The human-readable label for this step.
-
-        Returns:
-            The user-provided label, or None if no label was set
-        """
-        return self.user_label
+    def call(self) -> StepFunction[StateT, DepsT, InputT, OutputT]:
+        """The step function to execute. This needs to be a property for proper variance inference."""
+        return self._call
 
     @overload
     def as_node(self, inputs: None = None) -> StepNode[StateT, DepsT]: ...
@@ -123,6 +136,9 @@ class Step(Generic[StateT, DepsT, InputT, OutputT]):
             A [`StepNode`][pydantic_graph.beta.step.StepNode] with this step and the bound inputs
         """
         return StepNode(self, inputs)
+
+    def __repr__(self) -> str:
+        return f'{type(self).__name__}(id={self.id!r}, call={self._call!r}, label={self.label!r})'
 
 
 @dataclass
@@ -158,7 +174,8 @@ class StepNode(BaseNode[StateT, DepsT, Any]):
         )
 
 
-@dataclass(frozen=True, init=False)
+# Note: we should make this into a frozen dataclass if https://github.com/python/mypy/issues/17623 gets resolved
+# Right now, it cannot be because that breaks variance inference in Python 3.13 due to __replace__
 class NodeStep(Step[StateT, DepsT, Any, BaseNode[StateT, DepsT, Any] | End[Any]]):
     """A step that wraps a BaseNode type for execution.
 
@@ -175,27 +192,25 @@ class NodeStep(Step[StateT, DepsT, Any, BaseNode[StateT, DepsT, Any] | End[Any]]
         node_type: type[BaseNode[StateT, DepsT, Any]],
         *,
         id: NodeID | None = None,
-        user_label: str | None = None,
+        label: str | None = None,
     ):
         """Initialize a node step.
 
         Args:
             node_type: The BaseNode class this step will execute
             id: Optional unique identifier, defaults to the node's get_node_id()
-            user_label: Optional human-readable label for this step
+            label: Optional human-readable label for this step
         """
         super().__init__(
             id=id or NodeID(node_type.get_node_id()),
-            call=self._call,
-            user_label=user_label,
+            call=self._call_node,
+            label=label,
         )
         # `type[BaseNode[StateT, DepsT, Any]]` could actually be a `typing._GenericAlias` like `pydantic_ai._agent_graph.UserPromptNode[~DepsT, ~OutputT]`,
         # so we get the origin to get to the actual class
-        object.__setattr__(
-            self, 'node_type', get_origin(node_type) or node_type
-        )  # have to use object.__setattr__ because this class is frozen
+        self.node_type = get_origin(node_type) or node_type
 
-    async def _call(self, ctx: StepContext[StateT, DepsT, Any]) -> BaseNode[StateT, DepsT, Any] | End[Any]:
+    async def _call_node(self, ctx: StepContext[StateT, DepsT, Any]) -> BaseNode[StateT, DepsT, Any] | End[Any]:
         """Execute the wrapped node with the step context.
 
         Args:

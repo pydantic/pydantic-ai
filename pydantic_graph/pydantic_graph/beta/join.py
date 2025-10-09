@@ -133,7 +133,8 @@ def reduce_first_value(ctx: ReducerContext[object, object], current: T, inputs: 
     return inputs
 
 
-@dataclass(frozen=True)
+# Note: we should make this into a frozen dataclass if https://github.com/python/mypy/issues/17623 gets resolved
+# Right now, it cannot be because that breaks variance inference in Python 3.13 due to __replace__
 class Join(Generic[StateT, DepsT, InputT, OutputT]):
     """A join operation that synchronizes and aggregates parallel execution paths.
 
@@ -148,14 +149,32 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
         OutputT: The type of the final joined output
     """
 
-    id: JoinID
-    """A unique identifier for this join operation."""
-    reducer: ReducerFunction[StateT, DepsT, InputT, OutputT]
-    """The reducer function this join uses to aggregate inputs."""
-    initial_factory: Callable[[], OutputT]
-    """The value to use as the `current` value during the first call to `reduce`."""
-    joins: ForkID | None
-    """The fork ID this join synchronizes with, if any."""
+    def __init__(
+        self,
+        *,
+        id: JoinID,
+        reducer: ReducerFunction[StateT, DepsT, InputT, OutputT],
+        initial_factory: Callable[[], OutputT],
+        joins: ForkID | None = None,
+    ):
+        """Arguments:
+        id: A unique identifier for this join operation
+        reducer: The reducer function this join uses to aggregate inputs
+        initial_factory: The value to use as the `current` value during the first call to `reduce`
+        joins: The fork ID this join synchronizes with, if any
+        """
+        self.id = id
+        self._initial_factory = initial_factory
+        self._reducer = reducer
+        self.joins = joins
+
+    @property
+    def reducer(self):
+        return self._reducer
+
+    @property
+    def initial_factory(self):
+        return self._initial_factory
 
     def reduce(self, ctx: ReducerContext[StateT, DepsT], current: OutputT, inputs: InputT) -> OutputT:
         n_parameters = len(inspect.signature(self.reducer).parameters)
@@ -180,6 +199,9 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
             A [`StepNode`][pydantic_graph.beta.step.StepNode] with this step and the bound inputs
         """
         return JoinNode(self, inputs)
+
+    def __repr__(self):
+        return f'{type(self).__name__}(id={self.id!r}, reducer={self.reducer!r}, initial_factory={self.initial_factory!r} joins={self.joins!r})'
 
 
 @dataclass

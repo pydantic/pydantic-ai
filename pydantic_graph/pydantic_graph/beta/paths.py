@@ -44,6 +44,7 @@ class TransformFunction(Protocol[StateT, DepsT, InputT, OutputT]):
         OutputT: The type of the output data
     """
 
+    # TODO: Rework to better-support lambdas through callable union like we did with ReducerFunction
     def __call__(self, ctx: StepContext[StateT, DepsT, InputT]) -> OutputT:
         """Execute the step function with the given context.
 

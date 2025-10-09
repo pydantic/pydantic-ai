@@ -78,7 +78,7 @@ def build_mermaid_graph(graph: Graph[Any, Any, Any, Any]) -> MermaidGraph:  # no
             kind = 'end'
         elif isinstance(node, Step):
             kind = 'step'
-            label = node.user_label
+            label = node.label
         elif isinstance(node, Join):
             kind = 'join'
         elif isinstance(node, Fork):

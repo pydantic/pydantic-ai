@@ -210,7 +210,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
 
         node_id = node_id or get_callable_name(call)
 
-        step = Step[StateT, DepsT, InputT, OutputT](id=NodeID(node_id), call=call, user_label=label)
+        step = Step[StateT, DepsT, InputT, OutputT](id=NodeID(node_id), call=call, label=label)
 
         return step
 
@@ -883,48 +883,35 @@ def _build_placeholder_node_id_remapping(nodes: dict[NodeID, AnyNode]) -> dict[N
 
 
 def _update_node_with_id_remapping(node: AnyNode, node_id_remapping: dict[NodeID, NodeID]) -> AnyNode:
+    # Note: we have already deepcopied the node provided to this function so it should be okay to make mutations,
+    # this could change if we change the code surrounding the code paths leading to this function call though.
     if isinstance(node, Step):
-        # Even though steps are frozen, we use object.__setattr__ to overrule that and change the id value to make it
-        # work with NodeStep.
-        # Note: we have already deepcopied the inputs to this function so it should be okay to make mutations,
-        # this could change if we change the code surrounding the code paths leading to this function call though.
-        object.__setattr__(node, 'id', node_id_remapping.get(node.id, node.id))
+        node.id = node_id_remapping.get(node.id, node.id)
     elif isinstance(node, Join):
-        node = replace(node, id=JoinID(node_id_remapping.get(node.id, node.id)))
+        node.id = JoinID(node_id_remapping.get(node.id, node.id))
     elif isinstance(node, Fork):
-        node = replace(node, id=ForkID(node_id_remapping.get(node.id, node.id)))
+        node.id = ForkID(node_id_remapping.get(node.id, node.id))
     elif isinstance(node, Decision):
-        node = replace(
-            node,
-            id=node_id_remapping.get(node.id, node.id),
-            branches=[
-                replace(branch, path=_update_path_with_id_remapping(branch.path, node_id_remapping))
-                for branch in node.branches
-            ],
-        )
+        node.id = node_id_remapping.get(node.id, node.id)
+        node.branches = [
+            replace(branch, path=_update_path_with_id_remapping(branch.path, node_id_remapping))
+            for branch in node.branches
+        ]
     return node
 
 
 def _update_path_with_id_remapping(path: Path, node_id_remapping: dict[NodeID, NodeID]) -> Path:
-    path = replace(path)  # prevent mutating the input; not technically necessary but could make debugging easier later
-    for i, item in enumerate(path.items):
+    # Note: we have already deepcopied the node provided to this function so it should be okay to make mutations,
+    # this could change if we change the code surrounding the code paths leading to this function call though.
+    for item in path.items:
         if isinstance(item, MapMarker):
             downstream_join_id = item.downstream_join_id
             if downstream_join_id is not None:
-                downstream_join_id = JoinID(node_id_remapping.get(downstream_join_id, downstream_join_id))
-            path.items[i] = replace(
-                item,
-                fork_id=ForkID(node_id_remapping.get(item.fork_id, item.fork_id)),
-                downstream_join_id=downstream_join_id,
-            )
+                item.downstream_join_id = JoinID(node_id_remapping.get(downstream_join_id, downstream_join_id))
+            item.fork_id = ForkID(node_id_remapping.get(item.fork_id, item.fork_id))
         elif isinstance(item, BroadcastMarker):
-            path.items[i] = replace(
-                item,
-                fork_id=ForkID(node_id_remapping.get(item.fork_id, item.fork_id)),
-                paths=[_update_path_with_id_remapping(p, node_id_remapping) for p in item.paths],
-            )
+            item.fork_id = ForkID(node_id_remapping.get(item.fork_id, item.fork_id))
+            item.paths = [_update_path_with_id_remapping(p, node_id_remapping) for p in item.paths]
         elif isinstance(item, DestinationMarker):
-            path.items[i] = replace(
-                item, destination_id=node_id_remapping.get(item.destination_id, item.destination_id)
-            )
+            item.destination_id = node_id_remapping.get(item.destination_id, item.destination_id)
     return path
