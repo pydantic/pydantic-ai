@@ -1,5 +1,7 @@
 """Mem0 memory provider implementation."""
 
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
+
 from __future__ import annotations as _annotations
 
 import logging
@@ -13,12 +15,11 @@ if TYPE_CHECKING:
 
 try:
     from mem0 import AsyncMemoryClient, MemoryClient
+except ImportError:  # pragma: no cover
+    AsyncMemoryClient = None
+    MemoryClient = None
 
-    MEM0_AVAILABLE = True
-except ImportError:
-    MEM0_AVAILABLE = False
-    AsyncMemoryClient = None  # type: ignore[assignment,misc]
-    MemoryClient = None  # type: ignore[assignment,misc]
+_MEM0_AVAILABLE = AsyncMemoryClient is not None
 
 __all__ = ('Mem0Provider',)
 
@@ -32,25 +33,31 @@ class Mem0Provider(BaseMemoryProvider):
     and retrieval.
 
     Example:
-        ```python
+        ```python test="skip"
         from pydantic_ai import Agent
-        from pydantic_ai.memory import MemoryConfig
         from pydantic_ai.memory.providers import Mem0Provider
 
-        # Create mem0 provider
-        memory = Mem0Provider(api_key="your-mem0-api-key")
 
-        # Create agent with memory
-        agent = Agent(
-            'openai:gpt-4o',
-            memory_provider=memory
-        )
+        async def main():
+            # Create mem0 provider
+            memory = Mem0Provider(api_key='your-mem0-api-key')
 
-        # Use agent - memories are automatically managed
-        result = await agent.run(
-            'My name is Alice',
-            deps={'user_id': 'user_123'}
-        )
+            # Create agent
+            agent = Agent('openai:gpt-4o')
+
+            # Run agent
+            result = await agent.run('My name is Alice')
+
+            # Store memories manually
+            await memory.store_memories(
+                messages=result.all_messages(), user_id='user_123'
+            )
+
+            # Retrieve memories
+            memories = await memory.retrieve_memories(
+                query='user info', user_id='user_123'
+            )
+            print(f'Found {len(memories)} memories')
         ```
 
     Attributes:
@@ -84,7 +91,7 @@ class Mem0Provider(BaseMemoryProvider):
             ImportError: If mem0 package is not installed.
             ValueError: If no API key is provided.
         """
-        if not MEM0_AVAILABLE:
+        if not _MEM0_AVAILABLE:
             raise ImportError(
                 'mem0 is not installed. Install it with: pip install mem0ai\n'
                 'Or install pydantic-ai with mem0 support: pip install pydantic-ai[mem0]'
@@ -95,7 +102,7 @@ class Mem0Provider(BaseMemoryProvider):
 
         if client is not None:
             self.client = client
-            self._is_async = isinstance(client, AsyncMemoryClient)  # type: ignore[arg-type,misc]
+            self._is_async = isinstance(client, AsyncMemoryClient)  # type: ignore[arg-type]
         else:
             # Create async client by default for better performance
             self.client = AsyncMemoryClient(  # type: ignore[misc]
@@ -205,7 +212,7 @@ class Mem0Provider(BaseMemoryProvider):
                 mem0_messages.append(msg_dict)
         return mem0_messages
 
-    def _extract_message_content(self, msg: ModelMessage) -> dict[str, str]:  # type: ignore[misc]
+    def _extract_message_content(self, msg: ModelMessage) -> dict[str, str]:
         """Extract content and role from a ModelMessage.
 
         Args:
@@ -216,13 +223,13 @@ class Mem0Provider(BaseMemoryProvider):
         """
         msg_dict = {'role': 'user', 'content': ''}
 
-        if not hasattr(msg, 'parts'):  # type: ignore[misc]
+        if not hasattr(msg, 'parts'):
             return msg_dict
 
-        for part in msg.parts:  # type: ignore[attr-defined]
+        for part in msg.parts:
             # Extract content
             if hasattr(part, 'content'):
-                content_value = part.content  # type: ignore[attr-defined]
+                content_value = part.content  # pyright: ignore[reportAttributeAccessIssue]
                 msg_dict['content'] += str(content_value) if not isinstance(content_value, str) else content_value
 
             # Determine role from part type
@@ -236,7 +243,7 @@ class Mem0Provider(BaseMemoryProvider):
 
         return msg_dict
 
-    def _parse_mem0_response(self, response: Any) -> list[Any]:  # type: ignore[misc]
+    def _parse_mem0_response(self, response: Any) -> list[Any]:
         """Parse Mem0 API response to extract results.
 
         Args:
@@ -246,9 +253,9 @@ class Mem0Provider(BaseMemoryProvider):
             List of result items.
         """
         if isinstance(response, dict):
-            return response.get('results', [])  # type: ignore[return-value]
+            return response.get('results', [])
         if isinstance(response, list):
-            return response  # type: ignore[return-value]
+            return response
         logger.warning(f'Unexpected response type from Mem0: {type(response)}')
         return []
 
@@ -292,16 +299,16 @@ class Mem0Provider(BaseMemoryProvider):
 
         # Store in Mem0
         try:
-            response = await self.client.add(**add_kwargs) if self._is_async else self.client.add(**add_kwargs)  # type: ignore[misc]
+            response = await self.client.add(**add_kwargs) if self._is_async else self.client.add(**add_kwargs)
             results = self._parse_mem0_response(response)
 
             # Convert to StoredMemory objects
             stored = [
                 StoredMemory(
-                    id=result.get('id', ''),  # type: ignore[union-attr]
-                    memory=result.get('memory', ''),  # type: ignore[union-attr]
-                    event=result.get('event', 'ADD'),  # type: ignore[union-attr]
-                    metadata=result.get('metadata', {}),  # type: ignore[union-attr]
+                    id=result.get('id', ''),
+                    memory=result.get('memory', ''),
+                    event=result.get('event', 'ADD'),
+                    metadata=result.get('metadata', {}),
                 )
                 for result in results
                 if isinstance(result, dict)

@@ -1,5 +1,7 @@
 """Simple tests for memory system."""
 
+from typing import TYPE_CHECKING, Any
+
 import pytest
 
 from pydantic_ai.memory import (
@@ -12,6 +14,9 @@ from pydantic_ai.memory import (
     RetrievedMemory,
     StoredMemory,
 )
+
+if TYPE_CHECKING:
+    from pydantic_ai.messages import ModelMessage
 
 
 def test_retrieved_memory():
@@ -124,7 +129,7 @@ class MockMemoryProvider(BaseMemoryProvider):
     """Mock memory provider for testing."""
 
     def __init__(self) -> None:
-        self.stored_memories: list[tuple[list[object], dict[str, object]]] = []
+        self.stored_memories: list[tuple[list[ModelMessage], dict[str, Any]]] = []
         self.mock_memories = [
             RetrievedMemory(
                 id='mem_1',
@@ -138,11 +143,30 @@ class MockMemoryProvider(BaseMemoryProvider):
             ),
         ]
 
-    async def retrieve_memories(self, query: str, **kwargs: object) -> list[RetrievedMemory]:
+    async def retrieve_memories(
+        self,
+        query: str,
+        *,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        run_id: str | None = None,
+        top_k: int = 5,
+        metadata: dict[str, Any] | None = None,
+    ) -> list[RetrievedMemory]:
         return self.mock_memories
 
-    async def store_memories(self, messages: list[object], **kwargs: object) -> list[StoredMemory]:
-        self.stored_memories.append((messages, kwargs))
+    async def store_memories(
+        self,
+        messages: list[ModelMessage],
+        *,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        run_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> list[StoredMemory]:
+        self.stored_memories.append(
+            (messages, {'user_id': user_id, 'agent_id': agent_id, 'run_id': run_id, 'metadata': metadata})
+        )
         return [
             StoredMemory(
                 id='mem_new',
@@ -151,7 +175,14 @@ class MockMemoryProvider(BaseMemoryProvider):
             )
         ]
 
-    async def get_all_memories(self, **kwargs: object) -> list[RetrievedMemory]:
+    async def get_all_memories(
+        self,
+        *,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        run_id: str | None = None,
+        limit: int | None = None,
+    ) -> list[RetrievedMemory]:
         return self.mock_memories
 
     async def delete_memory(self, memory_id: str) -> bool:
