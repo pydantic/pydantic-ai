@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from inline_snapshot import snapshot
 
@@ -8,22 +10,11 @@ from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
-from pydantic_ai.ui.vercel_ai.request_types import (
+from pydantic_ai.ui.vercel_ai._request_types import (
     SubmitMessage,
     TextUIPart,
     ToolOutputAvailablePart,
     UIMessage,
-)
-from pydantic_ai.ui.vercel_ai.response_types import (
-    DoneChunk,
-    FinishChunk,
-    ReasoningDeltaChunk,
-    ReasoningStartChunk,
-    TextDeltaChunk,
-    TextStartChunk,
-    ToolInputDeltaChunk,
-    ToolInputStartChunk,
-    ToolOutputAvailableChunk,
 )
 
 from .conftest import IsStr
@@ -43,7 +34,6 @@ pytestmark = [
 async def test_run(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, builtin_tools=[WebSearchTool()])
-    adapter = VercelAIAdapter(agent)
 
     data = SubmitMessage(
         trigger='submit-message',
@@ -152,670 +142,713 @@ async def test_run(allow_model_requests: None, openai_api_key: str):
         ],
     )
 
-    events = [event async for event in adapter.run_stream(data, None)]
+    adapter = VercelAIAdapter(agent, request=data)
+    events = [json.loads(event.removeprefix('data: ')) async for event in adapter.encode_stream(adapter.run_stream())]
     assert events == snapshot(
         [
-            ReasoningStartChunk(id='d775971d84c848228275a25a097b6409'),
-            ReasoningDeltaChunk(id='d775971d84c848228275a25a097b6409', delta=''),
-            ToolInputStartChunk(
-                tool_call_id='ws_00e767404995b9950068e647f909248191bfe8d05eeed67645', tool_name='web_search'
-            ),
-            ToolInputDeltaChunk(
-                tool_call_id='ws_00e767404995b9950068e647f909248191bfe8d05eeed67645',
-                input_text_delta='{"query":"OpenTelemetry FastAPI instrumentation capture request and response body","type":"search"}',
-            ),
-            ToolOutputAvailableChunk(
-                tool_call_id='ws_00e767404995b9950068e647f909248191bfe8d05eeed67645', output={'status': 'completed'}
-            ),
-            ReasoningStartChunk(id='d775971d84c848228275a25a097b6409'),
-            ReasoningDeltaChunk(id='d775971d84c848228275a25a097b6409', delta=''),
-            ToolInputStartChunk(
-                tool_call_id='ws_00e767404995b9950068e647fb73c48191b0bdb147c3a0d22c', tool_name='web_search'
-            ),
-            ToolInputDeltaChunk(
-                tool_call_id='ws_00e767404995b9950068e647fb73c48191b0bdb147c3a0d22c',
-                input_text_delta='{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY Python","type":"search"}',
-            ),
-            ToolOutputAvailableChunk(
-                tool_call_id='ws_00e767404995b9950068e647fb73c48191b0bdb147c3a0d22c', output={'status': 'completed'}
-            ),
-            ReasoningStartChunk(id='d775971d84c848228275a25a097b6409'),
-            ReasoningDeltaChunk(id='d775971d84c848228275a25a097b6409', delta=''),
-            ToolInputStartChunk(
-                tool_call_id='ws_00e767404995b9950068e647fee97c8191919865e0c0a78bba', tool_name='web_search'
-            ),
-            ToolInputDeltaChunk(
-                tool_call_id='ws_00e767404995b9950068e647fee97c8191919865e0c0a78bba',
-                input_text_delta='{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY opentelemetry python","type":"search"}',
-            ),
-            ToolOutputAvailableChunk(
-                tool_call_id='ws_00e767404995b9950068e647fee97c8191919865e0c0a78bba', output={'status': 'completed'}
-            ),
-            ReasoningStartChunk(id='d775971d84c848228275a25a097b6409'),
-            ReasoningDeltaChunk(id='d775971d84c848228275a25a097b6409', delta=''),
-            ToolInputStartChunk(
-                tool_call_id='ws_00e767404995b9950068e64803f27c81918a39ce50cb8dfbc2', tool_name='web_search'
-            ),
-            ToolInputDeltaChunk(
-                tool_call_id='ws_00e767404995b9950068e64803f27c81918a39ce50cb8dfbc2',
-                input_text_delta='{"query":"site:github.com open-telemetry/opentelemetry-python-contrib OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY","type":"search"}',
-            ),
-            ToolOutputAvailableChunk(
-                tool_call_id='ws_00e767404995b9950068e64803f27c81918a39ce50cb8dfbc2', output={'status': 'completed'}
-            ),
-            ReasoningStartChunk(id='d775971d84c848228275a25a097b6409'),
-            ReasoningDeltaChunk(id='d775971d84c848228275a25a097b6409', delta=''),
-            ToolInputStartChunk(
-                tool_call_id='ws_00e767404995b9950068e6480ac0888191a7897231e6ca9911', tool_name='web_search'
-            ),
-            ToolInputDeltaChunk(
-                tool_call_id='ws_00e767404995b9950068e6480ac0888191a7897231e6ca9911',
-                input_text_delta='{"query":null,"type":"search"}',
-            ),
-            ToolOutputAvailableChunk(
-                tool_call_id='ws_00e767404995b9950068e6480ac0888191a7897231e6ca9911', output={'status': 'completed'}
-            ),
-            ReasoningStartChunk(id='d775971d84c848228275a25a097b6409'),
-            ReasoningDeltaChunk(id='d775971d84c848228275a25a097b6409', delta=''),
-            ToolInputStartChunk(
-                tool_call_id='ws_00e767404995b9950068e6480e11208191834104e1aaab1148', tool_name='web_search'
-            ),
-            ToolInputDeltaChunk(
-                tool_call_id='ws_00e767404995b9950068e6480e11208191834104e1aaab1148',
-                input_text_delta='{"query":null,"type":"search"}',
-            ),
-            ToolOutputAvailableChunk(
-                tool_call_id='ws_00e767404995b9950068e6480e11208191834104e1aaab1148', output={'status': 'completed'}
-            ),
-            ReasoningStartChunk(id='d775971d84c848228275a25a097b6409'),
-            ReasoningDeltaChunk(id='d775971d84c848228275a25a097b6409', delta=''),
-            ToolInputStartChunk(
-                tool_call_id='ws_00e767404995b9950068e648118bf88191aa7f804637c45b32', tool_name='web_search'
-            ),
-            ToolInputDeltaChunk(
-                tool_call_id='ws_00e767404995b9950068e648118bf88191aa7f804637c45b32',
-                input_text_delta='{"query":"OTEL_PYTHON_LOG_CORRELATION environment variable","type":"search"}',
-            ),
-            ToolOutputAvailableChunk(
-                tool_call_id='ws_00e767404995b9950068e648118bf88191aa7f804637c45b32', output={'status': 'completed'}
-            ),
-            ReasoningStartChunk(id='d775971d84c848228275a25a097b6409'),
-            ReasoningDeltaChunk(id='d775971d84c848228275a25a097b6409', delta=''),
-            TextStartChunk(id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+            {'type': 'reasoning-start', 'id': IsStr()},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+            },
+            {
+                'type': 'tool-input-delta',
+                'toolCallId': IsStr(),
+                'inputTextDelta': '{"query":"OpenTelemetry FastAPI instrumentation capture request and response body","type":"search"}',
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': IsStr(),
+                'output': {'status': 'completed'},
+            },
+            {'type': 'reasoning-start', 'id': IsStr()},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+            },
+            {
+                'type': 'tool-input-delta',
+                'toolCallId': IsStr(),
+                'inputTextDelta': '{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY Python","type":"search"}',
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': IsStr(),
+                'output': {'status': 'completed'},
+            },
+            {'type': 'reasoning-start', 'id': IsStr()},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+            },
+            {
+                'type': 'tool-input-delta',
+                'toolCallId': IsStr(),
+                'inputTextDelta': '{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY opentelemetry python","type":"search"}',
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': IsStr(),
+                'output': {'status': 'completed'},
+            },
+            {'type': 'reasoning-start', 'id': IsStr()},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+            },
+            {
+                'type': 'tool-input-delta',
+                'toolCallId': IsStr(),
+                'inputTextDelta': '{"query":"site:github.com open-telemetry/opentelemetry-python-contrib OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY","type":"search"}',
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': IsStr(),
+                'output': {'status': 'completed'},
+            },
+            {'type': 'reasoning-start', 'id': IsStr()},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+            },
+            {
+                'type': 'tool-input-delta',
+                'toolCallId': IsStr(),
+                'inputTextDelta': '{"query":null,"type":"search"}',
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': IsStr(),
+                'output': {'status': 'completed'},
+            },
+            {'type': 'reasoning-start', 'id': IsStr()},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+            },
+            {
+                'type': 'tool-input-delta',
+                'toolCallId': IsStr(),
+                'inputTextDelta': '{"query":null,"type":"search"}',
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': IsStr(),
+                'output': {'status': 'completed'},
+            },
+            {'type': 'reasoning-start', 'id': IsStr()},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'web_search',
+            },
+            {
+                'type': 'tool-input-delta',
+                'toolCallId': IsStr(),
+                'inputTextDelta': '{"query":"OTEL_PYTHON_LOG_CORRELATION environment variable","type":"search"}',
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': IsStr(),
+                'output': {'status': 'completed'},
+            },
+            {'type': 'reasoning-start', 'id': IsStr()},
+            {'type': 'text-start', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 Short answer:
 - Default\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' FastAPI/OpenTelemetry', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' instrumentation already records method', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='/route/status', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' FastAPI/OpenTelemetry', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': ' instrumentation already records method',
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': '/route/status', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 .
 - To also\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' include HTTP headers', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=', set', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' the capture-', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='headers env', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' include HTTP headers', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ', set', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' the capture-', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'headers env', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
  vars.
 -\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' To include request', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='/response bodies', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=', use the', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' FastAPI', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='/ASGI', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' request/response', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' hooks and add', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' the', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' payload to', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' the span yourself', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' (with red', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='action/size', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' To include request', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '/response bodies', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ', use the', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' FastAPI', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '/ASGI', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' request/response', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' hooks and add', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' the', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' payload to', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' the span yourself', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' (with red', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'action/size', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
  limits).
 
 How\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' to do it', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' to do it', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 
 
 1)\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' Enable header capture', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' (server side', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' Enable header capture', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' (server side', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 )
 - Choose\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' just the', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' headers you need; avoid', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' sensitive ones or sanitize', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' just the', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' headers you need; avoid', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': ' sensitive ones or sanitize',
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': """\
  them.
 
 export OTEL\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta='_INSTRUMENTATION_HTTP_CAPTURE', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='_HEADERS_SERVER_REQUEST="content', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='-type,user', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='-agent"\n', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='export OTEL_INSTRUMENTATION', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='_HTTP_CAPTURE_HEADERS', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='_SERVER_RESPONSE="content-type"\n', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='export OTEL_INSTRUMENTATION_HTTP', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': '_INSTRUMENTATION_HTTP_CAPTURE',
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': '_HEADERS_SERVER_REQUEST="content',
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': '-type,user', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '-agent"\n', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': 'export OTEL_INSTRUMENTATION',
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': '_HTTP_CAPTURE_HEADERS', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': '_SERVER_RESPONSE="content-type"\n',
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': 'export OTEL_INSTRUMENTATION_HTTP',
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': """\
 _CAPTURE_HEADERS_SANITIZE_FIELDS="authorization,set-cookie"
 
 This makes headers appear on spans as http.request.header.* and http.response.header.*. ([opentelemetry-python-contrib.readthedocs.io](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html))
 
 2)\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' Add hooks to capture request', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='/response bodies', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': ' Add hooks to capture request',
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': '/response bodies', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 
 Note:\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=IsStr(), id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' a built-in Python', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' env', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' var to', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' auto-capture', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' HTTP bodies for Fast', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='API/AS', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='GI. Use', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' hooks to look at', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' ASGI receive', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='/send events and', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' attach (tr', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='uncated) bodies', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' as span attributes', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': IsStr(), 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' a built-in Python', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' env', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' var to', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' auto-capture', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' HTTP bodies for Fast', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'API/AS', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'GI. Use', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' hooks to look at', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' ASGI receive', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '/send events and', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' attach (tr', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'uncated) bodies', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' as span attributes', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 .
 
 from\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' fastapi import', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' FastAPI', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' fastapi import', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' FastAPI', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 
 from opente\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta='lemetry.trace', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' import Span', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': 'lemetry.trace', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' import Span', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 
 from opente\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta='lemetry.instrument', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='ation.fastapi import', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' FastAPIInstrument', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': 'lemetry.instrument', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'ation.fastapi import', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' FastAPIInstrument', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 or
 
 MAX\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta='_BYTES = ', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='2048 ', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' # keep this', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' small in prod', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': '_BYTES = ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '2048 ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' # keep this', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' small in prod', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 
 
 def client\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta='_request_hook(span', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=': Span,', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' scope: dict', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=', message:', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': '_request_hook(span', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ': Span,', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' scope: dict', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ', message:', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
  dict):
    \
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' if span and', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' span.is_record', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='ing() and', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' message.get("', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='type") ==', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' "http.request', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' if span and', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' span.is_record', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'ing() and', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' message.get("', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'type") ==', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' "http.request', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 ":
         body\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' = message.get', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='("body")', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' or b"', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' = message.get', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '("body")', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' or b"', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 "
         if\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': """\
  body:
            \
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' span.set_attribute', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' span.set_attribute', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 (
                 "\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta='http.request.body', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': 'http.request.body', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 ",
                 body\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta='[:MAX_BYTES', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='].decode("', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='utf-8', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='", "replace', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': '[:MAX_BYTES', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '].decode("', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'utf-8', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '", "replace', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 "),
             )
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': """\
 
 def client_response\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta='_hook(span:', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' Span, scope', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=': dict,', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' message: dict', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': '_hook(span:', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' Span, scope', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ': dict,', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' message: dict', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 ):
     if\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' span and span', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='.is_recording', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='() and message', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='.get("type', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='") == "', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='http.response.body', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' span and span', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '.is_recording', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '() and message', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '.get("type', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '") == "', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'http.response.body', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 ":
         body\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' = message.get', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='("body")', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' or b"', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' = message.get', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '("body")', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' or b"', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 "
         if\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': """\
  body:
            \
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' span.set_attribute', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' span.set_attribute', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 (
                 "\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta='http.response.body', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': 'http.response.body', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 ",
                 body\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta='[:MAX_BYTES', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='].decode("', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='utf-8', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='", "replace', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': '[:MAX_BYTES', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '].decode("', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'utf-8', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '", "replace', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 "),
             )
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': """\
 
 app = Fast\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': """\
 API()
 Fast\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta='APIInstrumentor', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='.instrument_app(', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': 'APIInstrumentor', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '.instrument_app(', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 
     app,\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': """\
 
     client_request\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta='_hook=client', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': '_hook=client', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 _request_hook,
    \
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' client_response_hook', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='=client_response', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' client_response_hook', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '=client_response', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 _hook,
 )
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': """\
 
 - The hooks\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' receive the AS', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='GI event dict', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='s: http', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='.request (with', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' body/more', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='_body) and', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' http.response.body', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='. If your', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' bodies can be', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' chunked,', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' you may need', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' to accumulate across', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' calls when message', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='.get("more', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='_body") is', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' True. ', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta='([opentelemetry-python-contrib.readthedocs.io](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html)',
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=')', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' receive the AS', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'GI event dict', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 's: http', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '.request (with', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' body/more', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '_body) and', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' http.response.body', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '. If your', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' bodies can be', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' chunked,', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' you may need', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' to accumulate across', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' calls when message', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '.get("more', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '_body") is', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' True. ', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': '([opentelemetry-python-contrib.readthedocs.io](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html)',
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ')', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 
 
 3)\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' Be careful with', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' PII and', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' Be careful with', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' PII and', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
  size
 -\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' Always limit size', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' and consider redaction', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' before putting payloads', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' Always limit size', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' and consider redaction', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' before putting payloads', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
  on spans.
 -\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' Use the sanitize', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' env var above', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' for sensitive headers', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='. ', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta='([opentelemetry-python-contrib.readthedocs.io](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html))\n',
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' Use the sanitize', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' env var above', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' for sensitive headers', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '. ', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': '([opentelemetry-python-contrib.readthedocs.io](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html))\n',
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': """\
 
 Optional: correlate logs\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': """\
  with traces
 -\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' If you also want', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' request/response', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' details in logs with', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' trace IDs, enable', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' Python log correlation:\n', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' If you also want', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' request/response', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' details in logs with', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' trace IDs, enable', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' Python log correlation:\n', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 
 export OTEL_P\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta='YTHON_LOG_COR', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='RELATION=true', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': 'YTHON_LOG_COR', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'RELATION=true', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 
 
 or programmatically\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': """\
 :
 from opente\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta='lemetry.instrumentation', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='.logging import LoggingInstrument', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': 'lemetry.instrumentation', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': '.logging import LoggingInstrument',
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': """\
 or
 LoggingInstrument\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta='or().instrument(set', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta='_logging_format=True)\n', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': 'or().instrument(set', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '_logging_format=True)\n', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': """\
 
 This injects trace\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta='_id/span_id into', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' log records so you', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' can line up logs', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' with the span that', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' carries the HTTP payload', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' attributes. ', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(
-                delta='([opentelemetry-python-contrib.readthedocs.io](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/logging/logging.html?utm_source=openai))\n',
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(
-                delta="""\
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': '_id/span_id into', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' log records so you', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' can line up logs', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' with the span that', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' carries the HTTP payload', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' attributes. ', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': '([opentelemetry-python-contrib.readthedocs.io](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/logging/logging.html?utm_source=openai))\n',
+                'id': IsStr(),
+            },
+            {
+                'type': 'text-delta',
+                'delta': """\
 
 Want me to tailor\
 """,
-                id='d775971d84c848228275a25a097b6409',
-            ),
-            TextDeltaChunk(delta=' the hook to only', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' capture JSON bodies,', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' skip binary content,', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' or accumulate chunked', id='d775971d84c848228275a25a097b6409'),
-            TextDeltaChunk(delta=' bodies safely?', id='d775971d84c848228275a25a097b6409'),
-            ToolInputStartChunk(
-                tool_call_id='ws_00e767404995b9950068e647f909248191bfe8d05eeed67645', tool_name='web_search'
-            ),
-            ToolInputDeltaChunk(
-                tool_call_id='ws_00e767404995b9950068e647f909248191bfe8d05eeed67645',
-                input_text_delta='{"query":"OpenTelemetry FastAPI instrumentation capture request and response body","type":"search"}',
-            ),
-            ToolOutputAvailableChunk(
-                tool_call_id='ws_00e767404995b9950068e647f909248191bfe8d05eeed67645', output={'status': 'completed'}
-            ),
-            ToolInputStartChunk(
-                tool_call_id='ws_00e767404995b9950068e647fb73c48191b0bdb147c3a0d22c', tool_name='web_search'
-            ),
-            ToolInputDeltaChunk(
-                tool_call_id='ws_00e767404995b9950068e647fb73c48191b0bdb147c3a0d22c',
-                input_text_delta='{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY Python","type":"search"}',
-            ),
-            ToolOutputAvailableChunk(
-                tool_call_id='ws_00e767404995b9950068e647fb73c48191b0bdb147c3a0d22c', output={'status': 'completed'}
-            ),
-            ToolInputStartChunk(
-                tool_call_id='ws_00e767404995b9950068e647fee97c8191919865e0c0a78bba', tool_name='web_search'
-            ),
-            ToolInputDeltaChunk(
-                tool_call_id='ws_00e767404995b9950068e647fee97c8191919865e0c0a78bba',
-                input_text_delta='{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY opentelemetry python","type":"search"}',
-            ),
-            ToolOutputAvailableChunk(
-                tool_call_id='ws_00e767404995b9950068e647fee97c8191919865e0c0a78bba', output={'status': 'completed'}
-            ),
-            ToolInputStartChunk(
-                tool_call_id='ws_00e767404995b9950068e64803f27c81918a39ce50cb8dfbc2', tool_name='web_search'
-            ),
-            ToolInputDeltaChunk(
-                tool_call_id='ws_00e767404995b9950068e64803f27c81918a39ce50cb8dfbc2',
-                input_text_delta='{"query":"site:github.com open-telemetry/opentelemetry-python-contrib OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY","type":"search"}',
-            ),
-            ToolOutputAvailableChunk(
-                tool_call_id='ws_00e767404995b9950068e64803f27c81918a39ce50cb8dfbc2', output={'status': 'completed'}
-            ),
-            ToolInputStartChunk(
-                tool_call_id='ws_00e767404995b9950068e6480ac0888191a7897231e6ca9911', tool_name='web_search'
-            ),
-            ToolInputDeltaChunk(
-                tool_call_id='ws_00e767404995b9950068e6480ac0888191a7897231e6ca9911',
-                input_text_delta='{"query":null,"type":"search"}',
-            ),
-            ToolOutputAvailableChunk(
-                tool_call_id='ws_00e767404995b9950068e6480ac0888191a7897231e6ca9911', output={'status': 'completed'}
-            ),
-            ToolInputStartChunk(
-                tool_call_id='ws_00e767404995b9950068e6480e11208191834104e1aaab1148', tool_name='web_search'
-            ),
-            ToolInputDeltaChunk(
-                tool_call_id='ws_00e767404995b9950068e6480e11208191834104e1aaab1148',
-                input_text_delta='{"query":null,"type":"search"}',
-            ),
-            ToolOutputAvailableChunk(
-                tool_call_id='ws_00e767404995b9950068e6480e11208191834104e1aaab1148', output={'status': 'completed'}
-            ),
-            ToolInputStartChunk(
-                tool_call_id='ws_00e767404995b9950068e648118bf88191aa7f804637c45b32', tool_name='web_search'
-            ),
-            ToolInputDeltaChunk(
-                tool_call_id='ws_00e767404995b9950068e648118bf88191aa7f804637c45b32',
-                input_text_delta='{"query":"OTEL_PYTHON_LOG_CORRELATION environment variable","type":"search"}',
-            ),
-            ToolOutputAvailableChunk(
-                tool_call_id='ws_00e767404995b9950068e648118bf88191aa7f804637c45b32', output={'status': 'completed'}
-            ),
-            FinishChunk(),
-            DoneChunk(),
+                'id': IsStr(),
+            },
+            {'type': 'text-delta', 'delta': ' the hook to only', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' capture JSON bodies,', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' skip binary content,', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' or accumulate chunked', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': ' bodies safely?', 'id': IsStr()},
+            {'type': 'finish'},
         ]
     )

@@ -6,19 +6,12 @@ for building interactive AI applications with streaming event-based communicatio
 
 from __future__ import annotations
 
-import json
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from http import HTTPStatus
-from typing import (
-    Any,
-    Final,
-    Generic,
-    TypeAlias,
-)
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from typing import Any, Generic
 
-from pydantic import ValidationError
-
-from .agent import AbstractAgent, AgentRunResult
+from . import DeferredToolResults
+from .agent import AbstractAgent
+from .messages import ModelMessage
 from .models import KnownModelName, Model
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
@@ -27,11 +20,13 @@ from .toolsets import AbstractToolset
 from .usage import RunUsage, UsageLimits
 
 try:
+    from ag_ui.core.types import RunAgentInput
+
+    from .ui import OnCompleteFunc, StateDeps, StateHandler
     from .ui.ag_ui import (
-        StateDeps,
-        StateHandler,
+        SSE_CONTENT_TYPE,
+        AGUIAdapter,
     )
-    from .ui.ag_ui.event_stream import RunAgentInput, _RunError  # type: ignore[reportPrivateUsage]
 except ImportError as e:  # pragma: no cover
     raise ImportError(
         'Please install the `ag-ui-protocol` package to use `Agent.to_ag_ui()` method, '
@@ -42,7 +37,7 @@ try:
     from starlette.applications import Starlette
     from starlette.middleware import Middleware
     from starlette.requests import Request
-    from starlette.responses import Response, StreamingResponse
+    from starlette.responses import Response
     from starlette.routing import BaseRoute
     from starlette.types import ExceptionHandler, Lifespan
 except ImportError as e:  # pragma: no cover
@@ -61,14 +56,6 @@ __all__ = [
     'handle_ag_ui_request',
     'run_ag_ui',
 ]
-
-SSE_CONTENT_TYPE: Final[str] = 'text/event-stream'
-"""Content type header value for Server-Sent Events (SSE)."""
-
-OnCompleteFunc: TypeAlias = Callable[[AgentRunResult[Any]], None] | Callable[[AgentRunResult[Any]], Awaitable[None]]
-"""Callback function type that receives the `AgentRunResult` of the completed run. Can be sync or async."""
-
-_BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
 
 class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
@@ -199,32 +186,18 @@ async def handle_ag_ui_request(
     Returns:
         A streaming Starlette response with AG-UI protocol events.
     """
-    accept = request.headers.get('accept', SSE_CONTENT_TYPE)
-    try:
-        input_data = RunAgentInput.model_validate(await request.json())
-    except ValidationError as e:  # pragma: no cover
-        return Response(
-            content=json.dumps(e.json()),
-            media_type='application/json',
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-        )
-
-    return StreamingResponse(
-        run_ag_ui(
-            agent,
-            input_data,
-            accept,
-            output_type=output_type,
-            model=model,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            on_complete=on_complete,
-        ),
-        media_type=accept,
+    return await AGUIAdapter.dispatch_request(
+        agent,
+        request,
+        deps=deps,
+        output_type=output_type,
+        model=model,
+        model_settings=model_settings,
+        usage_limits=usage_limits,
+        usage=usage,
+        infer_name=infer_name,
+        toolsets=toolsets,
+        on_complete=on_complete,
     )
 
 
@@ -234,6 +207,8 @@ async def run_ag_ui(
     accept: str = SSE_CONTENT_TYPE,
     *,
     output_type: OutputSpec[Any] | None = None,
+    message_history: Sequence[ModelMessage] | None = None,
+    deferred_tool_results: DeferredToolResults | None = None,
     model: Model | KnownModelName | str | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
@@ -265,32 +240,21 @@ async def run_ag_ui(
     Yields:
         Streaming event chunks encoded as strings according to the accept header value.
     """
-    from .ui.ag_ui import AGUIAdapter
-
-    adapter = AGUIAdapter(agent=agent)
-    async for event_str in adapter.run_stream_sse(
-        request=run_input,
+    adapter = AGUIAdapter(agent=agent, request=run_input)
+    async for event in adapter.encode_stream(
+        adapter.run_stream(
+            output_type=output_type,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+            model=model,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            on_complete=on_complete,
+        ),
         accept=accept,
-        output_type=output_type,
-        model=model,
-        deps=deps,
-        model_settings=model_settings,
-        usage_limits=usage_limits,
-        usage=usage,
-        infer_name=infer_name,
-        toolsets=toolsets,
-        on_complete=on_complete,
     ):
-        yield event_str
-
-
-# _ToolCallNotFoundError is defined here (not in ui/ag_ui) since it's specific to this module
-class _ToolCallNotFoundError(_RunError, ValueError):
-    """Exception raised when an tool result is present without a matching call."""
-
-    def __init__(self, tool_call_id: str) -> None:
-        """Initialize the exception with the tool call ID."""
-        super().__init__(  # pragma: no cover
-            message=f'Tool call with ID {tool_call_id} not found in the history.',
-            code='tool_call_not_found',
-        )
+        yield event

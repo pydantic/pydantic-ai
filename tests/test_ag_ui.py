@@ -48,9 +48,7 @@ from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
 from .conftest import IsDatetime, IsSameStr, try_import
 
-has_ag_ui: bool = False
 with try_import() as imports_successful:
-    has_ag_ui = imports_successful()
     from ag_ui.core import (
         AssistantMessage,
         CustomEvent,
@@ -70,16 +68,16 @@ with try_import() as imports_successful:
 
     from pydantic_ai.ag_ui import (
         SSE_CONTENT_TYPE,
+        AGUIAdapter,
         OnCompleteFunc,
         StateDeps,
         run_ag_ui,
     )
-    from pydantic_ai.ui.ag_ui.event_stream import protocol_messages_to_pai_messages
 
 
 pytestmark = [
     pytest.mark.anyio,
-    pytest.mark.skipif(not imports_successful, reason='ag-ui-protocol not installed'),
+    pytest.mark.skipif(not imports_successful(), reason='ag-ui-protocol not installed'),
     pytest.mark.filterwarnings(
         'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
     ),
@@ -257,7 +255,7 @@ async def test_empty_messages() -> None:
                 'threadId': IsStr(),
                 'runId': IsStr(),
             },
-            {'type': 'RUN_ERROR', 'message': 'no messages found in the input', 'code': 'no_messages'},
+            {'type': 'RUN_ERROR', 'message': 'No messages provided', 'code': 'UserError'},
         ]
     )
 
@@ -1097,7 +1095,7 @@ async def test_request_with_state() -> None:
 
     agent: Agent[StateDeps[StateInt], str] = Agent(
         model=FunctionModel(stream_function=simple_stream),
-        deps_type=StateDeps[StateInt],  # type: ignore[reportUnknownArgumentType]
+        deps_type=StateDeps[StateInt],
         prepare_tools=store_state,
     )
 
@@ -1197,7 +1195,7 @@ async def test_concurrent_runs() -> None:
 
     agent: Agent[StateDeps[StateInt], str] = Agent(
         model=TestModel(),
-        deps_type=StateDeps[StateInt],  # type: ignore[reportUnknownArgumentType]
+        deps_type=StateDeps[StateInt],
     )
 
     @agent.tool
@@ -1342,30 +1340,7 @@ async def test_callback_async() -> None:
     assert events[-1]['type'] == 'RUN_FINISHED'
 
 
-async def test_callback_with_error() -> None:
-    """Test that callbacks are not called when errors occur."""
-
-    captured_results: list[AgentRunResult[Any]] = []
-
-    def error_callback(run_result: AgentRunResult[Any]) -> None:
-        captured_results.append(run_result)  # pragma: no cover
-
-    agent = Agent(TestModel())
-    # Empty messages should cause an error
-    run_input = create_input()  # No messages will cause _NoMessagesError
-
-    events = await run_and_collect_events(agent, run_input, on_complete=error_callback)
-
-    # Verify callback was not called due to error
-    assert len(captured_results) == 0
-
-    # Verify error event was sent
-    assert len(events) > 0
-    assert events[0]['type'] == 'RUN_STARTED'
-    assert any(event['type'] == 'RUN_ERROR' for event in events)
-
-
-async def test_protocol_messages_to_pai_messages() -> None:
+async def test_messages() -> None:
     messages = [
         SystemMessage(
             id='msg_1',
@@ -1448,7 +1423,20 @@ async def test_protocol_messages_to_pai_messages() -> None:
         ),
     ]
 
-    assert protocol_messages_to_pai_messages(messages) == snapshot(
+    adapter = AGUIAdapter(
+        Agent(TestModel()),
+        # TODO (DouweM): Have a convenience method so the useless args aren't necessary
+        request=RunAgentInput(
+            messages=messages,
+            thread_id='test_thread',
+            run_id='test_run',
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={},
+        ),
+    )
+    assert adapter.messages == snapshot(
         [
             ModelRequest(
                 parts=[

@@ -1,12 +1,10 @@
 """AG-UI protocol integration for Pydantic AI agents."""
 
-from .adapter import AGUIAdapter
-from .event_stream import AGUIEventStream, StateDeps, StateHandler, protocol_messages_to_pai_messages
+from ._adapter import SSE_CONTENT_TYPE, AGUIAdapter
+from ._event_stream import AGUIEventStream
 
 __all__ = [
     'AGUIAdapter',
     'AGUIEventStream',
-    'StateHandler',
-    'StateDeps',
-    'protocol_messages_to_pai_messages',
+    'SSE_CONTENT_TYPE',
 ]

@@ -7,10 +7,9 @@ Converted to Python from:
 https://github.com/vercel/ai/blob/ai%405.0.34/packages/ai/src/ui/ui-messages.ts
 """
 
-from ._utils import VERCEL_AI_DSP_HEADERS, CamelBaseModel, JSONValue, ProviderMetadata
-from .adapter import VercelAIAdapter
-from .event_stream import VercelAIEventStream, protocol_messages_to_pai_messages
-from .request_types import (
+from ._adapter import VercelAIAdapter
+from ._event_stream import VercelAIEventStream
+from ._request_types import (
     RequestData,
     SubmitMessage,
     TextUIPart,
@@ -19,11 +18,10 @@ from .request_types import (
     UIPart,
     request_data_ta,
 )
-from .response_types import (
+from ._response_types import (
     AbortChunk,
-    AbstractSSEChunk,
+    BaseChunk,
     DataUIMessageChunk,
-    DoneChunk,
     ErrorChunk,
     FileChunk,
     FinishChunk,
@@ -46,6 +44,7 @@ from .response_types import (
     ToolOutputAvailableChunk,
     ToolOutputErrorChunk,
 )
+from ._utils import VERCEL_AI_DSP_HEADERS, CamelBaseModel, JSONValue, ProviderMetadata
 
 __all__ = [
     # Utilities
@@ -62,7 +61,7 @@ __all__ = [
     'SubmitMessage',
     'request_data_ta',
     # Response types
-    'AbstractSSEChunk',
+    'BaseChunk',
     'TextStartChunk',
     'TextDeltaChunk',
     'TextEndChunk',
@@ -86,9 +85,7 @@ __all__ = [
     'FinishChunk',
     'AbortChunk',
     'MessageMetadataChunk',
-    'DoneChunk',
     # Event stream and adapter
     'VercelAIEventStream',
     'VercelAIAdapter',
-    'protocol_messages_to_pai_messages',
 ]

@@ -9,7 +9,7 @@ from typing import Any, Literal
 from ._utils import CamelBaseModel, ProviderMetadata
 
 __all__ = [
-    'AbstractSSEChunk',
+    'BaseChunk',
     'TextStartChunk',
     'TextDeltaChunk',
     'TextEndChunk',
@@ -33,19 +33,14 @@ __all__ = [
     'FinishChunk',
     'AbortChunk',
     'MessageMetadataChunk',
-    'DoneChunk',
 ]
 
 
-class AbstractSSEChunk(CamelBaseModel):
+class BaseChunk(CamelBaseModel):
     """Abstract base class for response SSE events."""
 
-    def sse(self) -> str:
-        """Encode as SSE format."""
-        return self.model_dump_json(exclude_none=True, by_alias=True)
 
-
-class TextStartChunk(AbstractSSEChunk):
+class TextStartChunk(BaseChunk):
     """Text start chunk."""
 
     type: Literal['text-start'] = 'text-start'
@@ -53,7 +48,7 @@ class TextStartChunk(AbstractSSEChunk):
     provider_metadata: ProviderMetadata | None = None
 
 
-class TextDeltaChunk(AbstractSSEChunk):
+class TextDeltaChunk(BaseChunk):
     """Text delta chunk."""
 
     type: Literal['text-delta'] = 'text-delta'
@@ -62,7 +57,7 @@ class TextDeltaChunk(AbstractSSEChunk):
     provider_metadata: ProviderMetadata | None = None
 
 
-class TextEndChunk(AbstractSSEChunk):
+class TextEndChunk(BaseChunk):
     """Text end chunk."""
 
     type: Literal['text-end'] = 'text-end'
@@ -70,7 +65,7 @@ class TextEndChunk(AbstractSSEChunk):
     provider_metadata: ProviderMetadata | None = None
 
 
-class ReasoningStartChunk(AbstractSSEChunk):
+class ReasoningStartChunk(BaseChunk):
     """Reasoning start chunk."""
 
     type: Literal['reasoning-start'] = 'reasoning-start'
@@ -78,7 +73,7 @@ class ReasoningStartChunk(AbstractSSEChunk):
     provider_metadata: ProviderMetadata | None = None
 
 
-class ReasoningDeltaChunk(AbstractSSEChunk):
+class ReasoningDeltaChunk(BaseChunk):
     """Reasoning delta chunk."""
 
     type: Literal['reasoning-delta'] = 'reasoning-delta'
@@ -87,7 +82,7 @@ class ReasoningDeltaChunk(AbstractSSEChunk):
     provider_metadata: ProviderMetadata | None = None
 
 
-class ReasoningEndChunk(AbstractSSEChunk):
+class ReasoningEndChunk(BaseChunk):
     """Reasoning end chunk."""
 
     type: Literal['reasoning-end'] = 'reasoning-end'
@@ -95,14 +90,14 @@ class ReasoningEndChunk(AbstractSSEChunk):
     provider_metadata: ProviderMetadata | None = None
 
 
-class ErrorChunk(AbstractSSEChunk):
+class ErrorChunk(BaseChunk):
     """Error chunk."""
 
     type: Literal['error'] = 'error'
     error_text: str
 
 
-class ToolInputStartChunk(AbstractSSEChunk):
+class ToolInputStartChunk(BaseChunk):
     """Tool input start chunk."""
 
     type: Literal['tool-input-start'] = 'tool-input-start'
@@ -112,7 +107,7 @@ class ToolInputStartChunk(AbstractSSEChunk):
     dynamic: bool | None = None
 
 
-class ToolInputDeltaChunk(AbstractSSEChunk):
+class ToolInputDeltaChunk(BaseChunk):
     """Tool input delta chunk."""
 
     type: Literal['tool-input-delta'] = 'tool-input-delta'
@@ -120,7 +115,7 @@ class ToolInputDeltaChunk(AbstractSSEChunk):
     input_text_delta: str
 
 
-class ToolOutputAvailableChunk(AbstractSSEChunk):
+class ToolOutputAvailableChunk(BaseChunk):
     """Tool output available chunk."""
 
     type: Literal['tool-output-available'] = 'tool-output-available'
@@ -131,14 +126,14 @@ class ToolOutputAvailableChunk(AbstractSSEChunk):
     preliminary: bool | None = None
 
 
-class FinishChunk(AbstractSSEChunk):
+class FinishChunk(BaseChunk):
     """Finish chunk."""
 
     type: Literal['finish'] = 'finish'
     message_metadata: Any | None = None
 
 
-class ToolInputAvailableChunk(AbstractSSEChunk):
+class ToolInputAvailableChunk(BaseChunk):
     """Tool input available chunk."""
 
     type: Literal['tool-input-available'] = 'tool-input-available'
@@ -150,7 +145,7 @@ class ToolInputAvailableChunk(AbstractSSEChunk):
     dynamic: bool | None = None
 
 
-class ToolInputErrorChunk(AbstractSSEChunk):
+class ToolInputErrorChunk(BaseChunk):
     """Tool input error chunk."""
 
     type: Literal['tool-input-error'] = 'tool-input-error'
@@ -163,7 +158,7 @@ class ToolInputErrorChunk(AbstractSSEChunk):
     error_text: str
 
 
-class ToolOutputErrorChunk(AbstractSSEChunk):
+class ToolOutputErrorChunk(BaseChunk):
     """Tool output error chunk."""
 
     type: Literal['tool-output-error'] = 'tool-output-error'
@@ -173,7 +168,7 @@ class ToolOutputErrorChunk(AbstractSSEChunk):
     dynamic: bool | None = None
 
 
-class SourceUrlChunk(AbstractSSEChunk):
+class SourceUrlChunk(BaseChunk):
     """Source URL chunk."""
 
     type: Literal['source-url'] = 'source-url'
@@ -183,7 +178,7 @@ class SourceUrlChunk(AbstractSSEChunk):
     provider_metadata: ProviderMetadata | None = None
 
 
-class SourceDocumentChunk(AbstractSSEChunk):
+class SourceDocumentChunk(BaseChunk):
     """Source document chunk."""
 
     type: Literal['source-document'] = 'source-document'
@@ -194,7 +189,7 @@ class SourceDocumentChunk(AbstractSSEChunk):
     provider_metadata: ProviderMetadata | None = None
 
 
-class FileChunk(AbstractSSEChunk):
+class FileChunk(BaseChunk):
     """File chunk."""
 
     type: Literal['file'] = 'file'
@@ -202,26 +197,26 @@ class FileChunk(AbstractSSEChunk):
     media_type: str
 
 
-class DataUIMessageChunk(AbstractSSEChunk):
+class DataUIMessageChunk(BaseChunk):
     """Data UI message chunk with dynamic type."""
 
     type: str  # Will be f"data-{NAME}"
     data: Any
 
 
-class StartStepChunk(AbstractSSEChunk):
+class StartStepChunk(BaseChunk):
     """Start step chunk."""
 
     type: Literal['start-step'] = 'start-step'
 
 
-class FinishStepChunk(AbstractSSEChunk):
+class FinishStepChunk(BaseChunk):
     """Finish step chunk."""
 
     type: Literal['finish-step'] = 'finish-step'
 
 
-class StartChunk(AbstractSSEChunk):
+class StartChunk(BaseChunk):
     """Start chunk."""
 
     type: Literal['start'] = 'start'
@@ -229,28 +224,14 @@ class StartChunk(AbstractSSEChunk):
     message_metadata: Any | None = None
 
 
-class AbortChunk(AbstractSSEChunk):
+class AbortChunk(BaseChunk):
     """Abort chunk."""
 
     type: Literal['abort'] = 'abort'
 
 
-class MessageMetadataChunk(AbstractSSEChunk):
+class MessageMetadataChunk(BaseChunk):
     """Message metadata chunk."""
 
     type: Literal['message-metadata'] = 'message-metadata'
     message_metadata: Any
-
-
-class DoneChunk:
-    """Special marker chunk to indicate the end of the SSE stream."""
-
-    def sse(self) -> str:
-        """Encode as SSE done marker."""
-        return '[DONE]'
-
-    def __str__(self) -> str:
-        return 'DoneChunk<marker for the end of sse stream message>'
-
-    def __eq__(self, other: Any) -> bool:
-        return isinstance(other, DoneChunk)

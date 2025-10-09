@@ -16,7 +16,7 @@ import logfire
 from fastapi import Depends, Request, Response
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.vercel_ai.starlette import StarletteChat
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 from .sqlite_database import Database
 
@@ -80,7 +80,6 @@ async def retrieve_memories(ctx: RunContext[Deps], memory_contains: str) -> str:
     return '\n'.join([row[0] for row in rows])
 
 
-starlette_chat = StarletteChat(chat_agent)
 app = fastapi.FastAPI(lifespan=lifespan)
 logfire.instrument_fastapi(app)
 
@@ -96,7 +95,9 @@ def options_chat():
 
 @app.post('/api/chat')
 async def get_chat(request: Request, database: Database = Depends(get_db)) -> Response:
-    return await starlette_chat.dispatch_request(request, deps=Deps(database, 123))
+    return await VercelAIAdapter[Deps].dispatch_request(
+        chat_agent, request, deps=Deps(database, 123)
+    )
 
 
 if __name__ == '__main__':
