@@ -46,6 +46,7 @@ nav:
           - input.md
           - thinking.md
           - retries.md
+          - memory.md
       - MCP:
           - Overview: mcp/overview.md
           - mcp/client.md
@@ -113,6 +114,8 @@ nav:
           - api/format_prompt.md
           - api/direct.md
           - api/ext.md
+          - api/memory.md
+          - api/memory_providers.md
           - api/models/base.md
           - api/models/openai.md
           - api/models/anthropic.md
@@ -306,6 +309,7 @@ plugins:
           - output.md
           - retries.md
           - message-history.md
+          - memory.md
           - multi-agent-applications.md
           - thinking.md
           - third-party-tools.md
