@@ -29,6 +29,16 @@ from .exceptions import (
     UserError,
 )
 from .format_prompt import format_as_xml
+from .memory import (
+    BaseMemoryProvider,
+    MemoryConfig,
+    MemoryContext,
+    MemoryProvider,
+    MemoryScope,
+    RetrievalStrategy,
+    RetrievedMemory,
+    StoredMemory,
+)
 from .messages import (
     AgentStreamEvent,
     AudioFormat,
@@ -219,6 +229,15 @@ __all__ = (
     'StructuredDict',
     # format_prompt
     'format_as_xml',
+    # memory
+    'MemoryProvider',
+    'BaseMemoryProvider',
+    'RetrievedMemory',
+    'StoredMemory',
+    'MemoryConfig',
+    'RetrievalStrategy',
+    'MemoryScope',
+    'MemoryContext',
     # settings
     'ModelSettings',
     # usage
