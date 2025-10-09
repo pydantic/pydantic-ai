@@ -427,17 +427,17 @@ so that the agent can offload MCP calls and parsing to the provider.
 
 ### Provider Support
 
-| Provider | Supported | Notes |
-|----------|-----------|-------|
-| OpenAI Responses | ✅ | Full feature support. To include search results on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls]|
-| Anthropic | ✅ | Full feature support |
-| Google  | ❌ | Not supported |
-| Groq  | ❌ | Not supported |
-| OpenAI Chat Completions | ❌ | Not supported |
-| Bedrock | ❌ | Not supported |
-| Mistral | ❌ | Not supported |
-| Cohere | ❌ | Not supported |
-| HuggingFace | ❌ | Not supported |
+| Provider | Supported | Notes                 |
+|----------|-----------|-----------------------|
+| OpenAI Responses | ✅ | Full feature support  |
+| Anthropic | ✅ | Full feature support  |
+| Google  | ❌ | Not supported         |
+| Groq  | ❌ | Not supported         |
+| OpenAI Chat Completions | ❌ | Not supported         |
+| Bedrock | ❌ | Not supported         |
+| Mistral | ❌ | Not supported         |
+| Cohere | ❌ | Not supported         |
+| HuggingFace | ❌ | Not supported         |
 
 ### Usage
 
