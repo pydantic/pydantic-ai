@@ -102,7 +102,7 @@ async def test_step_with_custom_id():
 
     @g.step(node_id='custom_step_id')
     async def my_step(ctx: StepContext[SimpleState, None, None]) -> int:
-        return 42
+        return 42  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).to(my_step),
@@ -257,11 +257,11 @@ async def test_duplicate_node_ids_error():
 
     @g.step(node_id='duplicate_id')
     async def step_one(ctx: StepContext[SimpleState, None, None]) -> int:
-        return 1
+        return 1  # pragma: no cover
 
     @g.step(node_id='duplicate_id')
     async def step_two(ctx: StepContext[SimpleState, None, None]) -> int:
-        return 2
+        return 2  # pragma: no cover
 
     with pytest.raises(GraphBuildingError, match='All nodes must have unique node IDs'):
         g.add(

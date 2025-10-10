@@ -33,7 +33,7 @@ async def test_simple_decision_literal():
         return 'Went left'
 
     @g.step
-    async def right_path(ctx: StepContext[DecisionState, None, object]) -> str:
+    async def right_path(ctx: StepContext[DecisionState, None, object]) -> str:  # pragma: no cover
         ctx.state.path_taken = 'right'
         return 'Went right'
 
@@ -68,7 +68,7 @@ async def test_decision_with_type_matching():
 
     @g.step
     async def handle_str(ctx: StepContext[DecisionState, None, str]) -> str:
-        return f'Got str: {ctx.inputs}'
+        return f'Got str: {ctx.inputs}'  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).to(return_int),
@@ -95,7 +95,7 @@ async def test_decision_with_custom_matcher():
 
     @g.step
     async def even_path(ctx: StepContext[DecisionState, None, int]) -> str:
-        return f'{ctx.inputs} is even'
+        return f'{ctx.inputs} is even'  # pragma: no cover
 
     @g.step
     async def odd_path(ctx: StepContext[DecisionState, None, int]) -> str:
@@ -130,7 +130,7 @@ async def test_decision_with_state_modification():
         return ctx.inputs * 2
 
     @g.step
-    async def large_value(ctx: StepContext[DecisionState, None, int]) -> int:
+    async def large_value(ctx: StepContext[DecisionState, None, int]) -> int:  # pragma: no cover
         ctx.state.path_taken = 'large'
         return ctx.inputs * 10
 
@@ -188,7 +188,7 @@ async def test_decision_first_match_wins():
 
     @g.step
     async def branch_b(ctx: StepContext[DecisionState, None, int]) -> str:
-        return 'Branch B'
+        return 'Branch B'  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).to(return_value),
@@ -220,11 +220,11 @@ async def test_nested_decisions():
 
     @g.step
     async def is_negative(ctx: StepContext[DecisionState, None, int]) -> str:
-        return 'Negative'
+        return 'Negative'  # pragma: no cover
 
     @g.step
     async def small_positive(ctx: StepContext[DecisionState, None, int]) -> str:
-        return 'Small positive'
+        return 'Small positive'  # pragma: no cover
 
     @g.step
     async def large_positive(ctx: StepContext[DecisionState, None, int]) -> str:
@@ -264,7 +264,7 @@ async def test_decision_with_label():
 
     @g.step
     async def path_b(ctx: StepContext[DecisionState, None, object]) -> str:
-        return 'Path B'
+        return 'Path B'  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).to(choose),
@@ -295,7 +295,7 @@ async def test_decision_with_map():
 
     @g.step
     async def make_single(ctx: StepContext[DecisionState, None, object]) -> int:
-        return 10
+        return 10  # pragma: no cover
 
     @g.step
     async def process_item(ctx: StepContext[DecisionState, None, int]) -> int:
@@ -401,7 +401,7 @@ async def test_decision_branch_label():
 
     @g.step
     async def handle_b(ctx: StepContext[DecisionState, None, object]) -> str:
-        return 'Got B'
+        return 'Got B'  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).to(get_value),

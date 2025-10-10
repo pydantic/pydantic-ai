@@ -12,7 +12,7 @@ from pydantic_graph.beta.join import Join
 from pydantic_graph.beta.node import EndNode, Fork, StartNode
 from pydantic_graph.beta.node_types import AnyNode
 from pydantic_graph.beta.paths import BroadcastMarker, DestinationMarker, LabelMarker, MapMarker, Path
-from pydantic_graph.beta.step import NodeStep, Step
+from pydantic_graph.beta.step import Step
 
 DEFAULT_HIGHLIGHT_CSS = 'fill:#fdff32'
 """The default CSS to use for highlighting nodes."""
@@ -27,7 +27,7 @@ StateDiagramDirection = Literal['TB', 'LR', 'RL', 'BT']
 - `'BT'`: Bottom to top
 """
 
-NodeKind = Literal['broadcast', 'map', 'join', 'start', 'end', 'step', 'decision', 'base_node']
+NodeKind = Literal['broadcast', 'map', 'join', 'start', 'end', 'step', 'decision']
 
 
 @dataclass
@@ -83,8 +83,6 @@ def build_mermaid_graph(  # noqa C901
         elif isinstance(node, Decision):
             kind = 'decision'
             note = node.note
-        elif isinstance(node, NodeStep):
-            kind = 'base_node'
         else:
             assert_never(node)
 
@@ -147,9 +145,6 @@ class MermaidGraph:
                 node_lines = [f'  state {node.id} <<choice>>']
                 if node.note:
                     node_lines.append(f'  note right of {node.id}\n    {node.note}\n  end note')
-            elif node.kind == 'base_node':
-                # Base nodes from v1 system
-                node_lines.append(f'  {node.id}')
             lines.extend(node_lines)
 
         lines.append('')

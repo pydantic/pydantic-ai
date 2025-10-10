@@ -138,7 +138,7 @@ async def test_label_on_decision_branch():
 
     @g.step
     async def path_b(ctx: StepContext[LabelState, None, object]) -> str:
-        return 'B'
+        return 'B'  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).to(choose),

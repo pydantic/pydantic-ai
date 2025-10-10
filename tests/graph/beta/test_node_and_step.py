@@ -38,7 +38,7 @@ def test_is_source_type_guard():
 
     # Test with Step
     async def my_step(ctx: StepContext[Any, Any, Any]):
-        return 42
+        return 42  # pragma: no cover
 
     step = Step[None, None, None, int](id=NodeID('test'), call=my_step)
     assert is_source(step)
@@ -56,7 +56,7 @@ def test_is_destination_type_guard():
 
     # Test with Step
     async def my_step(ctx: StepContext[Any, Any, Any]):
-        return 42
+        return 42  # pragma: no cover
 
     step = Step[None, None, None, int](id=NodeID('test'), call=my_step)
     assert is_destination(step)

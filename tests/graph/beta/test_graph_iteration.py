@@ -255,12 +255,12 @@ async def test_iter_early_termination():
         return 10
 
     @g.step
-    async def step_two(ctx: StepContext[IterState, None, int]) -> int:
+    async def step_two(ctx: StepContext[IterState, None, int]) -> int:  # pragma: no cover
         ctx.state.counter += 1
         return ctx.inputs + 5
 
     @g.step
-    async def step_three(ctx: StepContext[IterState, None, int]) -> int:
+    async def step_three(ctx: StepContext[IterState, None, int]) -> int:  # pragma: no cover
         ctx.state.counter += 1
         return ctx.inputs * 2
 

@@ -119,7 +119,7 @@ async def test_map_empty_list():
 
     @g.step
     async def double(ctx: StepContext[CounterState, None, int]) -> int:
-        return ctx.inputs * 2
+        return ctx.inputs * 2  # pragma: no cover
 
     collect = g.join(reduce_list_append, initial_factory=list[int])
 

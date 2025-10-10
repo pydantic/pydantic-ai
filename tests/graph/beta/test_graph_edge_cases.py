@@ -26,7 +26,7 @@ async def test_graph_repr():
 
     @g.step
     async def simple_step(ctx: StepContext[MyState, None, None]) -> int:
-        return 42
+        return 42  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).to(simple_step),
@@ -56,7 +56,7 @@ async def test_graph_render_with_title():
 
     @g.step
     async def simple_step(ctx: StepContext[MyState, None, None]) -> int:
-        return 42
+        return 42  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).to(simple_step),
@@ -85,7 +85,7 @@ async def test_get_parent_fork_missing():
 
     @g.step
     async def simple_step(ctx: StepContext[MyState, None, None]) -> int:
-        return 42
+        return 42  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).to(simple_step),
@@ -110,7 +110,7 @@ async def test_decision_no_matching_branch():
 
     @g.step
     async def handle_str(ctx: StepContext[MyState, None, str]) -> str:
-        return f'Got: {ctx.inputs}'
+        return f'Got: {ctx.inputs}'  # pragma: no cover
 
     # the purpose of this test is to test runtime behavior when you have this type failure, which is why
     # we have the `# type: ignore` below
@@ -163,7 +163,7 @@ async def test_map_non_iterable():
 
     @g.step
     async def process_item(ctx: StepContext[MyState, None, int]) -> int:
-        return ctx.inputs
+        return ctx.inputs  # pragma: no cover
 
     sum_items = g.join(reduce_sum, initial=0)
 
@@ -328,7 +328,7 @@ async def test_literal_branch_matching():
 
     @g.step
     async def handle_a(ctx: StepContext[MyState, None, object]) -> str:
-        return 'Chose A'
+        return 'Chose A'  # pragma: no cover
 
     @g.step
     async def handle_b(ctx: StepContext[MyState, None, object]) -> str:
@@ -336,7 +336,7 @@ async def test_literal_branch_matching():
 
     @g.step
     async def handle_c(ctx: StepContext[MyState, None, object]) -> str:
-        return 'Chose C'
+        return 'Chose C'  # pragma: no cover
 
     from pydantic_graph.beta import TypeExpression
 

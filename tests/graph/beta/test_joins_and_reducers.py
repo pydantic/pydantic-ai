@@ -154,11 +154,11 @@ async def test_join_with_custom_id():
 
     @g.step
     async def source(ctx: StepContext[SimpleState, None, None]) -> list[int]:
-        return [1, 2, 3]
+        return [1, 2, 3]  # pragma: no cover
 
     @g.step
     async def process(ctx: StepContext[SimpleState, None, int]) -> int:
-        return ctx.inputs
+        return ctx.inputs  # pragma: no cover
 
     custom_join = g.join(reduce_list_append, initial_factory=list[int], node_id='my_custom_join')
 

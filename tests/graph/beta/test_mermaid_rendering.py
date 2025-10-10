@@ -24,7 +24,7 @@ async def test_render_with_step_label():
 
     @g.step(label='Process Data')
     async def process(ctx: StepContext[SimpleState, None, None]) -> int:
-        return 42
+        return 42  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).to(process),
@@ -42,11 +42,11 @@ async def test_render_with_edge_labels():
 
     @g.step
     async def step_a(ctx: StepContext[SimpleState, None, None]) -> int:
-        return 10
+        return 10  # pragma: no cover
 
     @g.step
     async def step_b(ctx: StepContext[SimpleState, None, int]) -> int:
-        return ctx.inputs + 1
+        return ctx.inputs + 1  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).label('start edge').to(step_a),
@@ -67,7 +67,7 @@ async def test_render_without_edge_labels():
 
     @g.step
     async def step_a(ctx: StepContext[SimpleState, None, None]) -> int:
-        return 10
+        return 10  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).label('hidden label').to(step_a),
@@ -86,15 +86,15 @@ async def test_render_decision_node():
 
     @g.step
     async def choose(ctx: StepContext[SimpleState, None, None]) -> Literal['a', 'b']:
-        return 'a'
+        return 'a'  # pragma: no cover
 
     @g.step
     async def path_a(ctx: StepContext[SimpleState, None, object]) -> str:
-        return 'A'
+        return 'A'  # pragma: no cover
 
     @g.step
     async def path_b(ctx: StepContext[SimpleState, None, object]) -> str:
-        return 'B'
+        return 'B'  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).to(choose),
@@ -118,15 +118,15 @@ async def test_render_decision_branches():
 
     @g.step
     async def get_value(ctx: StepContext[SimpleState, None, None]) -> int:
-        return 5
+        return 5  # pragma: no cover
 
     @g.step
     async def small(ctx: StepContext[SimpleState, None, int]) -> int:
-        return ctx.inputs * 2
+        return ctx.inputs * 2  # pragma: no cover
 
     @g.step
     async def large(ctx: StepContext[SimpleState, None, int]) -> int:
-        return ctx.inputs * 10
+        return ctx.inputs * 10  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).to(get_value),
@@ -150,11 +150,11 @@ async def test_render_decision_with_note():
 
     @g.step
     async def choose(ctx: StepContext[SimpleState, None, None]) -> Literal['x', 'y']:
-        return 'x'
+        return 'x'  # pragma: no cover
 
     @g.step
     async def handler(ctx: StepContext[SimpleState, None, object]) -> str:
-        return 'result'
+        return 'result'  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).to(choose),
@@ -179,7 +179,7 @@ async def test_render_with_direction():
 
     @g.step
     async def step(ctx: StepContext[SimpleState, None, None]) -> int:
-        return 1
+        return 1  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).to(step),

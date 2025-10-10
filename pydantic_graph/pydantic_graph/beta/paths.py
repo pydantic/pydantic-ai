@@ -385,6 +385,15 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
         Returns:
             A new EdgePathBuilder that operates on individual items from the iterable
         """
+        if len(self.sources) > 1:
+            # The current implementation mishandles this because you get one copy of each edge
+            # from the MapMarker to its destination for each source, resulting in unintentional multiple execution.
+            # I suspect this is fixable without a major refactor, though it's not clear to me what the ideal behavior
+            # would be. But for now, it's definitely easiest to just raise an error for this.
+            raise NotImplementedError(
+                'Map is not currently supported with multiple source nodes.'
+                ' You can work around this by just creating a separate edge for each source.'
+            )
         return EdgePathBuilder(
             sources=self.sources,
             path_builder=self._path_builder.map(fork_id=fork_id, downstream_join_id=downstream_join_id),

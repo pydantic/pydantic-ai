@@ -35,7 +35,7 @@ async def test_map_to_end_node_cancels_pending():
             return ctx.inputs
         # Others would take longer
         await asyncio.sleep(1)
-        return ctx.inputs
+        return ctx.inputs  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).to(generate),
@@ -59,7 +59,7 @@ async def test_map_non_iterable_raises_error():
 
     @g.step
     async def process_item(ctx: StepContext[ExecutionState, None, int]) -> int:
-        return ctx.inputs
+        return ctx.inputs  # pragma: no cover
 
     g.add(
         g.edge_from(g.start_node).to(return_non_iterable),

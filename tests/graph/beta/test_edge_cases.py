@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append, reduce_null
+from pydantic_graph.beta.join import reduce_list_append, reduce_null, reduce_sum
 from pydantic_graph.exceptions import GraphBuildingError
 
 pytestmark = pytest.mark.anyio
@@ -228,7 +228,7 @@ async def test_null_reducer_with_no_inputs():
 
     @g.step
     async def process(ctx: StepContext[EdgeCaseState, None, int]) -> int:
-        return ctx.inputs
+        return ctx.inputs  # pragma: no cover
 
     null_join = g.join(reduce_null, initial=None)
 
@@ -274,7 +274,7 @@ async def test_step_with_complex_input_type():
 
 async def test_multiple_joins_same_fork():
     """Test multiple joins converging from the same fork point."""
-    g = GraphBuilder(state_type=EdgeCaseState, output_type=tuple[list[int], list[int]])
+    g = GraphBuilder(state_type=EdgeCaseState, output_type=int)
 
     @g.step
     async def source(ctx: StepContext[EdgeCaseState, None, None]) -> list[int]:
@@ -290,19 +290,24 @@ async def test_multiple_joins_same_fork():
 
     join_a = g.join(reduce_list_append, initial_factory=list[int], node_id='join_a')
     join_b = g.join(reduce_list_append, initial_factory=list[int], node_id='join_b')
+    collect = g.join(reduce_sum, initial=0, node_id='collect')
 
-    @g.step
-    async def combine(ctx: StepContext[EdgeCaseState, None, None]) -> tuple[list[int], list[int]]:
-        # This is a bit awkward but demonstrates the pattern
-        return ([], [])  # In real usage, you'd access the join results differently
+    with pytest.raises(NotImplementedError, match='Map is not currently supported with multiple source nodes.'):
+        g.edge_from(join_a, join_b).map().to(collect)
 
     g.add(
         g.edge_from(g.start_node).to(source),
         g.edge_from(source).map().to(path_a, path_b),
         g.edge_from(path_a).to(join_a),
         g.edge_from(path_b).to(join_b),
+        g.edge_from(join_a).map().to(collect),
+        g.edge_from(join_b).map().to(collect),
+        g.edge_from(collect).to(g.end_node),
         # Note: This test demonstrates structure but may need adjustment based on actual API
     )
+    graph = g.build()
+    result = await graph.run(state=EdgeCaseState())
+    assert result == 30
 
 
 async def test_state_with_mutable_collections():
@@ -385,7 +390,7 @@ async def test_empty_edge_broadcast():
 
     @g.step
     async def source(ctx: StepContext[None, None, None]) -> int:
-        return 5
+        return 5  # pragma: no cover
 
     with pytest.raises(GraphBuildingError, match='returned no branches, but must return at least one'):
         g.edge_from(source).broadcast(lambda e: [])

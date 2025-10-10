@@ -75,7 +75,7 @@ async def test_v2_step_to_v1_node():
     class V1StartNode(BaseNode[IntegrationState, None, str]):
         value: int
 
-        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> V1MiddleNode:
+        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> V1MiddleNode:  # pragma: no cover
             ctx.state.log.append(f'V1StartNode: {self.value}')
             return V1MiddleNode(self.value * 2)
 
@@ -83,14 +83,14 @@ async def test_v2_step_to_v1_node():
     class V1MiddleNode(BaseNode[IntegrationState, None, str]):
         value: int
 
-        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[str]:
+        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[str]:  # pragma: no cover
             ctx.state.log.append(f'V1MiddleNode: {self.value}')
             return End(f'Result: {self.value}')
 
     @g.step
     async def v2_step(
         ctx: StepContext[IntegrationState, None, None],
-    ) -> V1StartNode:
+    ) -> V1StartNode:  # pragma: no cover
         ctx.state.log.append('V2Step')
         # Return a StepNode to transition to a v1 node
         return V1StartNode(10)
@@ -166,16 +166,10 @@ async def test_mixed_v1_v2_with_broadcast():
     async def create_node(ctx: StepContext[IntegrationState, None, int]) -> ProcessNode:
         return ProcessNode(ctx.inputs)
 
-    @g.step
-    async def auxiliary_node(ctx: StepContext[IntegrationState, None, int]) -> int:
-        """This auxiliary node is used to feed the output of a V1-style node into a join"""
-        return ctx.inputs
-
     g.add(
         g.node(ProcessNode),
         g.edge_from(g.start_node).to(generate_values),
         g.edge_from(generate_values).map().to(create_node),
-        g.edge_from(auxiliary_node).to(collect),
         g.edge_from(collect).to(g.end_node),
     )
 
@@ -193,7 +187,7 @@ async def test_v1_node_type_hints_inferred():
     class StartNode(BaseNode[IntegrationState, None, str]):
         async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> MiddleNode | End[str]:
             if ctx.state.log:
-                return End('early exit')
+                return End('early exit')  # pragma: no cover
             ctx.state.log.append('StartNode')
             return MiddleNode()
 

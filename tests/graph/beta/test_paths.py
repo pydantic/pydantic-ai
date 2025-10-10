@@ -51,7 +51,7 @@ async def test_path_builder_transform():
     """Test PathBuilder.transform method."""
 
     async def transform_func(ctx: StepContext[MyState, None, int]) -> int:
-        return ctx.inputs * 2
+        return ctx.inputs * 2  # pragma: no cover
 
     builder = PathBuilder[MyState, None, int](working_items=[])
     new_builder = builder.transform(transform_func)
