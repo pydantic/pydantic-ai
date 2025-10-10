@@ -233,7 +233,6 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
         Returns:
             A new DecisionBranchBuilder where mapping is performed prior to generating the final output.
         """
-        # TODO: Need to cover this in a test
         return DecisionBranchBuilder(
             decision=self._decision,
             source=self._source,

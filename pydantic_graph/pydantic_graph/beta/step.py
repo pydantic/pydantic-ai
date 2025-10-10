@@ -144,9 +144,6 @@ class Step(Generic[StateT, DepsT, InputT, OutputT]):
         """
         return StepNode(self, inputs)
 
-    def __repr__(self) -> str:
-        return f'{type(self).__name__}(id={self.id!r}, call={self._call!r}, label={self.label!r})'
-
 
 @dataclass
 class StepNode(BaseNode[StateT, DepsT, Any]):

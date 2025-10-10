@@ -109,7 +109,7 @@ class ParentForkFinder(Generic[T]):
             if upstream_nodes is not None:  # found upstream nodes without a cycle
                 parent_fork = ParentFork[T](cur, upstream_nodes)
             elif parent_fork is not None:
-                # TODO: Need to cover this in a test
+                assert False  # TODO: Need to cover this in a test
                 # We reached a fork that is an ancestor of a parent fork but is not itself a parent fork.
                 # This means there is a cycle to J that is downstream of `cur`, and so any node further upstream
                 # will fail to be a parent fork for the same reason. So we can stop here and just return `parent_fork`.

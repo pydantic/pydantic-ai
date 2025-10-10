@@ -10,7 +10,6 @@ from __future__ import annotations
 import inspect
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
-from copy import deepcopy
 from dataclasses import dataclass, replace
 from types import NoneType
 from typing import Any, Generic, cast, get_origin, get_type_hints, overload
@@ -21,7 +20,7 @@ from pydantic_graph import _utils, exceptions
 from pydantic_graph._utils import UNSET, Unset
 from pydantic_graph.beta.decision import Decision, DecisionBranch, DecisionBranchBuilder
 from pydantic_graph.beta.graph import Graph
-from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID, generate_placeholder_node_id, is_placeholder_node_id
+from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID, generate_placeholder_node_id, replace_placeholder_id
 from pydantic_graph.beta.join import Join, JoinNode, ReducerFunction
 from pydantic_graph.beta.node import (
     EndNode,
@@ -288,6 +287,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             initial_factory = lambda: initial  # pyright: ignore[reportAssignmentType]  # noqa E731
 
         return Join[StateT, DepsT, InputT, OutputT](
+            # TODO: Find a way to use the reducer name here, but still allow duplicates. It makes for a better node id.
             id=JoinID(NodeID(node_id or generate_placeholder_node_id('join'))),
             reducer=reducer,
             initial_factory=cast(Callable[[], OutputT], initial_factory),
@@ -439,7 +439,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         """
         # Note, the following node_id really is just a placeholder and shouldn't end up in the final graph
         # This is why we don't expose a way for end users to override the value used here.
-        node_id = NodeID(generate_placeholder_node_id('match-decision'))
+        node_id = NodeID(generate_placeholder_node_id('match_decision'))
         decision = Decision[StateT, DepsT, Never](id=node_id, branches=[], note=None)
         new_path_builder = PathBuilder[StateT, DepsT, SourceT](working_items=[])
         return DecisionBranchBuilder(decision=decision, source=source, matches=matches, path_builder=new_path_builder)
@@ -462,7 +462,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         Returns:
             A DecisionBranch for the BaseNode type
         """
-        # TODO: Need to cover this in a test
+        assert False  # TODO: Need to cover this in a test
         path = Path(items=[DestinationMarker(NodeStep(source).id)])
         return DecisionBranch(source=source, matches=matches, path=path)
 
@@ -517,7 +517,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         elif isinstance(existing, NodeStep) and isinstance(node, NodeStep) and existing.node_type is node.node_type:
             pass
         elif existing is not node:
-            # TODO: Need to cover this in a test
             raise ValueError(f'All nodes must have unique node IDs. {node.id!r} was the ID for {existing} and {node}')
 
     def _edge_from_return_hint(
@@ -610,13 +609,16 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         # TODO(P2): Verify that any user-specified parent forks are _actually_ valid parent forks, and if not, generate a helpful error message
         # TODO(P3): Consider doing a deepcopy here to prevent modifications to the underlying nodes and edges
 
-        nodes = deepcopy(self._nodes)
-        edges_by_source = deepcopy(self._edges_by_source)
+        nodes = self._nodes
+        edges_by_source = self._edges_by_source
 
         nodes, edges_by_source = _replace_placeholder_node_ids(nodes, edges_by_source)
         nodes, edges_by_source = _flatten_paths(nodes, edges_by_source)
         nodes, edges_by_source = _normalize_forks(nodes, edges_by_source)
         parent_forks = _collect_dominating_forks(nodes, edges_by_source)
+        print(nodes)
+        print(edges_by_source)
+        print(parent_forks)
 
         return Graph[StateT, DepsT, GraphInputT, GraphOutputT](
             name=self.name,
@@ -703,7 +705,7 @@ def _normalize_forks(
         if len(edges_from_source) == 1:
             new_edges[source_id] = edges_from_source
             continue
-        # TODO: Need to cover this in a test, specifically by using `.to()`  with multiple arguments
+        assert False  # TODO: Need to cover this in a test, specifically by using `.to()`  with multiple arguments
         new_fork = Fork[Any, Any](id=ForkID(NodeID(f'{node.id}_broadcast_fork')), is_map=False, downstream_join_id=None)
         new_nodes[new_fork.id] = new_fork
         new_edges[source_id] = [Path(items=[BroadcastMarker(fork_id=new_fork.id, paths=edges_from_source)])]
@@ -778,7 +780,7 @@ def _collect_dominating_forks(
         dominating_fork = finder.find_parent_fork(join_id)
         if dominating_fork is None:
             # TODO(P3): Print out the mermaid graph and explain the problem
-            # TODO: Need to cover this in a test
+            assert False  # TODO: Need to cover this in a test
             raise ValueError(f'Join node {join_id} has no dominating fork')
         dominating_forks[join_id] = dominating_fork
 
@@ -806,24 +808,28 @@ def _build_placeholder_node_id_remapping(nodes: dict[NodeID, AnyNode]) -> dict[N
     """
     counter = Counter[str]()
     remapping: dict[NodeID, NodeID] = {}
-    for node_id, node in nodes.items():
-        if not is_placeholder_node_id(node_id):
+    for node_id in nodes.keys():
+        replaced_node_id = replace_placeholder_id(node_id)
+        if replaced_node_id == node_id:
             continue
-        label = type(node).__name__.lower()
-        counter[label] = count = counter[label] + 1
-        remapping[node_id] = NodeID(f'{label}_{count}')
+        counter[replaced_node_id] = count = counter[replaced_node_id] + 1
+        remapping[node_id] = NodeID(f'{replaced_node_id}_{count}' if count > 1 else replaced_node_id)
     return remapping
 
 
 def _update_node_with_id_remapping(node: AnyNode, node_id_remapping: dict[NodeID, NodeID]) -> AnyNode:
-    # Note: we have already deepcopied the node provided to this function so it should be okay to make mutations,
-    # this could change if we change the code surrounding the code paths leading to this function call though.
+    # Note: it's a bit awkward that we mutate the provided nodes, but this is necessary to ensure that
+    # calls to `.as_node` reference the correct node_ids when relying on compatibility with the v1 API.
+    # We only mutate placeholder IDs so I _think_ this should generally be okay. I guess we can
+    # rework it more carefully if it causes issues in the future..
     if isinstance(node, Step):
         node.id = node_id_remapping.get(node.id, node.id)
     elif isinstance(node, Join):
         node.id = JoinID(node_id_remapping.get(node.id, node.id))
     elif isinstance(node, Fork):
         node.id = ForkID(node_id_remapping.get(node.id, node.id))
+        if node.downstream_join_id is not None:
+            node.downstream_join_id = JoinID(node_id_remapping.get(node.downstream_join_id, node.downstream_join_id))
     elif isinstance(node, Decision):
         node.id = node_id_remapping.get(node.id, node.id)
         node.branches = [

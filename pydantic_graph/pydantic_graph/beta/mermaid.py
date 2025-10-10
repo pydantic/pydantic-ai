@@ -63,7 +63,9 @@ def build_mermaid_graph(graph: Graph[Any, Any, Any, Any]) -> MermaidGraph:  # no
             elif isinstance(item, DestinationMarker):
                 edges_by_source[last_source_id].append(MermaidEdge(last_source_id, item.destination_id, working_label))
             else:
-                # TODO: Need to cover this in a test, by adding .transform() to a path, then delete the else: block
+                assert (
+                    False
+                )  # TODO: Need to cover this in a test, by adding .transform() to a path, then delete the else: block
                 pass
 
     for node_id, node in graph.nodes.items():
@@ -82,7 +84,6 @@ def build_mermaid_graph(graph: Graph[Any, Any, Any, Any]) -> MermaidGraph:  # no
         elif isinstance(node, Fork):
             kind = 'map' if node.is_map else 'broadcast'
         elif isinstance(node, Decision):
-            # TODO: Need to cover this in a test
             kind = 'decision'
             note = node.note
         elif isinstance(node, NodeStep):
@@ -99,7 +100,6 @@ def build_mermaid_graph(graph: Graph[Any, Any, Any, Any]) -> MermaidGraph:  # no
 
     for node in graph.nodes.values():
         if isinstance(node, Decision):
-            # TODO: Need to cover this in a test
             for branch in node.branches:
                 _collect_edges(branch.path, node.id)
 
@@ -129,7 +129,6 @@ class MermaidGraph:
             lines = ['---', f'title: {title}', '---']
         lines.append('stateDiagram-v2')
         if direction is not None:
-            # TODO: Need to cover this in a test
             lines.append(f'  direction {direction}')
 
         nodes, edges = _topological_sort(self.nodes, self.edges)
@@ -141,7 +140,6 @@ class MermaidGraph:
             elif node.kind == 'step':
                 line = f'  {node.id}'
                 if node.label:
-                    # TODO: Need to cover this in a test
                     line += f': {node.label}'
                 node_lines.append(line)
             elif node.kind == 'join':
@@ -149,7 +147,6 @@ class MermaidGraph:
             elif node.kind == 'broadcast' or node.kind == 'map':
                 node_lines = [f'  state {node.id} <<fork>>']
             elif node.kind == 'decision':
-                # TODO: Need to cover this in a test
                 node_lines = [f'  state {node.id} <<choice>>']
                 if node.note:
                     node_lines.append(f'  note right of {node.id}\n    {node.note}\n  end note')
@@ -166,7 +163,6 @@ class MermaidGraph:
             render_end_id = '[*]' if edge.end_id == EndNode.id else edge.end_id
             edge_line = f'  {render_start_id} --> {render_end_id}'
             if edge.label and edge_labels:
-                # TODO: Need to cover this in a test
                 edge_line += f': {edge.label}'
             lines.append(edge_line)
             # TODO(P3): Support node notes/highlighting

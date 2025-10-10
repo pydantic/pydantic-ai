@@ -477,7 +477,6 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         def _handle_result(result: EndMarker[OutputT] | JoinItem | Sequence[GraphTask]) -> bool:
             if isinstance(result, EndMarker):
                 for t in pending:
-                    # TODO: Need to cover this in a test, e.g. one that does .map().to(g.end_node)
                     t.cancel()
                 return True
 
@@ -511,11 +510,10 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                                 task_ids_to_cancel.add(task_id)
                                 break
                             else:
-                                # TODO: Need to cover this in a test
+                                assert False  # TODO: Need to cover this in a test
                                 pass
                     for task in list(pending):
                         if task.get_name() in task_ids_to_cancel:
-                            # TODO: Need to cover this in a test
                             task.cancel()
                             pending.remove(task)
             else:
@@ -531,7 +529,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                     source_task = tasks_by_id.pop(TaskID(task.get_name()))
                     maybe_overridden_result = yield task_result
                     if _handle_result(maybe_overridden_result):
-                        return  # TODO: Need to cover this in a test
+                        return
 
                     for join_id, fork_run_id in self._get_completed_fork_runs(source_task, tasks_by_id.values()):
                         join_state = self._active_reducers.pop((join_id, fork_run_id))
@@ -553,7 +551,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                         len(afs) > len(fork_stack) and fork_stack == afs[: len(fork_stack)]
                         for afs in active_fork_stacks
                     ):
-                        # TODO: Need to cover this in a test
+                        assert False  # TODO: Need to cover this in a test
                         continue  # this join_state is a strict prefix for one of the other active join_states
                     self._active_reducers.pop((join_id, fork_run_id))  # we're handling it now, so we can pop it
                     join_node = self.graph.nodes[join_id]
@@ -561,7 +559,8 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                     new_tasks = self._handle_edges(join_node, join_state.current, join_state.downstream_fork_stack)
                     maybe_overridden_result = yield new_tasks  # give an opportunity to override these
                     if _handle_result(maybe_overridden_result):
-                        return  # TODO: Need to cover this in a test
+                        assert False  # TODO: Need to cover this in a test
+                        return
 
         raise RuntimeError(  # pragma: no cover
             'Graph run completed, but no result was produced. This is either a bug in the graph or a bug in the graph runner.'
@@ -672,7 +671,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         elif isinstance(item, MapMarker):
             # Eagerly raise a clear error if the input value is not iterable as expected
             try:
-                # TODO: Need to cover this in a test
+                assert False  # TODO: Need to cover this in a test
                 iter(inputs)
             except TypeError:
                 raise RuntimeError(f'Cannot map non-iterable value: {inputs!r}')
@@ -695,7 +694,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                 map_tasks += item_tasks
             return map_tasks
         elif isinstance(item, BroadcastMarker):
-            # TODO: Need to cover this in a test
+            assert False  # TODO: Need to cover this in a test
             return [GraphTask(item.fork_id, inputs, fork_stack)]
         elif isinstance(item, TransformMarker):
             inputs = item.transform(StepContext(state=self.state, deps=self.deps, inputs=inputs))
@@ -751,6 +750,6 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                 if t.node_id in parent_fork.intermediate_nodes or t.node_id == join_id:
                     return False
             else:
-                # TODO: Need to cover this in a test
+                assert False  # TODO: Need to cover this in a test
                 pass
         return True

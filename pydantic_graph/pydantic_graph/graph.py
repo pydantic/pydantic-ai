@@ -241,7 +241,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                 if self.auto_instrument:  # pragma: no branch
                     entered_span = stack.enter_context(logfire_span('run graph {graph.name}', graph=self))
             else:
-                # TODO: Need to cover this in a test
+                assert False  # TODO: Need to cover this in a test
                 entered_span = stack.enter_context(span)
             traceparent = None if entered_span is None else get_traceparent(entered_span)
             yield GraphRun[StateT, DepsT, RunEndT](

@@ -6,6 +6,7 @@ providing type safety and clarity when working with different kinds of identifie
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from typing import NewType
@@ -57,17 +58,17 @@ allowing the system to coordinate and join parallel branches correctly.
 """
 
 
-def generate_placeholder_node_id(debug_label: str) -> str:
+def generate_placeholder_node_id(label: str) -> str:
     """Generate a placeholder node ID, to be replaced during graph building."""
-    return f'{_NODE_ID_PLACEHOLDER_PREFIX}:{debug_label}:{uuid.uuid4()}'
+    return f'{_NODE_ID_PLACEHOLDER_PREFIX}:{label}:{uuid.uuid4()}'
 
 
-def is_placeholder_node_id(node_id: NodeID) -> bool:
+def replace_placeholder_id(node_id: NodeID) -> str:
     """Returns whether a given NodeID is a placeholder node ID which should be replaced during graph building."""
-    return node_id.startswith(_NODE_ID_PLACEHOLDER_PREFIX)
+    return re.sub(rf'{_NODE_ID_PLACEHOLDER_PREFIX}:([^:]+):.*', r'\1', node_id)
 
 
-_NODE_ID_PLACEHOLDER_PREFIX = '__placeholder__:'
+_NODE_ID_PLACEHOLDER_PREFIX = '__placeholder__'
 """
 When Node IDs are required but not specified when building a graph, we generate placeholder values
 using this prefix followed by a random string.

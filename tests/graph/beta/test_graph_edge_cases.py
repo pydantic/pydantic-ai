@@ -350,15 +350,15 @@ async def test_nested_reducers_with_prefix():
     assert str(graph) == snapshot("""\
 stateDiagram-v2
   outer_list
-  state fork_1 <<fork>>
-  state fork_2 <<fork>>
+  state map <<fork>>
+  state map_2 <<fork>>
   inner_process
-  state reduce_sum <<join>>
+  state join <<join>>
 
   [*] --> outer_list
-  outer_list --> fork_1
-  fork_1 --> fork_2
-  fork_2 --> inner_process
-  inner_process --> reduce_sum
-  reduce_sum --> [*]\
+  outer_list --> map
+  map --> map_2
+  map_2 --> inner_process
+  inner_process --> join
+  join --> [*]\
 """)

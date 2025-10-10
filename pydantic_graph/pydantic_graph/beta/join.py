@@ -68,7 +68,6 @@ class ReducerContext(Generic[StateT, DepsT]):
 
     @property
     def deps(self) -> DepsT:
-        # TODO: Need to cover this in a test
         return self._deps
 
     @property
@@ -112,7 +111,6 @@ def reduce_list_append(current: list[T], inputs: T) -> list[T]:
 
 def reduce_list_extend(current: list[T], inputs: Iterable[T]) -> list[T]:
     """A reducer that extends a list."""
-    # TODO: Need to cover this in a test, perhaps one currently using reduce_list_append
     current.extend(inputs)
     return current
 
@@ -144,7 +142,6 @@ class ReduceFirstValue(Generic[T]):
 
     def __call__(self, ctx: ReducerContext[object, object], current: T, inputs: T) -> T:
         """The reducer function."""
-        # TODO: Need to cover this in a test
         if ctx.cancelled_sibling_tasks:
             return current
         ctx.cancel_sibling_tasks()

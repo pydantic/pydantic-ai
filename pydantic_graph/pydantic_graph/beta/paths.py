@@ -207,7 +207,7 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
         if extra_destinations:
             next_item = BroadcastMarker(
                 paths=[Path(items=[DestinationMarker(d.id)]) for d in (destination,) + extra_destinations],
-                fork_id=ForkID(NodeID(fork_id or generate_placeholder_node_id('PathBuilder.to'))),
+                fork_id=ForkID(NodeID(fork_id or generate_placeholder_node_id('broadcast'))),
             )
         else:
             next_item = DestinationMarker(destination.id)
@@ -224,7 +224,7 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
             A complete Path that forks to the specified parallel paths
         """
         next_item = BroadcastMarker(
-            paths=forks, fork_id=ForkID(NodeID(fork_id or generate_placeholder_node_id('PathBuilder.broadcast')))
+            paths=forks, fork_id=ForkID(NodeID(fork_id or generate_placeholder_node_id('broadcast')))
         )
         return Path(items=[*self.working_items, next_item])
 
@@ -259,7 +259,7 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
             A new PathBuilder that operates on individual items from the iterable
         """
         next_item = MapMarker(
-            fork_id=NodeID(fork_id or generate_placeholder_node_id('PathBuilder.map')),
+            fork_id=NodeID(fork_id or generate_placeholder_node_id('map')),
             downstream_join_id=downstream_join_id,
         )
         return PathBuilder[StateT, DepsT, T](working_items=[*self.working_items, next_item])
