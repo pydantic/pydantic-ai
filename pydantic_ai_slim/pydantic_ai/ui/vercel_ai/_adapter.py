@@ -57,7 +57,7 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT]
     @classmethod
     async def validate_request(cls, request: Request) -> RequestData:
         """Validate a Vercel AI request."""
-        return request_data_ta.validate_json(await request.json())
+        return request_data_ta.validate_json(await request.body())
 
     @classmethod
     async def dispatch_request(

@@ -7,8 +7,6 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import WebSearchTool
-from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.ui.vercel_ai._request_types import (
     SubmitMessage,
@@ -17,7 +15,12 @@ from pydantic_ai.ui.vercel_ai._request_types import (
     UIMessage,
 )
 
-from .conftest import IsStr
+from .conftest import IsStr, try_import
+
+with try_import() as openai_import_successful:
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
 
 pytestmark = [
     pytest.mark.anyio,
@@ -31,6 +34,7 @@ pytestmark = [
 ]
 
 
+@pytest.mark.skipif(not openai_import_successful(), reason='OpenAI not installed')
 async def test_run(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, builtin_tools=[WebSearchTool()])

@@ -4,9 +4,9 @@ Converted to Python from:
 https://github.com/vercel/ai/blob/ai%405.0.34/packages/ai/src/ui/ui-messages.ts
 """
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import TypeAdapter
+from pydantic import Discriminator, TypeAdapter
 
 from ._utils import CamelBaseModel, ProviderMetadata
 
@@ -56,7 +56,7 @@ class UIMessage(CamelBaseModel):
     parts: list[UIPart]
 
 
-class SubmitMessage(CamelBaseModel):
+class SubmitMessage(CamelBaseModel, extra='allow'):
     """Submit message request."""
 
     trigger: Literal['submit-message'] = 'submit-message'
@@ -64,7 +64,16 @@ class SubmitMessage(CamelBaseModel):
     messages: list[UIMessage]
 
 
-RequestData = SubmitMessage
+class RegenerateMessage(CamelBaseModel, extra='allow'):
+    """Ask the agent to regenerate a message."""
+
+    trigger: Literal['regenerate-message']
+    id: str
+    messages: list[UIMessage]
+    message_id: str
+
+
+RequestData = Annotated[SubmitMessage | RegenerateMessage, Discriminator('trigger')]
 
 # Type adapter for parsing requests
 request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
