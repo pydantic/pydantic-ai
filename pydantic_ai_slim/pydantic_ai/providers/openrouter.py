@@ -82,12 +82,20 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
+    def __init__(self, *, api_key: str, http_referer: str, x_title: str) -> None: ...
+
+    @overload
+    def __init__(self, *, api_key: str, http_referer: str, x_title: str, http_client: httpx.AsyncClient) -> None: ...
+
+    @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
 
     def __init__(
         self,
         *,
         api_key: str | None = None,
+        http_referer: str | None = None,
+        x_title: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
@@ -98,10 +106,20 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 'to use the OpenRouter provider.'
             )
 
+        attribution_headers: dict[str, str] = {}
+        if http_referer := http_referer or os.getenv('OPENROUTER_HTTP_REFERER'):
+            attribution_headers['HTTP-Referer'] = http_referer
+        if x_title := x_title or os.getenv('OPENROUTER_X_TITLE'):
+            attribution_headers['X-Title'] = x_title
+
         if openai_client is not None:
             self._client = openai_client
         elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=attribution_headers
+            )
         else:
             http_client = cached_async_http_client(provider='openrouter')
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=attribution_headers
+            )
