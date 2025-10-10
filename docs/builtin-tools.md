@@ -426,7 +426,7 @@ The [`MCPServerTool`][pydantic_ai.builtin_tools.MCPServerTool] allows your agent
 so that the agent can offload MCP calls and parsing to the provider.
 
 > **Note:** This tool is useful for models that support passing MCP servers as tools in parameters, so the model handles calls to remote servers by itself.
-> However, a vast majority of models do not support this feature, in which case you should refer to an [alternative solution](mcp/overview.md).
+> However, a vast majority of models do not support this feature, in which case you should refer to an [alternative solution](mcp/client.md).
 
 ### Provider Support
 

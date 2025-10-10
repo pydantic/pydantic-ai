@@ -1242,7 +1242,7 @@ class OpenAIResponsesModel(Model):
                     require_approval='never',
                     headers=tool.headers,
                 )
-                if tool.url:  # pragma: no cover
+                if tool.url:
                     mcp_tool['server_url'] = tool.url
                 elif tool.connector_id:  # pragma: no cover
                     mcp_tool['connector_id'] = tool.connector_id
@@ -1477,7 +1477,7 @@ class OpenAIResponsesModel(Model):
                                 and (status := content.get('status'))
                             ):
                                 web_search_item['status'] = status
-                            elif item.tool_name == ImageGenerationTool.kind:  # pragma: no cover
+                            elif item.tool_name == ImageGenerationTool.kind:
                                 # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
                                 pass
                             elif item.tool_name == MCPServerTool.list_tools_kind:  # pragma: no cover
