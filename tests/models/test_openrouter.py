@@ -3,7 +3,14 @@ from typing import cast
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, ModelHTTPError, ModelRequest, TextPart, ThinkingPart, UnexpectedModelBehavior
+from pydantic_ai import (
+    Agent,
+    ModelHTTPError,
+    ModelRequest,
+    TextPart,
+    ThinkingPart,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.direct import model_request
 
 from ..conftest import try_import
@@ -162,4 +169,37 @@ async def test_openrouter_validate_error_finish_reason(openrouter_api_key: str) 
 
     assert str(exc_info.value) == snapshot(
         'Invalid response from OpenRouter chat completions endpoint, error finish_reason without error data'
+    )
+
+
+async def test_openrouter_map_messages_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('anthropic/claude-3.7-sonnet:thinking', provider=provider)
+
+    user_message = ModelRequest.user_text_prompt('Who are you. Think about it.')
+    response = await model_request(model, [user_message])
+
+    mapped_messages = await model._map_messages([user_message, response])  # type: ignore[reportPrivateUsage]
+
+    assert len(mapped_messages) == 2
+    assert mapped_messages[1]['reasoning_details'] == snapshot(  # type: ignore[reportGeneralTypeIssues]
+        [
+            {
+                'type': 'reasoning.text',
+                'text': """\
+This question is asking me about my identity. Let me think about how to respond clearly and accurately.
+
+I am Claude, an AI assistant created by Anthropic. I'm designed to be helpful, harmless, and honest in my interactions with humans. I don't have a physical form - I exist as a large language model running on computer hardware. I don't have consciousness, sentience, or feelings in the way humans do. I don't have personal experiences or a life outside of these conversations.
+
+My capabilities include understanding and generating natural language text, reasoning about various topics, and attempting to be helpful to users in a wide range of contexts. I have been trained on a large corpus of text data, but my training data has a cutoff date, so I don't have knowledge of events that occurred after my training.
+
+I have certain limitations - I don't have the ability to access the internet, run code, or interact with external systems unless given specific tools to do so. I don't have perfect knowledge and can make mistakes.
+
+I'm designed to be conversational and to engage with users in a way that's helpful and informative, while respecting important ethical boundaries.\
+""",
+                'signature': 'ErcBCkgICBACGAIiQHtMxpqcMhnwgGUmSDWGoOL9ZHTbDKjWnhbFm0xKzFl0NmXFjQQxjFj5mieRYY718fINsJMGjycTVYeiu69npakSDDrsnKYAD/fdcpI57xoMHlQBxI93RMa5CSUZIjAFVCMQF5GfLLQCibyPbb7LhZ4kLIFxw/nqsTwDDt6bx3yipUcq7G7eGts8MZ6LxOYqHTlIDx0tfHRIlkkcNCdB2sUeMqP8e7kuQqIHoD52GAI=',
+                'format': 'anthropic-claude-v1',
+                'index': 0,
+            }
+        ]
     )

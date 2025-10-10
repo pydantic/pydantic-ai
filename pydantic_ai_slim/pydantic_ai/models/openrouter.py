@@ -1,12 +1,16 @@
 from typing import Any, Literal, cast
 
 from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletion
+from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
-from ..messages import ModelResponse
+from ..messages import (
+    ModelMessage,
+    ModelResponse,
+    ThinkingPart,
+)
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
@@ -312,6 +316,22 @@ class OpenRouterModel(OpenAIChatModel):
         if reasoning_details := getattr(choice.message, 'reasoning_details', None):
             provider_details['reasoning_details'] = reasoning_details
 
+            if signature := reasoning_details[0].get('signature', None):
+                thinking_part = cast(ThinkingPart, model_response.parts[0])
+                thinking_part.signature = signature
+
         model_response.provider_details = provider_details
 
         return model_response
+
+    async def _map_messages(self, messages: list[ModelMessage]) -> list[ChatCompletionMessageParam]:
+        """Maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam` and adds OpenRouter specific parameters."""
+        openai_messages = await super()._map_messages(messages)
+
+        for message, openai_message in zip(messages, openai_messages):
+            if isinstance(message, ModelResponse):
+                provider_details = cast(dict[str, Any], message.provider_details)
+                if reasoning_details := provider_details.get('reasoning_details', None):  # pragma: lax no cover
+                    openai_message['reasoning_details'] = reasoning_details  # type: ignore[reportGeneralTypeIssue]
+
+        return openai_messages
