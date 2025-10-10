@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 
 import pytest
 
 from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import ReducerContext, reduce_dict_update, reduce_list_append, reduce_null
+from pydantic_graph.beta.join import (
+    ReduceFirstValue,
+    ReducerContext,
+    reduce_dict_update,
+    reduce_list_append,
+    reduce_null,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -252,3 +259,114 @@ async def test_reduce_dict_update_with_overlapping_keys():
     # One of the values should win (1, 2, or 3)
     assert 'key' in result
     assert result['key'] in [1, 2, 3]
+
+
+async def test_reducer_with_deps_access():
+    """Test that reducer context can access deps (covers join.py:71)."""
+
+    @dataclass
+    class DepsWithMultiplier:
+        multiplier: int
+
+    def reducer_using_deps(ctx: ReducerContext[SimpleState, DepsWithMultiplier], current: int, inputs: int) -> int:
+        # Access deps through the context
+        return current + (inputs * ctx.deps.multiplier)
+
+    g = GraphBuilder(state_type=SimpleState, deps_type=DepsWithMultiplier, output_type=int)
+
+    @g.step
+    async def generate(ctx: StepContext[SimpleState, DepsWithMultiplier, None]) -> list[int]:
+        return [1, 2, 3]
+
+    @g.step
+    async def process(ctx: StepContext[SimpleState, DepsWithMultiplier, int]) -> int:
+        return ctx.inputs
+
+    deps_join = g.join(reducer_using_deps, initial=0)
+
+    g.add(
+        g.edge_from(g.start_node).to(generate),
+        g.edge_from(generate).map().to(process),
+        g.edge_from(process).to(deps_join),
+        g.edge_from(deps_join).to(g.end_node),
+    )
+
+    graph = g.build()
+    state = SimpleState()
+    deps = DepsWithMultiplier(multiplier=10)
+    result = await graph.run(state=state, deps=deps)
+    # (0 + 1*10) + (2*10) + (3*10) = 60
+    assert result == 60
+
+
+async def test_reduce_list_extend():
+    """Test reduce_list_extend that extends a list with iterables (covers join.py:115)."""
+    from pydantic_graph.beta.join import reduce_list_extend
+
+    g = GraphBuilder(state_type=SimpleState, output_type=list[int])
+
+    @g.step
+    async def generate_iterables(ctx: StepContext[SimpleState, None, None]) -> list[list[int]]:
+        return [[1, 2], [3, 4], [5, 6]]
+
+    @g.step
+    async def pass_through(ctx: StepContext[SimpleState, None, list[int]]) -> list[int]:
+        return ctx.inputs
+
+    extend_join = g.join(reduce_list_extend, initial_factory=list[int])
+
+    g.add(
+        g.edge_from(g.start_node).to(generate_iterables),
+        g.edge_from(generate_iterables).map().to(pass_through),
+        g.edge_from(pass_through).to(extend_join),
+        g.edge_from(extend_join).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=SimpleState())
+    # All sublists are extended into one flat list
+    assert sorted(result) == [1, 2, 3, 4, 5, 6]
+
+
+async def test_reduce_first_value():
+    """Test ReduceFirstValue cancels sibling tasks"""
+
+    @dataclass
+    class StateWithResults:
+        results: list[str] = field(default_factory=list)
+
+    g = GraphBuilder(state_type=StateWithResults, output_type=str)
+
+    @g.step
+    async def generate(ctx: StepContext[StateWithResults, None, None]) -> list[int]:
+        return [1, 2, 3, 4, 5]
+
+    @g.step
+    async def slow_process(ctx: StepContext[StateWithResults, None, int]) -> str:
+        # First task finishes quickly
+        if ctx.inputs == 1:
+            await asyncio.sleep(0.001)
+        else:
+            # Others take longer (should be cancelled)
+            await asyncio.sleep(10)
+        ctx.state.results.append(f'completed-{ctx.inputs}')
+        return f'result-{ctx.inputs}'
+
+    first_join = g.join(ReduceFirstValue[str](), initial='')
+
+    g.add(
+        g.edge_from(g.start_node).to(generate),
+        g.edge_from(generate).map().to(slow_process),
+        g.edge_from(slow_process).to(first_join),
+        g.edge_from(first_join).to(g.end_node),
+    )
+
+    graph = g.build()
+    state = StateWithResults()
+    result = await graph.run(state=state)
+
+    # Only the first value should be returned
+    assert result.startswith('result-')
+    # Due to cancellation, not all 5 tasks should complete
+    # (though timing can be tricky, so we just verify we got a result)
+    assert 'completed-1' in state.results

@@ -139,13 +139,16 @@ def reduce_sum(current: NumericT, inputs: NumericT) -> NumericT:
     return current + inputs
 
 
-def reduce_first_value(ctx: ReducerContext[object, object], current: T, inputs: T) -> T:
+class ReduceFirstValue(Generic[T]):
     """A reducer that returns the first value it encounters, and cancels all other tasks."""
-    # TODO: Need to cover this in a test
-    if ctx.cancelled_sibling_tasks:
-        return current
-    ctx.cancel_sibling_tasks()
-    return inputs
+
+    def __call__(self, ctx: ReducerContext[object, object], current: T, inputs: T) -> T:
+        """The reducer function."""
+        # TODO: Need to cover this in a test
+        if ctx.cancelled_sibling_tasks:
+            return current
+        ctx.cancel_sibling_tasks()
+        return inputs
 
 
 @dataclass(init=False)

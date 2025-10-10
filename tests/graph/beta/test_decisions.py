@@ -8,7 +8,7 @@ from typing import Literal
 import pytest
 
 from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph.beta.join import reduce_list_append, reduce_sum
 
 pytestmark = pytest.mark.anyio
 
@@ -350,6 +350,41 @@ async def test_decision_branch_transform():
     graph = g.build()
     result = await graph.run(state=DecisionState())
     assert result == 'Result: 20'
+
+
+async def test_decision_branch_map():
+    """Test DecisionBranchBuilder.map method."""
+    g = GraphBuilder(state_type=DecisionState, output_type=str)
+
+    @g.step
+    async def get_value(ctx: StepContext[DecisionState, None, None]) -> int | list[int]:
+        return [1, 2, 3, 4, 5, 6]
+
+    @g.step
+    async def format_result(ctx: StepContext[DecisionState, None, object]) -> str:
+        return f'Result: {ctx.inputs}'
+
+    join_sum = g.join(reduce_sum, initial=0)
+
+    def double_value(ctx: StepContext[DecisionState, None, int]) -> int:
+        return ctx.inputs * 2
+
+    g.add(
+        g.edge_from(g.start_node).to(get_value),
+        g.edge_from(get_value).to(
+            g.decision()
+            .branch(g.match(int).transform(double_value).to(format_result))
+            .branch(
+                g.match(list[int], matches=lambda x: isinstance(x, list)).map().transform(double_value).to(join_sum)
+            )
+        ),
+        g.edge_from(join_sum).to(format_result),
+        g.edge_from(format_result).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=DecisionState())
+    assert result == 'Result: 42'
 
 
 async def test_decision_branch_label():
