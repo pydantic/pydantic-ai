@@ -804,6 +804,40 @@ async def test_image_url_input(allow_model_requests: None):
     )
 
 
+async def test_image_url_input_force_download(allow_model_requests: None, openai_api_key: str):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIChatModel('gpt-4.1-nano', provider=provider)
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'What is this vegetable?',
+            ImageUrl(
+                force_download=True,
+                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+            ),
+        ]
+    )
+    assert result.output == snapshot('This vegetable is a potato.')
+
+
+async def test_image_url_input_force_download_response_api(allow_model_requests: None, openai_api_key: str):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIResponsesModel('gpt-4.1-nano', provider=provider)
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'What is this vegetable?',
+            ImageUrl(
+                force_download=True,
+                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+            ),
+        ]
+    )
+    assert result.output == snapshot('This is a potato.')
+
+
 async def test_openai_audio_url_input(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o-audio-preview', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)

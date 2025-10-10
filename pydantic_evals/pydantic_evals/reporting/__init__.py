@@ -206,7 +206,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             return ReportCaseAggregate.average(self.cases)
         return None
 
-    def print(
+    def render(
         self,
         width: int | None = None,
         baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None,
@@ -230,11 +230,73 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         metric_configs: dict[str, RenderNumberConfig] | None = None,
         duration_config: RenderNumberConfig | None = None,
         include_reasons: bool = False,
-    ):  # pragma: no cover
+    ) -> str:  # pragma: no cover
+        """Render this report to a nicely-formatted string, optionally comparing it to a baseline report.
+
+        If you want more control over the output, use `console_table` instead and pass it to `rich.Console.print`.
+        """
+        io_file = StringIO()
+        console = Console(width=width, file=io_file)
+        self.print(
+            width=width,
+            baseline=baseline,
+            console=console,
+            include_input=include_input,
+            include_metadata=include_metadata,
+            include_expected_output=include_expected_output,
+            include_output=include_output,
+            include_durations=include_durations,
+            include_total_duration=include_total_duration,
+            include_removed_cases=include_removed_cases,
+            include_averages=include_averages,
+            include_errors=include_errors,
+            include_error_stacktrace=include_error_stacktrace,
+            include_evaluator_failures=include_evaluator_failures,
+            input_config=input_config,
+            metadata_config=metadata_config,
+            output_config=output_config,
+            score_configs=score_configs,
+            label_configs=label_configs,
+            metric_configs=metric_configs,
+            duration_config=duration_config,
+            include_reasons=include_reasons,
+        )
+        Console(file=io_file)
+        return io_file.getvalue()
+
+    def print(
+        self,
+        width: int | None = None,
+        baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None,
+        *,
+        console: Console | None = None,
+        include_input: bool = False,
+        include_metadata: bool = False,
+        include_expected_output: bool = False,
+        include_output: bool = False,
+        include_durations: bool = True,
+        include_total_duration: bool = False,
+        include_removed_cases: bool = False,
+        include_averages: bool = True,
+        include_errors: bool = True,
+        include_error_stacktrace: bool = False,
+        include_evaluator_failures: bool = True,
+        input_config: RenderValueConfig | None = None,
+        metadata_config: RenderValueConfig | None = None,
+        output_config: RenderValueConfig | None = None,
+        score_configs: dict[str, RenderNumberConfig] | None = None,
+        label_configs: dict[str, RenderValueConfig] | None = None,
+        metric_configs: dict[str, RenderNumberConfig] | None = None,
+        duration_config: RenderNumberConfig | None = None,
+        include_reasons: bool = False,
+    ) -> None:  # pragma: no cover
         """Print this report to the console, optionally comparing it to a baseline report.
 
         If you want more control over the output, use `console_table` instead and pass it to `rich.Console.print`.
         """
+        if console is None:
+            console = Console(width=width)
+
         table = self.console_table(
             baseline=baseline,
             include_input=include_input,
@@ -255,7 +317,6 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             duration_config=duration_config,
             include_reasons=include_reasons,
         )
-        console = Console(width=width)
         console.print(table)
         if include_errors and self.failures:
             failures_table = self.failures_table(
@@ -358,10 +419,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
 
     def __str__(self) -> str:  # pragma: lax no cover
         """Return a string representation of the report."""
-        table = self.console_table()
-        io_file = StringIO()
-        Console(file=io_file).print(table)
-        return io_file.getvalue()
+        return self.render()
 
 
 EvaluationReportAdapter = TypeAdapter(EvaluationReport[Any, Any, Any])
