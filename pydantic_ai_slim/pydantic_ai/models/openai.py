@@ -1178,7 +1178,7 @@ class OpenAIResponsesModel(Model):
                 truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
-                previous_response_id=previous_response_id,
+                previous_response_id=previous_response_id or NOT_GIVEN,
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 text=text or NOT_GIVEN,
