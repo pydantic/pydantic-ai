@@ -544,7 +544,7 @@ class AnthropicModel(Model):
                                     input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
-                            elif response_part.tool_name == MCPServerTool.kind:  # pragma: no branch
+                            elif response_part.tool_name == MCPServerTool.kind:  # pragma: no cover
                                 mcp_tool_use_block_param = BetaMCPToolUseBlockParam(
                                     id=tool_use_id,
                                     type='mcp_tool_use',
@@ -584,7 +584,7 @@ class AnthropicModel(Model):
                                         ),
                                     )
                                 )
-                            elif response_part.tool_name in (  # pragma: no branch
+                            elif response_part.tool_name in (  # pragma: no cover
                                 MCPServerTool.kind,
                                 'mcp_tool_result',  # Backward compatibility
                             ) and isinstance(response_part.content, str | list):

@@ -250,6 +250,8 @@ class MCPServerTool(AbstractBuiltinTool):
     """
 
     kind: str = 'mcp_server'
+    list_tools_kind: str = 'mcp_list_tools'
+    call_kind: str = 'mcp_call'
 
     label: str
     """The label of the MCP server to use."""

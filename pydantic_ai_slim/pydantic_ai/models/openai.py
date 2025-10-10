@@ -1242,9 +1242,9 @@ class OpenAIResponsesModel(Model):
                     require_approval='never',
                     headers=tool.headers,
                 )
-                if tool.url:
+                if tool.url:  # pragma: no cover
                     mcp_tool['server_url'] = tool.url
-                if tool.connector_id:
+                elif tool.connector_id:  # pragma: no cover
                     mcp_tool['connector_id'] = tool.connector_id
                 tools.append(mcp_tool)
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
@@ -1428,32 +1428,36 @@ class OpenAIResponsesModel(Model):
                                     },
                                 )
                                 openai_messages.append(image_generation_item)
-                            elif (
-                                item.tool_name == MCPServerTool.kind
+                            elif (  # pragma: no cover
+                                item.tool_name == MCPServerTool.list_tools_kind
                                 and item.tool_call_id
                                 and (args := item.args_as_dict())
-                                and (server_label := args.get('server_label'))
-                            ):  # pragma: no branch
-                                if tools := args.get('tools'):
-                                    mcp_list_tools_item = responses.response_input_item_param.McpListTools(
-                                        id=item.tool_call_id,
-                                        tools=cast(list[responses.response_input_item_param.McpListToolsTool], tools),
-                                        server_label=server_label,
-                                        error=args.get('error'),
-                                        type='mcp_list_tools',
-                                    )
-                                    openai_messages.append(mcp_list_tools_item)
-                                elif (arguments := args.get('arguments')) and (name := args.get('name')):
-                                    mcp_call_item = responses.response_input_item_param.McpCall(
-                                        id=item.tool_call_id,
-                                        name=name,
-                                        arguments=arguments,
-                                        server_label=server_label,
-                                        error=cast(str | None, args.get('error')),
-                                        output=cast(str | None, args.get('output')),
-                                        type='mcp_call',
-                                    )
-                                    openai_messages.append(mcp_call_item)
+                            ):
+                                mcp_list_tools_item = responses.response_input_item_param.McpListTools(
+                                    id=item.tool_call_id,
+                                    tools=cast(
+                                        list[responses.response_input_item_param.McpListToolsTool], args.get('tools')
+                                    ),
+                                    server_label=cast(str, args.get('server_label')),
+                                    error=args.get('error'),
+                                    type='mcp_list_tools',
+                                )
+                                openai_messages.append(mcp_list_tools_item)
+                            elif (  # pragma: no cover
+                                item.tool_name == MCPServerTool.call_kind
+                                and item.tool_call_id
+                                and (args := item.args_as_dict())
+                            ):
+                                mcp_call_item = responses.response_input_item_param.McpCall(
+                                    id=item.tool_call_id,
+                                    name=cast(str, args.get('name')),
+                                    arguments=cast(str, args.get('arguments')),
+                                    server_label=cast(str, args.get('server_label')),
+                                    error=cast(str | None, args.get('error')),
+                                    output=cast(str | None, args.get('output')),
+                                    type='mcp_call',
+                                )
+                                openai_messages.append(mcp_call_item)
 
                     elif isinstance(item, BuiltinToolReturnPart):
                         if item.provider_name == self.system and send_item_ids:
@@ -1473,11 +1477,14 @@ class OpenAIResponsesModel(Model):
                                 and (status := content.get('status'))
                             ):
                                 web_search_item['status'] = status
-                            elif item.tool_name == ImageGenerationTool.kind:  # pragma: no branch
+                            elif item.tool_name == ImageGenerationTool.kind:  # pragma: no cover
                                 # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
                                 pass
-                            elif item.tool_name == MCPServerTool.kind:  # pragma: no branch
-                                # MCP result does not need to be sent back, just the fields off of `BuiltinToolCallPart`.
+                            elif item.tool_name == MCPServerTool.list_tools_kind:  # pragma: no cover
+                                # MCP list result does not need to be sent back, just the fields off of `BuiltinToolCallPart`.
+                                pass
+                            elif item.tool_name == MCPServerTool.call_kind:  # pragma: no cover
+                                # MCP call result does not need to be sent back, just the fields off of `BuiltinToolCallPart`.
                                 pass
                     elif isinstance(item, FilePart):
                         # This was generated by the `ImageGenerationTool` or `CodeExecutionTool`,
@@ -2202,13 +2209,13 @@ def _map_mcp_list_tools(
 
     return (
         BuiltinToolCallPart(
-            tool_name=MCPServerTool.kind,
+            tool_name=MCPServerTool.list_tools_kind,
             tool_call_id=item.id,
             args=item_serialized,
             provider_name=provider_name,
         ),
         BuiltinToolReturnPart(
-            tool_name=MCPServerTool.kind,
+            tool_name=MCPServerTool.list_tools_kind,
             tool_call_id=item.id,
             content=item_serialized,
             provider_name=provider_name,
@@ -2226,13 +2233,13 @@ def _map_mcp_call(
 
     return (
         BuiltinToolCallPart(
-            tool_name=MCPServerTool.kind,
+            tool_name=MCPServerTool.call_kind,
             tool_call_id=item.id,
             args=item_serialized,
             provider_name=provider_name,
         ),
         BuiltinToolReturnPart(
-            tool_name=MCPServerTool.kind,
+            tool_name=MCPServerTool.call_kind,
             tool_call_id=item.id,
             content=item_serialized,
             provider_name=provider_name,
