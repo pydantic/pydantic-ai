@@ -58,6 +58,9 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
         super().__init__(request)
         self._final_result_tool_id: str | None = None
 
+    def encode_event(self, event: BaseChunk, accept: str | None = None) -> str:
+        return f'data: {event.model_dump_json(by_alias=True, exclude_none=True)}\n\n'
+
     async def after_stream(self) -> AsyncIterator[BaseChunk]:
         """Yield events after agent streaming completes."""
         # Close the final result tool if there was one

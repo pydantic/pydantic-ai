@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
     Any,
-    Final,
 )
 
 from ... import ExternalToolset, ToolDefinition
@@ -39,7 +39,6 @@ try:
         ToolMessage,
         UserMessage,
     )
-    from ag_ui.encoder import EventEncoder
 
     from ..adapter import BaseAdapter
     from ..event_stream import BaseEventStream
@@ -63,9 +62,6 @@ if TYPE_CHECKING:
 
 __all__ = ['AGUIAdapter']
 
-
-SSE_CONTENT_TYPE: Final[str] = 'text/event-stream'
-"""Content type header value for Server-Sent Events (SSE)."""
 
 # Frontend toolset
 
@@ -99,14 +95,20 @@ class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
 class AGUIAdapter(BaseAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT]):
     """TODO (DouwM): Docstring."""
 
-    def create_event_stream(self) -> BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]:
-        """Create an event stream for the adapter."""
-        return AGUIEventStream(self.request)
-
     @classmethod
     async def validate_request(cls, request: Request) -> RunAgentInput:
         """Validate the request and return the validated request."""
         return RunAgentInput.model_validate(await request.json())
+
+    def dump_messages(self, messages: Sequence[ModelMessage]) -> list[Message]:
+        """Dump messages to the request and return the dumped messages."""
+        # TODO (DouweM): bring in from https://github.com/pydantic/pydantic-ai/pull/3068
+        raise NotImplementedError
+
+    @cached_property
+    def event_stream(self) -> BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]:
+        """Create an event stream for the adapter."""
+        return AGUIEventStream(self.request)
 
     @cached_property
     def toolset(self) -> AbstractToolset[AgentDepsT] | None:
@@ -120,19 +122,6 @@ class AGUIAdapter(BaseAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT]):
         """Get the state of the agent run."""
         return self.request.state
 
-    def encode_event(self, event: BaseEvent, accept: str | None = None) -> str:
-        """Encode an AG-UI event as SSE.
-
-        Args:
-            event: The AG-UI event to encode.
-            accept: The accept header value for encoding format.
-
-        Returns:
-            The SSE-formatted string.
-        """
-        encoder = EventEncoder(accept=accept or SSE_CONTENT_TYPE)
-        return encoder.encode(event)
-
     @cached_property
     def messages(self) -> list[ModelMessage]:
         """Convert AG-UI messages to Pydantic AI messages.
@@ -143,12 +132,17 @@ class AGUIAdapter(BaseAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT]):
         Returns:
             List of Pydantic AI ModelMessage objects.
         """
+        return self.load_messages(self.request.messages)
+
+    @classmethod
+    def load_messages(cls, messages: Sequence[Message]) -> list[ModelMessage]:
+        """Load messages from the request and return the loaded messages."""
         result: list[ModelMessage] = []
         tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
         request_parts: list[ModelRequestPart] | None = None
         response_parts: list[ModelResponsePart] | None = None
 
-        for msg in self.request.messages:
+        for msg in messages:
             if isinstance(msg, UserMessage | SystemMessage | DeveloperMessage) or (
                 isinstance(msg, ToolMessage) and not msg.tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX)
             ):

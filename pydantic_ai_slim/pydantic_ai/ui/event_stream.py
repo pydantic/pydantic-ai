@@ -6,7 +6,7 @@ that transform Pydantic AI agent events into protocol-specific events (e.g., AG-
 
 from __future__ import annotations
 
-from abc import ABC
+from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar
@@ -39,17 +39,17 @@ __all__ = [
 EventT = TypeVar('EventT')
 """Type variable for protocol-specific event types."""
 
-RequestT = TypeVar('RequestT')
+RunRequestT = TypeVar('RunRequestT')
 """Type variable for request types."""
 
 SourceEvent = AgentStreamEvent | AgentRunResultEvent
 
 
 @dataclass
-class BaseEventStream(ABC, Generic[RequestT, EventT, AgentDepsT]):
+class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
     """TODO (DouwM): Docstring."""
 
-    request: RequestT
+    request: RunRequestT
 
     result: AgentRunResult | None = None
 
@@ -63,6 +63,26 @@ class BaseEventStream(ABC, Generic[RequestT, EventT, AgentDepsT]):
         """
         self.message_id = str(uuid4())
         return self.message_id
+
+    @abstractmethod
+    def encode_event(self, event: EventT, accept: str | None = None) -> str:
+        """Encode an event as a string.
+
+        Args:
+            event: The event to encode.
+            accept: The accept header value for encoding format.
+        """
+        raise NotImplementedError
+
+    async def encode_stream(self, stream: AsyncIterator[EventT], accept: str | None = None) -> AsyncIterator[str]:
+        """Encode a stream of events as SSE strings.
+
+        Args:
+            stream: The stream of events to encode.
+            accept: The accept header value for encoding format.
+        """
+        async for event in stream:
+            yield self.encode_event(event, accept)
 
     async def handle_stream(self, stream: AsyncIterator[SourceEvent]) -> AsyncIterator[EventT]:
         """Handle a stream of agent events.

@@ -7,7 +7,7 @@ that transform Pydantic AI agent events into protocol-specific events (e.g., AG-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import Field, dataclass, replace
 from functools import cached_property
 from http import HTTPStatus
@@ -53,7 +53,7 @@ EventT = TypeVar('EventT')
 """Type variable for protocol-specific event types."""
 
 
-RequestT = TypeVar('RequestT')
+RunRequestT = TypeVar('RunRequestT')
 """Type variable for protocol-specific request types."""
 
 MessageT = TypeVar('MessageT')
@@ -115,17 +115,32 @@ class StateDeps(Generic[StateT]):
 
 
 @dataclass
-class BaseAdapter(ABC, Generic[RequestT, MessageT, EventT, AgentDepsT]):
+class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
     """TODO (DouwM): Docstring."""
 
     agent: AbstractAgent[AgentDepsT]
     """The Pydantic AI agent to run."""
 
-    request: RequestT
+    request: RunRequestT  # TODO (DouweM): rename
     """The protocol-specific request object."""
 
+    @classmethod
+    async def validate_request(cls, request: Request) -> RunRequestT:
+        """Validate the request and return the validated request."""
+        raise NotImplementedError('validate_request is not implemented')
+
+    @classmethod
     @abstractmethod
-    def create_event_stream(self) -> BaseEventStream[RequestT, EventT, AgentDepsT]:
+    def load_messages(cls, messages: Sequence[MessageT]) -> list[ModelMessage]:
+        """Load messages from the request and return the loaded messages."""
+
+    @abstractmethod
+    def dump_messages(self, messages: Sequence[ModelMessage]) -> list[MessageT]:
+        """Dump messages to the request and return the dumped messages."""
+
+    @cached_property
+    @abstractmethod
+    def event_stream(self) -> BaseEventStream[RunRequestT, EventT, AgentDepsT]:
         """Create an event stream for the adapter."""
 
     @cached_property
@@ -150,32 +165,24 @@ class BaseAdapter(ABC, Generic[RequestT, MessageT, EventT, AgentDepsT]):
         """Get the state of the agent run."""
         return None
 
-    @abstractmethod
-    def encode_event(self, event: EventT, accept: str | None = None) -> str:
-        """Encode a protocol event as an SSE string.
+    @property
+    def result(self) -> AgentRunResult | None:
+        """Get the result of the agent run."""
+        return self.event_stream.result
 
-        Args:
-            event: The protocol-specific event.
-            accept: The accept header value for encoding format.
+    @property
+    def response_headers(self) -> Mapping[str, str] | None:
+        """Get the response headers for the adapter."""
+        return None
 
-        Returns:
-            Formatted string.
-        """
-
-    async def encode_stream(self, stream: AsyncIterator[EventT], accept: str | None = None) -> AsyncIterator[str]:
+    def encode_stream(self, stream: AsyncIterator[EventT], accept: str | None = None) -> AsyncIterator[str]:
         """Encode a stream of events as SSE strings.
 
         Args:
             stream: The stream of events to encode.
             accept: The accept header value for encoding format.
         """
-        async for event in stream:
-            yield self.encode_event(event, accept)
-
-    @classmethod
-    async def validate_request(cls, request: Request) -> RequestT:
-        """Validate the request and return the validated request."""
-        raise NotImplementedError('validate_request is not implemented')
+        return self.event_stream.encode_stream(stream, accept)
 
     async def process_stream(
         self,
@@ -188,7 +195,7 @@ class BaseAdapter(ABC, Generic[RequestT, MessageT, EventT, AgentDepsT]):
             stream: The stream of events to process.
             on_complete: Optional callback function called when the agent run completes successfully.
         """
-        event_stream = self.create_event_stream()
+        event_stream = self.event_stream
         async for event in event_stream.handle_stream(stream):
             yield event
 
@@ -343,5 +350,6 @@ class BaseAdapter(ABC, Generic[RequestT, MessageT, EventT, AgentDepsT]):
                     on_complete=on_complete,
                 ),
                 accept=request.headers.get('accept'),
-            )
+            ),
+            headers=adapter.response_headers,
         )

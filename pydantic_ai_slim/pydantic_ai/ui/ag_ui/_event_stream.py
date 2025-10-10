@@ -51,6 +51,8 @@ try:
         ToolCallResultEvent,
         ToolCallStartEvent,
     )
+    from ag_ui.encoder import EventEncoder
+
 except ImportError as e:  # pragma: no cover
     raise ImportError(
         'Please install the `ag-ui-protocol` package to use AG-UI integration, '
@@ -64,6 +66,10 @@ __all__ = [
     'RunFinishedEvent',
 ]
 
+SSE_CONTENT_TYPE: Final[str] = 'text/event-stream'
+"""Content type header value for Server-Sent Events (SSE)."""
+
+
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
 
@@ -76,6 +82,19 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
         self.part_end: BaseEvent | None = None
         self.thinking: bool = False
         self.builtin_tool_call_ids: dict[str, str] = {}
+
+    def encode_event(self, event: BaseEvent, accept: str | None = None) -> str:
+        """Encode an AG-UI event as SSE.
+
+        Args:
+            event: The AG-UI event to encode.
+            accept: The accept header value for encoding format.
+
+        Returns:
+            The SSE-formatted string.
+        """
+        encoder = EventEncoder(accept=accept or SSE_CONTENT_TYPE)
+        return encoder.encode(event)
 
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
         """Yield events before agent streaming starts."""

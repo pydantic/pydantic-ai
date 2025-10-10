@@ -44,14 +44,11 @@ from ._response_types import (
     ToolOutputAvailableChunk,
     ToolOutputErrorChunk,
 )
-from ._utils import VERCEL_AI_DSP_HEADERS, CamelBaseModel, JSONValue, ProviderMetadata
+from ._utils import ProviderMetadata
 
 __all__ = [
     # Utilities
-    'CamelBaseModel',
     'ProviderMetadata',
-    'JSONValue',
-    'VERCEL_AI_DSP_HEADERS',
     # Request types
     'RequestData',
     'TextUIPart',

@@ -10,10 +10,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
-__all__ = ('CamelBaseModel', 'ProviderMetadata', 'JSONValue', 'VERCEL_AI_DSP_HEADERS')
-
-# See https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol
-VERCEL_AI_DSP_HEADERS = {'x-vercel-ai-ui-message-stream': 'v1'}
+__all__ = ('CamelBaseModel', 'ProviderMetadata', 'JSONValue')
 
 # Technically this is recursive union of JSON types; for simplicity, we call it Any
 JSONValue = Any
