@@ -425,6 +425,9 @@ _(This example is complete, it can be run "as is")_
 The [`MCPServerTool`][pydantic_ai.builtin_tools.MCPServerTool] allows your agent to pass MCP configurations in context,
 so that the agent can offload MCP calls and parsing to the provider.
 
+> **Note:** This tool is useful for models that support passing MCP servers as tools in parameters, so the model handles calls to remote servers by itself.
+> However, a vast majority of models do not support this feature, in which case you should refer to an [alternative solution](mcp/overview.md).
+
 ### Provider Support
 
 | Provider | Supported | Notes                 |
@@ -489,7 +492,7 @@ _(This example is complete, it can be run "as is")_
 
 ### Configuration Options
 
-The `WebSearchTool` supports several configuration parameters:
+The `MCPServerTool` supports several configuration parameters:
 
 ```py {title="mcp_server_configured.py"}
 from pydantic_ai import Agent, MCPServerTool
