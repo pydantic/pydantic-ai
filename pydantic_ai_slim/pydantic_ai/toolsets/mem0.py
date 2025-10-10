@@ -18,10 +18,10 @@ if TYPE_CHECKING:
 
 try:
     from mem0 import AsyncMemoryClient, MemoryClient
-except ImportError as _e:
-    _import_error = _e
-    AsyncMemoryClient = None
-    MemoryClient = None
+except ImportError as _e:  # pragma: no cover
+    _import_error = _e  # pragma: no cover
+    AsyncMemoryClient = None  # pragma: no cover
+    MemoryClient = None  # pragma: no cover
 else:
     _import_error = None
 

@@ -65,4 +65,3 @@ await agent.run('My favorite color is red', deps='user_bob')
 ## Learn More
 
 For detailed documentation on the Mem0 integration, see the [Mem0 Memory Integration](../mem0.md) guide.
-

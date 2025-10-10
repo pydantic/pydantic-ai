@@ -38,8 +38,18 @@ def test_mem0_import_error():
     if _import_error is None:
         pytest.skip('mem0 is installed, skipping import error test')
 
-    with pytest.raises(ImportError, match='mem0 is not installed'):
-        Mem0Toolset(api_key='test-key')
+    with pytest.raises(ImportError, match='mem0 is not installed'):  # pragma: no cover
+        Mem0Toolset(api_key='test-key')  # pragma: no cover
+
+
+def test_mem0_import_error_mocked():
+    """Test ImportError handling by mocking the import error."""
+    from unittest.mock import patch
+
+    # Mock the import error scenario
+    with patch('pydantic_ai.toolsets.mem0._import_error', new=ImportError('Mocked import error')):
+        with pytest.raises(ImportError, match='mem0 is not installed'):
+            Mem0Toolset(api_key='test-key')
 
 
 @pytest.mark.skipif(_import_error is not None, reason='mem0 is not installed')
@@ -54,6 +64,36 @@ async def test_mem0_toolset_initialization():
 
     assert toolset.client is mock_client
     assert toolset._is_async is True
+
+
+@pytest.mark.skipif(_import_error is not None, reason='mem0 is not installed')
+async def test_mem0_toolset_initialization_without_client():
+    """Test Mem0Toolset initialization without providing a client."""
+    from unittest.mock import patch
+
+    # Mock the AsyncMemoryClient to avoid needing real API key
+    with patch('pydantic_ai.toolsets.mem0.AsyncMemoryClient') as mock_client_class:
+        mock_client = AsyncMock()
+        mock_client_class.return_value = mock_client
+
+        # Initialize toolset without client (will create AsyncMemoryClient)
+        toolset = Mem0Toolset(
+            api_key='test-key',
+            host='https://test.mem0.ai',
+            org_id='test-org',
+            project_id='test-project',
+        )
+
+        # Verify AsyncMemoryClient was called with correct params
+        mock_client_class.assert_called_once_with(
+            api_key='test-key',
+            host='https://test.mem0.ai',
+            org_id='test-org',
+            project_id='test-project',
+        )
+
+        assert toolset.client is mock_client
+        assert toolset._is_async is True
 
 
 @pytest.mark.skipif(_import_error is not None, reason='mem0 is not installed')
@@ -250,6 +290,34 @@ async def test_mem0_toolset_search_memory_unexpected_response():
 
 
 @pytest.mark.skipif(_import_error is not None, reason='mem0 is not installed')
+async def test_mem0_toolset_search_memory_with_non_dict_items():
+    """Test search_memory with non-dict items in results."""
+    mock_client = AsyncMock()
+    # Mix of dict and non-dict items
+    mock_client.search = AsyncMock(
+        return_value={
+            'results': [
+                {'memory': 'Valid memory', 'score': 0.9},
+                'invalid_string_item',  # This should be skipped
+                {'memory': 'Another valid memory', 'score': 0.8},
+                None,  # This should also be skipped
+            ]
+        }
+    )
+
+    toolset = Mem0Toolset(client=mock_client)
+    context = build_run_context('user_123')
+
+    result = await toolset._search_memory_impl(context, 'test')
+
+    # Only dict items should be included in the output
+    assert 'Found relevant memories:' in result
+    assert 'Valid memory (relevance: 0.90)' in result
+    assert 'Another valid memory (relevance: 0.80)' in result
+    assert 'invalid_string_item' not in result
+
+
+@pytest.mark.skipif(_import_error is not None, reason='mem0 is not installed')
 async def test_mem0_toolset_save_memory():
     """Test the save_memory tool."""
     mock_client = AsyncMock()
@@ -334,6 +402,22 @@ async def test_mem0_toolset_sync_client():
     # Save should still work with sync client
     result = await toolset._save_memory_impl(context, 'test content')
     assert 'Successfully saved to memory' in result
+
+
+@pytest.mark.skipif(_import_error is not None, reason='mem0 is not installed')
+async def test_mem0_toolset_client_without_search():
+    """Test Mem0Toolset with a client that doesn't have search attribute."""
+
+    # Create a client without search attribute to test the _is_async=False path
+    class MinimalClient:
+        def add(self, messages: Any, user_id: Any) -> None:
+            pass
+
+    mock_client = MinimalClient()
+    toolset = Mem0Toolset(client=mock_client)
+
+    # Should detect it's not async because it doesn't have search method
+    assert toolset._is_async is False
 
 
 @pytest.mark.skipif(_import_error is not None, reason='mem0 is not installed')
