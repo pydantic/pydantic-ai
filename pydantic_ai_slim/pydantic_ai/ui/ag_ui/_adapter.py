@@ -105,7 +105,7 @@ class AGUIAdapter(BaseAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT]):
         # TODO (DouweM): bring in from https://github.com/pydantic/pydantic-ai/pull/3068
         raise NotImplementedError
 
-    @cached_property
+    @property
     def event_stream(self) -> BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]:
         """Create an event stream for the adapter."""
         return AGUIEventStream(self.request)

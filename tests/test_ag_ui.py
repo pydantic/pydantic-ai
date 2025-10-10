@@ -255,11 +255,7 @@ async def test_empty_messages() -> None:
                 'threadId': IsStr(),
                 'runId': IsStr(),
             },
-            {
-                'type': 'RUN_ERROR',
-                'message': 'No message history, user prompt, or instructions provided',
-                'code': 'UserError',
-            },
+            {'type': 'RUN_ERROR', 'message': 'No message history, user prompt, or instructions provided'},
         ]
     )
 
@@ -887,6 +883,7 @@ async def test_thinking() -> None:
         yield {0: DeltaThinkingPart(content='')}
         yield "Let's do some thinking"
         yield ''
+        yield ' and some more'
         yield {1: DeltaThinkingPart(content='Thinking ')}
         yield {1: DeltaThinkingPart(content='about the weather')}
         yield {2: DeltaThinkingPart(content='')}
@@ -921,6 +918,11 @@ async def test_thinking() -> None:
                 'type': 'TEXT_MESSAGE_CONTENT',
                 'messageId': message_id,
                 'delta': "Let's do some thinking",
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': ' and some more',
             },
             {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
             {'type': 'THINKING_START'},

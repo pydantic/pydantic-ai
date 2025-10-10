@@ -138,7 +138,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
     def dump_messages(self, messages: Sequence[ModelMessage]) -> list[MessageT]:
         """Dump messages to the request and return the dumped messages."""
 
-    @cached_property
+    @property
     @abstractmethod
     def event_stream(self) -> BaseEventStream[RunRequestT, EventT, AgentDepsT]:
         """Create an event stream for the adapter."""
@@ -164,11 +164,6 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
     def raw_state(self) -> dict[str, Any] | None:
         """Get the state of the agent run."""
         return None
-
-    @property
-    def result(self) -> AgentRunResult | None:
-        """Get the result of the agent run."""
-        return self.event_stream.result
 
     @property
     def response_headers(self) -> Mapping[str, str] | None:
@@ -283,6 +278,21 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
         ):
             yield event
 
+    async def stream_response(self, stream: AsyncIterator[EventT], accept: str | None = None) -> Response:
+        """Stream a response to the client.
+
+        Args:
+            stream: The stream of events to encode.
+            accept: The accept header value for encoding format.
+        """
+        return StreamingResponse(
+            self.encode_stream(
+                stream,
+                accept=accept,
+            ),
+            headers=self.response_headers,
+        )
+
     @classmethod
     async def dispatch_request(
         cls,
@@ -334,22 +344,18 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
 
         adapter = cls(agent=agent, request=request_data)
 
-        return StreamingResponse(
-            adapter.encode_stream(
-                adapter.run_stream(
-                    message_history=message_history,
-                    deferred_tool_results=deferred_tool_results,
-                    deps=deps,
-                    output_type=output_type,
-                    model=model,
-                    model_settings=model_settings,
-                    usage_limits=usage_limits,
-                    usage=usage,
-                    infer_name=infer_name,
-                    toolsets=toolsets,
-                    on_complete=on_complete,
-                ),
-                accept=request.headers.get('accept'),
-            ),
-            headers=adapter.response_headers,
+        run_stream = adapter.run_stream(
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+            deps=deps,
+            output_type=output_type,
+            model=model,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            on_complete=on_complete,
         )
+
+        return await adapter.stream_response(run_stream, accept=request.headers.get('accept'))

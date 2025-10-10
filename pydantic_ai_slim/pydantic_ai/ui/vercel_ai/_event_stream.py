@@ -17,6 +17,7 @@ from ...messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelResponsePart,
     RetryPromptPart,
     TextPart,
     TextPartDelta,
@@ -74,7 +75,9 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
 
     # Granular handlers implementation
 
-    async def handle_text_start(self, part: TextPart) -> AsyncIterator[BaseChunk]:
+    async def handle_text_start(
+        self, part: TextPart, previous_part: ModelResponsePart | None = None
+    ) -> AsyncIterator[BaseChunk]:
         """Handle a TextPart at start."""
         yield TextStartChunk(id=self.message_id or self.new_message_id())
         if part.content:
@@ -85,7 +88,9 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
         if delta.content_delta:
             yield TextDeltaChunk(id=self.message_id, delta=delta.content_delta)
 
-    async def handle_thinking_start(self, part: ThinkingPart) -> AsyncIterator[BaseChunk]:
+    async def handle_thinking_start(
+        self, part: ThinkingPart, previous_part: ModelResponsePart | None = None
+    ) -> AsyncIterator[BaseChunk]:
         """Handle a ThinkingPart at start."""
         if not self.message_id:
             self.new_message_id()

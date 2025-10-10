@@ -50,7 +50,7 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT]
         # TODO (DouweM): implement
         raise NotImplementedError
 
-    @cached_property
+    @property
     def event_stream(self) -> BaseEventStream[RequestData, BaseChunk, AgentDepsT]:
         return VercelAIEventStream(self.request)
 

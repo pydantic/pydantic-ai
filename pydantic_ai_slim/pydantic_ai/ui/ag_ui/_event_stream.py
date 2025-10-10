@@ -13,9 +13,8 @@ from typing import TYPE_CHECKING, Final
 from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
-    FinalResultEvent,
-    FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelResponsePart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -79,8 +78,7 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
     def __init__(self, request: RunAgentInput) -> None:
         """Initialize AG-UI event stream state."""
         super().__init__(request)
-        self.part_end: BaseEvent | None = None
-        self.thinking: bool = False
+        self.thinking_text = False
         self.builtin_tool_call_ids: dict[str, str] = {}
 
     def encode_event(self, event: BaseEvent, accept: str | None = None) -> str:
@@ -105,19 +103,6 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
 
     async def after_stream(self) -> AsyncIterator[BaseEvent]:
         """Handle an AgentRunResultEvent, cleaning up any pending state."""
-        # Emit any pending part end event
-        if self.part_end:  # pragma: no branch
-            yield self.part_end
-            self.part_end = None
-
-        # End thinking mode if still active
-        if self.thinking:
-            yield ThinkingEndEvent(
-                type=EventType.THINKING_END,
-            )
-            self.thinking = False
-
-        # Emit finish event
         yield RunFinishedEvent(
             thread_id=self.request.thread_id,
             run_id=self.request.run_id,
@@ -125,84 +110,92 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseEvent]:
         """Handle errors during streaming."""
-        # Try to get code from exception if it has one, otherwise use class name
-        code = getattr(error, 'code', error.__class__.__name__)
-        yield RunErrorEvent(message=str(error), code=code)
+        yield RunErrorEvent(message=str(error))
 
-    # Granular handlers implementation
-
-    async def handle_text_start(self, part: TextPart) -> AsyncIterator[BaseEvent]:
+    async def handle_text_start(
+        self, part: TextPart, previous_part: ModelResponsePart | None = None
+    ) -> AsyncIterator[BaseEvent]:
         """Handle a TextPart at start."""
-        if self.part_end:
-            yield self.part_end
-            self.part_end = None
+        if isinstance(previous_part, TextPart):
+            message_id = previous_part.message_id
+        else:
+            message_id = self.new_message_id()
+            yield TextMessageStartEvent(message_id=message_id)
 
-        if self.thinking:
-            yield ThinkingEndEvent(type=EventType.THINKING_END)
-            self.thinking = False
-
-        message_id = self.new_message_id()
-        yield TextMessageStartEvent(message_id=message_id)
         if part.content:  # pragma: no branch
             yield TextMessageContentEvent(message_id=message_id, delta=part.content)
-        self.part_end = TextMessageEndEvent(message_id=message_id)
 
     async def handle_text_delta(self, delta: TextPartDelta) -> AsyncIterator[BaseEvent]:
         """Handle a TextPartDelta."""
         if delta.content_delta:  # pragma: no branch
             yield TextMessageContentEvent(message_id=self.message_id, delta=delta.content_delta)
 
-    async def handle_thinking_start(self, part: ThinkingPart) -> AsyncIterator[BaseEvent]:
-        """Handle a ThinkingPart at start."""
-        if self.part_end:
-            yield self.part_end
-            self.part_end = None
+    async def handle_text_end(
+        self, part: TextPart, next_part: ModelResponsePart | None = None
+    ) -> AsyncIterator[BaseEvent]:
+        """Handle a TextPart at end."""
+        if not isinstance(next_part, TextPart):
+            yield TextMessageEndEvent(message_id=self.message_id)
 
-        if not self.thinking:
+    async def handle_thinking_start(
+        self, part: ThinkingPart, previous_part: ModelResponsePart | None = None
+    ) -> AsyncIterator[BaseEvent]:
+        """Handle a ThinkingPart at start."""
+        if not isinstance(previous_part, ThinkingPart):
             yield ThinkingStartEvent(type=EventType.THINKING_START)
-            self.thinking = True
 
         if part.content:
             yield ThinkingTextMessageStartEvent(type=EventType.THINKING_TEXT_MESSAGE_START)
             yield ThinkingTextMessageContentEvent(type=EventType.THINKING_TEXT_MESSAGE_CONTENT, delta=part.content)
-            self.part_end = ThinkingTextMessageEndEvent(type=EventType.THINKING_TEXT_MESSAGE_END)
+            self.thinking_text = True
 
     async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[BaseEvent]:
         """Handle a ThinkingPartDelta."""
-        if delta.content_delta:  # pragma: no branch
-            if not isinstance(self.part_end, ThinkingTextMessageEndEvent):
-                yield ThinkingTextMessageStartEvent(type=EventType.THINKING_TEXT_MESSAGE_START)
-                self.part_end = ThinkingTextMessageEndEvent(type=EventType.THINKING_TEXT_MESSAGE_END)
+        if not delta.content_delta:
+            return
 
-            yield ThinkingTextMessageContentEvent(
-                type=EventType.THINKING_TEXT_MESSAGE_CONTENT, delta=delta.content_delta
-            )
+        if not self.thinking_text:
+            yield ThinkingTextMessageStartEvent(type=EventType.THINKING_TEXT_MESSAGE_START)
+            self.thinking_text = True
+
+        yield ThinkingTextMessageContentEvent(type=EventType.THINKING_TEXT_MESSAGE_CONTENT, delta=delta.content_delta)
+
+    async def handle_thinking_end(
+        self, part: ThinkingPart, next_part: ModelResponsePart | None = None
+    ) -> AsyncIterator[BaseEvent]:
+        """Handle a ThinkingPart at end."""
+        if self.thinking_text:
+            yield ThinkingTextMessageEndEvent(type=EventType.THINKING_TEXT_MESSAGE_END)
+            self.thinking_text = False
+
+        if not isinstance(next_part, ThinkingPart):
+            yield ThinkingEndEvent(type=EventType.THINKING_END)
 
     async def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
         """Handle a ToolCallPart or BuiltinToolCallPart at start."""
-        if self.part_end:
-            yield self.part_end
-            self.part_end = None
+        async for e in self._handle_tool_call_start(part):
+            yield e
 
-        if self.thinking:
-            yield ThinkingEndEvent(type=EventType.THINKING_END)
-            self.thinking = False
-
+    async def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
+        """Handle a BuiltinToolCallPart at start."""
         tool_call_id = part.tool_call_id
-        if isinstance(part, BuiltinToolCallPart):
-            builtin_tool_call_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', tool_call_id])
-            self.builtin_tool_call_ids[tool_call_id] = builtin_tool_call_id
-            tool_call_id = builtin_tool_call_id
+        builtin_tool_call_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', tool_call_id])
+        self.builtin_tool_call_ids[tool_call_id] = builtin_tool_call_id
+        tool_call_id = builtin_tool_call_id
 
+        async for e in self._handle_tool_call_start(part, tool_call_id):
+            yield e
+
+    async def _handle_tool_call_start(
+        self, part: ToolCallPart | BuiltinToolCallPart, tool_call_id: str | None = None
+    ) -> AsyncIterator[BaseEvent]:
+        """Handle a ToolCallPart or BuiltinToolCallPart at start."""
+        tool_call_id = tool_call_id or part.tool_call_id
         message_id = self.message_id or self.new_message_id()
+
         yield ToolCallStartEvent(tool_call_id=tool_call_id, tool_call_name=part.tool_name, parent_message_id=message_id)
         if part.args:
             yield ToolCallArgsEvent(tool_call_id=tool_call_id, delta=part.args_as_json_str())
-        self.part_end = ToolCallEndEvent(tool_call_id=tool_call_id)
-
-    def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
-        """Handle a BuiltinToolCallPart at start."""
-        return self.handle_tool_call_start(part)
 
     async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[BaseEvent]:
         """Handle a ToolCallPartDelta."""
@@ -215,13 +208,16 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
             delta=delta.args_delta if isinstance(delta.args_delta, str) else json.dumps(delta.args_delta),
         )
 
+    async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseEvent]:
+        """Handle a ToolCallPart at end."""
+        yield ToolCallEndEvent(tool_call_id=part.tool_call_id)
+
+    async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
+        """Handle a BuiltinToolCallPart at end."""
+        yield ToolCallEndEvent(tool_call_id=self.builtin_tool_call_ids[part.tool_call_id])
+
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseEvent]:
         """Handle a BuiltinToolReturnPart."""
-        # Emit any pending part_end event (e.g., TOOL_CALL_END) before the result
-        if self.part_end:
-            yield self.part_end
-            self.part_end = None
-
         tool_call_id = self.builtin_tool_call_ids[part.tool_call_id]
         yield ToolCallResultEvent(
             message_id=self.new_message_id(),
@@ -231,25 +227,12 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
             content=part.model_response_str(),
         )
 
-    async def handle_function_tool_call(self, event: FunctionToolCallEvent) -> AsyncIterator[BaseEvent]:
-        """Handle a FunctionToolCallEvent.
-
-        This event is emitted when a function tool is called, but no AG-UI events
-        are needed at this stage since tool calls are handled in PartStartEvent.
-        """
-        return
-        yield  # Make this an async generator
-
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseEvent]:
         """Handle a FunctionToolResultEvent, emitting tool result events."""
         result = event.result
         if not isinstance(result, ToolReturnPart):
+            # TODO (DouweM): Stream RetryPromptParts to the frontend as well?
             return
-
-        # Emit any pending part_end event (e.g., TOOL_CALL_END) before the result
-        if self.part_end:
-            yield self.part_end
-            self.part_end = None
 
         yield ToolCallResultEvent(
             message_id=self.new_message_id(),
@@ -271,11 +254,4 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
                 if isinstance(item, BaseEvent):  # pragma: no branch
                     yield item
 
-    async def handle_final_result(self, event: FinalResultEvent) -> AsyncIterator[BaseEvent]:
-        """Handle a FinalResultEvent.
-
-        This event is emitted when the agent produces a final result, but no AG-UI events
-        are needed at this stage.
-        """
-        return
-        yield  # Make this an async generator
+        # TODO (DouweM): Stream ToolCallResultEvent.content as user parts?
