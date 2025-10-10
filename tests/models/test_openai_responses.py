@@ -6190,7 +6190,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
         builtin_tools=[
             MCPServerTool(
                 label='test_server',
-                url='https://humane-gazelle-moving.ngrok-free.app/mcp',
+                url='https://example.com/mcp',
                 description='Game registry server',
                 authorization='x-api-key',
             )
@@ -6553,7 +6553,7 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
         builtin_tools=[
             MCPServerTool(
                 label='test_server',
-                url='https://humane-gazelle-moving.ngrok-free.app/mcp',
+                url='https://example.com/mcp',
                 description='Game registry server',
                 authorization='x-api-key',
             )

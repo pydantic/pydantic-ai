@@ -30,7 +30,7 @@ interactions:
         require_approval: never
         server_description: Game registry server
         server_label: test_server
-        server_url: https://humane-gazelle-moving.ngrok-free.app/mcp
+        server_url: https://example.com/mcp
         type: mcp
     uri: https://api.openai.com/v1/responses
   response:
@@ -138,7 +138,7 @@ interactions:
         require_approval: never
         server_description: Game registry server
         server_label: test_server
-        server_url: https://humane-gazelle-moving.ngrok-free.app/<redacted>
+        server_url: https://example.com/<redacted>
         type: mcp
       top_logprobs: 0
       top_p: 1.0
@@ -198,7 +198,7 @@ interactions:
         require_approval: never
         server_description: Game registry server
         server_label: test_server
-        server_url: https://humane-gazelle-moving.ngrok-free.app/mcp
+        server_url: https://example.com/mcp
         type: mcp
     uri: https://api.openai.com/v1/responses
   response:
@@ -301,7 +301,7 @@ interactions:
         require_approval: never
         server_description: Game registry server
         server_label: test_server
-        server_url: https://humane-gazelle-moving.ngrok-free.app/<redacted>
+        server_url: https://example.com/<redacted>
         type: mcp
       top_logprobs: 0
       top_p: 1.0
