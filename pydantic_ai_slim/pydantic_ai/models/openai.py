@@ -284,6 +284,7 @@ class OpenAIChatModel(Model):
             'together',
             'vercel',
             'litellm',
+            'zhipu',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -312,6 +313,7 @@ class OpenAIChatModel(Model):
             'together',
             'vercel',
             'litellm',
+            'zhipu',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -339,6 +341,7 @@ class OpenAIChatModel(Model):
             'together',
             'vercel',
             'litellm',
+            'zhipu',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -522,6 +525,16 @@ class OpenAIChatModel(Model):
         # Thus we validate it fully here.
         if not isinstance(response, chat.ChatCompletion):
             raise UnexpectedModelBehavior('Invalid response from OpenAI chat completions endpoint, expected JSON data')
+
+        # Some OpenAI-compatible providers (currently only Zhipu/Z.ai, see issue #2723) omit the `object` field even
+        # though the OpenAI schema includes it. We only patch it for that provider to avoid changing validation
+        # error counts in tests that purposefully feed invalid OpenAI responses (which expect 4 errors, including
+        # a missing `object`).
+        if self._provider.name == 'zhipu' and not getattr(response, 'object', None):  # pragma: no branch
+            try:  # defensive, in case attribute is read-only in future SDK versions
+                response.object = 'chat.completion'
+            except Exception:  # pragma: no cover
+                pass
 
         if response.created:
             timestamp = number_to_datetime(response.created)
