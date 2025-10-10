@@ -35,7 +35,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -6177,6 +6177,1098 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_08acbdf1ae54befc0068dd9ced226c8197a2e974b29c565407',
                 finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        builtin_tools=[
+            MCPServerTool(
+                label='test_server',
+                url='https://example.com/mcp',
+                description='Game registry server',
+                authorization='x-api-key',
+            )
+        ],
+    )
+
+    result = await agent.run('What games do I have?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What games do I have?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='mcp_list_tools',
+                        args={
+                            'id': 'mcpl_0f42e5defd177dd30068e8ba4af45c8196a52b46eddf69ae69',
+                            'server_label': 'test_server',
+                            'tools': [
+                                {
+                                    'input_schema': {'properties': {}, 'type': 'object'},
+                                    'name': 'get_my_games',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns a list of my favorite games.',
+                                },
+                                {
+                                    'input_schema': {
+                                        'properties': {'game': {'type': 'string'}},
+                                        'required': ['game'],
+                                        'type': 'object',
+                                    },
+                                    'name': 'get_game_achivement_count',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns the number of achievements for a given game.',
+                                },
+                            ],
+                            'type': 'mcp_list_tools',
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_0f42e5defd177dd30068e8ba4af45c8196a52b46eddf69ae69',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_list_tools',
+                        content={
+                            'id': 'mcpl_0f42e5defd177dd30068e8ba4af45c8196a52b46eddf69ae69',
+                            'server_label': 'test_server',
+                            'tools': [
+                                {
+                                    'input_schema': {'properties': {}, 'type': 'object'},
+                                    'name': 'get_my_games',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns a list of my favorite games.',
+                                },
+                                {
+                                    'input_schema': {
+                                        'properties': {'game': {'type': 'string'}},
+                                        'required': ['game'],
+                                        'type': 'object',
+                                    },
+                                    'name': 'get_game_achivement_count',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns the number of achievements for a given game.',
+                                },
+                            ],
+                            'type': 'mcp_list_tools',
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_0f42e5defd177dd30068e8ba4af45c8196a52b46eddf69ae69',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_call',
+                        args={
+                            'id': 'mcp_0f42e5defd177dd30068e8ba4d2bf4819698a994e414cde59c',
+                            'arguments': '{}',
+                            'name': 'get_my_games',
+                            'server_label': 'test_server',
+                            'type': 'mcp_call',
+                            'error': None,
+                            'output': '["Lies of P", "Bloodborne", "Sekiro"]',
+                            'approval_request_id': None,
+                            'status': 'completed',
+                        },
+                        tool_call_id='mcp_0f42e5defd177dd30068e8ba4d2bf4819698a994e414cde59c',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_call',
+                        content={
+                            'id': 'mcp_0f42e5defd177dd30068e8ba4d2bf4819698a994e414cde59c',
+                            'arguments': '{}',
+                            'name': 'get_my_games',
+                            'server_label': 'test_server',
+                            'type': 'mcp_call',
+                            'error': None,
+                            'output': '["Lies of P", "Bloodborne", "Sekiro"]',
+                            'approval_request_id': None,
+                            'status': 'completed',
+                        },
+                        tool_call_id='mcp_0f42e5defd177dd30068e8ba4d2bf4819698a994e414cde59c',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content='You have the following games:\n\n- Lies of P\n- Bloodborne\n- Sekiro',
+                        id='msg_0f42e5defd177dd30068e8ba4f4a4481968e96dcf749bc4ffe',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=137, output_tokens=34, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0f42e5defd177dd30068e8ba4abfc88196bf33d9e5f04af14f',
+                finish_reason='stop',
+            ),
+        ]
+    )
+    messages = result.all_messages()
+    result = await agent.run('How many achievements do I have for Lies of P?', message_history=messages)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What games do I have?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='mcp_list_tools',
+                        args={
+                            'id': 'mcpl_0f42e5defd177dd30068e8ba4af45c8196a52b46eddf69ae69',
+                            'server_label': 'test_server',
+                            'tools': [
+                                {
+                                    'input_schema': {'properties': {}, 'type': 'object'},
+                                    'name': 'get_my_games',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns a list of my favorite games.',
+                                },
+                                {
+                                    'input_schema': {
+                                        'properties': {'game': {'type': 'string'}},
+                                        'required': ['game'],
+                                        'type': 'object',
+                                    },
+                                    'name': 'get_game_achivement_count',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns the number of achievements for a given game.',
+                                },
+                            ],
+                            'type': 'mcp_list_tools',
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_0f42e5defd177dd30068e8ba4af45c8196a52b46eddf69ae69',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_list_tools',
+                        content={
+                            'id': 'mcpl_0f42e5defd177dd30068e8ba4af45c8196a52b46eddf69ae69',
+                            'server_label': 'test_server',
+                            'tools': [
+                                {
+                                    'input_schema': {'properties': {}, 'type': 'object'},
+                                    'name': 'get_my_games',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns a list of my favorite games.',
+                                },
+                                {
+                                    'input_schema': {
+                                        'properties': {'game': {'type': 'string'}},
+                                        'required': ['game'],
+                                        'type': 'object',
+                                    },
+                                    'name': 'get_game_achivement_count',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns the number of achievements for a given game.',
+                                },
+                            ],
+                            'type': 'mcp_list_tools',
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_0f42e5defd177dd30068e8ba4af45c8196a52b46eddf69ae69',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_call',
+                        args={
+                            'id': 'mcp_0f42e5defd177dd30068e8ba4d2bf4819698a994e414cde59c',
+                            'arguments': '{}',
+                            'name': 'get_my_games',
+                            'server_label': 'test_server',
+                            'type': 'mcp_call',
+                            'error': None,
+                            'output': '["Lies of P", "Bloodborne", "Sekiro"]',
+                            'approval_request_id': None,
+                            'status': 'completed',
+                        },
+                        tool_call_id='mcp_0f42e5defd177dd30068e8ba4d2bf4819698a994e414cde59c',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_call',
+                        content={
+                            'id': 'mcp_0f42e5defd177dd30068e8ba4d2bf4819698a994e414cde59c',
+                            'arguments': '{}',
+                            'name': 'get_my_games',
+                            'server_label': 'test_server',
+                            'type': 'mcp_call',
+                            'error': None,
+                            'output': '["Lies of P", "Bloodborne", "Sekiro"]',
+                            'approval_request_id': None,
+                            'status': 'completed',
+                        },
+                        tool_call_id='mcp_0f42e5defd177dd30068e8ba4d2bf4819698a994e414cde59c',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content='You have the following games:\n\n- Lies of P\n- Bloodborne\n- Sekiro',
+                        id='msg_0f42e5defd177dd30068e8ba4f4a4481968e96dcf749bc4ffe',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=137, output_tokens=34, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0f42e5defd177dd30068e8ba4abfc88196bf33d9e5f04af14f',
+                finish_reason='stop',
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='How many achievements do I have for Lies of P?', timestamp=IsDatetime())
+                ],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='mcp_list_tools',
+                        args={
+                            'id': 'mcpl_061476d026868b770068e8ba50a918819f8b40e452efaace23',
+                            'server_label': 'test_server',
+                            'tools': [
+                                {
+                                    'input_schema': {'properties': {}, 'type': 'object'},
+                                    'name': 'get_my_games',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns a list of my favorite games.',
+                                },
+                                {
+                                    'input_schema': {
+                                        'properties': {'game': {'type': 'string'}},
+                                        'required': ['game'],
+                                        'type': 'object',
+                                    },
+                                    'name': 'get_game_achivement_count',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns the number of achievements for a given game.',
+                                },
+                            ],
+                            'type': 'mcp_list_tools',
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_061476d026868b770068e8ba50a918819f8b40e452efaace23',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_list_tools',
+                        content={
+                            'id': 'mcpl_061476d026868b770068e8ba50a918819f8b40e452efaace23',
+                            'server_label': 'test_server',
+                            'tools': [
+                                {
+                                    'input_schema': {'properties': {}, 'type': 'object'},
+                                    'name': 'get_my_games',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns a list of my favorite games.',
+                                },
+                                {
+                                    'input_schema': {
+                                        'properties': {'game': {'type': 'string'}},
+                                        'required': ['game'],
+                                        'type': 'object',
+                                    },
+                                    'name': 'get_game_achivement_count',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns the number of achievements for a given game.',
+                                },
+                            ],
+                            'type': 'mcp_list_tools',
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_061476d026868b770068e8ba50a918819f8b40e452efaace23',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_call',
+                        args={
+                            'id': 'mcp_061476d026868b770068e8ba526a9c819fbf64dd625e228746',
+                            'arguments': '{"game":"Lies of P"}',
+                            'name': 'get_game_achivement_count',
+                            'server_label': 'test_server',
+                            'type': 'mcp_call',
+                            'error': None,
+                            'output': '10',
+                            'approval_request_id': None,
+                            'status': 'completed',
+                        },
+                        tool_call_id='mcp_061476d026868b770068e8ba526a9c819fbf64dd625e228746',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_call',
+                        content={
+                            'id': 'mcp_061476d026868b770068e8ba526a9c819fbf64dd625e228746',
+                            'arguments': '{"game":"Lies of P"}',
+                            'name': 'get_game_achivement_count',
+                            'server_label': 'test_server',
+                            'type': 'mcp_call',
+                            'error': None,
+                            'output': '10',
+                            'approval_request_id': None,
+                            'status': 'completed',
+                        },
+                        tool_call_id='mcp_061476d026868b770068e8ba526a9c819fbf64dd625e228746',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content='You have 10 achievements in "Lies of P."',
+                        id='msg_061476d026868b770068e8ba540260819fb5bd77a6eec50616',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=174, output_tokens=38, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_061476d026868b770068e8ba5070ac819f8992649913ed3c99',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_model_mcp_server_tool_stream(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        builtin_tools=[
+            MCPServerTool(
+                label='test_server',
+                url='https://example.com/mcp',
+                description='Game registry server',
+                authorization='x-api-key',
+            )
+        ],
+    )
+
+    event_parts: list[Any] = []
+
+    async with agent.iter(user_prompt='What games do I have?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    messages = agent_run.result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What games do I have?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='mcp_list_tools',
+                        args={
+                            'id': 'mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213',
+                            'server_label': 'test_server',
+                            'tools': [],
+                            'type': 'mcp_list_tools',
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_list_tools',
+                        content={
+                            'id': 'mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213',
+                            'server_label': 'test_server',
+                            'tools': [
+                                {
+                                    'input_schema': {'properties': {}, 'type': 'object'},
+                                    'name': 'get_my_games',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns a list of my favorite games.',
+                                },
+                                {
+                                    'input_schema': {
+                                        'properties': {'game': {'type': 'string'}},
+                                        'required': ['game'],
+                                        'type': 'object',
+                                    },
+                                    'name': 'get_game_achivement_count',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns the number of achievements for a given game.',
+                                },
+                            ],
+                            'type': 'mcp_list_tools',
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_call',
+                        args={
+                            'id': 'mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5',
+                            'arguments': '',
+                            'name': 'get_my_games',
+                            'server_label': 'test_server',
+                            'type': 'mcp_call',
+                            'error': None,
+                            'output': None,
+                            'status': 'in_progress',
+                            'approval_request_id': None,
+                        },
+                        tool_call_id='mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_call',
+                        content={
+                            'id': 'mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5',
+                            'arguments': '{}',
+                            'name': 'get_my_games',
+                            'server_label': 'test_server',
+                            'type': 'mcp_call',
+                            'error': None,
+                            'output': '["Lies of P", "Bloodborne", "Sekiro"]',
+                            'status': 'completed',
+                            'approval_request_id': None,
+                        },
+                        tool_call_id='mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content='You have the following games:\n\n1. Lies of P\n2. Bloodborne\n3. Sekiro',
+                        id='msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=137, output_tokens=37, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_01c8a8292c5709750068e8bb5be8688195b71c732ac9edf8e1',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_list_tools',
+                    args={
+                        'id': 'mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213',
+                        'server_label': 'test_server',
+                        'tools': [],
+                        'type': 'mcp_list_tools',
+                        'error': None,
+                    },
+                    tool_call_id='mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213',
+                    provider_name='openai',
+                ),
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolReturnPart(
+                    tool_name='mcp_list_tools',
+                    content={
+                        'id': 'mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213',
+                        'server_label': 'test_server',
+                        'tools': [
+                            {
+                                'input_schema': {'properties': {}, 'type': 'object'},
+                                'name': 'get_my_games',
+                                'annotations': {'read_only': False},
+                                'description': 'Returns a list of my favorite games.',
+                            },
+                            {
+                                'input_schema': {
+                                    'properties': {'game': {'type': 'string'}},
+                                    'required': ['game'],
+                                    'type': 'object',
+                                },
+                                'name': 'get_game_achivement_count',
+                                'annotations': {'read_only': False},
+                                'description': 'Returns the number of achievements for a given game.',
+                            },
+                        ],
+                        'type': 'mcp_list_tools',
+                        'error': None,
+                    },
+                    tool_call_id='mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                ),
+            ),
+            PartStartEvent(
+                index=2,
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_call',
+                    args={
+                        'id': 'mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5',
+                        'arguments': '',
+                        'name': 'get_my_games',
+                        'server_label': 'test_server',
+                        'type': 'mcp_call',
+                        'error': None,
+                        'output': None,
+                        'status': 'in_progress',
+                        'approval_request_id': None,
+                    },
+                    tool_call_id='mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5',
+                    provider_name='openai',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(tool_call_id='mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5')
+            ),
+            PartStartEvent(
+                index=3,
+                part=BuiltinToolReturnPart(
+                    tool_name='mcp_call',
+                    content={
+                        'id': 'mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5',
+                        'arguments': '{}',
+                        'name': 'get_my_games',
+                        'server_label': 'test_server',
+                        'type': 'mcp_call',
+                        'error': None,
+                        'output': '["Lies of P", "Bloodborne", "Sekiro"]',
+                        'status': 'completed',
+                        'approval_request_id': None,
+                    },
+                    tool_call_id='mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                ),
+            ),
+            PartStartEvent(
+                index=4, part=TextPart(content='You', id='msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383')
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' have')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' following')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' games')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=':\n\n')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='1')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Lies')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' P')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='\n')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='2')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Blood')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='borne')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='\n')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='3')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Sek')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='iro')),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_list_tools',
+                    args={
+                        'id': 'mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213',
+                        'server_label': 'test_server',
+                        'tools': [],
+                        'type': 'mcp_list_tools',
+                        'error': None,
+                    },
+                    tool_call_id='mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213',
+                    provider_name='openai',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='mcp_list_tools',
+                    content={
+                        'id': 'mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213',
+                        'server_label': 'test_server',
+                        'tools': [
+                            {
+                                'input_schema': {'properties': {}, 'type': 'object'},
+                                'name': 'get_my_games',
+                                'annotations': {'read_only': False},
+                                'description': 'Returns a list of my favorite games.',
+                            },
+                            {
+                                'input_schema': {
+                                    'properties': {'game': {'type': 'string'}},
+                                    'required': ['game'],
+                                    'type': 'object',
+                                },
+                                'name': 'get_game_achivement_count',
+                                'annotations': {'read_only': False},
+                                'description': 'Returns the number of achievements for a given game.',
+                            },
+                        ],
+                        'type': 'mcp_list_tools',
+                        'error': None,
+                    },
+                    tool_call_id='mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                )
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_call',
+                    args={
+                        'id': 'mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5',
+                        'arguments': '',
+                        'name': 'get_my_games',
+                        'server_label': 'test_server',
+                        'type': 'mcp_call',
+                        'error': None,
+                        'output': None,
+                        'status': 'in_progress',
+                        'approval_request_id': None,
+                    },
+                    tool_call_id='mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5',
+                    provider_name='openai',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='mcp_call',
+                    content={
+                        'id': 'mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5',
+                        'arguments': '{}',
+                        'name': 'get_my_games',
+                        'server_label': 'test_server',
+                        'type': 'mcp_call',
+                        'error': None,
+                        'output': '["Lies of P", "Bloodborne", "Sekiro"]',
+                        'status': 'completed',
+                        'approval_request_id': None,
+                    },
+                    tool_call_id='mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                )
+            ),
+        ]
+    )
+
+    event_parts: list[Any] = []
+
+    async with agent.iter(
+        user_prompt='How many achievements do I have for Lies of P?', message_history=messages
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    messages = agent_run.result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What games do I have?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='mcp_list_tools',
+                        args={
+                            'id': 'mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213',
+                            'server_label': 'test_server',
+                            'tools': [],
+                            'type': 'mcp_list_tools',
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_list_tools',
+                        content={
+                            'id': 'mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213',
+                            'server_label': 'test_server',
+                            'tools': [
+                                {
+                                    'input_schema': {'properties': {}, 'type': 'object'},
+                                    'name': 'get_my_games',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns a list of my favorite games.',
+                                },
+                                {
+                                    'input_schema': {
+                                        'properties': {'game': {'type': 'string'}},
+                                        'required': ['game'],
+                                        'type': 'object',
+                                    },
+                                    'name': 'get_game_achivement_count',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns the number of achievements for a given game.',
+                                },
+                            ],
+                            'type': 'mcp_list_tools',
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_call',
+                        args={
+                            'id': 'mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5',
+                            'arguments': '',
+                            'name': 'get_my_games',
+                            'server_label': 'test_server',
+                            'type': 'mcp_call',
+                            'error': None,
+                            'output': None,
+                            'status': 'in_progress',
+                            'approval_request_id': None,
+                        },
+                        tool_call_id='mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_call',
+                        content={
+                            'id': 'mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5',
+                            'arguments': '{}',
+                            'name': 'get_my_games',
+                            'server_label': 'test_server',
+                            'type': 'mcp_call',
+                            'error': None,
+                            'output': '["Lies of P", "Bloodborne", "Sekiro"]',
+                            'status': 'completed',
+                            'approval_request_id': None,
+                        },
+                        tool_call_id='mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content='You have the following games:\n\n1. Lies of P\n2. Bloodborne\n3. Sekiro',
+                        id='msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=137, output_tokens=37, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_01c8a8292c5709750068e8bb5be8688195b71c732ac9edf8e1',
+                finish_reason='stop',
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='How many achievements do I have for Lies of P?', timestamp=IsDatetime())
+                ],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='mcp_list_tools',
+                        args={
+                            'id': 'mcpl_0459ad4252f1e1400068e8bb616fa8819291c521697c2cb185',
+                            'server_label': 'test_server',
+                            'tools': [],
+                            'type': 'mcp_list_tools',
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_0459ad4252f1e1400068e8bb616fa8819291c521697c2cb185',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_list_tools',
+                        content={
+                            'id': 'mcpl_0459ad4252f1e1400068e8bb616fa8819291c521697c2cb185',
+                            'server_label': 'test_server',
+                            'tools': [
+                                {
+                                    'input_schema': {'properties': {}, 'type': 'object'},
+                                    'name': 'get_my_games',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns a list of my favorite games.',
+                                },
+                                {
+                                    'input_schema': {
+                                        'properties': {'game': {'type': 'string'}},
+                                        'required': ['game'],
+                                        'type': 'object',
+                                    },
+                                    'name': 'get_game_achivement_count',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Returns the number of achievements for a given game.',
+                                },
+                            ],
+                            'type': 'mcp_list_tools',
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_0459ad4252f1e1400068e8bb616fa8819291c521697c2cb185',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_call',
+                        args={
+                            'id': 'mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154',
+                            'arguments': '',
+                            'name': 'get_game_achivement_count',
+                            'server_label': 'test_server',
+                            'type': 'mcp_call',
+                            'error': None,
+                            'output': None,
+                            'status': 'in_progress',
+                            'approval_request_id': None,
+                        },
+                        tool_call_id='mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_call',
+                        content={
+                            'id': 'mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154',
+                            'arguments': '{"game":"Lies of P"}',
+                            'name': 'get_game_achivement_count',
+                            'server_label': 'test_server',
+                            'type': 'mcp_call',
+                            'error': None,
+                            'output': '10',
+                            'status': 'completed',
+                            'approval_request_id': None,
+                        },
+                        tool_call_id='mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content='You have 10 achievements for *Lies of P*.',
+                        id='msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=177, output_tokens=38, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0459ad4252f1e1400068e8bb615c48819284b738a3d04f9ccf',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_list_tools',
+                    args={
+                        'id': 'mcpl_0459ad4252f1e1400068e8bb616fa8819291c521697c2cb185',
+                        'server_label': 'test_server',
+                        'tools': [],
+                        'type': 'mcp_list_tools',
+                        'error': None,
+                    },
+                    tool_call_id='mcpl_0459ad4252f1e1400068e8bb616fa8819291c521697c2cb185',
+                    provider_name='openai',
+                ),
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolReturnPart(
+                    tool_name='mcp_list_tools',
+                    content={
+                        'id': 'mcpl_0459ad4252f1e1400068e8bb616fa8819291c521697c2cb185',
+                        'server_label': 'test_server',
+                        'tools': [
+                            {
+                                'input_schema': {'properties': {}, 'type': 'object'},
+                                'name': 'get_my_games',
+                                'annotations': {'read_only': False},
+                                'description': 'Returns a list of my favorite games.',
+                            },
+                            {
+                                'input_schema': {
+                                    'properties': {'game': {'type': 'string'}},
+                                    'required': ['game'],
+                                    'type': 'object',
+                                },
+                                'name': 'get_game_achivement_count',
+                                'annotations': {'read_only': False},
+                                'description': 'Returns the number of achievements for a given game.',
+                            },
+                        ],
+                        'type': 'mcp_list_tools',
+                        'error': None,
+                    },
+                    tool_call_id='mcpl_0459ad4252f1e1400068e8bb616fa8819291c521697c2cb185',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                ),
+            ),
+            PartStartEvent(
+                index=2,
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_call',
+                    args={
+                        'id': 'mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154',
+                        'arguments': '',
+                        'name': 'get_game_achivement_count',
+                        'server_label': 'test_server',
+                        'type': 'mcp_call',
+                        'error': None,
+                        'output': None,
+                        'status': 'in_progress',
+                        'approval_request_id': None,
+                    },
+                    tool_call_id='mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154',
+                    provider_name='openai',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(tool_call_id='mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154')
+            ),
+            PartStartEvent(
+                index=3,
+                part=BuiltinToolReturnPart(
+                    tool_name='mcp_call',
+                    content={
+                        'id': 'mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154',
+                        'arguments': '{"game":"Lies of P"}',
+                        'name': 'get_game_achivement_count',
+                        'server_label': 'test_server',
+                        'type': 'mcp_call',
+                        'error': None,
+                        'output': '10',
+                        'status': 'completed',
+                        'approval_request_id': None,
+                    },
+                    tool_call_id='mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                ),
+            ),
+            PartStartEvent(
+                index=4, part=TextPart(content='You', id='msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2')
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' have')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='10')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' achievements')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' for')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' *')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='L')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='ies')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' P')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='*.')),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_list_tools',
+                    args={
+                        'id': 'mcpl_0459ad4252f1e1400068e8bb616fa8819291c521697c2cb185',
+                        'server_label': 'test_server',
+                        'tools': [],
+                        'type': 'mcp_list_tools',
+                        'error': None,
+                    },
+                    tool_call_id='mcpl_0459ad4252f1e1400068e8bb616fa8819291c521697c2cb185',
+                    provider_name='openai',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='mcp_list_tools',
+                    content={
+                        'id': 'mcpl_0459ad4252f1e1400068e8bb616fa8819291c521697c2cb185',
+                        'server_label': 'test_server',
+                        'tools': [
+                            {
+                                'input_schema': {'properties': {}, 'type': 'object'},
+                                'name': 'get_my_games',
+                                'annotations': {'read_only': False},
+                                'description': 'Returns a list of my favorite games.',
+                            },
+                            {
+                                'input_schema': {
+                                    'properties': {'game': {'type': 'string'}},
+                                    'required': ['game'],
+                                    'type': 'object',
+                                },
+                                'name': 'get_game_achivement_count',
+                                'annotations': {'read_only': False},
+                                'description': 'Returns the number of achievements for a given game.',
+                            },
+                        ],
+                        'type': 'mcp_list_tools',
+                        'error': None,
+                    },
+                    tool_call_id='mcpl_0459ad4252f1e1400068e8bb616fa8819291c521697c2cb185',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                )
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_call',
+                    args={
+                        'id': 'mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154',
+                        'arguments': '',
+                        'name': 'get_game_achivement_count',
+                        'server_label': 'test_server',
+                        'type': 'mcp_call',
+                        'error': None,
+                        'output': None,
+                        'status': 'in_progress',
+                        'approval_request_id': None,
+                    },
+                    tool_call_id='mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154',
+                    provider_name='openai',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='mcp_call',
+                    content={
+                        'id': 'mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154',
+                        'arguments': '{"game":"Lies of P"}',
+                        'name': 'get_game_achivement_count',
+                        'server_label': 'test_server',
+                        'type': 'mcp_call',
+                        'error': None,
+                        'output': '10',
+                        'status': 'completed',
+                        'approval_request_id': None,
+                    },
+                    tool_call_id='mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                )
             ),
         ]
     )

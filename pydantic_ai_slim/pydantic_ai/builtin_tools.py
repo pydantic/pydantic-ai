@@ -237,3 +237,72 @@ class MemoryTool(AbstractBuiltinTool):
 
     kind: str = 'memory'
     """The kind of tool."""
+
+
+@dataclass(kw_only=True)
+class MCPServerTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to use MCP servers.
+
+    Supported by:
+
+    * OpenAI Responses
+    * Anthropic
+    """
+
+    kind: str = 'mcp_server'
+    list_tools_kind: str = 'mcp_list_tools'
+    call_kind: str = 'mcp_call'
+
+    label: str
+    """The label of the MCP server to use."""
+
+    description: str
+    """A description of the MCP server."""
+
+    authorization: str
+    """Authorization header to use when making requests to the MCP server."""
+
+    url: str | None = None
+    """The URL of the MCP server to use.
+
+    For OpenAI Responses, one of `url` or `connector_id` must be provided.
+    """
+
+    allowed_tools: list[str] | None = None
+    """A list of tools that the MCP server can use.
+
+    Supported by:
+
+    * OpenAI Responses
+    * Anthropic
+    """
+
+    headers: dict[str, str] | None = None
+    """Optional HTTP headers to send to the MCP server.
+
+    Use for authentication or other purposes.
+
+    Supported by:
+
+    * OpenAI Responses
+    """
+
+    connector_id: (
+        Literal[
+            'connector_dropbox',
+            'connector_gmail',
+            'connector_googlecalendar',
+            'connector_googledrive',
+            'connector_microsoftteams',
+            'connector_outlookcalendar',
+            'connector_outlookemail',
+            'connector_sharepoint',
+        ]
+        | None
+    ) = None
+    """The ID of the connector to use.
+
+    Supported by:
+
+    * OpenAI Responses
+    """

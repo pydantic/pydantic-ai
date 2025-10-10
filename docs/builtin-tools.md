@@ -11,6 +11,7 @@ Pydantic AI supports the following built-in tools:
 - **[`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool]**: Enables agents to generate images
 - **[`UrlContextTool`][pydantic_ai.builtin_tools.UrlContextTool]**: Enables agents to pull URL contents into their context
 - **[`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool]**: Enables agents to use memory
+- **[`MCPServerTool`][pydantic_ai.builtin_tools.MCPServerTool]**: Enables agents to pass MCP server configuration in context
 
 These tools are passed to the agent via the `builtin_tools` parameter and are executed by the model provider's infrastructure.
 
@@ -418,6 +419,114 @@ print(result.output)
 ```
 
 _(This example is complete, it can be run "as is")_
+
+## MCP Server Tool
+
+The [`MCPServerTool`][pydantic_ai.builtin_tools.MCPServerTool] allows your agent to pass MCP configurations in context,
+so that the agent can offload MCP calls and parsing to the provider.
+
+> **Note:** This tool is useful for models that support passing MCP servers as tools in parameters, so the model handles calls to remote servers by itself.
+> However, a vast majority of models do not support this feature, in which case you should refer to an [alternative solution](mcp/client.md).
+
+### Provider Support
+
+| Provider | Supported | Notes                 |
+|----------|-----------|-----------------------|
+| OpenAI Responses | ✅ | Full feature support  |
+| Anthropic | ✅ | Full feature support  |
+| Google  | ❌ | Not supported         |
+| Groq  | ❌ | Not supported         |
+| OpenAI Chat Completions | ❌ | Not supported         |
+| Bedrock | ❌ | Not supported         |
+| Mistral | ❌ | Not supported         |
+| Cohere | ❌ | Not supported         |
+| HuggingFace | ❌ | Not supported         |
+
+### Usage
+
+```py {title="mcp_server_anthropic.py"}
+from pydantic_ai import Agent, MCPServerTool
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-0',
+    builtin_tools=[
+        MCPServerTool(
+            label='your-mcp-server',
+            url='https://example.com/mcp-server',
+            description='Your MCP Server',
+            authorization='$YOUR_AUTHORIZATION_TOKEN',
+        )
+    ]
+)
+
+result = agent.run_sync('Give me some examples of my products.')
+print(result.output)
+#> Here are some examples of my data: Pen, Paper, Pencil.
+```
+
+_(This example is complete, it can be run "as is")_
+
+With OpenAI, you must use their responses API to access the MCP server tool.
+
+```py {title="mcp_server_openai.py"}
+from pydantic_ai import Agent, MCPServerTool
+
+agent = Agent(
+    'openai-responses:gpt-4o',
+    builtin_tools=[
+        MCPServerTool(
+            label='your-mcp-server',
+            url='https://example.com/mcp-server',
+            description='Your MCP Server',
+            authorization='$YOUR_AUTHORIZATION_TOKEN',
+        )
+    ]
+)
+
+result = agent.run_sync('Give me some examples of my products.')
+print(result.output)
+#> Here are some examples of my data: Pen, Paper, Pencil.
+```
+
+_(This example is complete, it can be run "as is")_
+
+### Configuration Options
+
+The `MCPServerTool` supports several configuration parameters:
+
+```py {title="mcp_server_configured.py"}
+from pydantic_ai import Agent, MCPServerTool
+
+agent = Agent(
+    'openai-responses:gpt-4o',
+    builtin_tools=[
+        MCPServerTool(
+            label='your-mcp-server',
+            url='https://example.com/mcp-server',
+            description='Your MCP Server',
+            authorization='$YOUR_AUTHORIZATION_TOKEN',
+            allowed_tools=['tool-1', 'tool-2'],
+            headers={'X-CUSTOM-HEADER': 'custom-value'},
+            connector_id='valid-openai-connector-id',
+        )
+    ]
+)
+
+result = agent.run_sync('Give me some examples of my products.')
+print(result.output)
+#> Here are some examples of my data: Pen, Paper, Pencil.
+```
+
+_(This example is complete, it can be run "as is")_
+
+#### Provider Support
+
+| Parameter       | OpenAI | Anthropic | Notes                                                                                     |
+|-----------------|--------|-----------|-------------------------------------------------------------------------------------------|
+| `url`           | ✅ | ✅ | Optional for OpenAI (can use either `url` or `connector_id`, required for Anthropic)      |
+| `allowed_tools` | ✅ | ✅ | -----------                                                                               |
+| `connector_id`  | ✅ | ❌ | Optional for OpenAI (can use either `url` or `connector_id`, not supported for Anthropic) |
+| `headers`       | ✅ | ❌ | -----------                                                                               |
 
 ## API Reference
 

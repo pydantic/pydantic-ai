@@ -1,0 +1,321 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '441'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What games do I have?
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-4o
+      previous_response_id: null
+      stream: false
+      tool_choice: auto
+      tools:
+      - allowed_tools: null
+        authorization: x-api-key
+        headers: null
+        require_approval: never
+        server_description: Game registry server
+        server_label: test_server
+        server_url: https://example.com/mcp
+        type: mcp
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3108'
+      content-type:
+      - application/json
+      openai-organization:
+      - trustpoint-1
+      openai-processing-ms:
+      - '5483'
+      openai-project:
+      - proj_oRFiT7uLfyIUMKV93PEQNGvQ
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1760082506
+      error: null
+      id: resp_0f42e5defd177dd30068e8ba4abfc88196bf33d9e5f04af14f
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - id: mcpl_0f42e5defd177dd30068e8ba4af45c8196a52b46eddf69ae69
+        server_label: test_server
+        tools:
+        - annotations:
+            read_only: false
+          description: Returns a list of my favorite games.
+          input_schema:
+            properties: {}
+            type: object
+          name: get_my_games
+        - annotations:
+            read_only: false
+          description: Returns the number of achievements for a given game.
+          input_schema:
+            properties:
+              game:
+                type: string
+            required:
+            - game
+            type: object
+          name: get_game_achivement_count
+        type: mcp_list_tools
+      - approval_request_id: null
+        arguments: '{}'
+        error: null
+        id: mcp_0f42e5defd177dd30068e8ba4d2bf4819698a994e414cde59c
+        name: get_my_games
+        output: '["Lies of P", "Bloodborne", "Sekiro"]'
+        server_label: test_server
+        status: completed
+        type: mcp_call
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            You have the following games:
+
+            - Lies of P
+            - Bloodborne
+            - Sekiro
+          type: output_text
+        id: msg_0f42e5defd177dd30068e8ba4f4a4481968e96dcf749bc4ffe
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - allowed_tools: null
+        authorization: <redacted>
+        headers: null
+        require_approval: never
+        server_description: Game registry server
+        server_label: test_server
+        server_url: https://example.com/<redacted>
+        type: mcp
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 137
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 34
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 171
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '618'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=j4XAsU0ZlVin6mVhZk0At5jNma5JpQO7xK28.m7cmcU-1760082512-1.0.1.1-wdTH7jcbqhkKpzvJXrYSysBLctGKGcNAb8sqPG25FeTqoXbbQM94668a4n9daseFYGHeDBpHU6kG8z.xPivDWeVHwYQxgCadRYtQDd2HBUU;
+        _cfuvid=PXHIhrZDOC_rkH4aNzjCgOwz5INj_xJGZEf9t4YCf0k-1760082512294-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What games do I have?
+        role: user
+      - content: |-
+          You have the following games:
+
+          - Lies of P
+          - Bloodborne
+          - Sekiro
+        role: assistant
+      - content: How many achievements do I have for Lies of P?
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-4o
+      previous_response_id: null
+      stream: false
+      tool_choice: auto
+      tools:
+      - allowed_tools: null
+        authorization: x-api-key
+        headers: null
+        require_approval: never
+        server_description: Game registry server
+        server_label: test_server
+        server_url: https://example.com/mcp
+        type: mcp
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3076'
+      content-type:
+      - application/json
+      openai-organization:
+      - trustpoint-1
+      openai-processing-ms:
+      - '3918'
+      openai-project:
+      - proj_oRFiT7uLfyIUMKV93PEQNGvQ
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1760082512
+      error: null
+      id: resp_061476d026868b770068e8ba5070ac819f8992649913ed3c99
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - id: mcpl_061476d026868b770068e8ba50a918819f8b40e452efaace23
+        server_label: test_server
+        tools:
+        - annotations:
+            read_only: false
+          description: Returns a list of my favorite games.
+          input_schema:
+            properties: {}
+            type: object
+          name: get_my_games
+        - annotations:
+            read_only: false
+          description: Returns the number of achievements for a given game.
+          input_schema:
+            properties:
+              game:
+                type: string
+            required:
+            - game
+            type: object
+          name: get_game_achivement_count
+        type: mcp_list_tools
+      - approval_request_id: null
+        arguments: '{"game":"Lies of P"}'
+        error: null
+        id: mcp_061476d026868b770068e8ba526a9c819fbf64dd625e228746
+        name: get_game_achivement_count
+        output: '10'
+        server_label: test_server
+        status: completed
+        type: mcp_call
+      - content:
+        - annotations: []
+          logprobs: []
+          text: You have 10 achievements in "Lies of P."
+          type: output_text
+        id: msg_061476d026868b770068e8ba540260819fb5bd77a6eec50616
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - allowed_tools: null
+        authorization: <redacted>
+        headers: null
+        require_approval: never
+        server_description: Game registry server
+        server_label: test_server
+        server_url: https://example.com/<redacted>
+        type: mcp
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 174
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 38
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 212
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

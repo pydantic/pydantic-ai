@@ -1,0 +1,340 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '440'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What games do I have?
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-4o
+      previous_response_id: null
+      stream: true
+      tool_choice: auto
+      tools:
+      - allowed_tools: null
+        authorization: x-api-key
+        headers: null
+        require_approval: never
+        server_description: Game registry server
+        server_label: test_server
+        server_url: https://example.com/mcp
+        type: mcp
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_01c8a8292c5709750068e8bb5be8688195b71c732ac9edf8e1","object":"response","created_at":1760082780,"status":"in_progress","background":false,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-2024-08-06","output":[],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"mcp","allowed_tools":null,"authorization":"<redacted>","headers":null,"require_approval":"never","server_description":"Game registry server","server_label":"test_server","server_url":"https://example.com/<redacted>"}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_01c8a8292c5709750068e8bb5be8688195b71c732ac9edf8e1","object":"response","created_at":1760082780,"status":"in_progress","background":false,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-2024-08-06","output":[],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"mcp","allowed_tools":null,"authorization":"<redacted>","headers":null,"require_approval":"never","server_description":"Game registry server","server_label":"test_server","server_url":"https://example.com/<redacted>"}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213","type":"mcp_list_tools","server_label":"test_server","tools":[]}}
+
+        event: response.mcp_list_tools.in_progress
+        data: {"type":"response.mcp_list_tools.in_progress","sequence_number":3,"output_index":0,"item_id":"mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213"}
+
+        event: response.mcp_list_tools.completed
+        data: {"type":"response.mcp_list_tools.completed","sequence_number":4,"output_index":0,"item_id":"mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213"}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","sequence_number":5,"output_index":0,"item":{"id":"mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213","type":"mcp_list_tools","server_label":"test_server","tools":[{"annotations":{"read_only":false},"description":"Returns a list of my favorite games.","input_schema":{"properties":{},"type":"object"},"name":"get_my_games"},{"annotations":{"read_only":false},"description":"Returns the number of achievements for a given game.","input_schema":{"properties":{"game":{"type":"string"}},"required":["game"],"type":"object"},"name":"get_game_achivement_count"}]}}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","sequence_number":6,"output_index":1,"item":{"id":"mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5","type":"mcp_call","status":"in_progress","approval_request_id":null,"arguments":"","error":null,"name":"get_my_games","output":null,"server_label":"test_server"}}
+
+        event: response.mcp_call.in_progress
+        data: {"type":"response.mcp_call.in_progress","sequence_number":7,"output_index":1,"item_id":"mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5"}
+
+        event: response.mcp_call_arguments.delta
+        data: {"type":"response.mcp_call_arguments.delta","sequence_number":8,"output_index":1,"item_id":"mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5","delta":"{}","obfuscation":"hv2XA9smR5DViD"}
+
+        event: response.mcp_call_arguments.done
+        data: {"type":"response.mcp_call_arguments.done","sequence_number":9,"output_index":1,"item_id":"mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5","arguments":"{}"}
+
+        event: response.mcp_call.completed
+        data: {"type":"response.mcp_call.completed","sequence_number":10,"output_index":1,"item_id":"mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5"}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","sequence_number":11,"output_index":1,"item":{"id":"mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5","type":"mcp_call","status":"completed","approval_request_id":null,"arguments":"{}","error":null,"name":"get_my_games","output":"[\"Lies of P\", \"Bloodborne\", \"Sekiro\"]","server_label":"test_server"}}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","sequence_number":12,"output_index":2,"item":{"id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","type":"message","status":"in_progress","content":[],"role":"assistant"}}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","sequence_number":13,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":14,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":"You","logprobs":[],"obfuscation":"Ofu4FocOGQsHi"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":15,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":" have","logprobs":[],"obfuscation":"QylInXEstC5"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":16,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":" the","logprobs":[],"obfuscation":"xDafRCvQn8Yc"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":17,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":" following","logprobs":[],"obfuscation":"smCAoD"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":18,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":" games","logprobs":[],"obfuscation":"rMBku6xSXg"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":19,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":":\n\n","logprobs":[],"obfuscation":"QtRYtTk3JT0Kj"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":20,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":"1","logprobs":[],"obfuscation":"IV6O8KisYAmjFqJ"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":21,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":".","logprobs":[],"obfuscation":"riAlIjZHstLwDNY"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":22,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":" Lies","logprobs":[],"obfuscation":"nDZa09lqWNM"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":23,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":" of","logprobs":[],"obfuscation":"eh3MgJn7WVUu9"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":24,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":" P","logprobs":[],"obfuscation":"VDdm7NcyiwAJtq"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":25,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":"\n","logprobs":[],"obfuscation":"VfHYOmrDLkgKlde"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":26,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":"2","logprobs":[],"obfuscation":"raYnCDFvMsqeDF2"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":27,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":".","logprobs":[],"obfuscation":"kzCKPy936PtO3dp"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":28,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":" Blood","logprobs":[],"obfuscation":"1oh2Tsf15j"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":29,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":"borne","logprobs":[],"obfuscation":"etENF2mtVx8"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":30,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":"\n","logprobs":[],"obfuscation":"zMQsRjoy0KYJg1H"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":31,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":"3","logprobs":[],"obfuscation":"oJCwz9z8yYNLCVc"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":32,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":".","logprobs":[],"obfuscation":"Z9UBzVVqLxgg4pH"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":33,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":" Sek","logprobs":[],"obfuscation":"lNif9wvSQwoj"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":34,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"delta":"iro","logprobs":[],"obfuscation":"fCvxFpnHBgQAv"}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","sequence_number":35,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"text":"You have the following games:\n\n1. Lies of P\n2. Bloodborne\n3. Sekiro","logprobs":[]}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","sequence_number":36,"item_id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","output_index":2,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"You have the following games:\n\n1. Lies of P\n2. Bloodborne\n3. Sekiro"}}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","sequence_number":37,"output_index":2,"item":{"id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"You have the following games:\n\n1. Lies of P\n2. Bloodborne\n3. Sekiro"}],"role":"assistant"}}
+
+        event: response.completed
+        data: {"type":"response.completed","sequence_number":38,"response":{"id":"resp_01c8a8292c5709750068e8bb5be8688195b71c732ac9edf8e1","object":"response","created_at":1760082780,"status":"completed","background":false,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-2024-08-06","output":[{"id":"mcpl_01c8a8292c5709750068e8bb5c1d10819586b763e907432213","type":"mcp_list_tools","server_label":"test_server","tools":[{"annotations":{"read_only":false},"description":"Returns a list of my favorite games.","input_schema":{"properties":{},"type":"object"},"name":"get_my_games"},{"annotations":{"read_only":false},"description":"Returns the number of achievements for a given game.","input_schema":{"properties":{"game":{"type":"string"}},"required":["game"],"type":"object"},"name":"get_game_achivement_count"}]},{"id":"mcp_01c8a8292c5709750068e8bb5e835c8195a7b559aa823b21a5","type":"mcp_call","status":"completed","approval_request_id":null,"arguments":"{}","error":null,"name":"get_my_games","output":"[\"Lies of P\", \"Bloodborne\", \"Sekiro\"]","server_label":"test_server"},{"id":"msg_01c8a8292c5709750068e8bb60bbb08195a6ecec626c1b3383","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"You have the following games:\n\n1. Lies of P\n2. Bloodborne\n3. Sekiro"}],"role":"assistant"}],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"mcp","allowed_tools":null,"authorization":"<redacted>","headers":null,"require_approval":"never","server_description":"Game registry server","server_label":"test_server","server_url":"https://example.com/<redacted>"}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":137,"input_tokens_details":{"cached_tokens":0},"output_tokens":37,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":174},"user":null,"metadata":{}}}
+
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - trustpoint-1
+      openai-processing-ms:
+      - '217'
+      openai-project:
+      - proj_oRFiT7uLfyIUMKV93PEQNGvQ
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '620'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Y7yrbCNmWme8wSYSw183mVJW8KoaWU7q7exVGlP6Agw-1760082780-1.0.1.1-Zx1KEfXpbRay85V5yfY2DqjWgfDw4ZVJzeZVKVWCiZQjoIf1X5NC49MeZ9M6Ts68ZA1W2TFFumRCgS2Rq5orjtujzJJWpSwgB8tEFSdaEF8;
+        _cfuvid=4sQ8uXpZTLwqqX1DScMHA_.j_7inUIMZ0tThGZ.oabw-1760082780201-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What games do I have?
+        role: user
+      - content: |-
+          You have the following games:
+
+          1. Lies of P
+          2. Bloodborne
+          3. Sekiro
+        role: assistant
+      - content: How many achievements do I have for Lies of P?
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-4o
+      previous_response_id: null
+      stream: true
+      tool_choice: auto
+      tools:
+      - allowed_tools: null
+        authorization: x-api-key
+        headers: null
+        require_approval: never
+        server_description: Game registry server
+        server_label: test_server
+        server_url: https://example.com/mcp
+        type: mcp
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_0459ad4252f1e1400068e8bb615c48819284b738a3d04f9ccf","object":"response","created_at":1760082785,"status":"in_progress","background":false,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-2024-08-06","output":[],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"mcp","allowed_tools":null,"authorization":"<redacted>","headers":null,"require_approval":"never","server_description":"Game registry server","server_label":"test_server","server_url":"https://example.com/<redacted>"}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_0459ad4252f1e1400068e8bb615c48819284b738a3d04f9ccf","object":"response","created_at":1760082785,"status":"in_progress","background":false,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-2024-08-06","output":[],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"mcp","allowed_tools":null,"authorization":"<redacted>","headers":null,"require_approval":"never","server_description":"Game registry server","server_label":"test_server","server_url":"https://example.com/<redacted>"}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"mcpl_0459ad4252f1e1400068e8bb616fa8819291c521697c2cb185","type":"mcp_list_tools","server_label":"test_server","tools":[]}}
+
+        event: response.mcp_list_tools.in_progress
+        data: {"type":"response.mcp_list_tools.in_progress","sequence_number":3,"output_index":0,"item_id":"mcpl_0459ad4252f1e1400068e8bb616fa8819291c521697c2cb185"}
+
+        event: response.mcp_list_tools.completed
+        data: {"type":"response.mcp_list_tools.completed","sequence_number":4,"output_index":0,"item_id":"mcpl_0459ad4252f1e1400068e8bb616fa8819291c521697c2cb185"}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","sequence_number":5,"output_index":0,"item":{"id":"mcpl_0459ad4252f1e1400068e8bb616fa8819291c521697c2cb185","type":"mcp_list_tools","server_label":"test_server","tools":[{"annotations":{"read_only":false},"description":"Returns a list of my favorite games.","input_schema":{"properties":{},"type":"object"},"name":"get_my_games"},{"annotations":{"read_only":false},"description":"Returns the number of achievements for a given game.","input_schema":{"properties":{"game":{"type":"string"}},"required":["game"],"type":"object"},"name":"get_game_achivement_count"}]}}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","sequence_number":6,"output_index":1,"item":{"id":"mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154","type":"mcp_call","status":"in_progress","approval_request_id":null,"arguments":"","error":null,"name":"get_game_achivement_count","output":null,"server_label":"test_server"}}
+
+        event: response.mcp_call.in_progress
+        data: {"type":"response.mcp_call.in_progress","sequence_number":7,"output_index":1,"item_id":"mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154"}
+
+        event: response.mcp_call_arguments.delta
+        data: {"type":"response.mcp_call_arguments.delta","sequence_number":8,"output_index":1,"item_id":"mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154","delta":"{\"game\":\"Lies of P\"}","obfuscation":"x3FOLpWjsTag"}
+
+        event: response.mcp_call_arguments.done
+        data: {"type":"response.mcp_call_arguments.done","sequence_number":9,"output_index":1,"item_id":"mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154","arguments":"{\"game\":\"Lies of P\"}"}
+
+        event: response.mcp_call.completed
+        data: {"type":"response.mcp_call.completed","sequence_number":10,"output_index":1,"item_id":"mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154"}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","sequence_number":11,"output_index":1,"item":{"id":"mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154","type":"mcp_call","status":"completed","approval_request_id":null,"arguments":"{\"game\":\"Lies of P\"}","error":null,"name":"get_game_achivement_count","output":"10","server_label":"test_server"}}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","sequence_number":12,"output_index":2,"item":{"id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","type":"message","status":"in_progress","content":[],"role":"assistant"}}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","sequence_number":13,"item_id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","output_index":2,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":14,"item_id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","output_index":2,"content_index":0,"delta":"You","logprobs":[],"obfuscation":"SzoZ1VzRvqkC5"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":15,"item_id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","output_index":2,"content_index":0,"delta":" have","logprobs":[],"obfuscation":"WGSGZhv6ndA"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":16,"item_id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","output_index":2,"content_index":0,"delta":" ","logprobs":[],"obfuscation":"OSZVIBsM5TtseR3"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":17,"item_id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","output_index":2,"content_index":0,"delta":"10","logprobs":[],"obfuscation":"b3aFd0Dz4Nb85T"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":18,"item_id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","output_index":2,"content_index":0,"delta":" achievements","logprobs":[],"obfuscation":"s8j"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":19,"item_id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","output_index":2,"content_index":0,"delta":" for","logprobs":[],"obfuscation":"BIEbCc1VyV0B"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":20,"item_id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","output_index":2,"content_index":0,"delta":" *","logprobs":[],"obfuscation":"ouxu989qOMMPwQ"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":21,"item_id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","output_index":2,"content_index":0,"delta":"L","logprobs":[],"obfuscation":"bzQ3SqJegPcusHq"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":22,"item_id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","output_index":2,"content_index":0,"delta":"ies","logprobs":[],"obfuscation":"tLbUEt17Qvv7C"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":23,"item_id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","output_index":2,"content_index":0,"delta":" of","logprobs":[],"obfuscation":"IaAZiIUudPF2z"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":24,"item_id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","output_index":2,"content_index":0,"delta":" P","logprobs":[],"obfuscation":"qiONqtPGrigNdb"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":25,"item_id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","output_index":2,"content_index":0,"delta":"*.","logprobs":[],"obfuscation":"yIydD3QIk1Zlw5"}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","sequence_number":26,"item_id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","output_index":2,"content_index":0,"text":"You have 10 achievements for *Lies of P*.","logprobs":[]}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","sequence_number":27,"item_id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","output_index":2,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"You have 10 achievements for *Lies of P*."}}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","sequence_number":28,"output_index":2,"item":{"id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"You have 10 achievements for *Lies of P*."}],"role":"assistant"}}
+
+        event: response.completed
+        data: {"type":"response.completed","sequence_number":29,"response":{"id":"resp_0459ad4252f1e1400068e8bb615c48819284b738a3d04f9ccf","object":"response","created_at":1760082785,"status":"completed","background":false,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-2024-08-06","output":[{"id":"mcpl_0459ad4252f1e1400068e8bb616fa8819291c521697c2cb185","type":"mcp_list_tools","server_label":"test_server","tools":[{"annotations":{"read_only":false},"description":"Returns a list of my favorite games.","input_schema":{"properties":{},"type":"object"},"name":"get_my_games"},{"annotations":{"read_only":false},"description":"Returns the number of achievements for a given game.","input_schema":{"properties":{"game":{"type":"string"}},"required":["game"],"type":"object"},"name":"get_game_achivement_count"}]},{"id":"mcp_0459ad4252f1e1400068e8bb64a28481929c736b320967b154","type":"mcp_call","status":"completed","approval_request_id":null,"arguments":"{\"game\":\"Lies of P\"}","error":null,"name":"get_game_achivement_count","output":"10","server_label":"test_server"},{"id":"msg_0459ad4252f1e1400068e8bb66418c8192b5cd1bd2b01b8fb2","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"You have 10 achievements for *Lies of P*."}],"role":"assistant"}],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"mcp","allowed_tools":null,"authorization":"<redacted>","headers":null,"require_approval":"never","server_description":"Game registry server","server_label":"test_server","server_url":"https://example.com/<redacted>"}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":177,"input_tokens_details":{"cached_tokens":0},"output_tokens":38,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":215},"user":null,"metadata":{}}}
+
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - trustpoint-1
+      openai-processing-ms:
+      - '87'
+      openai-project:
+      - proj_oRFiT7uLfyIUMKV93PEQNGvQ
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...
