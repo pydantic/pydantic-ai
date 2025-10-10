@@ -518,11 +518,12 @@ _(This example is complete, it can be run "as is")_
 
 #### Provider Support
 
-| Parameter | OpenAI | Anthropic |
-|-----------|--------|-----------|
-| `allowed_tools` | ✅ | ✅ |
-| `connector_id` | ✅ | ❌ |
-| `headers` | ✅ | ❌ |
+| Parameter       | OpenAI | Anthropic | Notes                                                                                     |
+|-----------------|--------|-----------|-------------------------------------------------------------------------------------------|
+| `url`           | ✅ | ✅ | Optional for OpenAI (can use either `url` or `connector_id`, required for Anthropic)      |
+| `allowed_tools` | ✅ | ✅ | -----------                                                                               |
+| `connector_id`  | ✅ | ❌ | Optional for OpenAI (can use either `url` or `connector_id`, not supported for Anthropic) |
+| `headers`       | ✅ | ❌ | -----------                                                                               |
 
 ## API Reference
 
