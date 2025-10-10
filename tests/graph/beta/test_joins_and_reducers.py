@@ -262,7 +262,7 @@ async def test_reduce_dict_update_with_overlapping_keys():
 
 
 async def test_reducer_with_deps_access():
-    """Test that reducer context can access deps (covers join.py:71)."""
+    """Test that reducer context can access deps"""
 
     @dataclass
     class DepsWithMultiplier:
@@ -300,7 +300,7 @@ async def test_reducer_with_deps_access():
 
 
 async def test_reduce_list_extend():
-    """Test reduce_list_extend that extends a list with iterables (covers join.py:115)."""
+    """Test reduce_list_extend that extends a list with iterables"""
     from pydantic_graph.beta.join import reduce_list_extend
 
     g = GraphBuilder(state_type=SimpleState, output_type=list[int])

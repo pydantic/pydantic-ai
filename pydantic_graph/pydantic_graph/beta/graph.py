@@ -256,7 +256,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         """
         from pydantic_graph.beta.mermaid import build_mermaid_graph
 
-        return build_mermaid_graph(self).render(title=title, direction=direction)
+        return build_mermaid_graph(self.nodes, self.edges_by_source).render(title=title, direction=direction)
 
     def __repr__(self) -> str:
         super_repr = super().__repr__()  # include class and memory address
@@ -550,7 +550,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                         len(afs) > len(fork_stack) and fork_stack == afs[: len(fork_stack)]
                         for afs in active_fork_stacks
                     ):
-                        assert False  # TODO: Need to cover this in a test
+                        # TODO: Need to cover this in a test
                         continue  # this join_state is a strict prefix for one of the other active join_states
                     self._active_reducers.pop((join_id, fork_run_id))  # we're handling it now, so we can pop it
                     join_node = self.graph.nodes[join_id]
@@ -558,7 +558,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                     new_tasks = self._handle_edges(join_node, join_state.current, join_state.downstream_fork_stack)
                     maybe_overridden_result = yield new_tasks  # give an opportunity to override these
                     if _handle_result(maybe_overridden_result):
-                        assert False  # TODO: Need to cover this in a test
+                        # TODO: Need to cover this in a test
                         return
 
         raise RuntimeError(  # pragma: no cover
@@ -665,36 +665,11 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             return []  # pragma: no cover
 
         item = path.items[0]
+        assert not isinstance(item, MapMarker | BroadcastMarker), (
+            'These markers should be removed from paths during graph building'
+        )
         if isinstance(item, DestinationMarker):
             return [GraphTask(item.destination_id, inputs, fork_stack)]
-        elif isinstance(item, MapMarker):
-            # Eagerly raise a clear error if the input value is not iterable as expected
-            try:
-                assert False  # TODO: Need to cover this in a test
-                iter(inputs)
-            except TypeError:
-                raise RuntimeError(f'Cannot map non-iterable value: {inputs!r}')
-
-            node_run_id = NodeRunID(str(uuid.uuid4()))
-
-            # If the map specifies a downstream join id, eagerly create a join state for it
-            if item.downstream_join_id is not None:
-                join_node = self.graph.nodes[item.downstream_join_id]
-                assert isinstance(join_node, Join)
-                self._active_reducers[(item.downstream_join_id, node_run_id)] = JoinState(
-                    join_node.initial_factory(), fork_stack
-                )
-
-            map_tasks: list[GraphTask] = []
-            for thread_index, input_item in enumerate(inputs):
-                item_tasks = self._handle_path(
-                    path.next_path, input_item, fork_stack + (ForkStackItem(item.fork_id, node_run_id, thread_index),)
-                )
-                map_tasks += item_tasks
-            return map_tasks
-        elif isinstance(item, BroadcastMarker):
-            assert False  # TODO: Need to cover this in a test
-            return [GraphTask(item.fork_id, inputs, fork_stack)]
         elif isinstance(item, TransformMarker):
             inputs = item.transform(StepContext(state=self.state, deps=self.deps, inputs=inputs))
             return self._handle_path(path.next_path, inputs, fork_stack)

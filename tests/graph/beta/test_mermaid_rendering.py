@@ -19,7 +19,7 @@ class SimpleState:
 
 
 async def test_render_with_step_label():
-    """Test that step labels appear in mermaid output (covers mermaid.py:144)."""
+    """Test that step labels appear in mermaid output"""
     g = GraphBuilder(state_type=SimpleState, output_type=int)
 
     @g.step(label='Process Data')
@@ -37,7 +37,7 @@ async def test_render_with_step_label():
 
 
 async def test_render_with_edge_labels():
-    """Test that edge labels appear in mermaid output (covers mermaid.py:169)."""
+    """Test that edge labels appear in mermaid output"""
     g = GraphBuilder(state_type=SimpleState, output_type=int)
 
     @g.step
@@ -55,7 +55,7 @@ async def test_render_with_edge_labels():
     )
 
     graph = g.build()
-    mermaid_graph = build_mermaid_graph(graph)
+    mermaid_graph = build_mermaid_graph(graph.nodes, graph.edges_by_source)
     mermaid = mermaid_graph.render(edge_labels=True)
     assert 'start edge' in mermaid
     assert 'middle edge' in mermaid
@@ -75,13 +75,13 @@ async def test_render_without_edge_labels():
     )
 
     graph = g.build()
-    mermaid_graph = build_mermaid_graph(graph)
+    mermaid_graph = build_mermaid_graph(graph.nodes, graph.edges_by_source)
     mermaid = mermaid_graph.render(edge_labels=False)
     assert 'hidden label' not in mermaid
 
 
 async def test_render_decision_node():
-    """Test rendering a decision node (covers mermaid.py:85)."""
+    """Test rendering a decision node"""
     g = GraphBuilder(state_type=SimpleState, output_type=str)
 
     @g.step
@@ -113,7 +113,7 @@ async def test_render_decision_node():
 
 
 async def test_render_decision_branches():
-    """Test rendering decision branches (covers mermaid.py:102)."""
+    """Test rendering decision branches"""
     g = GraphBuilder(state_type=SimpleState, output_type=int)
 
     @g.step
@@ -145,7 +145,7 @@ async def test_render_decision_branches():
 
 
 async def test_render_decision_with_note():
-    """Test rendering a decision with a note (covers mermaid.py:152)."""
+    """Test rendering a decision with a note"""
     g = GraphBuilder(state_type=SimpleState, output_type=str)
 
     @g.step
@@ -174,7 +174,7 @@ async def test_render_decision_with_note():
 
 
 async def test_render_with_direction():
-    """Test rendering with explicit direction (covers mermaid.py:132)."""
+    """Test rendering with explicit direction"""
     g = GraphBuilder(state_type=SimpleState, output_type=int)
 
     @g.step

@@ -19,7 +19,7 @@ class ExecutionState:
 
 
 async def test_map_to_end_node_cancels_pending():
-    """Test that mapping directly to end_node cancels pending tasks (covers graph.py:480)."""
+    """Test that mapping directly to end_node cancels pending tasks"""
     import asyncio
 
     g = GraphBuilder(state_type=ExecutionState, output_type=int)
@@ -73,7 +73,7 @@ async def test_map_non_iterable_raises_error():
 
 
 async def test_broadcast_marker_handling():
-    """Test that BroadcastMarker is handled in paths (covers graph.py:698)."""
+    """Test that BroadcastMarker is handled in paths"""
     g = GraphBuilder(state_type=ExecutionState, output_type=list[str])
 
     @g.step
@@ -104,7 +104,7 @@ async def test_broadcast_marker_handling():
 
 
 async def test_nested_joins_with_different_fork_stacks():
-    """Test nested joins with different fork stack depths (covers graph.py:556)."""
+    """Test nested joins with different fork stack depths"""
     g = GraphBuilder(state_type=ExecutionState, output_type=list[int])
 
     @g.step
@@ -188,7 +188,7 @@ async def test_empty_map_handling():
 
 
 async def test_complex_fork_stack_with_multiple_levels():
-    """Test complex scenarios with multiple fork levels (covers various graph.py lines)."""
+    """Test complex scenarios with multiple fork levels"""
     g = GraphBuilder(state_type=ExecutionState, output_type=list[int])
 
     @g.step
@@ -251,6 +251,45 @@ async def test_broadcast_with_immediate_join():
         # Multiple .to() destinations creates a broadcast
         g.edge_from(source).to(path_a, path_b, path_c),
         g.edge_from(path_a, path_b, path_c).to(collect),
+        g.edge_from(collect).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=ExecutionState())
+    assert sorted(result) == [20, 30, 40]
+
+
+async def test_implicit_broadcast_with_immediate_join():
+    """Test broadcast that immediately joins by just manually adding multiple edges from a single node."""
+    g = GraphBuilder(state_type=ExecutionState, output_type=list[int])
+
+    @g.step
+    async def source(ctx: StepContext[ExecutionState, None, None]) -> int:
+        return 10
+
+    @g.step
+    async def path_a(ctx: StepContext[ExecutionState, None, int]) -> int:
+        return ctx.inputs * 2
+
+    @g.step
+    async def path_b(ctx: StepContext[ExecutionState, None, int]) -> int:
+        return ctx.inputs * 3
+
+    @g.step
+    async def path_c(ctx: StepContext[ExecutionState, None, int]) -> int:
+        return ctx.inputs * 4
+
+    collect = g.join(reduce_list_append, initial_factory=list[int])
+
+    g.add(
+        g.edge_from(g.start_node).to(source),
+        # Multiple .to() destinations creates a broadcast
+        g.edge_from(source).to(path_a),
+        g.edge_from(source).to(path_b),
+        g.edge_from(source).to(path_c),
+        g.edge_from(path_a).to(collect),
+        g.edge_from(path_b).to(collect),
+        g.edge_from(path_c).to(collect),
         g.edge_from(collect).to(g.end_node),
     )
 

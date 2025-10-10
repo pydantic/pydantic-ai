@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import pytest
 
 from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.graph_builder import GraphBuildingError
 from pydantic_graph.beta.join import reduce_list_append, reduce_sum
 from pydantic_graph.beta.node import Fork
 
@@ -262,7 +263,7 @@ async def test_duplicate_node_ids_error():
     async def step_two(ctx: StepContext[SimpleState, None, None]) -> int:
         return 2
 
-    with pytest.raises(ValueError, match='All nodes must have unique node IDs'):
+    with pytest.raises(GraphBuildingError, match='All nodes must have unique node IDs'):
         g.add(
             g.edge_from(g.start_node).to(step_one),
             g.edge_from(g.start_node).to(step_two),

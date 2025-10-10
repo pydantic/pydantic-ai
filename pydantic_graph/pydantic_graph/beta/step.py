@@ -22,7 +22,7 @@ InputT = TypeVar('InputT', infer_variance=True)
 OutputT = TypeVar('OutputT', infer_variance=True)
 
 
-# TODO: Remove inputs from StepContext and provide multiple allowed signatures like with ReducerFunction
+# TODO: Consider removing inputs from StepContext and provide multiple allowed signatures like with ReducerFunction
 @dataclass(init=False)
 class StepContext(Generic[StateT, DepsT, InputT]):
     """Context information passed to step functions during graph execution.

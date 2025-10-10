@@ -13,8 +13,6 @@ safe to proceed without risking deadlock.
 In most typical graphs, such dominating forks exist naturally. However, when there are multiple
 subsequent forks, the choice of parent fork can be ambiguous and may need to be specified by
 the graph designer.
-
-TODO(P3): Expand this documentation with more detailed examples and edge cases.
 """
 
 from __future__ import annotations
@@ -69,7 +67,6 @@ class ParentForkFinder(Generic[T]):
     edges: dict[T, list[T]]  # source_id to list of destination_ids
     """Graph edges represented as adjacency list mapping source nodes to destinations."""
 
-    # TODO: Add unit tests of this class that make use of explicit_fork_id and prefer_closest
     def find_parent_fork(
         self, join_id: T, *, explicit_fork_id: T | None = None, prefer_closest: bool = False
     ) -> ParentFork[T] | None:

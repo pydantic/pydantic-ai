@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 from typing_extensions import assert_never
 
 from pydantic_graph.beta.decision import Decision
-from pydantic_graph.beta.graph import Graph
 from pydantic_graph.beta.id_types import NodeID
 from pydantic_graph.beta.join import Join
 from pydantic_graph.beta.node import EndNode, Fork, StartNode
+from pydantic_graph.beta.node_types import AnyNode
 from pydantic_graph.beta.paths import BroadcastMarker, DestinationMarker, LabelMarker, MapMarker, Path
 from pydantic_graph.beta.step import NodeStep, Step
 
@@ -49,7 +49,9 @@ class MermaidEdge:
     label: str | None
 
 
-def build_mermaid_graph(graph: Graph[Any, Any, Any, Any]) -> MermaidGraph:  # noqa C901
+def build_mermaid_graph(  # noqa C901
+    graph_nodes: dict[NodeID, AnyNode], graph_edges_by_source: dict[NodeID, list[Path]]
+) -> MermaidGraph:
     """Build a mermaid graph."""
     nodes: list[MermaidNode] = []
     edges_by_source: dict[str, list[MermaidEdge]] = defaultdict(list)
@@ -63,7 +65,7 @@ def build_mermaid_graph(graph: Graph[Any, Any, Any, Any]) -> MermaidGraph:  # no
             elif isinstance(item, DestinationMarker):
                 edges_by_source[last_source_id].append(MermaidEdge(last_source_id, item.destination_id, working_label))
 
-    for node_id, node in graph.nodes.items():
+    for node_id, node in graph_nodes.items():
         kind: NodeKind
         label: str | None = None
         note: str | None = None
@@ -89,11 +91,11 @@ def build_mermaid_graph(graph: Graph[Any, Any, Any, Any]) -> MermaidGraph:  # no
         source_node = MermaidNode(id=node_id, kind=kind, label=label, note=note)
         nodes.append(source_node)
 
-    for k, v in graph.edges_by_source.items():
+    for k, v in graph_edges_by_source.items():
         for path in v:
             _collect_edges(path, k)
 
-    for node in graph.nodes.values():
+    for node in graph_nodes.values():
         if isinstance(node, Decision):
             for branch in node.branches:
                 _collect_edges(branch.path, node.id)

@@ -22,6 +22,7 @@ from pydantic_graph.beta.decision import Decision, DecisionBranch, DecisionBranc
 from pydantic_graph.beta.graph import Graph
 from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID, generate_placeholder_node_id, replace_placeholder_id
 from pydantic_graph.beta.join import Join, JoinNode, ReducerFunction
+from pydantic_graph.beta.mermaid import build_mermaid_graph
 from pydantic_graph.beta.node import (
     EndNode,
     Fork,
@@ -57,6 +58,12 @@ SourceOutputT = TypeVar('SourceOutputT', infer_variance=True)
 GraphInputT = TypeVar('GraphInputT', infer_variance=True)
 GraphOutputT = TypeVar('GraphOutputT', infer_variance=True)
 T = TypeVar('T', infer_variance=True)
+
+
+class GraphBuildingError(ValueError):
+    """An error raised during graph-building."""
+
+    pass
 
 
 @dataclass(init=False)
@@ -476,7 +483,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         Returns:
             A DecisionBranch for the BaseNode type
         """
-        assert False  # TODO: Need to cover this in a test
+        # TODO: Need to cover this in a test
         node = NodeStep(source)
         path = Path(items=[DestinationMarker(node.id)])
         return DecisionBranch(source=source, matches=matches, path=path, destinations=[node])
@@ -532,7 +539,9 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         elif isinstance(existing, NodeStep) and isinstance(node, NodeStep) and existing.node_type is node.node_type:
             pass
         elif existing is not node:
-            raise ValueError(f'All nodes must have unique node IDs. {node.id!r} was the ID for {existing} and {node}')
+            raise GraphBuildingError(
+                f'All nodes must have unique node IDs. {node.id!r} was the ID for {existing} and {node}'
+            )
 
     def _edge_from_return_hint(
         self, node: SourceNode[StateT, DepsT, Any], return_hint: TypeOrTypeExpression[Any]
@@ -631,9 +640,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         nodes, edges_by_source = _flatten_paths(nodes, edges_by_source)
         nodes, edges_by_source = _normalize_forks(nodes, edges_by_source)
         parent_forks = _collect_dominating_forks(nodes, edges_by_source)
-        print(nodes)
-        print(edges_by_source)
-        print(parent_forks)
 
         return Graph[StateT, DepsT, GraphInputT, GraphOutputT](
             name=self.name,
@@ -720,10 +726,9 @@ def _normalize_forks(
         if len(edges_from_source) == 1:
             new_edges[source_id] = edges_from_source
             continue
-        assert False  # TODO: Need to cover this in a test, specifically by using `.to()`  with multiple arguments
         new_fork = Fork[Any, Any](id=ForkID(NodeID(f'{node.id}_broadcast_fork')), is_map=False, downstream_join_id=None)
         new_nodes[new_fork.id] = new_fork
-        new_edges[source_id] = [Path(items=[BroadcastMarker(fork_id=new_fork.id, paths=edges_from_source)])]
+        new_edges[source_id] = [Path(items=[DestinationMarker(new_fork.id)])]
         new_edges[new_fork.id] = edges_from_source
 
     return new_nodes, new_edges
@@ -796,9 +801,22 @@ def _collect_dominating_forks(
             join.id, explicit_fork_id=join.parent_fork_id, prefer_closest=join.preferred_parent_fork == 'closest'
         )
         if dominating_fork is None:
-            # TODO(P3): Print out the mermaid graph and explain the problem
-            assert False  # TODO: Need to cover this in a test
-            raise ValueError(f'Join node {join.id} has no dominating fork')
+            rendered_mermaid_graph = build_mermaid_graph(graph_nodes, graph_edges_by_source).render()
+            error_message = f"""\
+For every Join J in the graph, there must be a Fork F between the StartNode and J satisfying:
+* Every path from the StartNode to J passes through F
+* There are no cycles in the graph including both J and F.
+In this case, F is called a "dominating fork" for J.
+
+This is used to determine when all tasks upstream of this Join are complete and we can proceed with execution.
+
+Mermaid diagram:
+{rendered_mermaid_graph}
+
+Join {join.id!r} in this graph has no dominating fork.\
+"""
+            # TODO: Need to cover this in a test
+            raise GraphBuildingError(error_message)
         dominating_forks[join.id] = dominating_fork
 
     return dominating_forks

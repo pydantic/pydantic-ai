@@ -265,7 +265,7 @@ async def test_v1_node_conditional_return():
 
 
 async def test_match_node_with_base_node():
-    """Test using match_node() to create decision branches for BaseNode classes (covers graph_builder.py:465).
+    """Test using match_node() to create decision branches for BaseNode classes
 
     Note: match_node is a complex API for integrating v1 BaseNode types into decision logic.
     This test documents the intended usage pattern.

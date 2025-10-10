@@ -61,9 +61,6 @@ class Decision(Generic[StateT, DepsT, HandledT]):
 
         Returns:
             A new Decision with the additional branch.
-
-        Note:
-            TODO(P3): Add an overload that skips the need for `match`, and is just less flexible about the building.
         """
         return Decision(id=self.id, branches=self.branches + [branch], note=self.note)
 
