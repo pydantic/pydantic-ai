@@ -23,6 +23,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._mcp import Resource
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.mcp import MCPServerStreamableHTTP, load_mcp_servers
@@ -37,7 +38,13 @@ with try_import() as imports_successful:
     from mcp import ErrorData, McpError, SamplingMessage
     from mcp.client.session import ClientSession
     from mcp.shared.context import RequestContext
-    from mcp.types import CreateMessageRequestParams, ElicitRequestParams, ElicitResult, ImageContent, TextContent
+    from mcp.types import (
+        CreateMessageRequestParams,
+        ElicitRequestParams,
+        ElicitResult,
+        ImageContent,
+        TextContent,
+    )
 
     from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response
     from pydantic_ai.mcp import CallToolFunc, MCPServerSSE, MCPServerStdio, ToolResult
@@ -312,6 +319,36 @@ async def test_log_level_unset(run_context: RunContext[int]):
     async with server:
         result = await server.direct_call_tool('get_log_level', {})
         assert result == snapshot('unset')
+
+
+async def test_stdio_server_list_resources(run_context: RunContext[int]):
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        resources = await server.list_resources()
+        assert len(resources) == snapshot(3)
+
+        assert resources[0].uri == snapshot('resource://kiwi.png')
+        assert resources[0].mime_type == snapshot('image/png')
+        assert resources[0].name == snapshot('kiwi_resource')
+
+        assert resources[1].uri == snapshot('resource://marcelo.mp3')
+        assert resources[1].mime_type == snapshot('audio/mpeg')
+        assert resources[1].name == snapshot('marcelo_resource')
+
+        assert resources[2].uri == snapshot('resource://product_name.txt')
+        assert resources[2].mime_type == snapshot('text/plain')
+        assert resources[2].name == snapshot('product_name_resource')
+
+
+async def test_stdio_server_list_resource_templates(run_context: RunContext[int]):
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        resource_templates = await server.list_resource_templates()
+        assert len(resource_templates) == snapshot(1)
+
+        assert resource_templates[0].uri_template == snapshot('resource://greeting/{name}')
+        assert resource_templates[0].name == snapshot('greeting_resource_template')
+        assert resource_templates[0].description == snapshot('Dynamic greeting resource template.')
 
 
 async def test_log_level_set(run_context: RunContext[int]):
@@ -1458,6 +1495,42 @@ async def test_elicitation_callback_not_set(run_context: RunContext[int]):
         # Should raise an error when elicitation is attempted without callback
         with pytest.raises(ModelRetry, match='Elicitation not supported'):
             await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
+
+
+async def test_read_text_resource(run_context: RunContext[int]):
+    """Test reading a text resource (converted to string)."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        # Test reading by URI string
+        content = await server.read_resource('resource://product_name.txt')
+        assert isinstance(content, str)
+        assert content == snapshot('Pydantic AI\n')
+
+        # Test reading by Resource object
+        resource = Resource(uri='resource://product_name.txt', name='product_name_resource')
+        content_from_resource = await server.read_resource(resource)
+        assert isinstance(content_from_resource, str)
+        assert content_from_resource == snapshot('Pydantic AI\n')
+
+
+async def test_read_blob_resource(run_context: RunContext[int]):
+    """Test reading a binary resource (converted to BinaryContent)."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        content = await server.read_resource('resource://kiwi.png')
+        assert isinstance(content, BinaryContent)
+        assert content.media_type == snapshot('image/png')
+        # Verify it's PNG data (starts with PNG magic bytes)
+        assert content.data[:8] == b'\x89PNG\r\n\x1a\n'  # PNG magic bytes
+
+
+async def test_read_resource_template(run_context: RunContext[int]):
+    """Test reading a resource template with parameters (converted to string)."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        content = await server.read_resource('resource://greeting/Alice')
+        assert isinstance(content, str)
+        assert content == snapshot('Hello, Alice!')
 
 
 def test_load_mcp_servers(tmp_path: Path):

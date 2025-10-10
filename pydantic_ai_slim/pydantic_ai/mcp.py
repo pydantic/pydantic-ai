@@ -10,13 +10,13 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontext
 from dataclasses import field, replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, overload
 
 import anyio
 import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from pydantic import BaseModel, Discriminator, Field, Tag
+from pydantic import AnyUrl, BaseModel, Discriminator, Field, Tag
 from pydantic_core import CoreSchema, core_schema
 from typing_extensions import Self, assert_never, deprecated
 
@@ -303,6 +303,52 @@ class MCPServer(AbstractToolset[Any], ABC):
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 
+    async def list_resources(self) -> list[_mcp.Resource]:
+        """Retrieve resources that are currently present on the server.
+
+        Note:
+        - We don't cache resources as they might change.
+        - We also don't subscribe to resource changes to avoid complexity.
+        """
+        async with self:  # Ensure server is running
+            result = await self._client.list_resources()
+        return [_mcp.map_from_mcp_resource(r) for r in result.resources]
+
+    async def list_resource_templates(self) -> list[_mcp.ResourceTemplate]:
+        """Retrieve resource templates that are currently present on the server."""
+        async with self:  # Ensure server is running
+            result = await self._client.list_resource_templates()
+        return [_mcp.map_from_mcp_resource_template(t) for t in result.resourceTemplates]
+
+    @overload
+    async def read_resource(self, uri: str) -> str | messages.BinaryContent | list[str | messages.BinaryContent]: ...
+
+    @overload
+    async def read_resource(
+        self, uri: _mcp.Resource
+    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent]: ...
+
+    async def read_resource(
+        self, uri: str | _mcp.Resource
+    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent]:
+        """Read the contents of a specific resource by URI.
+
+        Args:
+            uri: The URI of the resource to read, or a Resource object.
+
+        Returns:
+            The resource contents. If the resource has a single content item, returns that item directly.
+            If the resource has multiple content items, returns a list of items.
+        """
+        resource_uri = uri if isinstance(uri, str) else uri.uri
+        async with self:  # Ensure server is running
+            result = await self._client.read_resource(AnyUrl(resource_uri))
+        return (
+            self._get_content(result.contents[0])
+            if len(result.contents) == 1
+            else [self._get_content(resource) for resource in result.contents]
+        )
+
     async def __aenter__(self) -> Self:
         """Enter the MCP server context.
 
@@ -397,12 +443,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             resource = part.resource
             return self._get_content(resource)
         elif isinstance(part, mcp_types.ResourceLink):
-            resource_result: mcp_types.ReadResourceResult = await self._client.read_resource(part.uri)
-            return (
-                self._get_content(resource_result.contents[0])
-                if len(resource_result.contents) == 1
-                else [self._get_content(resource) for resource in resource_result.contents]
-            )
+            return await self.read_resource(str(part.uri))
         else:
             assert_never(part)
 
