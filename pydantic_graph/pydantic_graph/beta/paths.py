@@ -17,6 +17,7 @@ from typing_extensions import Protocol, Self, TypeAliasType, TypeVar
 from pydantic_graph import BaseNode
 from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID, generate_placeholder_node_id
 from pydantic_graph.beta.step import NodeStep, StepContext
+from pydantic_graph.exceptions import GraphBuildingError
 
 StateT = TypeVar('StateT', infer_variance=True)
 DepsT = TypeVar('DepsT', infer_variance=True)
@@ -360,7 +361,7 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
         new_edge_paths = get_forks(self)
         new_paths = [Path(x.path.items) for x in new_edge_paths]
         if not new_paths:
-            raise ValueError(f'The call to {get_forks} returned no branches, but must return at least one.')
+            raise GraphBuildingError(f'The call to {get_forks} returned no branches, but must return at least one.')
         path = self._path_builder.broadcast(new_paths, fork_id=fork_id)
         destinations = [d for ep in new_edge_paths for d in ep.destinations]
         return EdgePath(

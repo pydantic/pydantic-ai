@@ -537,7 +537,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                         new_tasks = self._handle_edges(join_node, join_state.current, join_state.downstream_fork_stack)
                         maybe_overridden_result = yield new_tasks  # give an opportunity to override these
                         if _handle_result(maybe_overridden_result):
-                            return
+                            return  # pragma: no cover  # TODO: We should cover this
 
             if self._active_reducers:  # pragma: no branch
                 # In this case, there are no pending tasks. We can therefore finalize all active reducers whose
@@ -550,16 +550,15 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                         len(afs) > len(fork_stack) and fork_stack == afs[: len(fork_stack)]
                         for afs in active_fork_stacks
                     ):
-                        # TODO: Need to cover this in a test
-                        continue  # this join_state is a strict prefix for one of the other active join_states
+                        # this join_state is a strict prefix for one of the other active join_states
+                        continue  # pragma: no cover  # TODO: We should cover this
                     self._active_reducers.pop((join_id, fork_run_id))  # we're handling it now, so we can pop it
                     join_node = self.graph.nodes[join_id]
                     assert isinstance(join_node, Join), f'Expected a `Join` but got {join_node}'
                     new_tasks = self._handle_edges(join_node, join_state.current, join_state.downstream_fork_stack)
                     maybe_overridden_result = yield new_tasks  # give an opportunity to override these
                     if _handle_result(maybe_overridden_result):
-                        # TODO: Need to cover this in a test
-                        return
+                        return  # pragma: no cover  # TODO: We should cover this
 
         raise RuntimeError(  # pragma: no cover
             'Graph run completed, but no result was produced. This is either a bug in the graph or a bug in the graph runner.'

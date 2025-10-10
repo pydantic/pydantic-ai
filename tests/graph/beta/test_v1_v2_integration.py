@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_graph import BaseNode, End, GraphRunContext
 from pydantic_graph.beta import GraphBuilder, StepContext, StepNode
@@ -254,6 +255,23 @@ async def test_v1_node_conditional_return():
     )
 
     graph = g.build()
+
+    assert str(graph) == snapshot("""\
+stateDiagram-v2
+  create_router
+  RouterNode
+  state decision <<choice>>
+  PathA
+  PathB
+
+  [*] --> create_router
+  create_router --> RouterNode
+  RouterNode --> decision
+  decision --> PathA
+  decision --> PathB
+  PathA --> [*]
+  PathB --> [*]\
+""")
 
     # Test path A
     result_a = await graph.run(state=IntegrationState(), inputs=5)

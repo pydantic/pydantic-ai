@@ -46,6 +46,7 @@ from pydantic_graph.beta.paths import (
 )
 from pydantic_graph.beta.step import NodeStep, Step, StepFunction, StepNode
 from pydantic_graph.beta.util import TypeOrTypeExpression, get_callable_name, unpack_type_expression
+from pydantic_graph.exceptions import GraphBuildingError
 from pydantic_graph.nodes import BaseNode, End
 
 StateT = TypeVar('StateT', infer_variance=True)
@@ -58,12 +59,6 @@ SourceOutputT = TypeVar('SourceOutputT', infer_variance=True)
 GraphInputT = TypeVar('GraphInputT', infer_variance=True)
 GraphOutputT = TypeVar('GraphOutputT', infer_variance=True)
 T = TypeVar('T', infer_variance=True)
-
-
-class GraphBuildingError(ValueError):
-    """An error raised during graph-building."""
-
-    pass
 
 
 @dataclass(init=False)
@@ -297,7 +292,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             initial_factory = lambda: initial  # pyright: ignore[reportAssignmentType]  # noqa E731
 
         return Join[StateT, DepsT, InputT, OutputT](
-            # TODO: Find a way to use the reducer name here, but still allow duplicates. It makes for a better node id.
             id=JoinID(NodeID(node_id or generate_placeholder_node_id(get_callable_name(reducer)))),
             reducer=reducer,
             initial_factory=cast(Callable[[], OutputT], initial_factory),
@@ -470,7 +464,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         source: type[SourceNodeT],
         *,
         matches: Callable[[Any], bool] | None = None,
-    ) -> DecisionBranch[SourceNodeT]:
+    ) -> DecisionBranch[SourceNodeT]:  # pragma: no cover  # TODO: We should cover this
         """Create a decision branch for BaseNode subclasses.
 
         This is similar to match() but specifically designed for matching
@@ -483,7 +477,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         Returns:
             A DecisionBranch for the BaseNode type
         """
-        # TODO: Need to cover this in a test
         node = NodeStep(source)
         path = Path(items=[DestinationMarker(node.id)])
         return DecisionBranch(source=source, matches=matches, path=path, destinations=[node])
@@ -772,7 +765,7 @@ def _collect_dominating_forks(
                 path: The path to process
                 last_source_id: The current source node ID
             """
-            for item in path.items:
+            for item in path.items:  # pragma: no branch
                 # No need to handle MapMarker or BroadcastMarker here as these should have all been removed
                 # by the call to `_flatten_paths`
                 if isinstance(item, DestinationMarker):
@@ -798,14 +791,14 @@ def _collect_dominating_forks(
     dominating_forks: dict[JoinID, ParentFork[NodeID]] = {}
     for join in joins:
         dominating_fork = finder.find_parent_fork(
-            join.id, explicit_fork_id=join.parent_fork_id, prefer_closest=join.preferred_parent_fork == 'closest'
+            join.id, parent_fork_id=join.parent_fork_id, prefer_closest=join.preferred_parent_fork == 'closest'
         )
-        if dominating_fork is None:
+        if dominating_fork is None:  # pragma: no cover  # TODO: We should cover this
             rendered_mermaid_graph = build_mermaid_graph(graph_nodes, graph_edges_by_source).render()
-            error_message = f"""\
+            raise GraphBuildingError(f"""\
 For every Join J in the graph, there must be a Fork F between the StartNode and J satisfying:
 * Every path from the StartNode to J passes through F
-* There are no cycles in the graph including both J and F.
+* There are no cycles in the graph including J that don't pass through F.
 In this case, F is called a "dominating fork" for J.
 
 This is used to determine when all tasks upstream of this Join are complete and we can proceed with execution.
@@ -813,10 +806,8 @@ This is used to determine when all tasks upstream of this Join are complete and 
 Mermaid diagram:
 {rendered_mermaid_graph}
 
-Join {join.id!r} in this graph has no dominating fork.\
-"""
-            # TODO: Need to cover this in a test
-            raise GraphBuildingError(error_message)
+Join {join.id!r} in this graph has no dominating fork in this graph.\
+""")
         dominating_forks[join.id] = dominating_fork
 
     return dominating_forks

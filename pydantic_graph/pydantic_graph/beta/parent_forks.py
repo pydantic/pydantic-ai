@@ -24,6 +24,8 @@ from typing import Generic
 
 from typing_extensions import TypeVar
 
+from pydantic_graph.exceptions import GraphBuildingError
+
 T = TypeVar('T', bound=Hashable, infer_variance=True, default=str)
 
 
@@ -68,7 +70,7 @@ class ParentForkFinder(Generic[T]):
     """Graph edges represented as adjacency list mapping source nodes to destinations."""
 
     def find_parent_fork(
-        self, join_id: T, *, explicit_fork_id: T | None = None, prefer_closest: bool = False
+        self, join_id: T, *, parent_fork_id: T | None = None, prefer_closest: bool = False
     ) -> ParentFork[T] | None:
         """Find the parent fork for a given join node.
 
@@ -78,7 +80,7 @@ class ParentForkFinder(Generic[T]):
 
         Args:
             join_id: The identifier of the join node to analyze.
-            explicit_fork_id: Optional manually selected node ID to attempt to use as the parent fork node.
+            parent_fork_id: Optional manually selected node ID to attempt to use as the parent fork node.
             prefer_closest: If no explicit fork is specified, this argument is used to determine
                 whether to find the closest or farthest (i.e., most ancestral) dominating fork.
 
@@ -91,14 +93,15 @@ class ParentForkFinder(Generic[T]):
             If every dominating fork of the join lets it participate in a cycle that avoids
             the fork, None is returned since no valid "parent fork" exists.
         """
-        if explicit_fork_id is not None:
+        if parent_fork_id is not None:
             # A fork was manually specified; we still verify it's a valid dominating fork
-            upstream_nodes = self._get_upstream_nodes_if_parent(join_id, explicit_fork_id)
+            upstream_nodes = self._get_upstream_nodes_if_parent(join_id, parent_fork_id)
             if upstream_nodes is None:
-                raise RuntimeError(
-                    f'There is a cycle in the graph passing through the nodes with IDs {join_id!r} and {explicit_fork_id!r}'
+                raise GraphBuildingError(
+                    f'There is a cycle in the graph passing through {join_id!r} that does not include {parent_fork_id!r}.'
+                    f' Parent forks of a join must be a part of any cycles involving that join.'
                 )
-            return ParentFork[T](explicit_fork_id, upstream_nodes)
+            return ParentFork[T](parent_fork_id, upstream_nodes)
 
         visited: set[str] = set()
         cur = join_id  # start at J and walk up the immediate dominator chain

@@ -19,6 +19,7 @@ from pydantic_graph.beta.id_types import NodeID
 from pydantic_graph.beta.paths import Path, PathBuilder, TransformFunction
 from pydantic_graph.beta.step import NodeStep
 from pydantic_graph.beta.util import TypeOrTypeExpression
+from pydantic_graph.exceptions import GraphBuildingError
 
 if TYPE_CHECKING:
     from pydantic_graph.beta.node_types import AnyDestinationNode, DestinationNode
@@ -207,7 +208,7 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
         fork_decision_branches = get_forks(self)
         new_paths = [b.path for b in fork_decision_branches]
         if not new_paths:
-            raise ValueError(f'The call to {get_forks} returned no branches, but must return at least one.')
+            raise GraphBuildingError(f'The call to {get_forks} returned no branches, but must return at least one.')
         path = self._path_builder.broadcast(new_paths, fork_id=fork_id)
         destinations = [d for fdp in fork_decision_branches for d in fdp.destinations]
         return DecisionBranch(source=self._source, matches=self._matches, path=path, destinations=destinations)

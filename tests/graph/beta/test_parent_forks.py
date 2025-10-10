@@ -1,8 +1,10 @@
 """Tests for parent fork identification and dominator analysis."""
 
+import pytest
 from inline_snapshot import snapshot
 
 from pydantic_graph.beta.parent_forks import ParentForkFinder
+from pydantic_graph.exceptions import GraphBuildingError
 
 
 def test_parent_fork_basic():
@@ -225,7 +227,6 @@ def test_parent_fork_complex_intermediate_nodes():
 
 def test_parent_fork_early_return_on_ancestor_with_cycle():
     """Test early return when encountering ancestor fork with cycle."""
-    # TODO: Update this test
     join_id = 'J'
     nodes = {'start', 'F1', 'F2', 'A', 'B', 'C', 'J', 'end'}
     start_ids = {'start'}
@@ -246,3 +247,27 @@ def test_parent_fork_early_return_on_ancestor_with_cycle():
     assert parent_fork is not None
     # Returns F1 as the most ancestral valid fork
     assert parent_fork.fork_id == 'F1'
+
+
+def test_parent_fork_explicit_fail_with_cycle():
+    join_id = 'J'
+    nodes = {'start', 'F', 'A', 'B', 'J', 'end'}
+    start_ids = {'start'}
+    fork_ids = {'F'}
+    edges = {
+        'start': ['F'],
+        'F': ['J'],  # F1 has two paths
+        'J': ['A', 'B'],  # F2 is the inner fork
+        'A': ['J'],
+        'B': ['end'],
+    }
+
+    finder = ParentForkFinder(nodes, start_ids, fork_ids, edges)
+    parent_fork = finder.find_parent_fork(join_id)
+    assert parent_fork is None
+
+    with pytest.raises(
+        GraphBuildingError,
+        match="There is a cycle in the graph passing through 'J' that does not include 'F'. Parent forks of a join must be a part of any cycles involving that join.",
+    ):
+        finder.find_parent_fork(join_id, parent_fork_id='F')

@@ -455,3 +455,10 @@ async def test_decision_branch_fork():
     graph = g.build()
     result = await graph.run(state=DecisionState())
     assert sorted(result) == ['Path 1', 'Path 2']
+
+
+async def test_empty_decision_broadcast():
+    """Test DecisionBranchBuilder.fork method."""
+    g = GraphBuilder(state_type=DecisionState, output_type=list[str])
+    with pytest.raises(ValueError, match=r'returned no branches, but must return at least one'):
+        g.match(TypeExpression[Literal['fork']]).broadcast(lambda b: [])

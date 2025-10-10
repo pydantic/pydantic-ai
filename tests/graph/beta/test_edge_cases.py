@@ -9,6 +9,7 @@ import pytest
 
 from pydantic_graph.beta import GraphBuilder, StepContext
 from pydantic_graph.beta.join import reduce_list_append, reduce_null
+from pydantic_graph.exceptions import GraphBuildingError
 
 pytestmark = pytest.mark.anyio
 
@@ -376,3 +377,15 @@ async def test_step_that_modifies_deps():
     # The deps object was mutated (user responsibility to avoid this)
     assert result == 999
     assert deps.value == 999
+
+
+async def test_empty_edge_broadcast():
+    """Test labels with lambda-style fork definitions."""
+    g = GraphBuilder(output_type=list[int])
+
+    @g.step
+    async def source(ctx: StepContext[None, None, None]) -> int:
+        return 5
+
+    with pytest.raises(GraphBuildingError, match='returned no branches, but must return at least one'):
+        g.edge_from(source).broadcast(lambda e: [])
