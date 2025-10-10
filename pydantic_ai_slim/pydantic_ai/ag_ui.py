@@ -67,6 +67,8 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         *,
         # Agent.iter parameters.
         output_type: OutputSpec[Any] | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -97,6 +99,8 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has
                 no output validators since output validators would expect an argument that matches the agent's
                 output type.
+            message_history: History of the conversation so far.
+            deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
@@ -139,6 +143,8 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
                 agent,
                 request,
                 output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
                 model=model,
                 deps=deps,
                 model_settings=model_settings,
@@ -156,6 +162,8 @@ async def handle_ag_ui_request(
     request: Request,
     *,
     output_type: OutputSpec[Any] | None = None,
+    message_history: Sequence[ModelMessage] | None = None,
+    deferred_tool_results: DeferredToolResults | None = None,
     model: Model | KnownModelName | str | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
@@ -173,6 +181,8 @@ async def handle_ag_ui_request(
 
         output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
             output validators since output validators would expect an argument that matches the agent's output type.
+        message_history: History of the conversation so far.
+        deferred_tool_results: Optional results for deferred tool calls in the message history.
         model: Optional model to use for this run, required if `model` was not set when creating the agent.
         deps: Optional dependencies to use for this run.
         model_settings: Optional settings to use for this model's request.
@@ -186,7 +196,7 @@ async def handle_ag_ui_request(
     Returns:
         A streaming Starlette response with AG-UI protocol events.
     """
-    return await AGUIAdapter.dispatch_request(
+    return await AGUIAdapter[AgentDepsT].dispatch_request(
         agent,
         request,
         deps=deps,
@@ -227,6 +237,8 @@ async def run_ag_ui(
 
         output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
             output validators since output validators would expect an argument that matches the agent's output type.
+        message_history: History of the conversation so far.
+        deferred_tool_results: Optional results for deferred tool calls in the message history.
         model: Optional model to use for this run, required if `model` was not set when creating the agent.
         deps: Optional dependencies to use for this run.
         model_settings: Optional settings to use for this model's request.

@@ -255,7 +255,11 @@ async def test_empty_messages() -> None:
                 'threadId': IsStr(),
                 'runId': IsStr(),
             },
-            {'type': 'RUN_ERROR', 'message': 'No messages provided', 'code': 'UserError'},
+            {
+                'type': 'RUN_ERROR',
+                'message': 'No message history, user prompt, or instructions provided',
+                'code': 'UserError',
+            },
         ]
     )
 
@@ -1152,7 +1156,7 @@ async def test_request_with_state_without_handler() -> None:
 
     with pytest.raises(
         UserError,
-        match='AG-UI state is provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol: it needs to be a dataclass with a non-optional `state` field.',
+        match='State is provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol: it needs to be a dataclass with a non-optional `state` field.',
     ):
         async for _ in run_ag_ui(agent, run_input):
             pass

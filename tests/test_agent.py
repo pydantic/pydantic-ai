@@ -4562,7 +4562,7 @@ def test_parallel_mcp_calls():
 
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     agent = Agent(FunctionModel(call_tools_parallel), toolsets=[server])
-    result = agent.run_sync()
+    result = agent.run_sync('call tools in parallel')
     assert result.output == snapshot('finished')
 
 
@@ -4620,11 +4620,13 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
         FunctionModel(call_tools_sequential), toolsets=[sequential_toolset], output_type=[str, DeferredToolRequests]
     )
 
+    user_prompt = 'call a lot of tools'
+
     if mode == 'contextmanager':
         with agent.sequential_tool_calls():
-            result = agent.run_sync()
+            result = agent.run_sync(user_prompt)
     else:
-        result = agent.run_sync()
+        result = agent.run_sync(user_prompt)
 
     assert result.output == snapshot(
         DeferredToolRequests(approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())])

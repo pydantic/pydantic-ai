@@ -68,19 +68,7 @@ BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
 
 class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
-    """Transforms Pydantic AI agent events into AG-UI protocol events.
-
-    This class handles the stateful transformation of streaming agent events
-    into the AG-UI protocol format, managing message IDs, thinking mode state,
-    and tool call ID mappings for builtin tools.
-
-    Example:
-        ```python
-        event_stream = AGUIEventStream()
-        async for ag_ui_event in event_stream.handle_event(pai_event):
-            print(ag_ui_event)
-        ```
-    """
+    """TODO (DouwM): Docstring."""
 
     def __init__(self, request: RunAgentInput) -> None:
         """Initialize AG-UI event stream state."""

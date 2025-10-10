@@ -51,18 +51,7 @@ def _json_dumps(obj: Any) -> str:
 
 
 class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
-    """Transforms Pydantic AI agent events into Vercel AI protocol events.
-
-    This class handles the stateful transformation of streaming agent events
-    into the Vercel AI protocol format, managing message IDs and final result tool tracking.
-
-    Example:
-        ```python
-        event_stream = VercelAIEventStream()
-        async for vercel_event in event_stream.handle_event(pai_event):
-            print(vercel_event.sse())
-        ```
-    """
+    """TODO (DouwM): Docstring."""
 
     def __init__(self, request: RequestData) -> None:
         """Initialize Vercel AI event stream state."""

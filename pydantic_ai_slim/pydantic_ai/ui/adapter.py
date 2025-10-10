@@ -116,30 +116,7 @@ class StateDeps(Generic[StateT]):
 
 @dataclass
 class BaseAdapter(ABC, Generic[RequestT, MessageT, EventT, AgentDepsT]):
-    """Base adapter for handling UI protocol requests and streaming responses.
-
-    This class provides a unified interface for request/response handling across different
-    UI protocols (AG-UI, Vercel AI, etc.). It handles:
-    - Request parsing and validation
-    - Message format conversion (protocol messages → pAI messages)
-    - Agent execution and event streaming
-    - Error handling (validation errors vs streaming errors)
-    - SSE encoding
-
-    Type Parameters:
-        RequestT: Protocol-specific request type (e.g., RunAgentInput, RequestData)
-        MessageT: Protocol-specific message type (e.g., ag_ui.Message, UIMessage)
-        EventT: Protocol-specific event type (e.g., ag_ui.BaseEvent, BaseChunk)
-        AgentDepsT: Agent dependencies type
-
-    Example:
-        ```python
-        class MyAdapter(BaseAdapter[MyRequest, MyMessage, MyEvent, MyDeps]):
-            def messages(self, messages: list[MyMessage]) -> list[ModelMessage]:
-                # Convert protocol messages to pAI messages
-                ...
-        ```
-    """
+    """TODO (DouwM): Docstring."""
 
     agent: AbstractAgent[AgentDepsT]
     """The Pydantic AI agent to run."""
@@ -169,23 +146,9 @@ class BaseAdapter(ABC, Generic[RequestT, MessageT, EventT, AgentDepsT]):
         return None
 
     @cached_property
-    def raw_state(self) -> dict[str, Any]:
+    def raw_state(self) -> dict[str, Any] | None:
         """Get the state of the agent run."""
-        return {}
-
-    def deps_with_state(self, deps: AgentDepsT) -> AgentDepsT:
-        raw_state: dict[str, Any] = self.raw_state
-        if isinstance(deps, StateHandler):
-            if isinstance(deps.state, BaseModel):
-                state = type(deps.state).model_validate(raw_state)
-            else:
-                state = raw_state
-
-            return replace(deps, state=state)
-        elif raw_state:
-            raise UserError(
-                f'AG-UI state is provided but `deps` of type `{type(deps).__name__}` does not implement the `StateHandler` protocol: it needs to be a dataclass with a non-optional `state` field.'
-            )
+        return None
 
     @abstractmethod
     def encode_event(self, event: EventT, accept: str | None = None) -> str:
@@ -258,12 +221,10 @@ class BaseAdapter(ABC, Generic[RequestT, MessageT, EventT, AgentDepsT]):
         """Run the agent with the AG-UI run input and stream AG-UI protocol events.
 
         Args:
-            agent: The agent to run.
-            run_input: The AG-UI run input containing thread_id, run_id, messages, etc.
-            accept: The accept header value for the run.
-
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
+            message_history: History of the conversation so far.
+            deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
@@ -284,7 +245,18 @@ class BaseAdapter(ABC, Generic[RequestT, MessageT, EventT, AgentDepsT]):
             output_type = [output_type or self.agent.output_type, DeferredToolRequests]
             toolsets = [*toolsets, toolset] if toolsets else [toolset]
 
-        deps = self.deps_with_state(deps)
+        if isinstance(deps, StateHandler):
+            raw_state = self.raw_state or {}
+            if isinstance(deps.state, BaseModel):
+                state = type(deps.state).model_validate(raw_state)
+            else:
+                state = raw_state
+
+            deps = replace(deps, state=state)
+        elif self.raw_state:
+            raise UserError(
+                f'State is provided but `deps` of type `{type(deps).__name__}` does not implement the `StateHandler` protocol: it needs to be a dataclass with a non-optional `state` field.'
+            )
 
         async for event in self.process_stream(
             self.agent.run_stream_events(
@@ -325,16 +297,21 @@ class BaseAdapter(ABC, Generic[RequestT, MessageT, EventT, AgentDepsT]):
         """Handle an AG-UI request and return a streaming response.
 
         Args:
+            agent: The agent to run.
             request: The incoming Starlette/FastAPI request.
-            deps: Optional dependencies to pass to the agent.
-            output_type: Custom output type for this run.
-            model: Optional model to use for this run.
-            model_settings: Optional settings for the model's request.
+            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
+                output validators since output validators would expect an argument that matches the agent's output type.
+            message_history: History of the conversation so far.
+            deferred_tool_results: Optional results for deferred tool calls in the message history.
+            model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            deps: Optional dependencies to use for this run.
+            model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
-            usage: Optional usage to start with.
-            infer_name: Whether to infer the agent name from the call frame.
+            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            on_complete: Optional callback called when the agent run completes.
+            on_complete: Optional callback function called when the agent run completes successfully.
+                The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
 
         Returns:
             A streaming Starlette response with AG-UI protocol events.

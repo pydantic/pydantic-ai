@@ -243,12 +243,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             if self.user_prompt is not None:
                 parts.append(_messages.UserPromptPart(self.user_prompt))
 
-            if not parts:
-                raise exceptions.UserError('No messages provided')
-
             next_message = _messages.ModelRequest(parts=parts)
 
         next_message.instructions = await ctx.deps.get_instructions(run_context)
+
+        if not messages and not next_message.parts and not next_message.instructions:
+            raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
         return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
 

@@ -47,28 +47,7 @@ SourceEvent = AgentStreamEvent | AgentRunResultEvent
 
 @dataclass
 class BaseEventStream(ABC, Generic[RequestT, EventT, AgentDepsT]):
-    """Base class for transforming pAI agent events into protocol-specific events.
-
-    This class provides a granular method-per-part-type pattern that makes it easy to customize
-    specific event transformations by overriding individual handler methods.
-
-    Subclasses should:
-    1. Initialize state attributes in `__init__` if needed
-    2. Implement all abstract `handle_*` methods for event transformation
-    3. Implement error handling methods
-    4. Optionally override lifecycle hooks (`before_stream`, `after_stream`)
-
-    Example:
-        ```python
-        class MyEventStream(BaseEventStream[MyEvent, MyDeps]):
-            def __init__(self):
-                super().__init__()
-                self.custom_state = {}
-
-            async def handle_text_start(self, part: TextPart):
-                yield MyTextStartEvent(id=self.new_message_id(), text=part.content)
-        ```
-    """
+    """TODO (DouwM): Docstring."""
 
     request: RequestT
 
@@ -109,13 +88,13 @@ class BaseEventStream(ABC, Generic[RequestT, EventT, AgentDepsT]):
                 yield e
 
     async def handle_event(self, event: SourceEvent) -> AsyncIterator[EventT]:  # noqa: C901
-        """Transform a pAI agent event into protocol-specific events.
+        """Transform a Pydantic AI agent event into protocol-specific events.
 
         This method dispatches to specific `handle_*` methods based on event and part type.
         Subclasses should implement the individual handler methods rather than overriding this.
 
         Args:
-            event: The pAI agent event to transform.
+            event: The Pydantic AI agent event to transform.
 
         Yields:
             Protocol-specific events.

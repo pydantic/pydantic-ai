@@ -97,25 +97,7 @@ class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
 
 
 class AGUIAdapter(BaseAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT]):
-    """Adapter for handling AG-UI protocol requests with Pydantic AI agents.
-
-    This adapter provides an interface for integrating Pydantic AI agents
-    with the AG-UI protocol, handling request parsing, message conversion,
-    and event streaming.
-
-    Example:
-        ```python
-        from pydantic_ai import Agent
-        from pydantic_ai.ui.ag_ui import AGUIAdapter
-
-        agent = Agent('openai:gpt-4')
-        adapter = AGUIAdapter(agent)
-
-        async def handle_request(request: RunAgentInput, deps=None):
-            async for event_str in adapter.run_stream_encoded(request, deps):
-                yield event_str
-        ```
-    """
+    """TODO (DouwM): Docstring."""
 
     def create_event_stream(self) -> BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]:
         """Create an event stream for the adapter."""
@@ -134,9 +116,9 @@ class AGUIAdapter(BaseAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT]):
         return None
 
     @cached_property
-    def raw_state(self) -> dict[str, Any]:
+    def raw_state(self) -> dict[str, Any] | None:
         """Get the state of the agent run."""
-        return self.request.state or {}
+        return self.request.state
 
     def encode_event(self, event: BaseEvent, accept: str | None = None) -> str:
         """Encode an AG-UI event as SSE.

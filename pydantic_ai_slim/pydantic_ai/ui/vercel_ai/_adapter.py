@@ -46,25 +46,7 @@ __all__ = ['VercelAIAdapter']
 
 @dataclass
 class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT]):
-    """Adapter for handling Vercel AI protocol requests with Pydantic AI agents.
-
-    This adapter provides a simplified interface for integrating Pydantic AI agents
-    with the Vercel AI protocol, handling request parsing, message conversion,
-    and event streaming.
-
-    Example:
-        ```python
-        from pydantic_ai import Agent
-        from pydantic_ai.ui.vercel_ai import VercelAIAdapter
-
-        agent = Agent('openai:gpt-4')
-        adapter = VercelAIAdapter(agent)
-
-        async def handle_request(data: RequestData, deps=None):
-            async for chunk in adapter.run_stream(data, deps):
-                yield chunk.sse()
-        ```
-    """
+    """TODO (DouwM): Docstring."""
 
     def create_event_stream(self) -> BaseEventStream[RequestData, BaseChunk, AgentDepsT]:
         return VercelAIEventStream(self.request)
@@ -98,16 +80,22 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT]
         """Handle an AG-UI request and return a streaming response.
 
         Args:
+            agent: The agent to run.
             request: The incoming Starlette/FastAPI request.
-            deps: Optional dependencies to pass to the agent.
-            output_type: Custom output type for this run.
-            model: Optional model to use for this run.
-            model_settings: Optional settings for the model's request.
+
+            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
+                output validators since output validators would expect an argument that matches the agent's output type.
+            message_history: History of the conversation so far.
+            deferred_tool_results: Optional results for deferred tool calls in the message history.
+            model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            deps: Optional dependencies to use for this run.
+            model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
-            usage: Optional usage to start with.
-            infer_name: Whether to infer the agent name from the call frame.
+            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            on_complete: Optional callback called when the agent run completes.
+            on_complete: Optional callback function called when the agent run completes successfully.
+                The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
 
         Returns:
             A streaming Starlette response with AG-UI protocol events.
@@ -181,3 +169,7 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT]
                     pai_messages.append(ModelRequest(parts=[SystemPromptPart(content='\n'.join(texts))]))
 
         return pai_messages
+
+    # TODO (DouweM): model, builtin_tools?
+
+    # TODO (DouweM): static load_messages, dump_messages
