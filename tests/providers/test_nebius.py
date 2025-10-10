@@ -8,10 +8,11 @@ from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
+from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
 from ..conftest import TestEnv, try_import
@@ -71,7 +72,7 @@ def test_nebius_provider_model_profile(mocker: MockerFixture):
     deepseek_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
     qwen_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
     google_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
-    openai_mock = mocker.patch(f'{ns}.openai_model_profile', wraps=openai_model_profile)
+    harmony_mock = mocker.patch(f'{ns}.harmony_model_profile', wraps=harmony_model_profile)
     mistral_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
     moonshotai_mock = mocker.patch(f'{ns}.moonshotai_model_profile', wraps=moonshotai_model_profile)
 
@@ -99,9 +100,9 @@ def test_nebius_provider_model_profile(mocker: MockerFixture):
     assert google_profile is not None
     assert google_profile.json_schema_transformer == GoogleJsonSchemaTransformer
 
-    # Test openai provider
+    # Test harmony (for openai gpt-oss) provider
     profile = provider.model_profile('openai/gpt-oss-120b')
-    openai_mock.assert_called_with('gpt-oss-120b')
+    harmony_mock.assert_called_with('gpt-oss-120b')
     assert profile is not None
     assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
