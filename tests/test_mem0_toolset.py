@@ -15,7 +15,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets.mem0 import _import_error  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.toolsets.mem0 import _import_error
 from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
@@ -120,6 +120,21 @@ async def test_mem0_toolset_extract_user_id_method():
 
 
 @pytest.mark.skipif(_import_error is not None, reason='mem0 is not installed')
+async def test_mem0_toolset_extract_user_id_method_wrong_type():
+    """Test that get_user_id() must return a string."""
+    mock_client = AsyncMock()
+    toolset = Mem0Toolset(client=mock_client)
+
+    class UserDeps:
+        def get_user_id(self) -> int:
+            return 123
+
+    deps = UserDeps()
+    with pytest.raises(ValueError, match='deps.get_user_id\\(\\) must return a string'):
+        toolset._extract_user_id(deps)
+
+
+@pytest.mark.skipif(_import_error is not None, reason='mem0 is not installed')
 async def test_mem0_toolset_extract_user_id_invalid():
     """Test that extracting user_id from invalid deps raises ValueError."""
     mock_client = AsyncMock()
@@ -221,6 +236,20 @@ async def test_mem0_toolset_search_memory_list_response():
 
 
 @pytest.mark.skipif(_import_error is not None, reason='mem0 is not installed')
+async def test_mem0_toolset_search_memory_unexpected_response():
+    """Test search_memory with unexpected response format."""
+    mock_client = AsyncMock()
+    mock_client.search = AsyncMock(return_value='unexpected string response')
+
+    toolset = Mem0Toolset(client=mock_client)
+    context = build_run_context('user_123')
+
+    result = await toolset._search_memory_impl(context, 'test')
+
+    assert 'Error: Unexpected response format from Mem0' in result
+
+
+@pytest.mark.skipif(_import_error is not None, reason='mem0 is not installed')
 async def test_mem0_toolset_save_memory():
     """Test the save_memory tool."""
     mock_client = AsyncMock()
@@ -261,8 +290,8 @@ async def test_mem0_toolset_with_agent():
     mock_client.search = AsyncMock(return_value={'results': []})
     mock_client.add = AsyncMock(return_value=None)
 
-    toolset = Mem0Toolset(client=mock_client)
-    agent = Agent('test', toolsets=[toolset])
+    toolset: Mem0Toolset[str] = Mem0Toolset(client=mock_client)
+    agent = Agent('test', deps_type=str, toolsets=[toolset])
 
     # Run agent and verify toolset is registered
     result = await agent.run('test', deps='user_123')

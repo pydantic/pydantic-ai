@@ -20,8 +20,8 @@ try:
     from mem0 import AsyncMemoryClient, MemoryClient
 except ImportError as _e:
     _import_error = _e
-    AsyncMemoryClient = None  # type: ignore[misc,assignment,unused-ignore]
-    MemoryClient = None  # type: ignore[misc,assignment,unused-ignore]
+    AsyncMemoryClient = None
+    MemoryClient = None
 else:
     _import_error = None
 

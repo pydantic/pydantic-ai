@@ -9,7 +9,7 @@ The [`Mem0Toolset`][pydantic_ai.toolsets.Mem0Toolset] is a simple toolset that p
 - **`_search_memory_impl`**: Search through stored memories
 - **`_save_memory_impl`**: Save information to memory
 
-This integration follows the same pattern as other third-party integrations like [LangChain tools](../third-party-tools.md#langchain-tools).
+This integration follows the same pattern as other third-party integrations like [LangChain tools](third-party-tools.md#langchain-tools).
 
 ## Installation
 
@@ -320,7 +320,7 @@ The [`Mem0Toolset`][pydantic_ai.toolsets.Mem0Toolset] is designed to be lightwei
 
 ### Similar to LangChain Tools
 
-Just like you can use [LangChain tools](../third-party-tools.md#langchain-tools) with PydanticAI:
+Just like you can use [LangChain tools](third-party-tools.md#langchain-tools) with PydanticAI:
 
 ```python test="skip"
 from langchain_community.tools import WikipediaQueryRun
@@ -347,4 +347,4 @@ For detailed API documentation, see [`Mem0Toolset`][pydantic_ai.toolsets.Mem0Too
 
 ## Complete Example
 
-See the [complete example](../examples/mem0-toolset.md) for a full demonstration of the Mem0Toolset capabilities.
+See the [complete example](examples/mem0-toolset.md) for a full demonstration of the Mem0Toolset capabilities.

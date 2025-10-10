@@ -11,31 +11,38 @@ Set environment variables:
     export OPENAI_API_KEY=your-openai-api-key
 """
 
-# pyright: reportArgumentType=false, reportAssignmentType=false
+# pyright: reportArgumentType=false, reportAssignmentType=false, reportOptionalMemberAccess=false
 
 import asyncio
 import os
 
 from pydantic_ai import Agent, Mem0Toolset
 
-# Create Mem0 toolset
-# The toolset provides two tools: _search_memory_impl and _save_memory_impl
-mem0_toolset = Mem0Toolset(
-    api_key=os.getenv('MEM0_API_KEY'),
-    limit=5,  # Return top 5 memories by default
-)
+# Initialize agent and toolset as None - will be created in main()
+agent = None
+mem0_toolset = None
 
-# Create agent with Mem0 toolset
-# The agent can now automatically use memory tools
-agent = Agent(
-    'openai:gpt-4o',
-    toolsets=[mem0_toolset],
-    instructions=(
-        'You are a helpful assistant with memory capabilities. '
-        'You can save important information to memory and search through memories. '
-        'Use these tools to remember user preferences and provide personalized assistance.'
-    ),
-)
+
+def create_agent_with_memory():
+    """Create agent with Mem0 toolset. Requires MEM0_API_KEY to be set."""
+    # Create Mem0 toolset
+    # The toolset provides two tools: _search_memory_impl and _save_memory_impl
+    toolset = Mem0Toolset(
+        api_key=os.getenv('MEM0_API_KEY'),
+        limit=5,  # Return top 5 memories by default
+    )
+
+    # Create agent with Mem0 toolset
+    # The agent can now automatically use memory tools
+    return Agent(
+        'openai:gpt-4o',
+        toolsets=[toolset],
+        instructions=(
+            'You are a helpful assistant with memory capabilities. '
+            'You can save important information to memory and search through memories. '
+            'Use these tools to remember user preferences and provide personalized assistance.'
+        ),
+    )
 
 
 async def example_basic_memory():
@@ -143,6 +150,8 @@ async def example_personalized_assistant():
 
 async def main():
     """Run all examples."""
+    global agent
+
     if not os.getenv('MEM0_API_KEY'):
         print('Error: MEM0_API_KEY environment variable not set')
         print('Get your API key at: https://app.mem0.ai')
@@ -151,6 +160,9 @@ async def main():
     if not os.getenv('OPENAI_API_KEY'):
         print('Error: OPENAI_API_KEY environment variable not set')
         return
+
+    # Create agent with memory capabilities
+    agent = create_agent_with_memory()
 
     print('🧠 Mem0Toolset Examples for Pydantic AI\n')
     print('=' * 60)
