@@ -175,7 +175,7 @@ async def test_label_with_lambda_fork():
 
     g.add(
         g.edge_from(g.start_node).to(source),
-        g.edge_from(source).to(
+        g.edge_from(source).broadcast(
             lambda e: [
                 e.label('to fork A').to(fork_a),
                 e.label('to fork B').to(fork_b),

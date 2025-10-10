@@ -224,13 +224,8 @@ def test_parent_fork_complex_intermediate_nodes():
 
 
 def test_parent_fork_early_return_on_ancestor_with_cycle():
-    """Test early return when encountering ancestor fork with cycle (covers parent_forks.py:112).
-
-    Note: The algorithm returns the most ancestral valid fork, which is F1 in this case.
-    The early return is covered by other internal graph structures during execution.
-    """
-    # Actually, F1 dominates J and the cycle doesn't bypass it, so F1 is returned
-    # This test documents the actual behavior
+    """Test early return when encountering ancestor fork with cycle."""
+    # TODO: Update this test
     join_id = 'J'
     nodes = {'start', 'F1', 'F2', 'A', 'B', 'C', 'J', 'end'}
     start_ids = {'start'}

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import pytest
 
 from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import reduce_list_append, reduce_sum
 from pydantic_graph.beta.node import Fork
 
 pytestmark = pytest.mark.anyio
@@ -250,7 +251,7 @@ async def test_state_mutation():
 
 
 async def test_duplicate_node_ids_error():
-    """Test that duplicate node IDs raise a ValueError (covers graph_builder.py:520)."""
+    """Test that duplicate node IDs raise a ValueError."""
     g = GraphBuilder(state_type=SimpleState, output_type=int)
 
     @g.step(node_id='duplicate_id')
@@ -269,9 +270,7 @@ async def test_duplicate_node_ids_error():
 
 
 async def test_multiple_destinations_creates_broadcast_fork():
-    """Test that using .to() with multiple arguments creates a broadcast fork (covers graph_builder.py:706)."""
-    from pydantic_graph.beta.join import reduce_list_append
-
+    """Test that using .to() with multiple arguments creates a broadcast fork."""
     g = GraphBuilder(state_type=SimpleState, output_type=list[int])
 
     @g.step
@@ -305,9 +304,30 @@ async def test_multiple_destinations_creates_broadcast_fork():
 
 
 async def test_join_without_dominating_fork_error():
-    """Test that a join without a dominating fork raises ValueError (covers graph_builder.py:781)."""
-    # Note: This is a tricky test because the start node itself acts as a fork.
-    # To truly have a join without a dominating fork, we'd need a very specific graph structure
-    # with cycles. For now, this test documents the expected behavior.
-    # The actual code path is better tested through complex graphs with cycles.
-    pass  # Placeholder - the actual line is covered by complex cycle scenarios
+    """Test that a join without a dominating fork raises ValueError."""
+    g = GraphBuilder(output_type=int, input_type=int)
+
+    @g.step
+    async def source_1(ctx: StepContext[None, None, int]) -> list[int]:
+        return [ctx.inputs, 1]  # pragma: no cover
+
+    @g.step
+    async def source_2(ctx: StepContext[None, None, int]) -> list[int]:
+        return [ctx.inputs, 2]  # pragma: no cover
+
+    sum_1 = g.join(reduce_sum, initial=0)
+    sum_2 = g.join(reduce_sum, initial=0)
+
+    g.add(
+        g.edge_from(g.start_node).to(source_1),
+        g.edge_from(source_1).map().to(sum_1),
+        g.edge_from(sum_1).to(source_2),
+        g.edge_from(source_2).map().to(sum_2),
+        g.edge_from(sum_2).to(
+            g.decision()
+            .branch(g.match(int, matches=lambda x: x % 2 == 0).to(g.end_node))
+            .branch(g.match(int).to(source_1))
+        ),
+    )
+
+    g.build()

@@ -12,7 +12,7 @@ from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from types import NoneType
-from typing import Any, Generic, cast, get_origin, get_type_hints, overload
+from typing import Any, Generic, Literal, cast, get_origin, get_type_hints, overload
 
 from typing_extensions import Never, TypeAliasType, TypeVar
 
@@ -262,7 +262,8 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         *,
         initial: OutputT,
         node_id: str | None = None,
-        joins: ForkID | None = None,
+        parent_fork_id: str | None = None,
+        preferred_parent_fork: Literal['farthest', 'closest'] = 'farthest',
     ) -> Join[StateT, DepsT, InputT, OutputT]: ...
     @overload
     def join(
@@ -271,7 +272,8 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         *,
         initial_factory: Callable[[], OutputT],
         node_id: str | None = None,
-        joins: ForkID | None = None,
+        parent_fork_id: str | None = None,
+        preferred_parent_fork: Literal['farthest', 'closest'] = 'farthest',
     ) -> Join[StateT, DepsT, InputT, OutputT]: ...
 
     def join(
@@ -281,17 +283,19 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         initial: OutputT | Unset = UNSET,
         initial_factory: Callable[[], OutputT] | Unset = UNSET,
         node_id: str | None = None,
-        joins: ForkID | None = None,
+        parent_fork_id: str | None = None,
+        preferred_parent_fork: Literal['farthest', 'closest'] = 'farthest',
     ) -> Join[StateT, DepsT, InputT, OutputT]:
         if initial_factory is UNSET:
             initial_factory = lambda: initial  # pyright: ignore[reportAssignmentType]  # noqa E731
 
         return Join[StateT, DepsT, InputT, OutputT](
             # TODO: Find a way to use the reducer name here, but still allow duplicates. It makes for a better node id.
-            id=JoinID(NodeID(node_id or generate_placeholder_node_id('join'))),
+            id=JoinID(NodeID(node_id or generate_placeholder_node_id(get_callable_name(reducer)))),
             reducer=reducer,
             initial_factory=cast(Callable[[], OutputT], initial_factory),
-            joins=joins,
+            parent_fork_id=ForkID(parent_fork_id) if parent_fork_id is not None else None,
+            preferred_parent_fork=preferred_parent_fork,
         )
 
     # Edge building
@@ -323,23 +327,33 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
                 elif isinstance(item, DestinationMarker):
                     pass
 
+        def _handle_destination_node(d: AnyDestinationNode):
+            if id(d) in destination_ids:  # pragma: no cover
+                return  # prevent infinite recursion if there is a cycle of decisions; not sure if this is possible
+
+            destination_ids.add(id(d))
+            destinations.append(d)
+            self._insert_node(d)
+            if isinstance(d, Decision):
+                for branch in d.branches:
+                    _handle_path(branch.path)
+                    for d2 in branch.destinations:
+                        _handle_destination_node(d2)
+
+        destination_ids = set[int]()
         destinations: list[AnyDestinationNode] = []
         for edge in edges:
             for source_node in edge.sources:
                 self._insert_node(source_node)
                 self._edges_by_source[source_node.id].append(edge.path)
             for destination_node in edge.destinations:
-                destinations.append(destination_node)
-                self._insert_node(destination_node)
-                if isinstance(destination_node, Decision):
-                    for branch in destination_node.branches:
-                        _handle_path(branch.path)
-
+                _handle_destination_node(destination_node)
             _handle_path(edge.path)
 
         # Automatically create edges from step function return hints including `BaseNode`s
         for destination in destinations:
             if not isinstance(destination, Step) or isinstance(destination, NodeStep):
+                # TODO: Confirm with Douwe that this logic is correct. It seems like we continue in more general conditions?
                 continue
             parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
             type_hints = get_type_hints(destination.call, localns=parent_namespace, include_extras=True)
@@ -463,8 +477,9 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             A DecisionBranch for the BaseNode type
         """
         assert False  # TODO: Need to cover this in a test
-        path = Path(items=[DestinationMarker(NodeStep(source).id)])
-        return DecisionBranch(source=source, matches=matches, path=path)
+        node = NodeStep(source)
+        path = Path(items=[DestinationMarker(node.id)])
+        return DecisionBranch(source=source, matches=matches, path=path, destinations=[node])
 
     def node(
         self,
@@ -774,15 +789,17 @@ def _collect_dominating_forks(
         edges=edges,
     )
 
-    join_ids = {node.id for node in graph_nodes.values() if isinstance(node, Join)}
+    joins = [node for node in graph_nodes.values() if isinstance(node, Join)]
     dominating_forks: dict[JoinID, ParentFork[NodeID]] = {}
-    for join_id in join_ids:
-        dominating_fork = finder.find_parent_fork(join_id)
+    for join in joins:
+        dominating_fork = finder.find_parent_fork(
+            join.id, explicit_fork_id=join.parent_fork_id, prefer_closest=join.preferred_parent_fork == 'closest'
+        )
         if dominating_fork is None:
             # TODO(P3): Print out the mermaid graph and explain the problem
             assert False  # TODO: Need to cover this in a test
-            raise ValueError(f'Join node {join_id} has no dominating fork')
-        dominating_forks[join_id] = dominating_fork
+            raise ValueError(f'Join node {join.id} has no dominating fork')
+        dominating_forks[join.id] = dominating_fork
 
     return dominating_forks
 

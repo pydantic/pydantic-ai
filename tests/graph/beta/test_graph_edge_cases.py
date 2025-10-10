@@ -10,7 +10,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import ReducerContext, reduce_sum
+from pydantic_graph.beta.join import ReduceFirstValue, ReducerContext, reduce_sum
 
 pytestmark = pytest.mark.anyio
 
@@ -235,6 +235,70 @@ async def test_reducer_stop_iteration():
     assert result <= 18
 
 
+async def test_parallel_reducer_stop_iteration_explicit_fork_ids():
+    """Test reducer that raises StopIteration to cancel concurrent tasks."""
+
+    g = GraphBuilder(output_type=int)
+
+    @g.step
+    async def generate_numbers(ctx: StepContext[None, None, None]) -> list[int]:
+        return [1, 1, 1, 1, 1]
+
+    stop_early_1 = g.join(ReduceFirstValue[int](), initial=0, parent_fork_id='map_1')
+    stop_early_2 = g.join(ReduceFirstValue[int](), initial=0, parent_fork_id='map_2')
+    collect = g.join(reduce_sum, initial=0)
+
+    g.add(
+        g.edge_from(g.start_node).to(generate_numbers),
+        g.edge_from(generate_numbers).broadcast(
+            lambda b: [
+                b.map(fork_id='map_1').transform(lambda ctx: ctx.inputs * 10).to(stop_early_1),
+                b.map(fork_id='map_2').to(stop_early_2),
+            ]
+        ),
+        g.edge_from(stop_early_1, stop_early_2).to(collect),
+        g.edge_from(collect).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run()
+
+    # Result should be 11 because it should have stopped early on one input in the first fork and the *10 fork
+    assert result == 11
+
+
+async def test_parallel_reducer_stop_iteration_implicit_fork_ids():
+    """Test reducer that raises StopIteration to cancel concurrent tasks."""
+
+    g = GraphBuilder(output_type=int)
+
+    @g.step
+    async def generate_numbers(ctx: StepContext[None, None, None]) -> list[int]:
+        return [1, 1, 1, 1, 1]
+
+    stop_early_1 = g.join(ReduceFirstValue[int](), initial=0, preferred_parent_fork='closest')
+    stop_early_2 = g.join(ReduceFirstValue[int](), initial=0, preferred_parent_fork='closest')
+    collect = g.join(reduce_sum, initial=0)
+
+    g.add(
+        g.edge_from(g.start_node).to(generate_numbers),
+        g.edge_from(generate_numbers).broadcast(
+            lambda b: [
+                b.map().transform(lambda ctx: ctx.inputs * 10).to(stop_early_1),
+                b.map().to(stop_early_2),
+            ]
+        ),
+        g.edge_from(stop_early_1, stop_early_2).to(collect),
+        g.edge_from(collect).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run()
+
+    # Result should be 11 because it should have stopped early on one input in the first fork and the *10 fork
+    assert result == 11
+
+
 async def test_empty_path_handling():
     """Test handling of empty paths in graph execution."""
     g = GraphBuilder(state_type=MyState, output_type=int)
@@ -353,12 +417,12 @@ stateDiagram-v2
   state map <<fork>>
   state map_2 <<fork>>
   inner_process
-  state join <<join>>
+  state reduce_sum <<join>>
 
   [*] --> outer_list
   outer_list --> map
   map --> map_2
   map_2 --> inner_process
-  inner_process --> join
-  join --> [*]\
+  inner_process --> reduce_sum
+  reduce_sum --> [*]\
 """)

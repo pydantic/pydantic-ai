@@ -10,7 +10,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, get_origin, overload
+from typing import TYPE_CHECKING, Any, Generic, get_origin
 
 from typing_extensions import Protocol, Self, TypeAliasType, TypeVar
 
@@ -175,18 +175,6 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
     working_items: Sequence[PathItem]
     """The accumulated sequence of path items being built."""
 
-    @property
-    def last_fork(self) -> BroadcastMarker | MapMarker | None:
-        """Get the most recent fork or map marker in the working path.
-
-        Returns:
-            The last BroadcastMarker or MapMarker in the working items, or None if no forks exist
-        """
-        for item in reversed(self.working_items):
-            if isinstance(item, BroadcastMarker | MapMarker):
-                return item
-        return None
-
     def to(
         self,
         destination: DestinationNode[StateT, DepsT, OutputT],
@@ -243,8 +231,8 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
     def map(
         self: PathBuilder[StateT, DepsT, Iterable[T]],
         *,
-        fork_id: ForkID | None = None,
-        downstream_join_id: JoinID | None = None,
+        fork_id: str | None = None,
+        downstream_join_id: str | None = None,
     ) -> PathBuilder[StateT, DepsT, T]:
         """Spread iterable data across parallel execution paths.
 
@@ -259,8 +247,8 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
             A new PathBuilder that operates on individual items from the iterable
         """
         next_item = MapMarker(
-            fork_id=NodeID(fork_id or generate_placeholder_node_id('map')),
-            downstream_join_id=downstream_join_id,
+            fork_id=ForkID(NodeID(fork_id or generate_placeholder_node_id('map'))),
+            downstream_join_id=JoinID(downstream_join_id) if downstream_join_id is not None else None,
         )
         return PathBuilder[StateT, DepsT, T](working_items=[*self.working_items, next_item])
 
@@ -329,24 +317,9 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
         self.sources = sources
         self._path_builder = path_builder
 
-    @overload
-    def to(
-        self, get_forks: Callable[[Self], Sequence[EdgePath[StateT, DepsT]]], /, *, fork_id: str | None = None
-    ) -> EdgePath[StateT, DepsT]: ...
-
-    @overload
     def to(
         self,
-        /,
-        *destinations: DestinationNode[StateT, DepsT, OutputT] | type[BaseNode[StateT, DepsT, Any]],
-        fork_id: str | None = None,
-    ) -> EdgePath[StateT, DepsT]: ...
-
-    def to(
-        self,
-        first_item: DestinationNode[StateT, DepsT, OutputT]
-        | type[BaseNode[StateT, DepsT, Any]]
-        | Callable[[Self], Sequence[EdgePath[StateT, DepsT]]],
+        destination: DestinationNode[StateT, DepsT, OutputT] | type[BaseNode[StateT, DepsT, Any]],
         /,
         *extra_destinations: DestinationNode[StateT, DepsT, OutputT] | type[BaseNode[StateT, DepsT, Any]],
         fork_id: str | None = None,
@@ -354,7 +327,7 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
         """Complete the edge path by routing to destination nodes.
 
         Args:
-            first_item: Either a destination node or a function that generates edge paths
+            destination: Either a destination node or a function that generates edge paths
             *extra_destinations: Additional destination nodes (creates a broadcast)
             fork_id: Optional ID for the fork created when multiple destinations are specified
 
@@ -363,30 +336,43 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
         """
         # `type[BaseNode[StateT, DepsT, Any]]` could actually be a `typing._GenericAlias` like `pydantic_ai._agent_graph.UserPromptNode[~DepsT, ~OutputT]`,
         # so we get the origin to get to the actual class
-        first_item = get_origin(first_item) or first_item
+        destination = get_origin(destination) or destination
         extra_destinations = tuple(get_origin(d) or d for d in extra_destinations)
+        destinations = [(NodeStep(d) if inspect.isclass(d) else d) for d in (destination, *extra_destinations)]
+        return EdgePath(
+            sources=self.sources,
+            path=self._path_builder.to(destinations[0], *destinations[1:], fork_id=fork_id),
+            destinations=destinations,
+        )
 
-        if callable(first_item) and not inspect.isclass(first_item):
-            new_edge_paths = first_item(self)
-            path = self._path_builder.broadcast([Path(x.path.items) for x in new_edge_paths], fork_id=fork_id)
-            destinations = [d for ep in new_edge_paths for d in ep.destinations]
-            return EdgePath(
-                sources=self.sources,
-                path=path,
-                destinations=destinations,
-            )
-        else:
-            destinations = [(NodeStep(d) if inspect.isclass(d) else d) for d in (first_item, *extra_destinations)]
-            return EdgePath(
-                sources=self.sources,
-                path=self._path_builder.to(*destinations, fork_id=fork_id),
-                destinations=destinations,
-            )
+    def broadcast(
+        self, get_forks: Callable[[Self], Sequence[EdgePath[StateT, DepsT]]], /, *, fork_id: str | None = None
+    ) -> EdgePath[StateT, DepsT]:
+        """Broadcast this EdgePathBuilder into multiple destinations.
+
+        Args:
+            get_forks: The callback that will return a sequence of EdgePaths to broadcast to.
+            fork_id: Optional node ID to use for the resulting broadcast fork.
+
+        Returns:
+            A completed EdgePath with the specified destinations.
+        """
+        new_edge_paths = get_forks(self)
+        new_paths = [Path(x.path.items) for x in new_edge_paths]
+        if not new_paths:
+            raise ValueError(f'The call to {get_forks} returned no branches, but must return at least one.')
+        path = self._path_builder.broadcast(new_paths, fork_id=fork_id)
+        destinations = [d for ep in new_edge_paths for d in ep.destinations]
+        return EdgePath(
+            sources=self.sources,
+            path=path,
+            destinations=destinations,
+        )
 
     def map(
         self: EdgePathBuilder[StateT, DepsT, Iterable[T]],
         *,
-        fork_id: ForkID | None = None,
+        fork_id: str | None = None,
         downstream_join_id: JoinID | None = None,
     ) -> EdgePathBuilder[StateT, DepsT, T]:
         """Spread iterable data across parallel execution paths.

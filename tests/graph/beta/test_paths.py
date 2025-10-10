@@ -47,19 +47,6 @@ async def test_path_last_fork_with_map():
     assert path.last_fork is map
 
 
-async def test_path_builder_last_fork_no_forks():
-    """Test PathBuilder.last_fork property when there are no forks."""
-    builder = PathBuilder[MyState, None, int](working_items=[LabelMarker('test')])
-    assert builder.last_fork is None
-
-
-async def test_path_builder_last_fork_with_map():
-    """Test PathBuilder.last_fork property with a MapMarker."""
-    map = MapMarker(fork_id=ForkID(NodeID('map1')), downstream_join_id=None)
-    builder = PathBuilder[MyState, None, int](working_items=[map, LabelMarker('test')])
-    assert builder.last_fork is map
-
-
 async def test_path_builder_transform():
     """Test PathBuilder.transform method."""
 

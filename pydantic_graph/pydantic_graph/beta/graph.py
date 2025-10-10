@@ -510,7 +510,6 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                                 task_ids_to_cancel.add(task_id)
                                 break
                             else:
-                                assert False  # TODO: Need to cover this in a test
                                 pass
                     for task in list(pending):
                         if task.get_name() in task_ids_to_cancel:
@@ -750,6 +749,5 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                 if t.node_id in parent_fork.intermediate_nodes or t.node_id == join_id:
                     return False
             else:
-                assert False  # TODO: Need to cover this in a test
                 pass
         return True

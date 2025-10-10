@@ -7,18 +7,21 @@ to choose different execution paths based on runtime conditions.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic
+from typing import TYPE_CHECKING, Any, Generic, get_origin
 
 from typing_extensions import Never, Self, TypeVar
 
-from pydantic_graph.beta.id_types import ForkID, JoinID, NodeID
+from pydantic_graph import BaseNode
+from pydantic_graph.beta.id_types import NodeID
 from pydantic_graph.beta.paths import Path, PathBuilder, TransformFunction
+from pydantic_graph.beta.step import NodeStep
 from pydantic_graph.beta.util import TypeOrTypeExpression
 
 if TYPE_CHECKING:
-    from pydantic_graph.beta.node_types import DestinationNode
+    from pydantic_graph.beta.node_types import AnyDestinationNode, DestinationNode
 
 StateT = TypeVar('StateT', infer_variance=True)
 """Type variable for graph state."""
@@ -119,6 +122,9 @@ class DecisionBranch(Generic[SourceT]):
 
     The path can also include position-aware labels which are used when generating mermaid diagrams."""
 
+    destinations: list[AnyDestinationNode]
+    """The destination nodes that can be referenced by DestinationMarker in the path."""
+
 
 OutputT = TypeVar('OutputT', infer_variance=True)
 """Type variable for the output data of a node."""
@@ -144,6 +150,7 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
     """The expected source type for this branch."""
     _matches: Callable[[Any], bool] | None
     """Optional matching predicate."""
+
     _path_builder: PathBuilder[StateT, DepsT, OutputT]
     """Builder for the execution path."""
 
@@ -163,39 +170,50 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
 
     def to(
         self,
-        destination: DestinationNode[StateT, DepsT, OutputT],
+        destination: DestinationNode[StateT, DepsT, OutputT] | type[BaseNode[StateT, DepsT, Any]],
         /,
-        *extra_destinations: DestinationNode[StateT, DepsT, OutputT],
+        *extra_destinations: DestinationNode[StateT, DepsT, OutputT] | type[BaseNode[StateT, DepsT, Any]],
+        fork_id: str | None = None,
     ) -> DecisionBranch[SourceT]:
         """Set the destination(s) for this branch.
 
         Args:
             destination: The primary destination node.
             *extra_destinations: Additional destination nodes.
+            fork_id: Optional node ID to use for the resulting broadcast fork if multiple destinations are provided.
 
         Returns:
             A completed DecisionBranch with the specified destinations.
         """
+        destination = get_origin(destination) or destination
+        extra_destinations = tuple(get_origin(d) or d for d in extra_destinations)
+        destinations = [(NodeStep(d) if inspect.isclass(d) else d) for d in (destination, *extra_destinations)]
         return DecisionBranch(
-            source=self._source, matches=self._matches, path=self._path_builder.to(destination, *extra_destinations)
+            source=self._source,
+            matches=self._matches,
+            path=self._path_builder.to(*destinations, fork_id=fork_id),
+            destinations=destinations,
         )
 
     def broadcast(
-        self,
-        get_forks: Callable[[Self], Sequence[DecisionBranch[SourceT]]],
-        /,
+        self, get_forks: Callable[[Self], Sequence[DecisionBranch[SourceT]]], /, *, fork_id: str | None = None
     ) -> DecisionBranch[SourceT]:
-        """Create a broadcast fork in the execution path.
+        """Broadcast this decision branch into multiple destinations.
 
         Args:
-            get_forks: Function (typically a lambda) that returns the broadcast forks downstream of this decision branch.
+            get_forks: The callback that will return a sequence of decision branches to broadcast to.
+            fork_id: Optional node ID to use for the resulting broadcast fork.
 
         Returns:
-            A completed DecisionBranch with broadcast-forked execution paths.
+            A completed DecisionBranch with the specified destinations.
         """
         fork_decision_branches = get_forks(self)
         new_paths = [b.path for b in fork_decision_branches]
-        return DecisionBranch(source=self._source, matches=self._matches, path=self._path_builder.broadcast(new_paths))
+        if not new_paths:
+            raise ValueError(f'The call to {get_forks} returned no branches, but must return at least one.')
+        path = self._path_builder.broadcast(new_paths, fork_id=fork_id)
+        destinations = [d for fdp in fork_decision_branches for d in fdp.destinations]
+        return DecisionBranch(source=self._source, matches=self._matches, path=path, destinations=destinations)
 
     def transform(
         self, func: TransformFunction[StateT, DepsT, OutputT, NewOutputT], /
@@ -218,8 +236,8 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
     def map(
         self: DecisionBranchBuilder[StateT, DepsT, Iterable[T], SourceT, HandledT],
         *,
-        fork_id: ForkID | None = None,
-        downstream_join_id: JoinID | None = None,
+        fork_id: str | None = None,
+        downstream_join_id: str | None = None,
     ) -> DecisionBranchBuilder[StateT, DepsT, T, SourceT, HandledT]:
         """Spread the branch's output.
 

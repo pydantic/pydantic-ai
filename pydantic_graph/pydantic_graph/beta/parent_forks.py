@@ -69,7 +69,10 @@ class ParentForkFinder(Generic[T]):
     edges: dict[T, list[T]]  # source_id to list of destination_ids
     """Graph edges represented as adjacency list mapping source nodes to destinations."""
 
-    def find_parent_fork(self, join_id: T) -> ParentFork[T] | None:
+    # TODO: Add unit tests of this class that make use of explicit_fork_id and prefer_closest
+    def find_parent_fork(
+        self, join_id: T, *, explicit_fork_id: T | None = None, prefer_closest: bool = False
+    ) -> ParentFork[T] | None:
         """Find the parent fork for a given join node.
 
         Searches for the _most_ ancestral dominating fork that can serve as a parent fork
@@ -78,6 +81,9 @@ class ParentForkFinder(Generic[T]):
 
         Args:
             join_id: The identifier of the join node to analyze.
+            explicit_fork_id: Optional manually selected node ID to attempt to use as the parent fork node.
+            prefer_closest: If no explicit fork is specified, this argument is used to determine
+                whether to find the closest or farthest (i.e., most ancestral) dominating fork.
 
         Returns:
             A ParentFork object containing the fork ID and intermediate nodes if a valid
@@ -88,10 +94,18 @@ class ParentForkFinder(Generic[T]):
             If every dominating fork of the join lets it participate in a cycle that avoids
             the fork, None is returned since no valid "parent fork" exists.
         """
+        if explicit_fork_id is not None:
+            # A fork was manually specified; we still verify it's a valid dominating fork
+            upstream_nodes = self._get_upstream_nodes_if_parent(join_id, explicit_fork_id)
+            if upstream_nodes is None:
+                raise RuntimeError(
+                    f'There is a cycle in the graph passing through the nodes with IDs {join_id!r} and {explicit_fork_id!r}'
+                )
+            return ParentFork[T](explicit_fork_id, upstream_nodes)
+
         visited: set[str] = set()
         cur = join_id  # start at J and walk up the immediate dominator chain
 
-        # TODO(P2): Make it a node-configuration option to choose the most _or_ the least ancestral node as parent fork? Or manually specified(?)
         parent_fork: ParentFork[T] | None = None
         while True:
             cur = self._immediate_dominator(cur)
@@ -108,8 +122,9 @@ class ParentForkFinder(Generic[T]):
             upstream_nodes = self._get_upstream_nodes_if_parent(join_id, cur)
             if upstream_nodes is not None:  # found upstream nodes without a cycle
                 parent_fork = ParentFork[T](cur, upstream_nodes)
+                if prefer_closest:
+                    return parent_fork
             elif parent_fork is not None:
-                assert False  # TODO: Need to cover this in a test
                 # We reached a fork that is an ancestor of a parent fork but is not itself a parent fork.
                 # This means there is a cycle to J that is downstream of `cur`, and so any node further upstream
                 # will fail to be a parent fork for the same reason. So we can stop here and just return `parent_fork`.

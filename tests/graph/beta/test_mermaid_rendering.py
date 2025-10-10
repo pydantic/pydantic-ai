@@ -183,7 +183,7 @@ async def test_render_with_direction():
 
     g.add(
         g.edge_from(g.start_node).to(step),
-        g.edge_from(step).to(g.end_node),
+        g.edge_from(step).transform(lambda ctx: ctx.inputs * 2).to(g.end_node),
     )
 
     graph = g.build()

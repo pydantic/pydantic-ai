@@ -11,7 +11,7 @@ import inspect
 from abc import abstractmethod
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Generic, cast, overload
+from typing import Any, Generic, Literal, cast, overload
 
 from typing_extensions import Protocol, Self, TypeAliasType, TypeVar
 
@@ -137,6 +137,7 @@ def reduce_sum(current: NumericT, inputs: NumericT) -> NumericT:
     return current + inputs
 
 
+@dataclass
 class ReduceFirstValue(Generic[T]):
     """A reducer that returns the first value it encounters, and cancels all other tasks."""
 
@@ -166,7 +167,8 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
     id: JoinID
     _reducer: ReducerFunction[StateT, DepsT, InputT, OutputT]
     _initial_factory: Callable[[], OutputT]
-    joins: ForkID | None
+    parent_fork_id: ForkID | None
+    preferred_parent_fork: Literal['closest', 'farthest']
 
     def __init__(
         self,
@@ -174,12 +176,14 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
         id: JoinID,
         reducer: ReducerFunction[StateT, DepsT, InputT, OutputT],
         initial_factory: Callable[[], OutputT],
-        joins: ForkID | None = None,
+        parent_fork_id: ForkID | None = None,
+        preferred_parent_fork: Literal['farthest', 'closest'] = 'farthest',
     ):
         self.id = id
         self._reducer = reducer
         self._initial_factory = initial_factory
-        self.joins = joins
+        self.parent_fork_id = parent_fork_id
+        self.preferred_parent_fork = preferred_parent_fork
 
     @property
     def reducer(self):

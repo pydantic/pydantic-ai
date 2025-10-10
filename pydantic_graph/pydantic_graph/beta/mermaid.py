@@ -62,11 +62,6 @@ def build_mermaid_graph(graph: Graph[Any, Any, Any, Any]) -> MermaidGraph:  # no
                 working_label = item.label
             elif isinstance(item, DestinationMarker):
                 edges_by_source[last_source_id].append(MermaidEdge(last_source_id, item.destination_id, working_label))
-            else:
-                assert (
-                    False
-                )  # TODO: Need to cover this in a test, by adding .transform() to a path, then delete the else: block
-                pass
 
     for node_id, node in graph.nodes.items():
         kind: NodeKind
