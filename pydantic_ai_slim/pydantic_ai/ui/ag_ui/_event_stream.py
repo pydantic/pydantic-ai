@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Iterable
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
 from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FunctionToolResultEvent,
-    ModelResponsePart,
+    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -25,9 +25,6 @@ from ...messages import (
 )
 from ...tools import AgentDepsT
 from .. import BaseEventStream
-
-if TYPE_CHECKING:
-    pass  # Agent type is not actually used in this module
 
 try:
     from ag_ui.core import (
@@ -78,8 +75,9 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
     def __init__(self, request: RunAgentInput) -> None:
         """Initialize AG-UI event stream state."""
         super().__init__(request)
-        self.thinking_text = False
-        self.builtin_tool_call_ids: dict[str, str] = {}
+        self._thinking_text = False
+        self._builtin_tool_call_ids: dict[str, str] = {}
+        self._final_result_tool_id: str | None = None
 
     def encode_event(self, event: BaseEvent, accept: str | None = None) -> str:
         """Encode an AG-UI event as SSE.
@@ -112,12 +110,10 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
         """Handle errors during streaming."""
         yield RunErrorEvent(message=str(error))
 
-    async def handle_text_start(
-        self, part: TextPart, previous_part: ModelResponsePart | None = None
-    ) -> AsyncIterator[BaseEvent]:
+    async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseEvent]:
         """Handle a TextPart at start."""
-        if isinstance(previous_part, TextPart):
-            message_id = previous_part.message_id
+        if follows_text:
+            message_id = self.message_id
         else:
             message_id = self.new_message_id()
             yield TextMessageStartEvent(message_id=message_id)
@@ -130,61 +126,57 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
         if delta.content_delta:  # pragma: no branch
             yield TextMessageContentEvent(message_id=self.message_id, delta=delta.content_delta)
 
-    async def handle_text_end(
-        self, part: TextPart, next_part: ModelResponsePart | None = None
-    ) -> AsyncIterator[BaseEvent]:
+    async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[BaseEvent]:
         """Handle a TextPart at end."""
-        if not isinstance(next_part, TextPart):
+        if not followed_by_text:
             yield TextMessageEndEvent(message_id=self.message_id)
 
     async def handle_thinking_start(
-        self, part: ThinkingPart, previous_part: ModelResponsePart | None = None
+        self, part: ThinkingPart, follows_thinking: bool = False
     ) -> AsyncIterator[BaseEvent]:
         """Handle a ThinkingPart at start."""
-        if not isinstance(previous_part, ThinkingPart):
+        if not follows_thinking:
             yield ThinkingStartEvent(type=EventType.THINKING_START)
 
         if part.content:
             yield ThinkingTextMessageStartEvent(type=EventType.THINKING_TEXT_MESSAGE_START)
             yield ThinkingTextMessageContentEvent(type=EventType.THINKING_TEXT_MESSAGE_CONTENT, delta=part.content)
-            self.thinking_text = True
+            self._thinking_text = True
 
     async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[BaseEvent]:
         """Handle a ThinkingPartDelta."""
         if not delta.content_delta:
             return
 
-        if not self.thinking_text:
+        if not self._thinking_text:
             yield ThinkingTextMessageStartEvent(type=EventType.THINKING_TEXT_MESSAGE_START)
-            self.thinking_text = True
+            self._thinking_text = True
 
         yield ThinkingTextMessageContentEvent(type=EventType.THINKING_TEXT_MESSAGE_CONTENT, delta=delta.content_delta)
 
     async def handle_thinking_end(
-        self, part: ThinkingPart, next_part: ModelResponsePart | None = None
+        self, part: ThinkingPart, followed_by_thinking: bool = False
     ) -> AsyncIterator[BaseEvent]:
         """Handle a ThinkingPart at end."""
-        if self.thinking_text:
+        if self._thinking_text:
             yield ThinkingTextMessageEndEvent(type=EventType.THINKING_TEXT_MESSAGE_END)
-            self.thinking_text = False
+            self._thinking_text = False
 
-        if not isinstance(next_part, ThinkingPart):
+        if not followed_by_thinking:
             yield ThinkingEndEvent(type=EventType.THINKING_END)
 
-    async def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
+    def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
         """Handle a ToolCallPart or BuiltinToolCallPart at start."""
-        async for e in self._handle_tool_call_start(part):
-            yield e
+        return self._handle_tool_call_start(part)
 
-    async def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
+    def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
         """Handle a BuiltinToolCallPart at start."""
         tool_call_id = part.tool_call_id
         builtin_tool_call_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', tool_call_id])
-        self.builtin_tool_call_ids[tool_call_id] = builtin_tool_call_id
+        self._builtin_tool_call_ids[tool_call_id] = builtin_tool_call_id
         tool_call_id = builtin_tool_call_id
 
-        async for e in self._handle_tool_call_start(part, tool_call_id):
-            yield e
+        return self._handle_tool_call_start(part, tool_call_id)
 
     async def _handle_tool_call_start(
         self, part: ToolCallPart | BuiltinToolCallPart, tool_call_id: str | None = None
@@ -201,8 +193,8 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
         """Handle a ToolCallPartDelta."""
         tool_call_id = delta.tool_call_id
         assert tool_call_id, '`ToolCallPartDelta.tool_call_id` must be set'
-        if tool_call_id in self.builtin_tool_call_ids:
-            tool_call_id = self.builtin_tool_call_ids[tool_call_id]
+        if tool_call_id in self._builtin_tool_call_ids:
+            tool_call_id = self._builtin_tool_call_ids[tool_call_id]
         yield ToolCallArgsEvent(
             tool_call_id=tool_call_id,
             delta=delta.args_delta if isinstance(delta.args_delta, str) else json.dumps(delta.args_delta),
@@ -214,11 +206,11 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
 
     async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
         """Handle a BuiltinToolCallPart at end."""
-        yield ToolCallEndEvent(tool_call_id=self.builtin_tool_call_ids[part.tool_call_id])
+        yield ToolCallEndEvent(tool_call_id=self._builtin_tool_call_ids[part.tool_call_id])
 
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseEvent]:
         """Handle a BuiltinToolReturnPart."""
-        tool_call_id = self.builtin_tool_call_ids[part.tool_call_id]
+        tool_call_id = self._builtin_tool_call_ids[part.tool_call_id]
         yield ToolCallResultEvent(
             message_id=self.new_message_id(),
             type=EventType.TOOL_CALL_RESULT,
@@ -230,28 +222,27 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseEvent]:
         """Handle a FunctionToolResultEvent, emitting tool result events."""
         result = event.result
-        if not isinstance(result, ToolReturnPart):
-            # TODO (DouweM): Stream RetryPromptParts to the frontend as well?
-            return
+        output = result.model_response() if isinstance(result, RetryPromptPart) else result.model_response_str()
 
         yield ToolCallResultEvent(
             message_id=self.new_message_id(),
             type=EventType.TOOL_CALL_RESULT,
             role='tool',
             tool_call_id=result.tool_call_id,
-            content=result.model_response_str(),
+            content=output,
         )
 
-        # Check for AG-UI events returned by tool calls.
-        possible_event = result.metadata or result.content
-        if isinstance(possible_event, BaseEvent):
-            yield possible_event
-        elif isinstance(possible_event, str | bytes):  # pragma: no branch
-            # Avoid iterable check for strings and bytes.
-            pass
-        elif isinstance(possible_event, Iterable):  # pragma: no branch
-            for item in possible_event:  # type: ignore[reportUnknownMemberType]
-                if isinstance(item, BaseEvent):  # pragma: no branch
-                    yield item
+        if isinstance(result, ToolReturnPart):
+            # Check for AG-UI events returned by tool calls.
+            possible_event = result.metadata or result.content
+            if isinstance(possible_event, BaseEvent):
+                yield possible_event
+            elif isinstance(possible_event, str | bytes):  # pragma: no branch
+                # Avoid iterable check for strings and bytes.
+                pass
+            elif isinstance(possible_event, Iterable):  # pragma: no branch
+                for item in possible_event:  # type: ignore[reportUnknownMemberType]
+                    if isinstance(item, BaseEvent):  # pragma: no branch
+                        yield item
 
         # TODO (DouweM): Stream ToolCallResultEvent.content as user parts?

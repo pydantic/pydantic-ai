@@ -203,10 +203,12 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         part = event.part
         match part:
             case TextPart():
-                async for e in self.handle_text_start(part, previous_part):
+                async for e in self.handle_text_start(part, follows_text=isinstance(previous_part, TextPart)):
                     yield e
             case ThinkingPart():
-                async for e in self.handle_thinking_start(part, previous_part):
+                async for e in self.handle_thinking_start(
+                    part, follows_thinking=isinstance(previous_part, ThinkingPart)
+                ):
                     yield e
             case ToolCallPart():
                 async for e in self.handle_tool_call_start(part):
@@ -251,10 +253,10 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         # TODO (DouweM): Make this a proper event. Figure out a proper way to do context manager style wrapping
         match part:
             case TextPart():
-                async for e in self.handle_text_end(part, next_part):
+                async for e in self.handle_text_end(part, followed_by_text=isinstance(next_part, TextPart)):
                     yield e
             case ThinkingPart():
-                async for e in self.handle_thinking_end(part, next_part):
+                async for e in self.handle_thinking_end(part, followed_by_thinking=isinstance(next_part, ThinkingPart)):
                     yield e
             case ToolCallPart():
                 async for e in self.handle_tool_call_end(part):
@@ -262,15 +264,16 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
             case BuiltinToolCallPart():
                 async for e in self.handle_builtin_tool_call_end(part):
                     yield e
+            case BuiltinToolReturnPart() | FilePart():
+                # These don't have deltas, so they don't need to be ended.
+                pass
 
-    async def handle_text_start(
-        self, part: TextPart, previous_part: ModelResponsePart | None = None
-    ) -> AsyncIterator[EventT]:
+    async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[EventT]:
         """Handle a TextPart at start.
 
         Args:
             part: The TextPart.
-            previous_part: The previous part.
+            follows_text: Whether the part follows a text part.
 
         Yields:
             Protocol-specific events.
@@ -290,14 +293,12 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         return
         yield  # Make this an async generator
 
-    async def handle_thinking_start(
-        self, part: ThinkingPart, previous_part: ModelResponsePart | None = None
-    ) -> AsyncIterator[EventT]:
+    async def handle_thinking_start(self, part: ThinkingPart, follows_thinking: bool = False) -> AsyncIterator[EventT]:
         """Handle a ThinkingPart at start.
 
         Args:
             part: The ThinkingPart.
-            previous_part: The previous part.
+            follows_thinking: Whether the part follows a thinking part.
 
         Yields:
             Protocol-specific events.
@@ -377,15 +378,13 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         return
         yield  # Make this an async generator
 
-    async def handle_text_end(
-        self, part: TextPart, next_part: ModelResponsePart | None = None
-    ) -> AsyncIterator[EventT]:
+    async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[EventT]:
         """Handle the end of a TextPart."""
         return
         yield  # Make this an async generator
 
     async def handle_thinking_end(
-        self, part: ThinkingPart, next_part: ModelResponsePart | None = None
+        self, part: ThinkingPart, followed_by_thinking: bool = False
     ) -> AsyncIterator[EventT]:
         """Handle the end of a ThinkingPart."""
         return

@@ -639,6 +639,17 @@ async def test_tool_ag_ui_parts() -> None:
             },
             {'type': 'TOOL_CALL_ARGS', 'toolCallId': tool_call_id, 'delta': 'Paris"}'},
             {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'messageId': IsStr(),
+                'toolCallId': tool_call_id,
+                'content': """\
+Unknown tool name: 'get_weather'. Available tools: 'get_weather_parts'
+
+Fix the errors and try again.\
+""",
+                'role': 'tool',
+            },
             {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
             {
                 'type': 'TEXT_MESSAGE_CONTENT',

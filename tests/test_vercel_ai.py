@@ -150,7 +150,9 @@ async def test_run(allow_model_requests: None, openai_api_key: str):
     events = [json.loads(event.removeprefix('data: ')) async for event in adapter.encode_stream(adapter.run_stream())]
     assert events == snapshot(
         [
+            {'type': 'start'},
             {'type': 'reasoning-start', 'id': IsStr()},
+            {'type': 'reasoning-end', 'id': IsStr()},
             {
                 'type': 'tool-input-start',
                 'toolCallId': IsStr(),
@@ -167,6 +169,7 @@ async def test_run(allow_model_requests: None, openai_api_key: str):
                 'output': {'status': 'completed'},
             },
             {'type': 'reasoning-start', 'id': IsStr()},
+            {'type': 'reasoning-end', 'id': IsStr()},
             {
                 'type': 'tool-input-start',
                 'toolCallId': IsStr(),
@@ -183,6 +186,7 @@ async def test_run(allow_model_requests: None, openai_api_key: str):
                 'output': {'status': 'completed'},
             },
             {'type': 'reasoning-start', 'id': IsStr()},
+            {'type': 'reasoning-end', 'id': IsStr()},
             {
                 'type': 'tool-input-start',
                 'toolCallId': IsStr(),
@@ -199,6 +203,7 @@ async def test_run(allow_model_requests: None, openai_api_key: str):
                 'output': {'status': 'completed'},
             },
             {'type': 'reasoning-start', 'id': IsStr()},
+            {'type': 'reasoning-end', 'id': IsStr()},
             {
                 'type': 'tool-input-start',
                 'toolCallId': IsStr(),
@@ -215,6 +220,7 @@ async def test_run(allow_model_requests: None, openai_api_key: str):
                 'output': {'status': 'completed'},
             },
             {'type': 'reasoning-start', 'id': IsStr()},
+            {'type': 'reasoning-end', 'id': IsStr()},
             {
                 'type': 'tool-input-start',
                 'toolCallId': IsStr(),
@@ -231,6 +237,7 @@ async def test_run(allow_model_requests: None, openai_api_key: str):
                 'output': {'status': 'completed'},
             },
             {'type': 'reasoning-start', 'id': IsStr()},
+            {'type': 'reasoning-end', 'id': IsStr()},
             {
                 'type': 'tool-input-start',
                 'toolCallId': IsStr(),
@@ -247,6 +254,7 @@ async def test_run(allow_model_requests: None, openai_api_key: str):
                 'output': {'status': 'completed'},
             },
             {'type': 'reasoning-start', 'id': IsStr()},
+            {'type': 'reasoning-end', 'id': IsStr()},
             {
                 'type': 'tool-input-start',
                 'toolCallId': IsStr(),
@@ -263,6 +271,7 @@ async def test_run(allow_model_requests: None, openai_api_key: str):
                 'output': {'status': 'completed'},
             },
             {'type': 'reasoning-start', 'id': IsStr()},
+            {'type': 'reasoning-end', 'id': IsStr()},
             {'type': 'text-start', 'id': IsStr()},
             {
                 'type': 'text-delta',
@@ -853,6 +862,7 @@ Want me to tailor\
             {'type': 'text-delta', 'delta': ' skip binary content,', 'id': IsStr()},
             {'type': 'text-delta', 'delta': ' or accumulate chunked', 'id': IsStr()},
             {'type': 'text-delta', 'delta': ' bodies safely?', 'id': IsStr()},
+            {'type': 'text-end', 'id': IsStr()},
             {'type': 'finish'},
         ]
     )
