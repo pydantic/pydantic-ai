@@ -391,6 +391,7 @@ class Tool(Generic[AgentDepsT]):
             json_schema=json_schema,
             takes_ctx=takes_ctx,
             is_async=_utils.is_async_callable(function),
+            is_async_iterator=_utils.is_async_iterator_callable(function),
         )
 
         return cls(

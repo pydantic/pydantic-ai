@@ -50,6 +50,10 @@ class ToolManager(Generic[AgentDepsT]):
         """Build a new tool manager for the next run step, carrying over the retries from the current run step."""
         if self.ctx is not None:
             if ctx.run_step == self.ctx.run_step:
+                # TODO (DouweM): Refactor to make sure it's always set
+
+                if ctx.event_stream and not self.ctx.event_stream:
+                    self.ctx.event_stream = ctx.event_stream
                 return self
 
             retries = {
