@@ -576,6 +576,15 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 tool_calls: list[_messages.ToolCallPart] = []
                 files: list[_messages.BinaryContent] = []
 
+                # If the model stopped due to token limit (length) and the last part is a tool call,
+                # the args are incomplete.
+                if self.model_response.finish_reason == 'length':
+                    last_part = self.model_response.parts[-1]
+                    if isinstance(last_part, _messages.ToolCallPart):
+                        raise exceptions.ToolExceedsTokenLimitError(
+                            'Model token limit exceeded while emitting a tool call.'
+                        )
+
                 for part in self.model_response.parts:
                     if isinstance(part, _messages.TextPart):
                         text += part.content

@@ -40,6 +40,7 @@ from pydantic_ai import (
     SystemPromptPart,
     TextPart,
     ToolCallPart,
+    ToolExceedsTokenLimitError,
     ToolReturn,
     ToolReturnPart,
     UnexpectedModelBehavior,
@@ -2446,6 +2447,18 @@ def test_unknown_tool_fix():
             ),
         ]
     )
+
+
+def test_tool_exceeds_token_limit_error():
+    def return_incomplete_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        resp = ModelResponse(parts=[ToolCallPart('dummy_tool', args='{"foo": "bar",')])
+        resp.finish_reason = 'length'
+        return resp
+
+    agent = Agent(FunctionModel(return_incomplete_tool), output_type=str)
+
+    with pytest.raises(ToolExceedsTokenLimitError, match='Model token limit exceeded while emitting a tool call.'):
+        agent.run_sync('Hello')
 
 
 def test_model_requests_blocked(env: TestEnv):
