@@ -5205,7 +5205,6 @@ We need to output the call.\
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content=''),
                     ThinkingPart(content='We need to call with correct param: name. Use a placeholder name.'),
                     ToolCallPart(
                         tool_name='get_something_by_name',

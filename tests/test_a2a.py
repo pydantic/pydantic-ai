@@ -1,6 +1,7 @@
 import uuid
 
 import anyio
+import datetime
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
@@ -621,11 +622,22 @@ async def test_a2a_multiple_tasks_same_context():
                             ToolReturnPart(
                                 tool_name='final_result',
                                 content='Final result processed.',
-                                tool_call_id=IsStr(),
-                                timestamp=IsDatetime(),
-                            ),
-                            UserPromptPart(content='Second message', timestamp=IsDatetime()),
-                        ],
+                                tool_call_id='pyd_ai_f535bc4dac9449329e63ff582da5778e',
+                                timestamp=datetime.datetime(
+                                    2025, 10, 11, 19, 35, 49, 748720, tzinfo=datetime.timezone.utc
+                                ),
+                            )
+                        ]
+                    ),
+                    ModelRequest(
+                        parts=[
+                            UserPromptPart(
+                                content='Second message',
+                                timestamp=datetime.datetime(
+                                    2025, 10, 11, 19, 35, 49, 854888, tzinfo=datetime.timezone.utc
+                                ),
+                            )
+                        ]
                     ),
                 ]
             )

@@ -1485,8 +1485,6 @@ async def test_google_model_receive_web_search_history_from_another_provider(
                 TextPart,
                 TextPart,
                 TextPart,
-                TextPart,
-                TextPart,
             ],
             [UserPromptPart],
             [TextPart],
@@ -2600,6 +2598,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _identifier='8a7952',
             identifier='8a7952',
         )
     )
@@ -2620,6 +2619,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _identifier='8a7952',
                             identifier='8a7952',
                         )
                     ),
@@ -2644,6 +2644,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _identifier='7d173c',
             identifier='7d173c',
         )
     )
@@ -2664,6 +2665,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _identifier='7d173c',
                             identifier='7d173c',
                         )
                     ),
@@ -2693,6 +2695,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
             BinaryImage(
                 data=IsBytes(),
                 media_type='image/png',
+                _identifier='9ff9cc',
                 identifier='9ff9cc',
             )
         )
@@ -2710,6 +2713,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _identifier='2af2a7',
             identifier='2af2a7',
         )
     )
@@ -2730,6 +2734,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _identifier='2af2a7',
                             identifier='2af2a7',
                         )
                     ),
@@ -2758,6 +2763,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                     content=BinaryImage(
                         data=IsBytes(),
                         media_type='image/png',
+                        _identifier='2af2a7',
                         identifier='2af2a7',
                     )
                 ),
@@ -2796,6 +2802,7 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _identifier='00f2af',
                             identifier=IsStr(),
                         )
                     ),
@@ -2831,6 +2838,7 @@ async def test_google_image_or_text_output(allow_model_requests: None, google_pr
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _identifier='f82faf',
             identifier='f82faf',
         )
     )
@@ -2849,6 +2857,7 @@ async def test_google_image_and_text_output(allow_model_requests: None, google_p
             BinaryImage(
                 data=IsBytes(),
                 media_type='image/png',
+                _identifier='67b12f',
                 identifier='67b12f',
             )
         ]
