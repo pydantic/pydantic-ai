@@ -5,6 +5,8 @@ import dataclasses
 import inspect
 from asyncio import Task
 from collections import defaultdict, deque
+
+import pydantic_ai.messages
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -1220,4 +1222,16 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                 clean_messages[-1] = merged_message
             else:
                 clean_messages.append(message)
-    return clean_messages
+
+    # This is a special filter that ensures old conversations in the "bad state" can be used
+    final_result = []
+    for message in clean_messages:
+        parts = []
+        for idx, part in enumerate(message.parts):
+            part_hash = hash(str(part))
+            if part_hash not in parts_set:
+                parts_set.add(part_hash)
+                parts.append(part)
+            continue
+        final_result.append(message)
+    return final_result
