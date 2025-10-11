@@ -5,8 +5,6 @@ import dataclasses
 import inspect
 from asyncio import Task
 from collections import defaultdict, deque
-
-import pydantic_ai.messages
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -1172,7 +1170,6 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
     """Clean the message history by merging consecutive messages of the same type."""
     clean_messages: list[_messages.ModelMessage] = []
     # Add parts to a set to ensure no duplication
-    parts_set = set()
     for message in messages:
         last_message = clean_messages[-1] if len(clean_messages) > 0 else None
 
@@ -1188,8 +1185,7 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                     for part in last_message.parts
                 )
                 message_is_stub = all(
-                    isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart)
-                    for part in message.parts
+                    isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart) for part in message.parts
                 )
 
                 if same_instructions and (not last_is_stub or message_is_stub):
@@ -1222,17 +1218,4 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                 clean_messages[-1] = merged_message
             else:
                 clean_messages.append(message)
-
-    # This is a special filter that ensures old conversations in the "bad state" can be used
-    final_result = []
-    for message in clean_messages:
-        parts = []
-        for idx, part in enumerate(message.parts):
-            part_hash = hash(str(part))
-            if part_hash not in parts_set:
-                parts_set.add(part_hash)
-                parts.append(part)
-            continue
-        message.parts = parts
-        final_result.append(message)
-    return final_result
+    return clean_messages
