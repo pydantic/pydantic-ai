@@ -1169,32 +1169,41 @@ async def _process_message_history(
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
     """Clean the message history by merging consecutive messages of the same type."""
     clean_messages: list[_messages.ModelMessage] = []
+    # Add parts to a set to ensure no duplication
+    parts_set = set()
     for message in messages:
         last_message = clean_messages[-1] if len(clean_messages) > 0 else None
 
         if isinstance(message, _messages.ModelRequest):
-            if (
-                last_message
-                and isinstance(last_message, _messages.ModelRequest)
-                # Requests can only be merged if they have the same instructions
-                and (
+            if last_message and isinstance(last_message, _messages.ModelRequest):
+                same_instructions = (
                     not last_message.instructions
                     or not message.instructions
                     or last_message.instructions == message.instructions
                 )
-            ):
-                parts = [*last_message.parts, *message.parts]
-                parts.sort(
-                    # Tool return parts always need to be at the start
-                    key=lambda x: 0 if isinstance(x, _messages.ToolReturnPart | _messages.RetryPromptPart) else 1
+                last_is_stub = all(
+                    isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart)
+                    for part in last_message.parts
                 )
-                merged_message = _messages.ModelRequest(
-                    parts=parts,
-                    instructions=last_message.instructions or message.instructions,
+                message_is_stub = all(
+                    isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart)
+                    for part in message.parts
                 )
-                clean_messages[-1] = merged_message
-            else:
-                clean_messages.append(message)
+
+                if same_instructions and (not last_is_stub or message_is_stub):
+                    parts = [*last_message.parts, *message.parts]
+                    parts.sort(
+                        # Tool return parts always need to be at the start
+                        key=lambda x: 0 if isinstance(x, _messages.ToolReturnPart | _messages.RetryPromptPart) else 1
+                    )
+                    merged_message = _messages.ModelRequest(
+                        parts=parts,
+                        instructions=last_message.instructions or message.instructions,
+                    )
+                    clean_messages[-1] = merged_message
+                    continue
+
+            clean_messages.append(message)
         elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
             if (
                 last_message
