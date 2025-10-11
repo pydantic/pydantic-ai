@@ -801,3 +801,28 @@ async def test_callable_class_history_processor_with_ctx_no_op(
         ]
     )
     assert result.new_messages() == result.all_messages()[-2:]
+
+def test_clean_message_history_keeps_tool_stub_separate():
+    """Regression guard for b26a6872f that merged tool-return stubs into the next user request."""
+
+    # TODO: imports should get moved to the top whenever we open P/R
+    from pydantic_ai.messages import ToolReturnPart
+    from pydantic_ai._agent_graph import _clean_message_history
+
+    tool_stub = ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name='summarize',
+                content='summaries galore',
+                tool_call_id='call-1',
+            )
+        ]
+    )
+    user_request = ModelRequest(parts=[UserPromptPart(content='fresh prompt')])
+
+    cleaned = _clean_message_history([tool_stub, user_request])
+
+    assert len(cleaned[0].parts) == 1, 'tool-return part started as unique and should remain unique'
+    assert len(cleaned) == 2, 'tool-return stubs must remain separate from subsequent user prompts'
+    assert isinstance(cleaned[0].parts[0], ToolReturnPart)
+    assert isinstance(cleaned[1].parts[0], UserPromptPart)
