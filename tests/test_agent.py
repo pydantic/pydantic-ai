@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import sys
@@ -21,6 +22,7 @@ from pydantic_ai import (
     AgentStreamEvent,
     AudioUrl,
     BinaryContent,
+    BinaryImage,
     CombinedToolset,
     DocumentUrl,
     FunctionToolset,
@@ -52,14 +54,15 @@ from pydantic_ai._output import (
     OutputSpec,
     PromptedOutput,
     TextOutput,
-    TextOutputSchema,
     ToolOutputSchema,
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
+from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import StructuredDict, ToolOutput
 from pydantic_ai.result import RunUsage
+from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
@@ -78,6 +81,14 @@ def test_result_tuple():
 
     result = agent.run_sync('Hello')
     assert result.output == ('foo', 'bar')
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())],
+            usage=RequestUsage(input_tokens=51, output_tokens=7),
+            model_name='function:return_tuple:',
+            timestamp=IsDatetime(),
+        )
+    )
 
 
 class Person(BaseModel):
@@ -339,7 +350,7 @@ def test_plain_response_then_tuple():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Plain text responses are not permitted, please include your response in a tool call',
+                        content='Please include your response in a tool call.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     )
@@ -349,7 +360,7 @@ def test_plain_response_then_tuple():
                 parts=[
                     ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())
                 ],
-                usage=RequestUsage(input_tokens=74, output_tokens=8),
+                usage=RequestUsage(input_tokens=68, output_tokens=8),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -394,6 +405,14 @@ def test_output_tool_return_content_str_return():
 
     result = agent.run_sync('Hello')
     assert result.output == 'success (no tool calls)'
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='success (no tool calls)')],
+            usage=RequestUsage(input_tokens=51, output_tokens=4),
+            model_name='test',
+            timestamp=IsDatetime(),
+        )
+    )
 
     msg = re.escape('Cannot set output tool return content when the return type is `str`.')
     with pytest.raises(ValueError, match=msg):
@@ -489,7 +508,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
         got_tool_call_name = ctx.tool_name
         return o
 
-    assert isinstance(agent._output_schema, TextOutputSchema)  # pyright: ignore[reportPrivateUsage]
+    assert agent._output_schema.allows_text  # pyright: ignore[reportPrivateUsage]
 
     result = agent.run_sync('Hello')
     assert isinstance(result.output, str)
@@ -1004,7 +1023,7 @@ def test_output_type_text_output_invalid():
     def int_func(x: int) -> str:
         return str(int)  # pragma: no cover
 
-    with pytest.raises(UserError, match='TextOutput must take a function taking a `str`'):
+    with pytest.raises(UserError, match='TextOutput must take a function taking a single `str` argument'):
         output_type: TextOutput[str] = TextOutput(int_func)  # type: ignore
         Agent('test', output_type=output_type)
 
@@ -2520,6 +2539,14 @@ async def test_agent_name_changes():
     assert new_agent.name == 'my_agent'
 
 
+def test_agent_name_override():
+    agent = Agent('test', name='custom_name')
+
+    with agent.override(name='overridden_name'):
+        agent.run_sync('Hello')
+        assert agent.name == 'overridden_name'
+
+
 def test_name_from_global(create_module: Callable[[str], Any]):
     module_code = """
 from pydantic_ai import Agent
@@ -3520,18 +3547,17 @@ def test_tool_return_part_binary_content_serialization():
 
     tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
 
-    response_str = tool_return.model_response_str()
-
-    assert '"kind":"binary"' in response_str
-    assert '"media_type":"image/png"' in response_str
-    assert '"data":"' in response_str
-    assert '"identifier":"14a01a"' in response_str
-
-    response_obj = tool_return.model_response_object()
-    assert response_obj['return_value']['kind'] == 'binary'
-    assert response_obj['return_value']['media_type'] == 'image/png'
-    assert response_obj['return_value']['identifier'] == '14a01a'
-    assert 'data' in response_obj['return_value']
+    assert tool_return.model_response_object() == snapshot(
+        {
+            'return_value': {
+                'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzgAAAAASUVORK5CYII=',
+                'media_type': 'image/png',
+                'vendor_metadata': None,
+                '_identifier': None,
+                'kind': 'binary',
+            }
+        }
+    )
 
 
 def test_tool_returning_binary_content_directly():
@@ -3923,12 +3949,17 @@ def test_unsupported_output_mode():
 
     agent = Agent(model, output_type=NativeOutput(Foo))
 
-    with pytest.raises(UserError, match='Native structured output is not supported by the model.'):
+    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
         agent.run_sync('Hello')
 
     agent = Agent(model, output_type=ToolOutput(Foo))
 
-    with pytest.raises(UserError, match='Output tools are not supported by the model.'):
+    with pytest.raises(UserError, match='Tool output is not supported by this model.'):
+        agent.run_sync('Hello')
+
+    agent = Agent(model, output_type=BinaryImage)
+
+    with pytest.raises(UserError, match='Image output is not supported by this model.'):
         agent.run_sync('Hello')
 
 
@@ -4744,7 +4775,7 @@ async def test_thinking_only_response_retry():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Responses without text or tool calls are not permitted.',
+                        content='Please return text or call a tool.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -4752,7 +4783,7 @@ async def test_thinking_only_response_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Final answer')],
-                usage=RequestUsage(input_tokens=75, output_tokens=8),
+                usage=RequestUsage(input_tokens=73, output_tokens=8),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
@@ -5148,3 +5179,474 @@ async def test_consecutive_model_responses_in_history():
             ),
         ]
     )
+
+
+def test_override_instructions_basic():
+    """Test that override can override instructions."""
+    agent = Agent('test')
+
+    @agent.instructions
+    def instr_fn() -> str:
+        return 'SHOULD_BE_IGNORED'
+
+    with capture_run_messages() as base_messages:
+        agent.run_sync('Hello', model=TestModel(custom_output_text='baseline'))
+
+    base_req = base_messages[0]
+    assert isinstance(base_req, ModelRequest)
+    assert base_req.instructions == 'SHOULD_BE_IGNORED'
+
+    with agent.override(instructions='OVERRIDE'):
+        with capture_run_messages() as messages:
+            agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    assert req.instructions == 'OVERRIDE'
+
+
+def test_override_reset_after_context():
+    """Test that instructions are reset after exiting the override context."""
+    agent = Agent('test', instructions='ORIG')
+
+    with agent.override(instructions='NEW'):
+        with capture_run_messages() as messages_new:
+            agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
+
+    with capture_run_messages() as messages_orig:
+        agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
+
+    req_new = messages_new[0]
+    assert isinstance(req_new, ModelRequest)
+    req_orig = messages_orig[0]
+    assert isinstance(req_orig, ModelRequest)
+    assert req_new.instructions == 'NEW'
+    assert req_orig.instructions == 'ORIG'
+
+
+def test_override_none_clears_instructions():
+    """Test that passing None for instructions clears all instructions."""
+    agent = Agent('test', instructions='BASE')
+
+    @agent.instructions
+    def instr_fn() -> str:  # pragma: no cover - ignored under override
+        return 'ALSO_BASE'
+
+    with agent.override(instructions=None):
+        with capture_run_messages() as messages:
+            agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    assert req.instructions is None
+
+
+def test_override_instructions_callable_replaces_functions():
+    """Override with a callable should replace existing instruction functions."""
+    agent = Agent('test')
+
+    @agent.instructions
+    def base_fn() -> str:
+        return 'BASE_FN'
+
+    def override_fn() -> str:
+        return 'OVERRIDE_FN'
+
+    with capture_run_messages() as base_messages:
+        agent.run_sync('Hello', model=TestModel(custom_output_text='baseline'))
+
+    base_req = base_messages[0]
+    assert isinstance(base_req, ModelRequest)
+    assert base_req.instructions is not None
+    assert 'BASE_FN' in base_req.instructions
+
+    with agent.override(instructions=override_fn):
+        with capture_run_messages() as messages:
+            agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    assert req.instructions == 'OVERRIDE_FN'
+    assert 'BASE_FN' not in req.instructions
+
+
+async def test_override_instructions_async_callable():
+    """Override with an async callable should be awaited."""
+    agent = Agent('test')
+
+    async def override_fn() -> str:
+        await asyncio.sleep(0)
+        return 'ASYNC_FN'
+
+    with agent.override(instructions=override_fn):
+        with capture_run_messages() as messages:
+            await agent.run('Hi', model=TestModel(custom_output_text='ok'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    assert req.instructions == 'ASYNC_FN'
+
+
+def test_override_instructions_sequence_mixed_types():
+    """Override can mix literal strings and functions."""
+    agent = Agent('test', instructions='BASE')
+
+    def override_fn() -> str:
+        return 'FUNC_PART'
+
+    def override_fn_2() -> str:
+        return 'FUNC_PART_2'
+
+    with agent.override(instructions=['OVERRIDE1', override_fn, 'OVERRIDE2', override_fn_2]):
+        with capture_run_messages() as messages:
+            agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    assert req.instructions == 'OVERRIDE1\nOVERRIDE2\n\nFUNC_PART\n\nFUNC_PART_2'
+    assert 'BASE' not in req.instructions
+
+
+async def test_override_concurrent_isolation():
+    """Test that concurrent overrides are isolated from each other."""
+    agent = Agent('test', instructions='ORIG')
+
+    async def run_with(instr: str) -> str | None:
+        with agent.override(instructions=instr):
+            with capture_run_messages() as messages:
+                await agent.run('Hi', model=TestModel(custom_output_text='ok'))
+            req = messages[0]
+            assert isinstance(req, ModelRequest)
+            return req.instructions
+
+    a, b = await asyncio.gather(
+        run_with('A'),
+        run_with('B'),
+    )
+
+    assert a == 'A'
+    assert b == 'B'
+
+
+def test_override_replaces_instructions():
+    """Test overriding instructions replaces the base instructions."""
+    agent = Agent('test', instructions='ORIG_INSTR')
+
+    with agent.override(instructions='NEW_INSTR'):
+        with capture_run_messages() as messages:
+            agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    assert req.instructions == 'NEW_INSTR'
+
+
+def test_override_nested_contexts():
+    """Test nested override contexts."""
+    agent = Agent('test', instructions='ORIG')
+
+    with agent.override(instructions='OUTER'):
+        with capture_run_messages() as outer_messages:
+            agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
+
+        with agent.override(instructions='INNER'):
+            with capture_run_messages() as inner_messages:
+                agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
+
+    outer_req = outer_messages[0]
+    assert isinstance(outer_req, ModelRequest)
+    inner_req = inner_messages[0]
+    assert isinstance(inner_req, ModelRequest)
+
+    assert outer_req.instructions == 'OUTER'
+    assert inner_req.instructions == 'INNER'
+
+
+async def test_override_async_run():
+    """Test override with async run method."""
+    agent = Agent('test', instructions='ORIG')
+
+    with agent.override(instructions='ASYNC_OVERRIDE'):
+        with capture_run_messages() as messages:
+            await agent.run('Hi', model=TestModel(custom_output_text='ok'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    assert req.instructions == 'ASYNC_OVERRIDE'
+
+
+def test_override_with_dynamic_prompts():
+    """Test override interacting with dynamic prompts."""
+    agent = Agent('test')
+
+    dynamic_value = 'DYNAMIC'
+
+    @agent.system_prompt
+    def dynamic_sys() -> str:
+        return dynamic_value
+
+    @agent.instructions
+    def dynamic_instr() -> str:
+        return 'DYNAMIC_INSTR'
+
+    with capture_run_messages() as base_messages:
+        agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
+
+    base_req = base_messages[0]
+    assert isinstance(base_req, ModelRequest)
+    assert base_req.instructions == 'DYNAMIC_INSTR'
+
+    # Override should take precedence over dynamic instructions but leave system prompts intact
+    with agent.override(instructions='OVERRIDE_INSTR'):
+        with capture_run_messages() as messages:
+            agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
+
+    req = messages[0]
+    assert isinstance(req, ModelRequest)
+    assert req.instructions == 'OVERRIDE_INSTR'
+    sys_texts = [p.content for p in req.parts if isinstance(p, SystemPromptPart)]
+    # The dynamic system prompt should still be present since overrides target instructions only
+    assert dynamic_value in sys_texts
+
+
+def test_continue_conversation_that_ended_in_output_tool_call(allow_model_requests: None):
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(p, ToolReturnPart) and p.tool_name == 'roll_dice' for p in messages[-1].parts):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'dice_roll': 4},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')]
+        )
+
+    class Result(BaseModel):
+        dice_roll: int
+
+    agent = Agent(FunctionModel(llm), output_type=Result)
+
+    @agent.tool_plain
+    def roll_dice() -> int:
+        return 4
+
+    result = agent.run_sync('Roll me a dice.')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Roll me a dice.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')],
+                usage=RequestUsage(input_tokens=55, output_tokens=2),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='roll_dice',
+                        content=4,
+                        tool_call_id='pyd_ai_tool_call_id__roll_dice',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'dice_roll': 4},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=56, output_tokens=6),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+    result = agent.run_sync('Roll me a dice again.', message_history=messages)
+    new_messages = result.new_messages()
+    assert new_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Roll me a dice again.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')],
+                usage=RequestUsage(input_tokens=66, output_tokens=8),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='roll_dice',
+                        content=4,
+                        tool_call_id='pyd_ai_tool_call_id__roll_dice',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'dice_roll': 4},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=67, output_tokens=12),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+    assert not any(isinstance(p, ToolReturnPart) and p.tool_name == 'final_result' for p in new_messages[0].parts)
+
+
+def test_agent_builtin_tools_runtime_parameter():
+    """Test that Agent.run_sync accepts builtin_tools parameter."""
+    model = TestModel()
+    agent = Agent(model=model, builtin_tools=[])
+
+    # Should work with empty builtin_tools
+    result = agent.run_sync('Hello', builtin_tools=[])
+    assert result.output == 'success (no tool calls)'
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.builtin_tools == []
+
+
+async def test_agent_builtin_tools_runtime_parameter_async():
+    """Test that Agent.run and Agent.run_stream accept builtin_tools parameter."""
+    model = TestModel()
+    agent = Agent(model=model, builtin_tools=[])
+
+    # Test async run
+    result = await agent.run('Hello', builtin_tools=[])
+    assert result.output == 'success (no tool calls)'
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.builtin_tools == []
+
+    # Test run_stream
+    async with agent.run_stream('Hello', builtin_tools=[]) as stream:
+        output = await stream.get_output()
+        assert output == 'success (no tool calls)'
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.builtin_tools == []
+
+
+def test_agent_builtin_tools_testmodel_rejection():
+    """Test that TestModel rejects builtin tools as expected."""
+    model = TestModel()
+    agent = Agent(model=model, builtin_tools=[])
+
+    # Should raise error when builtin_tools contains actual tools
+    web_search_tool = WebSearchTool()
+    with pytest.raises(Exception, match='TestModel does not support built-in tools'):
+        agent.run_sync('Hello', builtin_tools=[web_search_tool])
+
+    assert model.last_model_request_parameters is not None
+    assert len(model.last_model_request_parameters.builtin_tools) == 1
+    assert model.last_model_request_parameters.builtin_tools[0] == web_search_tool
+
+
+def test_agent_builtin_tools_runtime_vs_agent_level():
+    """Test that runtime builtin_tools parameter is merged with agent-level builtin_tools."""
+    model = TestModel()
+    web_search_tool = WebSearchTool()
+
+    # Agent has builtin tools, and we provide same type at runtime
+    agent = Agent(model=model, builtin_tools=[web_search_tool])
+
+    # Runtime tool of same type should override agent-level tool
+    different_web_search = WebSearchTool(search_context_size='high')
+    with pytest.raises(Exception, match='TestModel does not support built-in tools'):
+        agent.run_sync('Hello', builtin_tools=[different_web_search])
+
+    assert model.last_model_request_parameters is not None
+    assert len(model.last_model_request_parameters.builtin_tools) == 1
+    runtime_tool = model.last_model_request_parameters.builtin_tools[0]
+    assert isinstance(runtime_tool, WebSearchTool)
+    assert runtime_tool.search_context_size == 'high'
+
+
+def test_agent_builtin_tools_runtime_additional():
+    """Test that runtime builtin_tools can add to agent-level builtin_tools when different types."""
+    model = TestModel()
+    web_search_tool = WebSearchTool()
+
+    agent = Agent(model=model, builtin_tools=[])
+
+    with pytest.raises(Exception, match='TestModel does not support built-in tools'):
+        agent.run_sync('Hello', builtin_tools=[web_search_tool])
+
+    assert model.last_model_request_parameters is not None
+    assert len(model.last_model_request_parameters.builtin_tools) == 1
+    assert model.last_model_request_parameters.builtin_tools[0] == web_search_tool
+
+
+async def test_agent_builtin_tools_run_stream_events():
+    """Test that Agent.run_stream_events accepts builtin_tools parameter."""
+    model = TestModel()
+    agent = Agent(model=model, builtin_tools=[])
+
+    # Test with empty builtin_tools
+    events = [event async for event in agent.run_stream_events('Hello', builtin_tools=[])]
+
+    assert len(events) >= 2
+    assert isinstance(events[-1], AgentRunResultEvent)
+    assert events[-1].result.output == 'success (no tool calls)'
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.builtin_tools == []
+
+    # Test with builtin tool
+    web_search_tool = WebSearchTool()
+    with pytest.raises(Exception, match='TestModel does not support built-in tools'):
+        events = [event async for event in agent.run_stream_events('Hello', builtin_tools=[web_search_tool])]
+
+    assert model.last_model_request_parameters is not None
+    assert len(model.last_model_request_parameters.builtin_tools) == 1
+    assert model.last_model_request_parameters.builtin_tools[0] == web_search_tool

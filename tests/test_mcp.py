@@ -1464,13 +1464,28 @@ def test_load_mcp_servers(tmp_path: Path):
     config = tmp_path / 'mcp.json'
 
     config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/mcp"}}}')
-    assert load_mcp_servers(config) == snapshot([MCPServerStreamableHTTP(url='https://example.com/mcp')])
+    server = load_mcp_servers(config)[0]
+    assert server == MCPServerStreamableHTTP(url='https://example.com/mcp', id='potato', tool_prefix='potato')
 
     config.write_text('{"mcpServers": {"potato": {"command": "python", "args": ["-m", "tests.mcp_server"]}}}')
-    assert load_mcp_servers(config) == snapshot([MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'])])
+    server = load_mcp_servers(config)[0]
+    assert server == MCPServerStdio(
+        command='python', args=['-m', 'tests.mcp_server'], id='potato', tool_prefix='potato'
+    )
 
     config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/sse"}}}')
-    assert load_mcp_servers(config) == snapshot([MCPServerSSE(url='https://example.com/sse')])
+    server = load_mcp_servers(config)[0]
+    assert server == MCPServerSSE(url='https://example.com/sse', id='potato', tool_prefix='potato')
 
     with pytest.raises(FileNotFoundError):
         load_mcp_servers(tmp_path / 'does_not_exist.json')
+
+
+async def test_server_info(mcp_server: MCPServerStdio) -> None:
+    with pytest.raises(
+        AttributeError, match='The `MCPServerStdio.server_info` is only instantiated after initialization.'
+    ):
+        mcp_server.server_info
+    async with mcp_server:
+        assert mcp_server.server_info is not None
+        assert mcp_server.server_info.name == 'Pydantic AI MCP Server'

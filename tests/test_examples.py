@@ -24,6 +24,10 @@ from rich.console import Console
 
 from pydantic_ai import (
     AbstractToolset,
+    BinaryImage,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
+    FilePart,
     ModelHTTPError,
     ModelMessage,
     ModelResponse,
@@ -109,6 +113,9 @@ def tmp_path_cwd(tmp_path: Path):
 
 
 @pytest.mark.xdist_group(name='doc_tests')
+@pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
+    'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
+)
 @pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(  # noqa: C901
     example: CodeExample,
@@ -301,7 +308,6 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
-    'Calculate the factorial of 15 and show your work': 'The factorial of 15 is **1,307,674,368,000**.',
     'Use the web to get the current time.': "In San Francisco, it's 8:21:41 pm PDT on Wednesday, August 6, 2025.",
     'Give me a sentence with the biggest news in AI this week.': 'Scientists have developed a universal AI detector that can identify deepfake videos.',
     'How many days between 2000-01-01 and 2025-03-18?': 'There are 9,208 days between January 1, 2000, and March 18, 2025.',
@@ -319,6 +325,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What is the capital of France?': 'The capital of France is Paris.',
     'What is the capital of Italy?': 'The capital of Italy is Rome.',
     'What is the capital of the UK?': 'The capital of the UK is London.',
+    'What is the capital of Mexico?': 'The capital of Mexico is Mexico City.',
     'Who was Albert Einstein?': 'Albert Einstein was a German-born theoretical physicist.',
     'What was his most famous equation?': "Albert Einstein's most famous equation is (E = mc^2).",
     'What is the date?': 'Hello Frank, the date today is 2032-01-02.',
@@ -387,7 +394,10 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         'The capital of Italy is Rome (Roma, in Italian), which has been a cultural and political center for centuries.'
         'Rome is known for its rich history, stunning architecture, and delicious cuisine.'
     ),
-    'Please call the tool twice': ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id'),
+    'Please call the tool twice': [
+        ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id_1'),
+        ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id_2'),
+    ],
     'Begin infinite retry loop!': ToolCallPart(
         tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id'
     ),
@@ -628,6 +638,63 @@ async def model_logic(  # noqa: C901
             return ModelResponse(parts=[TextPart('The secret is safe with me')])
         elif m.content == 'What is the secret code?':
             return ModelResponse(parts=[TextPart('1234')])
+        elif m.content == 'Tell me a two-sentence story about an axolotl with an illustration.':
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        'Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip who loved to explore. One day, while venturing further than usual, Pip discovered a shimmering, ancient coin that granted wishes! '
+                    ),
+                    FilePart(
+                        content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47'),
+                    ),
+                ]
+            )
+        elif m.content == 'Tell me a two-sentence story about an axolotl, no image please.':
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        'Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip who loved to explore. One day, while venturing further than usual, Pip discovered a shimmering, ancient coin that granted wishes! '
+                    )
+                ]
+            )
+        elif m.content == 'Generate an image of an axolotl.':
+            return ModelResponse(
+                parts=[
+                    FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
+                ]
+            )
+        elif m.content == 'Generate a chart of y=x^2 for x=-5 to 5.':
+            return ModelResponse(
+                parts=[
+                    FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
+                ]
+            )
+        elif m.content == 'Calculate the factorial of 15.':
+            return ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': 'import math\n\n# Calculate factorial of 15\nresult = math.factorial(15)\nprint(f"15! = {result}")\n\n# Let\'s also show it in a more readable format with commas\nprint(f"15! = {result:,}")'
+                        },
+                        tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': '15! = 1307674368000\n15! = 1,307,674,368,000',
+                            'type': 'code_execution_result',
+                        },
+                        tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content='The factorial of 15 is **1,307,674,368,000**.'),
+                ]
+            )
 
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
