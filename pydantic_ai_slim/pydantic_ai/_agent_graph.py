@@ -1233,5 +1233,6 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                 parts_set.add(part_hash)
                 parts.append(part)
             continue
+        message.parts = parts
         final_result.append(message)
     return final_result
