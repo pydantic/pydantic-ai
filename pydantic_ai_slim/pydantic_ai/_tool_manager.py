@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -21,6 +22,7 @@ from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .usage import RunUsage
 
 _sequential_tool_calls_ctx_var: ContextVar[bool] = ContextVar('sequential_tool_calls', default=False)
+_usage_increment_lock_ctx_var: ContextVar[asyncio.Lock | None] = ContextVar('usage_increment_lock', default=None)
 
 
 @dataclass
@@ -234,7 +236,13 @@ class ToolManager(Generic[AgentDepsT]):
         ) as span:
             try:
                 tool_result = await self._call_tool(call, allow_partial, wrap_validation_errors)
-                usage.tool_calls += 1
+                # Use lock if available (for parallel tool execution) to prevent race conditions
+                lock = _usage_increment_lock_ctx_var.get()
+                if lock is not None:
+                    async with lock:
+                        usage.incr(RunUsage(tool_calls=1))
+                else:
+                    usage.incr(RunUsage(tool_calls=1))
 
             except ToolRetryError as e:
                 part = e.tool_retry

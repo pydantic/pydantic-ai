@@ -17,6 +17,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     RunContext,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UsageLimitExceeded,
@@ -200,7 +201,7 @@ async def test_multi_agent_usage_sync():
     controller_agent = Agent(TestModel())
 
     @controller_agent.tool
-    def delegate_to_other_agent(ctx: RunContext[None], sentence: str) -> int:
+    async def delegate_to_other_agent(ctx: RunContext[None], sentence: str) -> int:
         new_usage = RunUsage(requests=5, input_tokens=2, output_tokens=3)
         ctx.usage.incr(new_usage)
         return 0
@@ -246,6 +247,41 @@ def test_add_usages():
     )
     assert usage + RunUsage() == usage
     assert RunUsage() + RunUsage() == RunUsage()
+
+
+def test_run_usage_with_request_usage():
+    """Test RunUsage operations with RequestUsage to ensure coverage of RequestUsage branches."""
+    run_usage = RunUsage(requests=1, input_tokens=10, output_tokens=20, tool_calls=1)
+    request_usage = RequestUsage(input_tokens=5, output_tokens=10)
+
+    # Test __add__ with RequestUsage
+    result = run_usage + request_usage
+    assert result.requests == 2  # 1 + 1 (RequestUsage.requests property returns 1)
+    assert result.input_tokens == 15
+    assert result.output_tokens == 30
+    assert result.tool_calls == 1  # RequestUsage doesn't have tool_calls
+
+    # Test incr with RequestUsage (covers elif isinstance(incr_usage, RequestUsage) branch)
+    run_usage2 = RunUsage(requests=2, input_tokens=20, output_tokens=30, tool_calls=2)
+    run_usage2.incr(request_usage)
+    assert run_usage2.requests == 3  # 2 + 1
+    assert run_usage2.input_tokens == 25  # 20 + 5
+    assert run_usage2.output_tokens == 40  # 30 + 10
+    assert run_usage2.tool_calls == 2  # Unchanged
+
+    # Test incr with empty details dict (covers empty for loop branch in _incr_usage_tokens)
+    run_usage3 = RunUsage(requests=0, tool_calls=0)
+    request_usage_no_details = RequestUsage(input_tokens=5, output_tokens=10)
+    assert request_usage_no_details.details == {}  # Ensure details is empty
+    run_usage3.incr(request_usage_no_details)
+    assert run_usage3.requests == 1
+    assert run_usage3.details == {}
+
+    # Test incr with non-empty details dict
+    run_usage4 = RunUsage(requests=0, tool_calls=0, details={'reasoning_tokens': 10})
+    request_usage_with_details = RequestUsage(input_tokens=5, output_tokens=10, details={'reasoning_tokens': 5})
+    run_usage4.incr(request_usage_with_details)
+    assert run_usage4.details == {'reasoning_tokens': 15}
 
 
 async def test_tool_call_limit() -> None:
@@ -353,6 +389,41 @@ def test_deprecated_usage_limits():
         snapshot(['DeprecationWarning: `response_tokens_limit` is deprecated, use `output_tokens_limit` instead'])
     ):
         assert UsageLimits(output_tokens_limit=100).response_tokens_limit == 100  # type: ignore
+
+
+async def test_race_condition_parallel_tool_calls():
+    """Test that demonstrates race condition in parallel tool execution.
+
+    This test would fail intermittently on main without the fix because multiple
+    asyncio tasks calling usage.incr() can interleave their read-modify-write operations.
+    """
+    # Run multiple iterations to increase chance of catching race condition
+    for iteration in range(20):
+        call_count = 0
+
+        def parallel_tools_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # Return 10 parallel tool calls for more contention
+                return ModelResponse(parts=[ToolCallPart('tool_a', {}, f'call_{i}') for i in range(10)])
+            else:
+                # Return final text response
+                return ModelResponse(parts=[TextPart(content='done')])
+
+        agent = Agent(FunctionModel(parallel_tools_model))
+
+        @agent.tool_plain
+        async def tool_a() -> str:
+            # Add multiple await points to increase chance of task interleaving
+            await asyncio.sleep(0.0001)
+            await asyncio.sleep(0.0001)
+            return 'result'
+
+        result = await agent.run('test')
+        # Without proper synchronization, tool_calls might be undercounted
+        actual = result.usage().tool_calls
+        assert actual == 10, f'Iteration {iteration}: Expected 10 tool calls, got {actual}'
 
 
 async def test_parallel_tool_calls_limit_enforced():
