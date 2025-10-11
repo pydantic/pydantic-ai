@@ -9,6 +9,7 @@ import pytest
 from httpx import Timeout
 from inline_snapshot import Is, snapshot
 from pydantic import BaseModel
+from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -41,7 +42,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, UrlContextTool, WebSearchTool
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
@@ -54,6 +55,7 @@ from ..conftest import IsBytes, IsDatetime, IsInstance, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
+    from google.genai import errors
     from google.genai.types import (
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
@@ -2929,3 +2931,72 @@ async def test_google_vertexai_image_generation(allow_model_requests: None, vert
             identifier='f3edd8',
         )
     )
+
+
+# API 에러 테스트 데이터
+@pytest.mark.parametrize(
+    'error_class,error_response,expected_status',
+    [
+        (
+            errors.ServerError,
+            {'error': {'code': 503, 'message': 'The service is currently unavailable.', 'status': 'UNAVAILABLE'}},
+            503,
+        ),
+        (
+            errors.ClientError,
+            {'error': {'code': 400, 'message': 'Invalid request parameters', 'status': 'INVALID_ARGUMENT'}},
+            400,
+        ),
+        (
+            errors.ClientError,
+            {'error': {'code': 429, 'message': 'Rate limit exceeded', 'status': 'RESOURCE_EXHAUSTED'}},
+            429,
+        ),
+    ],
+)
+async def test_google_api_errors_are_handled(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+    error_class: type[errors.APIError],
+    error_response: dict[str, Any],
+    expected_status: int,
+):
+    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    mocked_error = error_class(expected_status, error_response)
+    mocker.patch.object(model.client.aio.models, 'generate_content', side_effect=mocked_error)
+
+    agent = Agent(model=model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('This prompt will trigger the mocked error.')
+
+    assert exc_info.value.status_code == expected_status
+    assert error_response['error']['message'] in str(exc_info.value.body)
+
+
+@pytest.mark.parametrize(
+    'error_class,expected_status',
+    [
+        (errors.UnknownFunctionCallArgumentError, 400),
+        (errors.UnsupportedFunctionError, 404),
+        (errors.FunctionInvocationError, 400),
+        (errors.UnknownApiResponseError, 422),
+    ],
+)
+async def test_google_specific_errors_are_handled(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+    error_class: type[errors.APIError],
+    expected_status: int,
+):
+    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    mocked_error = error_class
+    mocker.patch.object(model.client.aio.models, 'generate_content', side_effect=mocked_error)
+
+    agent = Agent(model=model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('This prompt will trigger the mocked error.')
+    assert exc_info.value.status_code == expected_status
