@@ -198,12 +198,17 @@ class RunUsage(UsageBase):
         if isinstance(incr_usage, RunUsage):
             self.requests += incr_usage.requests
             self.tool_calls += incr_usage.tool_calls
+        else:
+            # RequestUsage: requests is a property that returns 1
+            self.requests += incr_usage.requests
         return _incr_usage_tokens(self, incr_usage)
 
     def __add__(self, other: RunUsage | RequestUsage) -> RunUsage:
         """Add two RunUsages together.
 
         This is provided so it's trivial to sum usage information from multiple runs.
+
+        **WARNING:** this CANNOT be used to sum multiple requests without breaking some pricing calculations.
         """
         new_usage = copy(self)
         new_usage.incr(other)
