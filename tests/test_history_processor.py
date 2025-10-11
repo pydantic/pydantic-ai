@@ -807,7 +807,7 @@ def test_clean_message_history_keeps_tool_stub_separate():
     """Regression guard for b26a6872f that merged tool-return stubs into the next user request."""
 
     # TODO: imports should get moved to the top whenever we open P/R
-    from pydantic_ai._agent_graph import _clean_message_history
+    from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore
     from pydantic_ai.messages import ToolReturnPart
 
     tool_stub = ModelRequest(
