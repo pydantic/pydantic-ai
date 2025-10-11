@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+from re import sub
 
 from pydantic import ValidationError
 from typing_extensions import TypeVar
@@ -73,8 +74,10 @@ async def generate_dataset(
     )
 
     result = await agent.run(extra_instructions or 'Please generate the object.')
+    output = result.output.strip()
+    output = sub(r'^```(?:json)?\s*|\s*```$', '', output).strip()
     try:
-        result = dataset_type.from_text(result.output, fmt='json', custom_evaluator_types=custom_evaluator_types)
+        result = dataset_type.from_text(output, fmt='json', custom_evaluator_types=custom_evaluator_types)
     except ValidationError as e:  # pragma: no cover
         print(f'Raw response from model:\n{result.output}')
         raise e
