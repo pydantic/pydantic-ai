@@ -145,7 +145,7 @@ try:
     from logfire._internal.config import (
         LogfireNotConfiguredWarning,  # pyright: ignore[reportAssignmentType,reportPrivateImportUsage]
     )
-except ImportError:
+except ImportError:  # pragma: lax no cover
 
     class LogfireNotConfiguredWarning(UserWarning):
         pass

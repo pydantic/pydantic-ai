@@ -4,8 +4,8 @@ import pytest
 from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.agent import Agent
-from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
@@ -65,8 +65,8 @@ def test_azure_provider_with_azure_openai_client():
 
 
 async def test_azure_provider_call(allow_model_requests: None):
-    api_key = os.environ.get('AZURE_OPENAI_API_KEY', '1234567890')
-    api_version = os.environ.get('AZURE_OPENAI_API_VERSION', '2024-12-01-preview')
+    api_key = os.getenv('AZURE_OPENAI_API_KEY', '1234567890')
+    api_version = os.getenv('AZURE_OPENAI_API_VERSION', '2024-12-01-preview')
 
     provider = AzureProvider(
         api_key=api_key,

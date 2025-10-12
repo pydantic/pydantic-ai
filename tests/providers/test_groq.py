@@ -6,8 +6,8 @@ import httpx
 import pytest
 from pytest_mock import MockerFixture
 
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
 from pydantic_ai.profiles.groq import GroqModelProfile, groq_model_profile
@@ -64,7 +64,7 @@ def test_groq_provider_with_env_base_url(monkeypatch: pytest.MonkeyPatch) -> Non
     # Test with environment variable for base_url
     monkeypatch.setenv('GROQ_BASE_URL', 'https://custom.groq.com/v1')
     provider = GroqProvider(api_key='api-key')
-    assert provider.base_url == 'https://custom.groq.com/v1'
+    assert provider.base_url == 'https://custom.groq.com/v1/'
 
 
 def test_groq_provider_model_profile(mocker: MockerFixture):

@@ -40,9 +40,9 @@ def vertexai(http_client: httpx.AsyncClient, tmp_path: Path) -> Model:
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
-    if service_account_path := os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'):
+    if service_account_path := os.getenv('GOOGLE_APPLICATION_CREDENTIALS'):
         project_id = json.loads(Path(service_account_path).read_text())['project_id']
-    elif service_account_content := os.environ.get('GOOGLE_SERVICE_ACCOUNT_CONTENT'):
+    elif service_account_content := os.getenv('GOOGLE_SERVICE_ACCOUNT_CONTENT'):
         project_id = json.loads(service_account_content)['project_id']
         service_account_path = tmp_path / 'service_account.json'
         service_account_path.write_text(service_account_content)

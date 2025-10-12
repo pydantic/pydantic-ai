@@ -6,8 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, overload
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -48,6 +48,14 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
     return profile
 
 
+def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a DeepSeek model used via Bedrock."""
+    profile = deepseek_model_profile(model_name)
+    if 'r1' in model_name:
+        return BedrockModelProfile(bedrock_send_back_thinking_parts=True).update(profile)
+    return profile  # pragma: no cover
+
+
 class BedrockProvider(Provider[BaseClient]):
     """Provider for AWS Bedrock."""
 
@@ -74,7 +82,7 @@ class BedrockProvider(Provider[BaseClient]):
             'cohere': cohere_model_profile,
             'amazon': bedrock_amazon_model_profile,
             'meta': meta_model_profile,
-            'deepseek': deepseek_model_profile,
+            'deepseek': bedrock_deepseek_model_profile,
         }
 
         # Split the model name into parts

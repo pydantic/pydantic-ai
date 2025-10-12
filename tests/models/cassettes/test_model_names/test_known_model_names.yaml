@@ -99,7 +99,7 @@ interactions:
       alt-svc:
       - h3=":443"; ma=86400
       content-length:
-      - '99'
+      - '762'
       content-type:
       - application/json
       referrer-policy:
@@ -107,11 +107,45 @@ interactions:
       strict-transport-security:
       - max-age=3600; includeSubDomains
     parsed_body:
-      code: wrong_api_key
-      message: Wrong API Key
-      param: api_key
-      type: invalid_request_error
+      data:
+      - created: 0
+        id: llama-4-scout-17b-16e-instruct
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: qwen-3-32b
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: llama-3.3-70b
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: qwen-3-235b-a22b-instruct-2507
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: llama-4-maverick-17b-128e-instruct
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: qwen-3-coder-480b
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: gpt-oss-120b
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: qwen-3-235b-a22b-thinking-2507
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: llama3.1-8b
+        object: model
+        owned_by: Cerebras
+      object: list
     status:
-      code: 401
-      message: Unauthorized
+      code: 200
+      message: OK
 version: 1

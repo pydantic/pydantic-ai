@@ -94,6 +94,7 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     * Cohere
     * Mistral
+    * Gemini
     """
 
     presence_penalty: float

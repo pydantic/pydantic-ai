@@ -10,12 +10,14 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontext
 from dataclasses import field, replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import anyio
 import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from pydantic import BaseModel, Discriminator, Field, Tag
+from pydantic_core import CoreSchema, core_schema
 from typing_extensions import Self, assert_never, deprecated
 
 from pydantic_ai.tools import RunContext, ToolDefinition
@@ -41,7 +43,7 @@ except ImportError as _import_error:
 # after mcp imports so any import error maps to this file, not _mcp.py
 from . import _mcp, _utils, exceptions, messages, models
 
-__all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
+__all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP', 'load_mcp_servers'
 
 TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
     schema=pydantic_core.core_schema.dict_schema(
@@ -110,6 +112,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     _client: ClientSession
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
+    _server_info: mcp_types.Implementation
 
     def __init__(
         self,
@@ -164,6 +167,10 @@ class MCPServer(AbstractToolset[Any], ABC):
     def id(self) -> str | None:
         return self._id
 
+    @id.setter
+    def id(self, value: str | None):
+        self._id = value
+
     @property
     def label(self) -> str:
         if self.id:
@@ -174,6 +181,15 @@ class MCPServer(AbstractToolset[Any], ABC):
     @property
     def tool_name_conflict_hint(self) -> str:
         return 'Set the `tool_prefix` attribute to avoid name conflicts.'
+
+    @property
+    def server_info(self) -> mcp_types.Implementation:
+        """Access the information send by the MCP server during initialization."""
+        if getattr(self, '_server_info', None) is None:
+            raise AttributeError(
+                f'The `{self.__class__.__name__}.server_info` is only instantiated after initialization.'
+            )
+        return self._server_info
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.
@@ -223,13 +239,27 @@ class MCPServer(AbstractToolset[Any], ABC):
             except McpError as e:
                 raise exceptions.ModelRetry(e.error.message)
 
-        content = [await self._map_tool_result_part(part) for part in result.content]
-
         if result.isError:
-            text = '\n'.join(str(part) for part in content)
-            raise exceptions.ModelRetry(text)
-        else:
-            return content[0] if len(content) == 1 else content
+            message: str | None = None
+            if result.content:  # pragma: no branch
+                text_parts = [part.text for part in result.content if isinstance(part, mcp_types.TextContent)]
+                message = '\n'.join(text_parts)
+
+            raise exceptions.ModelRetry(message or 'MCP tool call failed')
+
+        # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
+        # See https://github.com/modelcontextprotocol/python-sdk#structured-output
+        if (structured := result.structuredContent) and not any(
+            not isinstance(part, mcp_types.TextContent) for part in result.content
+        ):
+            # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want to use the raw value returned by the tool function.
+            # See https://github.com/modelcontextprotocol/python-sdk#structured-output
+            if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured:
+                return structured['result']
+            return structured
+
+        mapped = [await self._map_tool_result_part(part) for part in result.content]
+        return mapped[0] if len(mapped) == 1 else mapped
 
     async def call_tool(
         self,
@@ -254,6 +284,11 @@ class MCPServer(AbstractToolset[Any], ABC):
                     name=name,
                     description=mcp_tool.description,
                     parameters_json_schema=mcp_tool.inputSchema,
+                    metadata={
+                        'meta': mcp_tool.meta,
+                        'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
+                        'output_schema': mcp_tool.outputSchema or None,
+                    },
                 ),
             )
             for mcp_tool in await self.list_tools()
@@ -291,8 +326,8 @@ class MCPServer(AbstractToolset[Any], ABC):
                     self._client = await exit_stack.enter_async_context(client)
 
                     with anyio.fail_after(self.timeout):
-                        await self._client.initialize()
-
+                        result = await self._client.initialize()
+                        self._server_info = result.serverInfo
                         if log_level := self.log_level:
                             await self._client.set_logging_level(log_level)
 
@@ -382,6 +417,9 @@ class MCPServer(AbstractToolset[Any], ABC):
             )
         else:
             assert_never(resource)
+
+    def __eq__(self, value: object, /) -> bool:
+        return isinstance(value, MCPServer) and self.id == value.id and self.tool_prefix == value.tool_prefix
 
 
 class MCPServerStdio(MCPServer):
@@ -498,6 +536,22 @@ class MCPServerStdio(MCPServer):
             id=id,
         )
 
+    @classmethod
+    def __get_pydantic_core_schema__(cls, _: Any, __: Any) -> CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            lambda dct: MCPServerStdio(**dct),
+            core_schema.typed_dict_schema(
+                {
+                    'command': core_schema.typed_dict_field(core_schema.str_schema()),
+                    'args': core_schema.typed_dict_field(core_schema.list_schema(core_schema.str_schema())),
+                    'env': core_schema.typed_dict_field(
+                        core_schema.dict_schema(core_schema.str_schema(), core_schema.str_schema()),
+                        required=False,
+                    ),
+                }
+            ),
+        )
+
     @asynccontextmanager
     async def client_streams(
         self,
@@ -517,8 +571,18 @@ class MCPServerStdio(MCPServer):
             f'args={self.args!r}',
         ]
         if self.id:
-            repr_args.append(f'id={self.id!r}')  # pragma: no cover
+            repr_args.append(f'id={self.id!r}')  # pragma: lax no cover
         return f'{self.__class__.__name__}({", ".join(repr_args)})'
+
+    def __eq__(self, value: object, /) -> bool:
+        return (
+            super().__eq__(value)
+            and isinstance(value, MCPServerStdio)
+            and self.command == value.command
+            and self.args == value.args
+            and self.env == value.env
+            and self.cwd == value.cwd
+        )
 
 
 class _MCPServerHTTP(MCPServer):
@@ -733,9 +797,26 @@ class MCPServerSSE(_MCPServerHTTP):
     1. This will connect to a server running on `localhost:3001`.
     """
 
+    @classmethod
+    def __get_pydantic_core_schema__(cls, _: Any, __: Any) -> CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            lambda dct: MCPServerSSE(**dct),
+            core_schema.typed_dict_schema(
+                {
+                    'url': core_schema.typed_dict_field(core_schema.str_schema()),
+                    'headers': core_schema.typed_dict_field(
+                        core_schema.dict_schema(core_schema.str_schema(), core_schema.str_schema()), required=False
+                    ),
+                }
+            ),
+        )
+
     @property
     def _transport_client(self):
         return sse_client  # pragma: no cover
+
+    def __eq__(self, value: object, /) -> bool:
+        return super().__eq__(value) and isinstance(value, MCPServerSSE) and self.url == value.url
 
 
 @deprecated('The `MCPServerHTTP` class is deprecated, use `MCPServerSSE` instead.')
@@ -790,9 +871,26 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     ```
     """
 
+    @classmethod
+    def __get_pydantic_core_schema__(cls, _: Any, __: Any) -> CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            lambda dct: MCPServerStreamableHTTP(**dct),
+            core_schema.typed_dict_schema(
+                {
+                    'url': core_schema.typed_dict_field(core_schema.str_schema()),
+                    'headers': core_schema.typed_dict_field(
+                        core_schema.dict_schema(core_schema.str_schema(), core_schema.str_schema()), required=False
+                    ),
+                }
+            ),
+        )
+
     @property
     def _transport_client(self):
         return streamablehttp_client  # pragma: no cover
+
+    def __eq__(self, value: object, /) -> bool:
+        return super().__eq__(value) and isinstance(value, MCPServerStreamableHTTP) and self.url == value.url
 
 
 ToolResult = (
@@ -823,3 +921,57 @@ It accepts a run context, the original tool call function, a tool name, and argu
 Allows wrapping an MCP server tool call to customize it, including adding extra request
 metadata.
 """
+
+
+def _mcp_server_discriminator(value: dict[str, Any]) -> str | None:
+    if 'url' in value:
+        if value['url'].endswith('/sse'):
+            return 'sse'
+        return 'streamable-http'
+    return 'stdio'
+
+
+class MCPServerConfig(BaseModel):
+    """Configuration for MCP servers."""
+
+    mcp_servers: Annotated[
+        dict[
+            str,
+            Annotated[
+                Annotated[MCPServerStdio, Tag('stdio')]
+                | Annotated[MCPServerStreamableHTTP, Tag('streamable-http')]
+                | Annotated[MCPServerSSE, Tag('sse')],
+                Discriminator(_mcp_server_discriminator),
+            ],
+        ],
+        Field(alias='mcpServers'),
+    ]
+
+
+def load_mcp_servers(config_path: str | Path) -> list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE]:
+    """Load MCP servers from a configuration file.
+
+    Args:
+        config_path: The path to the configuration file.
+
+    Returns:
+        A list of MCP servers.
+
+    Raises:
+        FileNotFoundError: If the configuration file does not exist.
+        ValidationError: If the configuration file does not match the schema.
+    """
+    config_path = Path(config_path)
+
+    if not config_path.exists():
+        raise FileNotFoundError(f'Config file {config_path} not found')
+
+    config = MCPServerConfig.model_validate_json(config_path.read_bytes())
+
+    servers: list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE] = []
+    for name, server in config.mcp_servers.items():
+        server.id = name
+        server.tool_prefix = name
+        servers.append(server)
+
+    return servers

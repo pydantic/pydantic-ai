@@ -7,15 +7,18 @@ from typing import Literal
 
 import pytest
 from inline_snapshot import snapshot
+from inline_snapshot.extra import warns
 from logfire_api import DEFAULT_LOGFIRE_INSTANCE
 from opentelemetry._events import NoOpEventLoggerProvider
 from opentelemetry.trace import NoOpTracerProvider
 
-from pydantic_ai._run_context import RunContext
-from pydantic_ai.messages import (
+from pydantic_ai import (
     AudioUrl,
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
+    FilePart,
     FinalResultEvent,
     ImageUrl,
     ModelMessage,
@@ -34,12 +37,13 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._run_context import RunContext
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsStr, try_import
+from ..conftest import IsInt, IsStr, try_import
 
 with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
@@ -86,6 +90,7 @@ class MyModel(Model):
             usage=RequestUsage(input_tokens=100, output_tokens=200),
             model_name='gpt-4o-2024-11-20',
             provider_details=dict(finish_reason='stop', foo='bar'),
+            provider_response_id='response_id',
         )
 
     @asynccontextmanager
@@ -174,6 +179,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                         'output_object': None,
                         'output_tools': [],
                         'allow_text_output': True,
+                        'allow_image_output': False,
                     },
                     'logfire.json_schema': {
                         'type': 'object',
@@ -183,6 +189,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'logfire.msg': 'chat gpt-4o',
                     'logfire.span_type': 'span',
                     'gen_ai.response.model': 'gpt-4o-2024-11-20',
+                    'gen_ai.response.id': 'response_id',
                     'gen_ai.usage.input_tokens': 100,
                     'gen_ai.usage.output_tokens': 200,
                     'operation.cost': 0.00225,
@@ -404,6 +411,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                         'output_object': None,
                         'output_tools': [],
                         'allow_text_output': True,
+                        'allow_image_output': False,
                     },
                     'logfire.json_schema': {
                         'type': 'object',
@@ -502,6 +510,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                         'output_object': None,
                         'output_tools': [],
                         'allow_text_output': True,
+                        'allow_image_output': False,
                     },
                     'logfire.json_schema': {
                         'type': 'object',
@@ -620,6 +629,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instr
                             'output_object': None,
                             'output_tools': [],
                             'allow_text_output': True,
+                            'allow_image_output': False,
                         },
                         'gen_ai.request.temperature': 1,
                         'logfire.msg': 'chat gpt-4o',
@@ -719,6 +729,7 @@ Fix the errors and try again.\
                             'properties': {'events': {'type': 'array'}, 'model_request_parameters': {'type': 'object'}},
                         },
                         'operation.cost': 0.00225,
+                        'gen_ai.response.id': 'response_id',
                     },
                 },
             ]
@@ -745,6 +756,7 @@ Fix the errors and try again.\
                             'output_object': None,
                             'output_tools': [],
                             'allow_text_output': True,
+                            'allow_image_output': False,
                         },
                         'gen_ai.request.temperature': 1,
                         'logfire.msg': 'chat gpt-4o',
@@ -803,7 +815,6 @@ Fix the errors and try again.\
                                     },
                                     {'type': 'text', 'content': 'text2'},
                                 ],
-                                'finish_reason': 'stop',
                             }
                         ],
                         'gen_ai.response.model': 'gpt-4o-2024-11-20',
@@ -820,10 +831,120 @@ Fix the errors and try again.\
                             },
                         },
                         'operation.cost': 0.00225,
+                        'gen_ai.response.id': 'response_id',
                     },
                 },
             ]
         )
+
+    assert capfire.get_collected_metrics() == snapshot(
+        [
+            {
+                'name': 'gen_ai.client.token.usage',
+                'description': 'Measures number of input and output tokens used',
+                'unit': '{token}',
+                'data': {
+                    'data_points': [
+                        {
+                            'attributes': {
+                                'gen_ai.system': 'openai',
+                                'gen_ai.operation.name': 'chat',
+                                'gen_ai.request.model': 'gpt-4o',
+                                'gen_ai.response.model': 'gpt-4o-2024-11-20',
+                                'gen_ai.token.type': 'input',
+                            },
+                            'start_time_unix_nano': IsInt(),
+                            'time_unix_nano': IsInt(),
+                            'count': 1,
+                            'sum': 100,
+                            'scale': 20,
+                            'zero_count': 0,
+                            'positive': {'offset': 6966588, 'bucket_counts': [1]},
+                            'negative': {'offset': 0, 'bucket_counts': [0]},
+                            'flags': 0,
+                            'min': 100,
+                            'max': 100,
+                            'exemplars': [],
+                        },
+                        {
+                            'attributes': {
+                                'gen_ai.system': 'openai',
+                                'gen_ai.operation.name': 'chat',
+                                'gen_ai.request.model': 'gpt-4o',
+                                'gen_ai.response.model': 'gpt-4o-2024-11-20',
+                                'gen_ai.token.type': 'output',
+                            },
+                            'start_time_unix_nano': IsInt(),
+                            'time_unix_nano': IsInt(),
+                            'count': 1,
+                            'sum': 200,
+                            'scale': 20,
+                            'zero_count': 0,
+                            'positive': {'offset': 8015164, 'bucket_counts': [1]},
+                            'negative': {'offset': 0, 'bucket_counts': [0]},
+                            'flags': 0,
+                            'min': 200,
+                            'max': 200,
+                            'exemplars': [],
+                        },
+                    ],
+                    'aggregation_temporality': 1,
+                },
+            },
+            {
+                'name': 'operation.cost',
+                'description': 'Monetary cost',
+                'unit': '{USD}',
+                'data': {
+                    'data_points': [
+                        {
+                            'attributes': {
+                                'gen_ai.system': 'openai',
+                                'gen_ai.operation.name': 'chat',
+                                'gen_ai.request.model': 'gpt-4o',
+                                'gen_ai.response.model': 'gpt-4o-2024-11-20',
+                                'gen_ai.token.type': 'input',
+                            },
+                            'start_time_unix_nano': IsInt(),
+                            'time_unix_nano': IsInt(),
+                            'count': 1,
+                            'sum': 0.00025,
+                            'scale': 20,
+                            'zero_count': 0,
+                            'positive': {'offset': -12547035, 'bucket_counts': [1]},
+                            'negative': {'offset': 0, 'bucket_counts': [0]},
+                            'flags': 0,
+                            'min': 0.00025,
+                            'max': 0.00025,
+                            'exemplars': [],
+                        },
+                        {
+                            'attributes': {
+                                'gen_ai.system': 'openai',
+                                'gen_ai.operation.name': 'chat',
+                                'gen_ai.request.model': 'gpt-4o',
+                                'gen_ai.response.model': 'gpt-4o-2024-11-20',
+                                'gen_ai.token.type': 'output',
+                            },
+                            'start_time_unix_nano': IsInt(),
+                            'time_unix_nano': IsInt(),
+                            'count': 1,
+                            'sum': 0.002,
+                            'scale': 20,
+                            'zero_count': 0,
+                            'positive': {'offset': -9401307, 'bucket_counts': [1]},
+                            'negative': {'offset': 0, 'bucket_counts': [0]},
+                            'flags': 0,
+                            'min': 0.002,
+                            'max': 0.002,
+                            'exemplars': [],
+                        },
+                    ],
+                    'aggregation_temporality': 1,
+                },
+            },
+        ]
+    )
 
 
 def test_messages_to_otel_events_serialization_errors():
@@ -950,6 +1071,7 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
         ),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])]),
         ModelResponse(parts=[TextPart('text1')]),
+        ModelResponse(parts=[FilePart(content=document_content)]),
     ]
     settings = InstrumentationSettings()
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
@@ -1003,6 +1125,18 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
                 'role': 'assistant',
                 'content': 'text1',
                 'gen_ai.message.index': 6,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'kind': 'binary',
+                        'media_type': 'application/pdf',
+                        'binary_content': IsStr(),
+                    }
+                ],
+                'gen_ai.message.index': 7,
                 'event.name': 'gen_ai.assistant.message',
             },
         ]
@@ -1059,6 +1193,16 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
                 ],
             },
             {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text1'}]},
+            {
+                'role': 'assistant',
+                'parts': [
+                    {
+                        'type': 'binary',
+                        'media_type': 'application/pdf',
+                        'content': IsStr(),
+                    }
+                ],
+            },
         ]
     )
 
@@ -1114,6 +1258,7 @@ def test_messages_without_content(document_content: BinaryContent):
         ModelRequest(parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')]),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])]),
         ModelRequest(parts=[UserPromptPart('simple text prompt')]),
+        ModelResponse(parts=[FilePart(content=document_content)]),
     ]
     settings = InstrumentationSettings(include_content=False)
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
@@ -1181,6 +1326,12 @@ def test_messages_without_content(document_content: BinaryContent):
                 'gen_ai.message.index': 7,
                 'event.name': 'gen_ai.user.message',
             },
+            {
+                'role': 'assistant',
+                'content': [{'kind': 'binary', 'media_type': 'application/pdf'}],
+                'gen_ai.message.index': 8,
+                'event.name': 'gen_ai.assistant.message',
+            },
         ]
     )
     assert settings.messages_to_otel_messages(messages) == snapshot(
@@ -1209,6 +1360,7 @@ def test_messages_without_content(document_content: BinaryContent):
             {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_2', 'name': 'tool'}]},
             {'role': 'user', 'parts': [{'type': 'text'}, {'type': 'binary', 'media_type': 'application/pdf'}]},
             {'role': 'user', 'parts': [{'type': 'text'}]},
+            {'role': 'assistant', 'parts': [{'type': 'binary', 'media_type': 'application/pdf'}]},
         ]
     )
 
@@ -1274,3 +1426,151 @@ def test_deprecated_event_mode_warning():
     assert settings.event_mode == 'logs'
     assert settings.version == 1
     assert InstrumentationSettings().version == 2
+
+
+async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch):
+    model = InstrumentedModel(MyModel())
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('user_prompt')])]
+    monkeypatch.setattr(ModelResponse, 'cost', None)
+
+    with warns(
+        snapshot(
+            [
+                "CostCalculationFailedWarning: Failed to get cost from response: TypeError: 'NoneType' object is not callable"
+            ]
+        )
+    ):
+        await model.request(messages, model_settings=ModelSettings(), model_request_parameters=ModelRequestParameters())
+
+    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
+        [
+            {
+                'name': 'chat gpt-4o',
+                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'parent': None,
+                'start_time': 1000000000,
+                'end_time': 2000000000,
+                'attributes': {
+                    'gen_ai.operation.name': 'chat',
+                    'gen_ai.system': 'openai',
+                    'gen_ai.request.model': 'gpt-4o',
+                    'server.address': 'example.com',
+                    'server.port': 8000,
+                    'model_request_parameters': {
+                        'function_tools': [],
+                        'builtin_tools': [],
+                        'output_mode': 'text',
+                        'output_object': None,
+                        'output_tools': [],
+                        'allow_text_output': True,
+                        'allow_image_output': False,
+                    },
+                    'logfire.span_type': 'span',
+                    'logfire.msg': 'chat gpt-4o',
+                    'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'user_prompt'}]}],
+                    'gen_ai.output.messages': [
+                        {
+                            'role': 'assistant',
+                            'parts': [
+                                {'type': 'text', 'content': 'text1'},
+                                {'type': 'tool_call', 'id': 'tool_call_1', 'name': 'tool1', 'arguments': 'args1'},
+                                {'type': 'tool_call', 'id': 'tool_call_2', 'name': 'tool2', 'arguments': {'args2': 3}},
+                                {'type': 'text', 'content': 'text2'},
+                            ],
+                        }
+                    ],
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'gen_ai.input.messages': {'type': 'array'},
+                            'gen_ai.output.messages': {'type': 'array'},
+                            'model_request_parameters': {'type': 'object'},
+                        },
+                    },
+                    'gen_ai.usage.input_tokens': 100,
+                    'gen_ai.usage.output_tokens': 200,
+                    'gen_ai.response.model': 'gpt-4o-2024-11-20',
+                    'gen_ai.response.id': 'response_id',
+                },
+            }
+        ]
+    )
+
+
+def test_message_with_builtin_tool_calls():
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                TextPart('text1'),
+                BuiltinToolCallPart('code_execution', {'code': '2 * 2'}, tool_call_id='tool_call_1'),
+                BuiltinToolReturnPart('code_execution', {'output': '4'}, tool_call_id='tool_call_1'),
+                TextPart('text2'),
+                BuiltinToolCallPart(
+                    'web_search',
+                    '{"query": "weather: San Francisco, CA", "type": "search"}',
+                    tool_call_id='tool_call_2',
+                ),
+                BuiltinToolReturnPart(
+                    'web_search',
+                    [
+                        {
+                            'url': 'https://www.weather.com/weather/today/l/USCA0987:1:US',
+                            'title': 'Weather in San Francisco',
+                        }
+                    ],
+                    tool_call_id='tool_call_2',
+                ),
+                TextPart('text3'),
+            ]
+        ),
+    ]
+    settings = InstrumentationSettings()
+    # Built-in tool calls are only included in v2-style messages, not v1-style events,
+    # as the spec does not yet allow tool results coming from the assistant,
+    # and Logfire has special handling for the `type='tool_call_response', 'builtin=True'` messages, but not events.
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'parts': [
+                    {'type': 'text', 'content': 'text1'},
+                    {
+                        'type': 'tool_call',
+                        'id': 'tool_call_1',
+                        'name': 'code_execution',
+                        'builtin': True,
+                        'arguments': {'code': '2 * 2'},
+                    },
+                    {
+                        'type': 'tool_call_response',
+                        'id': 'tool_call_1',
+                        'name': 'code_execution',
+                        'builtin': True,
+                        'result': {'output': '4'},
+                    },
+                    {'type': 'text', 'content': 'text2'},
+                    {
+                        'type': 'tool_call',
+                        'id': 'tool_call_2',
+                        'name': 'web_search',
+                        'builtin': True,
+                        'arguments': '{"query": "weather: San Francisco, CA", "type": "search"}',
+                    },
+                    {
+                        'type': 'tool_call_response',
+                        'id': 'tool_call_2',
+                        'name': 'web_search',
+                        'builtin': True,
+                        'result': [
+                            {
+                                'url': 'https://www.weather.com/weather/today/l/USCA0987:1:US',
+                                'title': 'Weather in San Francisco',
+                            }
+                        ],
+                    },
+                    {'type': 'text', 'content': 'text3'},
+                ],
+            }
+        ]
+    )

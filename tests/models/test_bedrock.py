@@ -7,9 +7,7 @@ import pytest
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
-from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import (
+from pydantic_ai import (
     BinaryContent,
     DocumentUrl,
     FinalResultEvent,
@@ -32,6 +30,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.agent import Agent
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -40,7 +40,9 @@ from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
@@ -83,6 +85,8 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -142,6 +146,8 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -168,6 +174,8 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -269,6 +277,8 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -294,6 +304,8 @@ I'm sorry, but the tool I have does not support retrieving the capital of France
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -562,6 +574,8 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                 model_name='us.amazon.nova-pro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -599,9 +613,9 @@ async def test_bedrock_multiple_documents_in_history(
     )
 
 
-async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    deepseek_model = BedrockConverseModel('us.deepseek.r1-v1:0', provider=bedrock_provider)
-    agent = Agent(deepseek_model)
+async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel('us.deepseek.r1-v1:0', provider=bedrock_provider)
+    agent = Agent(m)
 
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
@@ -609,35 +623,84 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
-                usage=RequestUsage(input_tokens=12, output_tokens=882),
+                usage=RequestUsage(input_tokens=12, output_tokens=693),
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
         ]
     )
 
-    anthropic_model = BedrockConverseModel('us.anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
     result = await agent.run(
         'Considering the way to cross the street, analogously, how do I cross the river?',
-        model=anthropic_model,
-        model_settings=BedrockModelSettings(
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
+                usage=RequestUsage(input_tokens=33, output_tokens=907),
+                model_name='us.deepseek.r1-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
             bedrock_additional_model_requests_fields={
                 'thinking': {'type': 'enabled', 'budget_tokens': 1024},
             }
         ),
-        message_history=result.all_messages(),
     )
+    agent = Agent(m)
+
+    result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
-                parts=[IsInstance(TextPart), IsInstance(ThinkingPart)],
-                usage=RequestUsage(input_tokens=12, output_tokens=882),
-                model_name='us.deepseek.r1-v1:0',
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=42, output_tokens=313),
+                model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
             ModelRequest(
                 parts=[
                     UserPromptPart(
@@ -650,14 +713,307 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        signature='ErcBCkgIAhABGAIiQMuiyDObz/Z/ryneAVaQDk4iH6JqSNKJmJTwpQ1RqPz07UFTEffhkJW76u0WVKZaYykZAHmZl/IbQOPDLGU0nhQSDDuHLg82YIApYmWyfhoMe8vxT1/WGTJwyCeOIjC5OfF0+c6JOAvXvv9ElFXHo3yS3am1V0KpTiFj4YCy/bqfxv1wFGBw0KOMsTgq7ugqHeuOpzNM91a/RgtYHUdrcAKm9iCRu24jIOCjr5+h',
+                        signature=IsStr(),
+                        provider_name='bedrock',
                     ),
                     IsInstance(TextPart),
                 ],
-                usage=RequestUsage(input_tokens=636, output_tokens=690),
+                usage=RequestUsage(input_tokens=334, output_tokens=432),
+                model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel(
+        'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={
+                'thinking': {'type': 'enabled', 'budget_tokens': 1024},
+            }
+        ),
+    )
+    agent = Agent(m)
+
+    result = await agent.run(
+        'ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_content',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=92, output_tokens=176),
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'What was that?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What was that?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_content',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=182, output_tokens=258),
+                model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_redacted_stream(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    m = BedrockConverseModel(
+        'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={
+                'thinking': {'type': 'enabled', 'budget_tokens': 1024},
+            }
+        ),
+    )
+    agent = Agent(m)
+
+    event_parts: list[Any] = []
+    async with agent.iter(
+        user_prompt='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB'
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_content',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_content',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=92, output_tokens=253),
+                model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_content',
+                    signature=IsStr(),
+                    provider_name='bedrock',
+                ),
+            ),
+            PartStartEvent(
+                index=1,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_content',
+                    signature=IsStr(),
+                    provider_name='bedrock',
+                ),
+            ),
+            PartStartEvent(index=2, part=TextPart(content="I notice you've sent what appears to be some")),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' kind of command or trigger string, but I don')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta="'t respond to special codes or")),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=" triggers. That string doesn't have")),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' any special meaning to me.')),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+
+If you have a question you\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=2, delta=TextPartDelta(content_delta="'d like to discuss or need assistance with something")
+            ),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=", I'd be happy to help in")),
+            PartDeltaEvent(
+                index=2, delta=TextPartDelta(content_delta=' a straightforward conversation. What would you like to')
+            ),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' talk about today?')),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_from_other_model(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, openai_api_key: str
+):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIResponsesModel('gpt-5', provider=provider)
+    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
+    agent = Agent(m, system_prompt='You are a helpful assistant.', model_settings=settings)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful assistant.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                        signature='gAAAAABowgAKxFTo-oXVZ9WpxX1o2XmQkqXqGTeqSbHjr1hsNXhe0QDBXDnKBMrBVbYympkJVMbAIsYJuZ8P3-DmXZVwYJR_F1cfpCbt97TxVSbG7WIbUp-H1vYpN3oA2-hlP-G76YzOGJzHQy1bWWluUC4GsPP194NpVANRnTUBQakfwhOgk9WE2Op7SyzfdHxYV5vpRPcrXRMrLZYZFUXM6D6ROZljjaZKNj9KaluIOdiTZydQnKVyZs0ffjIpNe6Cn9jJNAUH-cxKfOJ3fmUVN213tTr-PveUkAdlYwCRdtq_IlrFrr1gp6hiMgtdQXxSdtjPuoMfQEZTsI-FiAGFipYDrN5Gu_YXlqX1Lmzbb2famCXTYp6bWljYT14pCSMA-OZrJWsgj4tSahyZIgNq_E_cvHnQ-iJo1ACH0Jt22soOFBhAhSG8rLOG8O5ZkmF7sGUr1MbP56LLkz29NPgh98Zsyxp4tM33QH5XPrMC7MOfTvzj8TyhRH31CWHScQl3AJq1o3z2K3qgl6spkmWIwWLjbo4DBzFz6-wRPBm5Fv60hct1oFuYjXL-ntOBASLOAES7U3Cvb56VPex7JdmTyzb-XP7jNhYzWK-69HgGZaMhOJJmLGZhu8Xp9P6GPnXiQpyL5LvcX_FEiR6CzpkhhS54IryQx2UW7VadUMnpvwEUwtT2c9xoh6WEwt2kTDj65DyzRwFdcms3WG_B1cSe5iwBN1JAQm3ay04dSG-a5JNVqFyaW7r1NcVts3HWC2c-S9Z_Xjse548XftM_aD97KTqoiR5GxU95geXvrWI8szDSYSueSGCTI8L7bCDO-iKE4RQEmyS8ZbqMSWyQgClVQOR5CF3jPKb6hP7ofoQlPRuMyMY8AqyWGeY9bbWb-LjrSDpRTAR6af8Ip5JYr4rlcG1YqEWYT-MqiCPw3ZJqBXUICSpz9ZHQNTrYIzkJZqPg-hCqvFkOCUtvOYSDtGkAe9x1ekPqlV0IuWLxAmjqbkGH0QCaYAF90wVQUgWPkVWfQ6ULRz2sveQDZf0P8rVZw6ATEvZVnkml6VDbaH69lMyvzls7suvEZJxS5osyjrGfkt6L4nsvhZS7Nuxj2TcRxSEXxo5kULEqAO85Ivsm4j7R1Cxb2h8I4ZZZ_-DnkbWsgd7DELMI-CYtpAWLFl4K4VaMBT6mNAuud545BemUlWnQgmrde4aS7Q_W5GP11iQea9_JcJr6DMf4Y40NDr_fPVU5p7q1bnc1xtwkIpyx0uEeXHEZDR8k-5apBXScJtmelzpiy-25oJdSU5xtgVPrb77kVyJofPtujplZoqMh6MOqTdIhIMm_Goy_Wne4W39hVI01b2vwduBaCCaX6M8uACX96s454WPitX4MYAVc65UHF0BTFskEcbY5bFZpzcWb39VTfra-Ru2URvdo_66qmUd-03XzLKiMsqJHGclhaU6XBqaIo9qD8FjLVT9DOx56eh3GFvYA1dxvgbp6gyOg7bOBL0KDarT9Vmo40vGvwyCT_a2S_6Oki6uBU_3bf-jGvtum4tkN--wZkBrhOj7L8onItPoAZQXjYXrcXfVC1KR_xA0IOxYZD59G1rBxTDlvatIFwhvoISinkU-zPkKMpralHlxDicmJrBsKsy-mZWCF5qHeWF36pjE35dE9GxR28xw1Ed0pA_kOIgMKSKCiRWUYY8D1jAHKzimnj_4VTKR05kTp30pasr0IUMl2celsQMDv1D2atEJ_65CeRio5cnNGUR_Z73LJ-fqLkSjSxlE2YvtcKX7bdF6bSq3EqDtOdLVUjYl_pxRaUNMRmahQUJXGsDx7X-W9xUgQmAq09qT3lh1fhVUgdtUuuaoNY_M1s5V0E5ePuu_C6Duuz8WCcecbhrcbI3FDQSJn_XHK6ImLMYBowGRYVkBE_Rf7q7Hj4zdF-3bVE_QDce3syZNshCYK5kO8mvADptgdNVG7lEiZ9TIQPBd-XWRUrZ3XvIfGVJFVMjh_Laq8RTDyvvId7iQDuvq89hQ86hlfWteEl8HzuwpakWnogg3CCStX5CMGpYUWWkOCUu2LCH2H4EBaeCcAPLCmEoxcpKS182kYLm8-4ShRz-YOMIEmE9TL2za15I6BCBi9OhQGcLSl4BquhfBVHyxmkEN7_g102yI1Ocucux8q_HLMo5UZz0KALRQy4qmNpnLg9f4Yetj6msezjuU17Ji1ofIcadglOYy2J3Aswf58M9fCwCfB6hAHRYM2XkYzJ3nc0VosWA0er90zqKOeM1-erWC-skbupO-8nw9DA5OtnJTZOLnhGRjzXqna0E5R69wOHi3yvb3zzv2K9fLMKi11bCM_cnel9ItcFM-AYQ0AhBTZ3sTn-tpIf3IVNCvnCxMWvbO-MBmoexQnPorA0SL6n_nL49Y9Zb7UgwCyNGmhsFjIlSXu-YG-yCV1lVXBYoEPDwa2eCaMwph0QneXPHHMUs_i9PuFVI-nwfEiwU0b4tk8x3tWdkltvtzhjB8fxQxJNrk-ykNhuEYfQMQ0_MCqIRD097_gjO8q-eFUjnuiVqqoQ9_rH9QCxABdA8afoNt0hFxBwR6d57P81_XKOnApyrPx0DjsuKVTBFoCWccKX4DZuQT_PhmsFtPquNp6OPWQM5a8HzKntjz_HgFYnyS5p6n0hBGZVC_GDtFEm8JELcwuVoSLSXhI_XKnck2FIhHA5YQ4vLGOhCEEZoINkDdq3oNgm-NiP-DpG2LYetLl4ljlUpRBUizmWn4Fr3jhIt8rmQwqmFj6aMDSEM0Sgen9DsUH7H3uGK2NipvFv2Uxic5aXAKQ37EFjxPFqvKXlDl-hLnUXtkXLXBbmgCJJw6nBvm-SeIxU_eKnWHkhtdnkNZrmNFaq0OYZKk-moYSxEgzxasQNYGtkN89LqAhRTS6dIbb4nXa8ArvuHTJ_qpLFjGF3SSX98Y53cgtSdGTTmHQ6_v0BmeKCWhRd83vPrmFosif57AXyBVk0HJ5YdeueitsBCyXcJmeCntrT4zDlujwuMWK7wDO4vGMj3nIIyuJMJjtpD_auuDLmpYHqmKTHm8Ob8R2jJIwDhJIupkTldX5kHZmo6Nyh8tjeMgeEbp4Tp05CfyUTWWM16gaGkwW2Gto3sJtv0AiA_PzSN_dDziD5fRSH2Q2JTW4g03Uc9SBelL2fFiQifPSc3-mI4i8QHIswd_qPnSAnHxBW6SLJFqY-qIG6soLzt2VnH5hpVvakMfO27A82DQrcoFDFsqRb8KgLEoL5u-6NbgwKSNFjfIrLFg9IzrQI7oktylkFrc_EWL_smmL6iuT5WEYt4jBwtMvyDD6nVHzzx7jd8J3XQqjXfWuH_uTAX6cOHprzaPn05QRAluZgcBL-FSQJ3Qw7PjpoiLyd3DGL77nfl_m9cpAnpz3ojtajP7Gb-aq_xa_JIqxbnuBDBkeyN8pOQp--ZD7T2BOAgS7poVoqPFXRYIJOwKtOcrj6UdPN2yrx-44ZMTJYzwcGELnFRs32PKx8TiiF1pKSwo4NB5Z97_0k_WbyBwyNajMtRUPmEuTr9VoO7CBwe1r3U3iIZbBKCfJjiG5FQToqzku31_YAs5OIIaV4B9ifLt5PwUA4mO-7XqgO1VQQjt2cUQo3Ui3EKWEJ-ov7F3wf_byGsguBwv2qMuAQiLBqs5jxrJUxyYIJAM7B_TtUjpQnNERvHEkt9TxCN8Kc6L-MejMOfu3VPdArf38naQjvBjBAZDznV639bkIRED7-soJbGMcGEyGWUqAVs9vkFleO9S4YLNvFShwo3ujBd7SMMdAyvi851CXT5uN5SDtaxmQnUGzAXmPJ9-UoJF23lSGB26eMdnIerzFoYMCgWPHyvt949IrsUKnpjuxebqQYVSrppmhIIrD8R255bJGSscVwdbrd9iA9-gHoB3UzCr5pd3gfW9Z6ynT4dQVILqtj0KgrDOHw4AIBqmwaecTBi5BeyXJx2oF1ClqS_7AanfqNToLcAwaKXnrK4RGyrX_mXHUFX9cT-o-eGqhi0lifCcJixwb3kG2AhP1USNNsCz31m40_c7cm7JcqLbzCnz4hvbivUvON5rf6kQ8PrfrjNrZA73VVIKhgZBDHxsHa3skwQvq-JH_3QulELy1-6vL5Kq84bg3ZPQxOUtxBRuyjxEJkpgG-sED2pYsKrUPqo0Ku_ggMTQjvoGGYRBt5uMlVX4pdB1zhOe1ZjcvPb8IwnL_BdLX4NvLpN97KH9Ot45bLeVTCGpv5UH8Nnm5CzQ53wqsOUD-9u5hqrSwx89sF7h8TlN9non95r7b_oHkU1R_czZ-ZjL6EubsUx4w-rWKwVU7GYde-ie62v8jcaLhkM72O4B0UvCfY2t3GtruZ4OirX44hWfOPujFr5L6bOkVSMKONJFooIJ2RIwCw64Mczkle2zQZ1P3u1DrMS5s65h-gNTwSGw3qyQBwF58-um9ycDis6f6O0ggqubsCDlsW7Vdnk_GlETHLDQ7lR_lRG1g3kRQEhKz2iwzxQan01X021EJd4TlocJYafpp8HU_rgcJdUmcvPFgB2xysE6F1vYdUAdovDztLftb5Bad4aKueUfDs8haq9TBgosHQinvKFfazE2StHUaEAVK_BiOYrH1XsrFQlXuMwhQlRgA9L3Q663gMrnhnfcQPSNd7P5EhqbadtddoVrLOKhMD5yBJj9RiC0vamCGVr2LA7hStIPBGysTBanE3u4bT-TKe2qCOskvfR2xU8NSlai9b8d57zkuxklf7LaDnMi-xu9TOqduYFfXOn87uqjaN3_emcq0NExYcQ1fMUMcbOuGoW6qeWlWmMtANjI3VaJCa_v2JYJ4cyl4gUoboC42d2esKg_Em2XfqUkKQh4XTG673LC1ebToWGPRvFtTQM3gZ4Wh5JY4pL58VeSsf1jhINWsytNpgGckHCK11BzUUx4MABT2BuMWf-a_5DV4KYdmXHn_AKAqoZWHgE2hC2Q6DUEaKTm7AV56Cm5vo-NibALDGH1zG8ih5C3dmHvQmES7vUOVM1jPS6k7paHXEwnPFE9M-zg6XmjKjdvSZ04lauZEeCjSJPb4E_v-uWlwkdHsDcTxfj9oTjfEpX0mZxIuT_Ex7Mx2I7DUHDUQgKgZT9n1TQym9patiPO8VYzYuoXrsEeLS1Mk5N3AmQXeB89x85_Xj2plBbDOqqMpAD2uMBXwHI4kut10unkHhl3S0JtA1tE0ukxTRaitpDQveHfao0tQC8gy4JEA6M5AD7iyWOm_iuW9baElC-R_g_6s_X1t2qv4mWwd8P-h7yFm4XEZg_oJEIA40hGwSPKD1d-b9QRz7Kl734V5RvMw1ekdsvZ9dVKNcPffkGX0inTp8RgkOWFUnS0hZpxuNbte3-rGWEt6Syy4x2jaH-Zr6o667kigSt1Q3cQO_eqQtq4VWuFmYIbDzkEbIKmIHY52gh-rB5k-FMQqCs-ay5Blj_IpvfcImMtrZBrbhL89gzGNRonBZEa-9kJeu4jr2_DLzw14KJR5zVNwiGLub3jJkgYqOZZ5ee_oNchx3v68S3wHyFnZA9IIaXRZjYLMrjD699h9SZvkTHdGAwICpyOjrfYbgX_7woRp1ZWBslOamnw6mDqJAk22nb1a8cpdGNP2IjXVRtuqIB8y36bHEFjChDTxERZ2dsz7a2mp5qM2Xz75OGBM77DAjnGpU7GFXDnolAnAsU5T3dd-LLnVlVhvzyuZWg7ZdH-0WsVVCezyIsQnm3WMpdPrlUcHtT6fyY2fhJVIm1QJEES5wEiEPMRrmGQ68V-q8TWlrPan6LU5Kr8Ak0nJKhE-r5bcaemeUbIsY4a9n2YDZck9CI6VGumMccelQ61Bhs5vgQ0W4AID90TXnUtJjWrVcgdhrLCWV_kv2_YSqDDoI6TM0oJKNaoNeG2HXCxXpHy8izUvfMwHvdniW3c4BPnvMpQW83bXrMPteKk-CFXdwQ6bB2PzzXAzWTp5q6D5cLWAyPJjju4AmopBUJmRwp0tjulMCClWqMiB08y8DIWDDLAAaG7Q-de-_Q-T6tZy4LRk_c0sYOtAaNCA1HgTDSLvP4j-xeuu8DrKv5SqefP2J7LLFM_JAi1gRh_84NUvUDvBdexr9wZI8eXjnnoDvP6KTosKCLmSC_ErmtzRXfUg1mz5fNVtlKSm03tqzmfL46iKDATVuEejDtlo34djj7uBV5DUw4lDIpQY1VsO1Ozgpoz9i8sNcRKQ-K3Of-vDL6R28gLBUq0Xo3nm1hAJgjc68C57jrMlJhD8GM6AeoGnnhDTfJ2xuxsdnH6i06qFUKcuTmA8l23Ek-A3ryx8DHAIaRX40d3e5MwaUqbglufHWBGId7KBiaiFuD3LhJC0CLl23XyHf225Rd4lir9LpltmuaRLnyS0FwIGZMaRmxQ-SWB2fDVzj81SJpo9lPDsuLu_ji7AA1cx-PnTj5fVp3APeRmy9E0A2v8hCKm4C6tPuvgC7Xp6MV8epxYIsGRiTy5wlHQE0FUuOdBtBH0rmGJDf4HQJoZHjhDhOJZqkvlDtEowB1mtndHgRz-0lpQurRm-RwKvl4n0quBfWZ1GL_PmiZIO36Iyyw4BRt3c1a5Zc5ilweQcle_-ZxawS1aAXXOaknt2c6AGB5JnmrTz2dXS7A8M20uNp7Cv8RoeiCYjPa1Co3Nr_6BuQL7HFxNsyk1AXDbG2qUJljSeWG3YFkaPHxgTw7aAefXrFFL_GNPi0YtageYJq3WN6lrdQ2CB0g7QLoj9dsHlAGhm8PtUESBUBbSyJVOm1lCuGGbB7psYxOLLO3BSqnXHb0--sDiyCTKMi-80rtMiHttXC3zAxXUFQjTre3a8KNohgPWx1PTAbxf96enJ33rhBV-2ewMIROT9j-K_Esee0eWUcTmt9v0yHW-V5ij0Hopx7oaXadNQLdgBJwUDf6R9xEktHhzUkyJ0g73gjrKQz2EidorhljD9LSFMAlUuRTkUhG35crMduH9TAAEgOHXZI24CD5Fz3n2KgXKoxWHlpaLlTwBXK1xLHVCrqCqvsBo60w5FV7cmdNTBjFbDU1EKSHLopt_aMgtT_6Fg1ZT6H2p0CAvvbinLkTLop3pSVU1_itnzRHOf3ayHzMrmSN_pI_03Of_63ZuHJmRWRCd7s1PviAo-B1LcG52VTanJz0JCF1RAlPj9-2DIgJLxDgNcPI96cTqZBbLk-rwKlebrmX6d5CBg3V5pmJKkgLIj5FpTmhiXhqDHHJvu-BxfzDQl2c8QtQYF6aygihfCCluN5biEv51XKRDpC-S3sU3USofDTgcg1pznwUvVv2eL8nWywckhIHWnip7z_ptCTmyn7BEzzgRgGLA_pLG17SPRJP6laoXHG_dprfpRM7gcLJZQ2zk29W2zVEpFwWePGpnQbpPjPqcOBiQfewxwnLHEuV8yGBR7Y-SEKrc6M6v8AHYk9oLXaRu1qBKkLUKSzKQhNFtfl-h-J8Adf0W9hxYSt6QNzf1YUuE8H_w2SrUGcVnsCnIQY_xu11sJ-0d-T2oFelzeEoasMeeCDamuFQye14ps0k4cM8vXpk_7ZrVE7rQmEpW40_n1iNHwB4UINg9CnQGXH98DzBBCoGPZpA1SELOwGTcJGcBZVQ5Tfey1SRFwXWJO0QFHfDb5-_tQUj9o30MhJBGxOftnwLaFROLgq3FuSBRM9dYsdlpHe1SILQXKVIwjXcOVMFgmbDq_hMSNFlMvblX9LLBduT9cXk6JhBVcxb8-oKbvbjL7zqQHOgke3ZC6oDEvcew2YzLMiNLiyGxJcthsyDfrWbhbq9DSRE7lYq9AVeh_Zc2wZq0RFh4CJGhXtW8WobIOY8JPIkyQKD4W_mKRxchykWyrCRliFId1Tzbgzu1NKxdZLiGZchs7MRgd-c_Kk0mDAvcVqyCSw5ZnlG8qWxmgwods9KD80tww2Bvp87a9Jwf-S8_PhqqG3ggGuLLm2CH71h7v6uA7f9-aCJKnlPiyb43OU2IK-rRgJf_U6VNAs1n0-RwWlaMttgA5wcecqRUlkneFkWpJOKDXpuAR9vwfoArMnPnp0jGQDN3-OPymX4xsYY6L4k0zC6j3zz9K2wgcGFD9kliVy2qwbeAqWL37Qdnr6sEbkxusF6IiYh-POUU_8rCQX03_uw0XHroHwK4mFajchjXmOY8ykOBQCIGPwCNI446xFhqWFDytDTXq9Eu651PlEqDELIcRwQz6KYWNJNlEFi4_f4GYS8sn0wpwte5R9QuaaLjc38obGBswmh15l9PrMvrWklBnnEZpV3NWmxQViKWcuey_QG_hRfQ-8Kjhv0f4D4L-d52x89yVXeVu0wbN_GstklEGCCecqvmQi1vXDf2FKr69Md-TE-mAh9pA-72vepP3guNcHz6PqzzOQX9Sj1uNZCkB0heHrXuCunn_Elv3ZvHZ-9AE26ybqtRVxaHtYrbtX9AKVk7ud_YdFPxSq-HeavXCXOBDGxEVleN03Q01jj7xoz5MjhKrVDF7XOobW0xMLtPfJLLmEGkBtSrLFCDGo1T7T3DnEiFQzXZutM50_l0k_3DxzDKhI4s5rOeeTMjSXDaxjM52LLgwAanVnMtKEsEXFVF4b5xvu_xn5CzqW5T0TTDOFXm2Gdxj-t59bgRGmnO56K85rTGgeJyXBroTz8cS4hkgfm2fQKiDAQZ5iMJeY4iqKZJTrOYb0IueB_ez-I8XW_dibgUd-WcJNKYKf4KnZR9_Z8o4OofbCdVj2mcgunpgjbTCORNWj7IpYmkHcbIQFtXnnts_2WNf-TtE6xr-iIVkwGABYE7ugHl1BUO5yKuDmeTOijSxWQGO22dzPnGVQ4O7AuXUYBFRa6FKVEIIVyk49ggvgRFFerncqEW1s8LR9gCzMIsxH2jCOyOSqjWGdZncRqDWhF6NYgFsqs3BDGYspC1vd9KFYppnH5W7MRYb2Duoi9yb7SQhNarto9KaqqgiTdEWeOw3kSkTZxa1moEh8F3ueFWhjQXNW4I3_inDPUdw0Xcf703y7uitnAsi-235tGC36JkWMR9M9Dx1cQSnS0NWhOYjUPPrKSHW8QCY-ZAfEUSJfixJeXEEUI0YmuGlFCIrLFvtlqFjxzqJW4JPCfnB0jCC9Z07d7rwHznYBSkr_cis4gNwnPOa11060WODyso6zRSJ7Q57bPhULvgnMZHZq2hl5dygeAz-elG8XYIUmr8jwXKuVGT_hl13cNI5QHaxshgdJuTzE362jxI4c0usFIVIzwhX6KqDFtWIZ5skj8iGioS6pDkY5tTj91aRu1ZL9eQ7KSLBbPeqhZCjQJGuudUr4u7HGuz8lQR0KvuZqKGGaybbPYwzJSx9qkGwqr_RNT7RW7oDxNiPlUHEf1qvED5M5FBFt_YlTmVtLQDJHRxvx3jv-Nc9pm6tew-et17Z0lMcXypXhr138RTXZYHSwJXsHMTNNGZFHCuZsyrq-PywrzCm-i6tXstJXx79s9os_dAaYgMtYEjPNRCb29LjaNw6OL60MKAl0Fung52DEDjnxFCTp9ygM_IkmLw95r9nhdq3smfsasefn6cp3YnEG3skKDswqS2Ul8Pilfqz3JI7mVucw4zA08ICIXAxB_L8_MPXUPPrVrdcf2HHicjjFs5L7mabPyv6blX2uB0BJ8Pcsdr_qdm-JbxmEEZZnxmtaG0VPgo23-DaHHIdMnNa-4cElpS64Tqcanin5QIsd1e1jIBJcjLmGOjV0eJpawOICK6dIhgdAsgLyXT-ItiUkVc_7NrPdpe0Fag7jMtvqXlvi-JljdILhGfbT7o-rNPY2iJ32jKUIDVZTSADQRf7Psnt40y3m1Ccx6aN3JVhNrgihrfjMF4rhZkqrh7Rlzs350VVOar8RblBoycjjBh9-xyXXSp4OWebr4rK6w76HQqKoOdQZvFrBG0Y3Qfkq1tNnJyy7QA3ZZwhnVPzmvi7GeCLIZMNQLQ2A3mUvZXcmmcI2NmLBJuTHoQ5IBhmtMA9_b1qVTt-8iy0jIklazgzzUa0Zdl3IAuptdmJT7AGneTDhrR60WBnxVbbjJa-_LvOyVdEVimw6wNuUO0HIuyLo7s5MkR1D1SNShzV7PUtM2YKxUxbE1zEHkqiTIF1P5RxIhh85XAaIaJMlIxjhvtIUy--jiuzLh9HDDjDCuSMRrqOk958lSAkZnProYbHuRI12ViZ561Z4-whNCQwctuoP68FvRWLByoO2NtNSaPBC9aqNx6OWHcTTGdaip8MZLmD_xPjoq6O04HNxBsaCQeo2xqMkeoB74m_8HtZQIPHyEgW2cAnDDOPDRFspt8KN9TMgAWTf_Pa7eI1ZvWo1vZtjOUi9E9SARkpmtFNtaQP_NRLp_76h9B_piPJCdzuIl9QXbwscJOaDHIlYfeauN1j1zMGmSY1jS2UPNPF7Qfy1wUcdxLFuzGy_1YPe6i8DoMimj_c995kmHFKi9jIdBHrTz5p-pX_E01O95Wd1mzgCeQCo643zzQ10c93MASc5dgHgCjyTfT4RATHXhVrhhjnamu0xnLxIHt0qA43qDfQd23xzzp5gA0KLoQ-b9fYpo5tjD3z-A6BuVES9k9W60WN3nwxJiil6rjHSHxzq_rmoDj--EOBsKv5TcismcMk4IdBgoKWcsHGW43c5t5gmaA6c1QZPDHZWTnkHPZIsH2U1kMcsNHoWG-H-xQ65cz6cceu_ATRu26etMuEZo4ecqNSENhCQq7NlkEnWVacuW7qybowkEr2uIU-BB_wI1oHPKVupH-0ZOHsVZOgktQ5g1DWiXUVloBabeRIZJt7fDYFs5oNgXxggElnN9fK-fb8BQb9j2BraENpRQonC68YsbFQLoyefvK3WnO1GFQQg7qDqzhU9PgMU6CIYfMfuHAoFiXtaTsnykAIv7m0nckJn8nldATLqakn72ObT_rzRQXi_cKoksBvKel4sqg7FtoM9no5s9a3wT1OwRXNUZ5Jg5iYyFW9mlRV4-Pwo67XhiipGG-iXsqxlhmDQjmeJoBfOKfm3MWJccFO9hMReoCp1DDqP5wxG_1gFMhl4mHPgxQW24pRrYOO00YYdR9VVrsBdjalyjo4mK5PuWqP0O3BKTZ7-Al2P5_VyQ2MxMZAZCkHSE5tRIkq0k29sZLPM58yUwN5FkIrzop2PR_VNYNa2eY2jK-mVv7eYvwcq9LcF6JbJN79K9YyPI-dqKutPoFzFXQEijdF77VbVDQYN5v33gKMYWIyXUb_ZgBFZ9wwZkGkzK7aRR22QVhUMk-M6dZrVH365Cmnboiq_7ZqSIa49uF1qlWbCljkpXMDxF8i0YGRdx4CUSU6vfyKyMUtCb-c6ZxGztojxz72-u3SwPOEJeRNUjpgH25LHo21ORRGuDHM0p04CyxXYe6YH-qYyINgouQ58GorDnhZJfLssqXFDEV_HeQfuZp-KsEnHSMDgX7ibItCu_ETXE2ano2M0XnOjdmSPRHl1aFyQAWkHsgTsrlzucRFcDhkK1BNIGPgC4eWce4bsaf_DHP0OJW8qVEnd15Oj1r9Om2K-vL5pYCLySkxA85DSgMKNOXPsPV3wGkiJjLJqn250v5aiwAziMHrcY5ik4Fm2AvDlRXPvGqXOuQG-zJsFc05J-1TBLgT1wZ1b2mw_qihmlJt71mthNKfgjmCMtx6WVKgRGM2lhdZ6gXt_9AkBcf3Rax9inuLnPgfaOZSCNa-MMR5yVa7ql7i-NwvuupwuuTuuKGkXv_-T3EK-Ky418dDDOMTgpW8nHiUM6Y5uBu6v__N8NMYvnJmujw6dUTNMR-R6vgaXdDtzs6a4KAccwIgqQ43uhgDexj9x4OB4304dKb5PJ2HpgIlnXlhjB-JGmnQAbAIaLrEcW9V0S0PX4H_Mz4NGqaAtDTeeiw=',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                    ),
+                    TextPart(content=IsStr(), id='msg_68c200091ccc8191b38e07ea231e862d0003919771fccd27'),
+                ],
+                usage=RequestUsage(input_tokens=23, output_tokens=2030, details={'reasoning_tokens': 1728}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68c1ffe0f9a48191894c46b63c1a4f440003919771fccd27',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        model=BedrockConverseModel(
+            'us.anthropic.claude-sonnet-4-20250514-v1:0',
+            provider=bedrock_provider,
+            settings=BedrockModelSettings(
+                bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+            ),
+        ),
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=1241, output_tokens=495),
+                model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -764,7 +1120,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='ly and ask')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' how I can help')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' them today.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta=IsStr())),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta=IsStr(), provider_name='bedrock')),
             PartStartEvent(index=1, part=TextPart(content='Hello! It')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta="'s nice")),
@@ -789,6 +1145,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                     ThinkingPart(
                         content='The user has greeted me with a simple "Hello". I should respond in a friendly and welcoming manner. This is a straightforward greeting, so I\'ll respond warmly and ask how I can help them today.',
                         signature=IsStr(),
+                        provider_name='bedrock',
                     ),
                     TextPart(content="Hello! It's nice to meet you. How can I help you today?"),
                 ],
@@ -796,6 +1153,8 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
         ]
     )

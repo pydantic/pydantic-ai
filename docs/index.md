@@ -1,4 +1,4 @@
-# Introduction {.hide}
+# Pydantic AI {.hide}
 
 --8<-- "docs/.partials/index-header.html"
 
@@ -32,7 +32,7 @@ Integrates the [Model Context Protocol](mcp/client.md), [Agent2Agent](a2a.md), a
 Easily lets you flag that certain tool calls [require approval](deferred-tools.md#human-in-the-loop-tool-approval) before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences.
 
 8. **Durable Execution**:
-Enables you to build [durable agents](temporal.md) that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability.
+Enables you to build [durable agents](durable_execution/overview.md) that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability.
 
 9. **Streamed Outputs**:
 Provides the ability to [stream](output.md#streamed-results) structured output continuously, with immediate validation, ensuring real time access to generated data.

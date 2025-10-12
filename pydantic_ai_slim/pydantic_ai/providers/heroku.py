@@ -6,9 +6,9 @@ from typing import overload
 import httpx
 from openai import AsyncOpenAI
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.providers import Provider
 
@@ -65,14 +65,14 @@ class HerokuProvider(Provider[AsyncOpenAI]):
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             self._client = openai_client
         else:
-            api_key = api_key or os.environ.get('HEROKU_INFERENCE_KEY')
+            api_key = api_key or os.getenv('HEROKU_INFERENCE_KEY')
             if not api_key:
                 raise UserError(
                     'Set the `HEROKU_INFERENCE_KEY` environment variable or pass it via `HerokuProvider(api_key=...)`'
                     'to use the Heroku provider.'
                 )
 
-            base_url = base_url or os.environ.get('HEROKU_INFERENCE_URL', 'https://us.inference.heroku.com')
+            base_url = base_url or os.getenv('HEROKU_INFERENCE_URL', 'https://us.inference.heroku.com')
             base_url = base_url.rstrip('/') + '/v1'
 
             if http_client is not None:

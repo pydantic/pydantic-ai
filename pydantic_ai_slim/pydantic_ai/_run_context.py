@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Generic
 from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
 
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+
 from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
@@ -36,6 +38,8 @@ class RunContext(Generic[AgentDepsT]):
     """The tracer to use for tracing the run."""
     trace_include_content: bool = False
     """Whether to include the content of the messages in the trace."""
+    instrumentation_version: int = DEFAULT_INSTRUMENTATION_VERSION
+    """Instrumentation settings version, if instrumentation is enabled."""
     retries: dict[str, int] = field(default_factory=dict)
     """Number of retries for each tool so far."""
     tool_call_id: str | None = None
@@ -43,10 +47,17 @@ class RunContext(Generic[AgentDepsT]):
     tool_name: str | None = None
     """Name of the tool being called."""
     retry: int = 0
-    """Number of retries so far."""
+    """Number of retries of this tool so far."""
+    max_retries: int = 0
+    """The maximum number of retries of this tool."""
     run_step: int = 0
     """The current step in the run."""
     tool_call_approved: bool = False
     """Whether a tool call that required approval has now been approved."""
+
+    @property
+    def last_attempt(self) -> bool:
+        """Whether this is the last attempt at running this tool before an error is raised."""
+        return self.retry == self.max_retries
 
     __repr__ = _utils.dataclasses_no_defaults_repr

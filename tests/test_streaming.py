@@ -13,26 +13,34 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
-from pydantic_ai.agent import AgentRun
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
+    AgentRunResult,
+    AgentRunResultEvent,
     AgentStreamEvent,
+    ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
+    RunContext,
     TextPart,
     TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
+    UnexpectedModelBehavior,
+    UserError,
     UserPromptPart,
+    capture_run_messages,
 )
+from pydantic_ai.agent import AgentRun
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
@@ -137,6 +145,21 @@ async def test_streamed_structured_response():
         response = await result.get_output()
         assert response == snapshot(('a', 'a'))
         assert result.is_complete
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={'response': ['a', 'a']},
+                    tool_call_id='pyd_ai_tool_call_id__final_result',
+                )
+            ],
+            usage=RequestUsage(input_tokens=50),
+            model_name='test',
+            timestamp=IsDatetime(),
+            provider_name='test',
+        )
+    )
 
 
 async def test_structured_response_iter():
@@ -400,15 +423,47 @@ async def test_call_tool():
         )
 
 
-async def test_call_tool_empty():
-    async def stream_structured_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
-        yield {}
+async def test_empty_response():
+    async def stream_structured_function(
+        messages: list[ModelMessage], _: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {}
+        else:
+            yield 'ok here is text'
 
-    agent = Agent(FunctionModel(stream_function=stream_structured_function), output_type=tuple[str, int])
+    agent = Agent(FunctionModel(stream_function=stream_structured_function))
 
-    with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
-        async with agent.run_stream('hello'):
-            pass
+    async with agent.run_stream('hello') as result:
+        response = await result.get_output()
+        assert response == snapshot('ok here is text')
+        messages = result.all_messages()
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='hello',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=50),
+                model_name='function::stream_structured_function',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(parts=[]),
+            ModelResponse(
+                parts=[TextPart(content='ok here is text')],
+                usage=RequestUsage(input_tokens=50, output_tokens=4),
+                model_name='function::stream_structured_function',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
 
 
 async def test_call_tool_wrong_name():
@@ -765,6 +820,182 @@ async def test_early_strategy_with_final_result_in_middle():
     )
 
 
+async def test_early_strategy_with_external_tool_call():
+    tool_called: list[str] = []
+
+    async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        assert info.output_tools is not None
+        yield {1: DeltaToolCall('external_tool')}
+        yield {2: DeltaToolCall('final_result', '{"value": "final"}')}
+        yield {3: DeltaToolCall('regular_tool', '{"x": 1}')}
+
+    agent = Agent(
+        FunctionModel(stream_function=sf),
+        output_type=[OutputType, DeferredToolRequests],
+        toolsets=[
+            ExternalToolset(
+                tool_defs=[
+                    ToolDefinition(
+                        name='external_tool',
+                        kind='external',
+                    )
+                ]
+            )
+        ],
+        end_strategy='early',
+    )
+
+    @agent.tool_plain
+    def regular_tool(x: int) -> int:  # pragma: no cover
+        """A regular tool that should not be called."""
+        tool_called.append('regular_tool')
+        return x
+
+    async with agent.run_stream('test early strategy with external tool call') as result:
+        response = await result.get_output()
+        assert response == snapshot(
+            DeferredToolRequests(
+                calls=[
+                    ToolCallPart(
+                        tool_name='external_tool',
+                        tool_call_id=IsStr(),
+                    )
+                ]
+            )
+        )
+        messages = result.all_messages()
+
+    # Verify no tools were called
+    assert tool_called == []
+
+    # Verify we got appropriate tool returns
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='test early strategy with external tool call',
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        part_kind='user-prompt',
+                    )
+                ],
+                kind='request',
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='external_tool', tool_call_id=IsStr()),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"value": "final"}',
+                        tool_call_id=IsStr(),
+                    ),
+                    ToolCallPart(
+                        tool_name='regular_tool',
+                        args='{"x": 1}',
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=50, output_tokens=7),
+                model_name='function::sf',
+                timestamp=IsNow(tz=datetime.timezone.utc),
+                kind='response',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Output tool not used - a final result was already processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                    ),
+                    ToolReturnPart(
+                        tool_name='regular_tool',
+                        content='Tool not executed - a final result was already processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                    ),
+                ],
+                kind='request',
+            ),
+        ]
+    )
+
+
+async def test_early_strategy_with_deferred_tool_call():
+    tool_called: list[str] = []
+
+    async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        assert info.output_tools is not None
+        yield {1: DeltaToolCall('deferred_tool')}
+        yield {2: DeltaToolCall('regular_tool', '{"x": 1}')}
+
+    agent = Agent(
+        FunctionModel(stream_function=sf),
+        output_type=[str, DeferredToolRequests],
+        end_strategy='early',
+    )
+
+    @agent.tool_plain
+    def deferred_tool() -> int:
+        raise CallDeferred
+
+    @agent.tool_plain
+    def regular_tool(x: int) -> int:
+        tool_called.append('regular_tool')
+        return x
+
+    async with agent.run_stream('test early strategy with external tool call') as result:
+        response = await result.get_output()
+        assert response == snapshot(
+            DeferredToolRequests(calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())])
+        )
+        messages = result.all_messages()
+
+    # Verify no tools were called
+    assert tool_called == ['regular_tool']
+
+    # Verify we got appropriate tool returns
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='test early strategy with external tool call',
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        part_kind='user-prompt',
+                    )
+                ],
+                kind='request',
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr()),
+                    ToolCallPart(
+                        tool_name='regular_tool',
+                        args='{"x": 1}',
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=50, output_tokens=3),
+                model_name='function::sf',
+                timestamp=IsNow(tz=datetime.timezone.utc),
+                kind='response',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='regular_tool',
+                        content=1,
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                    )
+                ],
+                kind='request',
+            ),
+        ]
+    )
+
+
 async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
     """Test that 'early' strategy does not apply to tool calls without final tool."""
     tool_called: list[str] = []
@@ -833,6 +1064,15 @@ async def test_custom_output_type_default_str() -> None:
     async with agent.run_stream('test') as result:
         response = await result.get_output()
         assert response == snapshot('success (no tool calls)')
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='success (no tool calls)')],
+            usage=RequestUsage(input_tokens=51, output_tokens=4),
+            model_name='test',
+            timestamp=IsDatetime(),
+            provider_name='test',
+        )
+    )
 
     async with agent.run_stream('test', output_type=OutputType) as result:
         response = await result.get_output()
@@ -862,7 +1102,7 @@ async def test_iter_stream_output():
         return re.sub('cat sat', 'bat sat', data)
 
     run: AgentRun
-    stream: AgentStream
+    stream: AgentStream | None = None
     messages: list[str] = []
 
     stream_usage: RunUsage | None = None
@@ -873,6 +1113,16 @@ async def test_iter_stream_output():
                     async for chunk in stream.stream_output(debounce_by=None):
                         messages.append(chunk)
                 stream_usage = deepcopy(stream.usage())
+    assert stream is not None
+    assert stream.response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='The cat sat on the mat.')],
+            usage=RequestUsage(input_tokens=51, output_tokens=7),
+            model_name='test',
+            timestamp=IsDatetime(),
+            provider_name='test',
+        )
+    )
     assert run.next_node == End(data=FinalResult(output='The bat sat on the mat.', tool_name=None, tool_call_id=None))
     assert run.usage() == stream_usage == RunUsage(requests=1, input_tokens=51, output_tokens=7)
 
@@ -1503,5 +1753,90 @@ async def test_run_stream_event_stream_handler():
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
+        ]
+    )
+
+
+async def test_stream_tool_returning_user_content():
+    m = TestModel()
+
+    agent = Agent(m)
+    assert agent.name is None
+
+    @agent.tool_plain
+    async def get_image() -> ImageUrl:
+        return ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg')
+
+    events: list[AgentStreamEvent] = []
+
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+        async for event in stream:
+            events.append(event)
+
+    await agent.run('Hello', event_stream_handler=event_stream_handler)
+
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr())),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='get_image',
+                    content='See file bd38f5',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                content=[
+                    'This is file bd38f5:',
+                    ImageUrl(
+                        url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+                        identifier='bd38f5',
+                    ),
+                ],
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"get_image":"See ')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='file ')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='bd38f5"}')),
+        ]
+    )
+
+
+async def test_run_stream_events():
+    m = TestModel()
+
+    test_agent = Agent(m)
+    assert test_agent.name is None
+
+    @test_agent.tool_plain
+    async def ret_a(x: str) -> str:
+        return f'{x}-apple'
+
+    events = [event async for event in test_agent.run_stream_events('Hello')]
+
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='ret_a',
+                    content='a-apple',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
+            AgentRunResultEvent(result=AgentRunResult(output='{"ret_a":"a-apple"}')),
         ]
     )

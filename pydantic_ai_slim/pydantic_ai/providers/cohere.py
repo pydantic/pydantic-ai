@@ -4,9 +4,9 @@ import os
 
 import httpx
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.providers import Provider
 
@@ -60,14 +60,14 @@ class CohereProvider(Provider[AsyncClientV2]):
             assert api_key is None, 'Cannot provide both `cohere_client` and `api_key`'
             self._client = cohere_client
         else:
-            api_key = api_key or os.environ.get('CO_API_KEY')
+            api_key = api_key or os.getenv('CO_API_KEY')
             if not api_key:
                 raise UserError(
                     'Set the `CO_API_KEY` environment variable or pass it via `CohereProvider(api_key=...)`'
                     'to use the Cohere provider.'
                 )
 
-            base_url = os.environ.get('CO_BASE_URL')
+            base_url = os.getenv('CO_BASE_URL')
             if http_client is not None:
                 self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)
             else:
