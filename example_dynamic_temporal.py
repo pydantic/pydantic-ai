@@ -1,19 +1,15 @@
 """Simple example showing DynamicToolset with TemporalAgent.
 
-NOTE: This example currently FAILS with the error:
-    "Toolsets that are 'leaves' need to have a unique `id` in order to be used with Temporal"
+NOTE: This example currently FAILS because TemporalDynamicToolset is not yet implemented.
 
-Why it fails:
-- The @agent.toolset decorator automatically wraps the function in a DynamicToolset
-- DynamicToolset.id returns None (by design - it's not known until the function runs)
-- At TemporalAgent.__init__ time, DynamicToolset._toolset is None (the function hasn't been called yet)
-- When visit_and_replace is called, DynamicToolset behaves as a "leaf" because _toolset is None
-- The visitor function requires all leaf toolsets to have an ID, but DynamicToolset.id returns None
+The @agent.toolset decorator now accepts an `id` parameter, which allows DynamicToolset
+to have a unique identifier. This is the first step towards Temporal support.
 
-Solution (not yet implemented):
-- Need to implement TemporalDynamicToolset wrapper (similar to TemporalMCPServer)
-- It will provide a fixed ID and static activities (get_tools, call_tool)
+Next steps (not yet implemented):
+- Implement TemporalDynamicToolset wrapper (similar to TemporalMCPServer)
+- It will provide static activities (get_tools, call_tool) that are registered at worker start time
 - Inside the activities, it will call the user's dynamic function where I/O is allowed
+- Update temporalize_toolset() to handle DynamicToolset instances
 """
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
@@ -38,8 +34,8 @@ class AgentDeps(BaseModel):
 # Create agent with dynamic toolset
 agent = Agent("openai:gpt-4.1", deps_type=AgentDeps)
 
-# Register dynamic toolset via decorator
-@agent.toolset
+# Register dynamic toolset via decorator with ID for Temporal
+@agent.toolset(id="dynamic_mcp_tools")
 def dynamic_tools(ctx: RunContext[AgentDeps]):
     """Returns toolset based on MCP connections - can do I/O!"""
     if not ctx.deps.mcp_connections:
@@ -66,7 +62,6 @@ async def main():
     deps = AgentDeps(
         mcp_connections=[
             MCPConnection(command="uvx", args=["mcp-server-time"], id="time-server"),
-            MCPConnection(command="npx", args=["@modelcontextprotocol/server-fetch"], id="fetch-server"),
         ],
         user_id="alice",
     )
