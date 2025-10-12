@@ -90,7 +90,6 @@ dev = [
     "coverage[toml]>=7.10.7",
     "dirty-equals>=0.9.0",
     "duckduckgo-search>=7.0.0",
-    "fastmcp>=2.12.0",
     "inline-snapshot>=0.19.3",
     "pytest>=8.3.3",
     "pytest-examples>=0.0.18",
@@ -232,6 +231,7 @@ filterwarnings = [
     "ignore:unclosed <socket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
 ]
+# addopts = ["--inline-snapshot=create,fix"]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]

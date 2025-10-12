@@ -9,7 +9,9 @@ from typing import Any
 
 import pytest
 from fastmcp.client import PythonStdioTransport, SSETransport
+from fastmcp.exceptions import ToolError
 from inline_snapshot import snapshot
+from mcp.types import AnyUrl, BlobResourceContents, EmbeddedResource, ResourceLink, TextResourceContents
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
@@ -28,7 +30,6 @@ with try_import() as imports_successful:
         StdioTransport,
         StreamableHttpTransport,
     )
-    from fastmcp.exceptions import ToolError
     from fastmcp.server.server import FastMCP
     from mcp.types import (
         AudioContent,
@@ -96,6 +97,26 @@ async def fastmcp_server() -> FastMCP:
         ]
 
     @server.tool()
+    async def resource_link_tool(message: str) -> ResourceLink:
+        """A tool that returns text content without a return annotation."""
+        return ResourceLink(type='resource_link', uri=AnyUrl('resource://message.txt'), name='message.txt')
+
+    @server.tool()
+    async def resource_tool(message: str) -> EmbeddedResource:
+        """A tool that returns resource content."""
+        return EmbeddedResource(
+            type='resource', resource=TextResourceContents(uri=AnyUrl('resource://message.txt'), text=message)
+        )
+
+    @server.tool()
+    async def resource_tool_blob(message: str) -> EmbeddedResource:
+        """A tool that returns blob content."""
+        base64_message = base64.b64encode(message.encode('utf-8')).decode('utf-8')
+        return EmbeddedResource(
+            type='resource', resource=BlobResourceContents(uri=AnyUrl('resource://message.txt'), blob=base64_message)
+        )
+
+    @server.tool()
     async def text_tool_wo_return_annotation(message: str):
         """A tool that returns text content."""
         return f'Echo: {message}'
@@ -157,6 +178,18 @@ class TestFastMCPToolsetInitialization:
         """Test that the id property returns None."""
         toolset = FastMCPToolset(client=fastmcp_client)
         assert toolset.id is None
+
+    async def test_init_without_client_or_transport(self):
+        """Test initialization without a client or transport."""
+        with pytest.raises(ValueError, match='Either client or transport must be provided'):
+            FastMCPToolset()
+
+    async def test_init_with_client_and_transport(self):
+        """Test initialization with a client and transport."""
+        with pytest.raises(ValueError, match='Either client or transport must be provided, not both'):
+            tmp_server = FastMCP('tmp_server')
+            client = Client(transport=tmp_server)
+            FastMCPToolset(client=client, transport=tmp_server)  # pyright: ignore[reportCallIssue]
 
 
 class TestFastMCPToolsetContextManagement:
@@ -228,6 +261,9 @@ class TestFastMCPToolsetToolDiscovery:
                 'text_list_tool',
                 'text_tool_wo_return_annotation',
                 'json_tool',
+                'resource_link_tool',
+                'resource_tool',
+                'resource_tool_blob',
             }
             assert set(tools.keys()) == expected_tools
 
@@ -390,18 +426,76 @@ class TestFastMCPToolsetToolCalling:
             # Should parse the JSON string into a dict
             assert result == snapshot({'result': '{"received": {"key": "value"}, "processed": true}'})
 
-    async def test_call_tool_with_error_behavior_raise(
+    async def test_call_tool_with_resource_link(
         self,
         fastmcp_toolset: FastMCPToolset[None],
         run_context: RunContext[None],
     ):
-        """Test tool call with error behavior set to raise."""
+        """Test tool call that returns resource link content."""
         async with fastmcp_toolset:
             tools = await fastmcp_toolset.get_tools(run_context)
+            resource_link_tool = tools['resource_link_tool']
+
+            with pytest.raises(
+                NotImplementedError,
+                match='ResourceLink is not supported by the FastMCP toolset as reading resources is not yet supported.',
+            ):
+                await fastmcp_toolset.call_tool(
+                    name='resource_link_tool',
+                    tool_args={'message': 'Hello World'},
+                    ctx=run_context,
+                    tool=resource_link_tool,
+                )
+
+    async def test_call_tool_with_embedded_resource(
+        self,
+        fastmcp_toolset: FastMCPToolset[None],
+        run_context: RunContext[None],
+    ):
+        """Test tool call that returns resource content."""
+        async with fastmcp_toolset:
+            tools = await fastmcp_toolset.get_tools(run_context)
+            resource_tool = tools['resource_tool']
+
+            result = await fastmcp_toolset.call_tool(
+                name='resource_tool', tool_args={'message': 'Hello World'}, ctx=run_context, tool=resource_tool
+            )
+
+            assert result == snapshot('Hello World')
+
+    async def test_call_tool_with_resource_tool_blob(
+        self,
+        fastmcp_toolset: FastMCPToolset[None],
+        run_context: RunContext[None],
+    ):
+        """Test tool call that returns resource blob content."""
+        async with fastmcp_toolset:
+            tools = await fastmcp_toolset.get_tools(run_context)
+            resource_tool_blob = tools['resource_tool_blob']
+
+            result = await fastmcp_toolset.call_tool(
+                name='resource_tool_blob',
+                tool_args={'message': 'Hello World'},
+                ctx=run_context,
+                tool=resource_tool_blob,
+            )
+
+            assert result == snapshot(BinaryContent(data=b'Hello World', media_type='application/octet-stream'))
+
+    async def test_call_tool_with_error_behavior_raise(
+        self,
+        fastmcp_client: Client[FastMCPTransport],
+        run_context: RunContext[None],
+    ):
+        """Test tool call with error behavior set to raise."""
+        toolset = FastMCPToolset(client=fastmcp_client, tool_error_behavior='error')
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
             error_tool = tools['error_tool']
 
             with pytest.raises(ToolError, match='This is a test error'):
-                await fastmcp_toolset.call_tool(name='error_tool', tool_args={}, ctx=run_context, tool=error_tool)
+                await toolset.call_tool('error_tool', {}, run_context, error_tool)
 
     async def test_call_tool_with_error_behavior_model_retry(
         self,
@@ -477,57 +571,18 @@ server.run()"""
         )
         assert isinstance(toolset.client.transport, MCPConfigTransport)
 
-    #     async def test_sse_transport(self, run_context: RunContext[None]):
-    #         """Test creating toolset from stdio transport."""
-    #         server_script = """
-    # from fastmcp import FastMCP
+    @pytest.mark.parametrize(
+        'invalid_transport', ['tomato_is_not_a_valid_transport', '/path/to/server.ini', 'ftp://localhost']
+    )
+    async def test_invalid_transports_uninferrable(self, invalid_transport: str | None):
+        """Test creating toolset from invalid transports."""
+        with pytest.raises(ValueError, match='Could not infer a valid transport from:'):
+            FastMCPToolset(invalid_transport)
 
-    # server = FastMCP('test_server')
-
-    # @server.tool()
-    # async def test_tool(param1: str, param2: int = 0) -> str:
-    #     return f'param1={param1}, param2={param2}'
-
-    # server.run(transport='sse')"""
-    #         with TemporaryDirectory() as temp_dir:
-    #             server_py = Path(temp_dir) / 'server.py'
-    #             server_py.write_text(server_script)
-
-    #             with subprocess.Popen(['python', server_py], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True):
-    #                 toolset = FastMCPToolset(mcp='http://localhost:8000/sse')
-    #                 async with toolset:
-    #                     tools = await toolset.get_tools(
-    #                         RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
-    #                     )
-    #                     assert 'test_tool' in tools
-
-    #     async def test_streamable_http_transport(self, run_context: RunContext[None]):
-    #         """Test creating toolset from stdio transport."""
-
-    #         toolset = FastMCPToolset(mcp='http://localhost:8001/mcp')
-
-    #         assert isinstance(get_client_from_toolset(toolset).transport, StreamableHttpTransport)
-    #         server_script = """
-    # from fastmcp import FastMCP
-    # import asyncio
-
-    # server = FastMCP('test_server')
-
-    # @server.tool()
-    # async def test_tool(param1: str, param2: int = 0) -> str:
-    #     return f'param1={param1}, param2={param2}'
-
-    # asyncio.run(server.run_streamable_http_async(host='localhost', port=8001))
-    # """
-    #         with TemporaryDirectory() as temp_dir:
-    #             server_py = Path(temp_dir) / 'server.py'
-    #             server_py.write_text(server_script)
-
-    #             with subprocess.Popen(['python', server_py], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True):
-    #                 toolset = FastMCPToolset(mcp='http://localhost:8001/mcp')
-    #                 async with toolset:
-    #                     tools = await toolset.get_tools(run_context)
-    #                     assert 'test_tool' in tools
+    async def test_bad_transports(self):
+        """Test creating toolset from invalid transports."""
+        with pytest.raises(ValueError, match='No MCP servers defined in the config'):
+            FastMCPToolset({'bad_transport': 'bad_value'})
 
     async def test_in_memory_transport(self, run_context: RunContext[None]):
         """Test creating toolset from stdio transport."""

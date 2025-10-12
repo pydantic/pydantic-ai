@@ -11,6 +11,7 @@ from fastmcp.client.transports import ClientTransport
 from fastmcp.mcp_config import MCPConfig
 from fastmcp.server import FastMCP
 from mcp.server.fastmcp import FastMCP as FastMCP1Server
+from mcp.types import BlobResourceContents, EmbeddedResource, ResourceLink
 from pydantic import AnyUrl
 from typing_extensions import Self
 
@@ -47,6 +48,8 @@ if TYPE_CHECKING:
 FastMCPToolResult = messages.BinaryContent | dict[str, Any] | str | None
 
 ToolErrorBehavior = Literal['model_retry', 'error']
+
+UNKNOWN_BINARY_MEDIA_TYPE = 'application/octet-stream'
 
 
 @dataclass
@@ -113,7 +116,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         *,
         client: Client[Any] | None = None,
         max_retries: int = 2,
-        tool_error_behavior: Literal['model_retry', 'error'] = 'error',
+        tool_error_behavior: Literal['model_retry', 'error'] = 'model_retry',
         id: str | None = None,
     ) -> None:
         if not client and not transport:
@@ -226,6 +229,22 @@ def _map_fastmcp_tool_result(part: ContentBlock) -> FastMCPToolResult:
 
     if isinstance(part, ImageContent | AudioContent):
         return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
+
+    if isinstance(part, EmbeddedResource):
+        if isinstance(part.resource, BlobResourceContents):
+            return messages.BinaryContent(
+                data=base64.b64decode(part.resource.blob),
+                media_type=part.resource.mimeType or UNKNOWN_BINARY_MEDIA_TYPE,
+            )
+
+        # If not a BlobResourceContents, it's a TextResourceContents
+        return part.resource.text
+
+    if isinstance(part, ResourceLink):
+        # ResourceLink is not yet supported by the FastMCP toolset as reading resources is not yet supported.
+        raise NotImplementedError(
+            'ResourceLink is not supported by the FastMCP toolset as reading resources is not yet supported.'
+        )
 
     msg = f'Unsupported/Unknown content block type: {type(part)}'  # pragma: no cover
     raise ValueError(msg)  # pragma: no cover)
