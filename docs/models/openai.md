@@ -243,9 +243,8 @@ The grammar can be written as either a regular expression:
 
 
 ```python
-from pydantic_ai import Agent
+from pydantic_ai import Agent, FunctionTextFormat
 from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai import FunctionTextFormat
 
 model = OpenAIResponsesModel('gpt-5')  # (1)!
 agent = Agent(model)
@@ -264,9 +263,8 @@ def timestamp_accepting_tool(timestamp: str): ...
 Or as a [LARK](https://lark-parser.readthedocs.io/en/latest/how_to_use.html) grammar:
 
 ```python
-from pydantic_ai import Agent
+from pydantic_ai import Agent, FunctionTextFormat
 from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai import FunctionTextFormat
 
 model = OpenAIResponsesModel('gpt-5')  # (1)!
 agent = Agent(model)
@@ -297,10 +295,9 @@ There is a limit to the grammar complexity that GPT-5 supports, as such it is im
 Freeform function calling, with or without a context free grammar, can be used with the output tool for the agent:
 
 ```python
-from pydantic_ai import Agent
+from pydantic_ai import Agent, FunctionTextFormat
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.output import ToolOutput
-from pydantic_ai import FunctionTextFormat
 
 sql_grammar_definition = r'''
 start: select_stmt
