@@ -1983,7 +1983,9 @@ def test_openai_responses_model_freeform_function_unsupported_model_error():
     # GPT-4 doesn't support freeform function calling
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
 
-    with pytest.raises(UserError, match='uses freeform function calling but gpt-4o does not support'):
+    with pytest.raises(
+        UserError, match=r'uses freeform function calling but .* does not support freeform function calling'
+    ):
         model._map_tool_definition(freeform_tool)  # type: ignore[reportPrivateUsage]
 
 
@@ -2004,7 +2006,7 @@ def test_openai_responses_model_freeform_function_invalid_signature_error():
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
 
-    with pytest.raises(UserError, match='does not take a single string argument'):
+    with pytest.raises(UserError, match=r'is set as a freeform function but does not take a single string argument'):
         model._map_tool_definition(multi_param_tool)  # type: ignore[reportPrivateUsage]
 
 
