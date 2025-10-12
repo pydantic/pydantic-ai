@@ -62,6 +62,7 @@ class PydanticAIPlugin(ClientPlugin, WorkerPlugin):
                     'logfire',
                     'rich',
                     'httpx',
+                    'httpcore',
                     # Imported inside `logfire._internal.json_encoder` when running `logfire.info` inside an activity with attributes to serialize
                     'attrs',
                     # Imported inside `logfire._internal.json_schema` when running `logfire.info` inside an activity with attributes to serialize
