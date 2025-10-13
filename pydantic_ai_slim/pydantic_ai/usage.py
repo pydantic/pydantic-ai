@@ -195,12 +195,9 @@ class RunUsage(UsageBase):
         Args:
             incr_usage: The usage to increment by.
         """
+        self.requests += incr_usage.requests
         if isinstance(incr_usage, RunUsage):
-            self.requests += incr_usage.requests
             self.tool_calls += incr_usage.tool_calls
-        else:
-            # RequestUsage: requests is a property that returns 1
-            self.requests += incr_usage.requests
         return _incr_usage_tokens(self, incr_usage)
 
     def __add__(self, other: RunUsage | RequestUsage) -> RunUsage:

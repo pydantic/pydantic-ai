@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
+from functools import cached_property
 from typing import Any, Generic
 
 from opentelemetry.trace import Tracer
@@ -22,7 +23,6 @@ from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .usage import RunUsage
 
 _sequential_tool_calls_ctx_var: ContextVar[bool] = ContextVar('sequential_tool_calls', default=False)
-_usage_increment_lock_ctx_var: ContextVar[asyncio.Lock | None] = ContextVar('usage_increment_lock', default=None)
 
 
 @dataclass
@@ -73,6 +73,11 @@ class ToolManager(Generic[AgentDepsT]):
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         return [tool.tool_def for tool in self.tools.values()]
+
+    @cached_property
+    def _usage_lock(self) -> asyncio.Lock:
+        """Lock to prevent race conditions when incrementing usage.tool_calls from concurrent tool executions."""
+        return asyncio.Lock()
 
     def should_call_sequentially(self, calls: list[ToolCallPart]) -> bool:
         """Whether to require sequential tool calls for a list of tool calls."""
@@ -236,12 +241,7 @@ class ToolManager(Generic[AgentDepsT]):
         ) as span:
             try:
                 tool_result = await self._call_tool(call, allow_partial, wrap_validation_errors)
-                # Use lock if available (for parallel tool execution) to prevent race conditions
-                lock = _usage_increment_lock_ctx_var.get()
-                if lock is not None:
-                    async with lock:
-                        usage.incr(RunUsage(tool_calls=1))
-                else:
+                async with self._usage_lock:
                     usage.incr(RunUsage(tool_calls=1))
 
             except ToolRetryError as e:
