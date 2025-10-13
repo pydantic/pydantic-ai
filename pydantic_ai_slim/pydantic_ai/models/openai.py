@@ -1030,13 +1030,15 @@ class OpenAIResponsesModel(Model):
             elif isinstance(item, responses.ResponseCustomToolCall):
                 # Handle custom tool calls (freeform function calling)
                 if item.name not in model_request_parameters.tool_defs:
-                    raise UnexpectedModelBehavior(f'Unknown tool called: {item.name}')
-                tool = model_request_parameters.tool_defs[item.name]
-                argument_name = tool.single_string_argument_name
-                if argument_name is None:
-                    raise UnexpectedModelBehavior(
-                        f'Custom tool call made to function {item.name} which has unexpected arguments'
-                    )
+                    argument_name = 'input'
+                else:
+                    tool = model_request_parameters.tool_defs[item.name]
+                    tool_argument_name = tool.single_string_argument_name
+                    if tool_argument_name is None:
+                        raise UnexpectedModelBehavior(
+                            f'Custom tool call made to function {item.name} which has unexpected arguments'
+                        )
+                    argument_name = tool_argument_name
                 items.append(
                     ToolCallPart(
                         item.name,
