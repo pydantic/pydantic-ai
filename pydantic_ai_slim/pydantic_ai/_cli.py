@@ -229,7 +229,6 @@ async def run_chat(
     config_dir: Path | None = None,
     deps: AgentDepsT = None,
     message_history: list[ModelMessage] | None = None,
-    show_tool_calls: bool = False,
 ) -> int:
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -256,7 +255,7 @@ async def run_chat(
                 return exit_value
         else:
             try:
-                messages = await ask_agent(agent, text, stream, console, code_theme, deps, messages, show_tool_calls)
+                messages = await ask_agent(agent, text, stream, console, code_theme, deps, messages)
             except CancelledError:  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
             except Exception as e:  # pragma: no cover
@@ -274,9 +273,12 @@ async def ask_agent(
     code_theme: str,
     deps: AgentDepsT = None,
     messages: list[ModelMessage] | None = None,
-    show_tool_calls: bool = False,
 ) -> list[ModelMessage]:
-    status = Status('[dim]Working on it…[/dim]', console=console)
+    MODEL_CALL_STATUS_MSG = '[dim]Calling model…[/dim]'
+    TOOL_EXECUTION_STATUS_MSG = '[dim]Executing tools…[/dim]'
+    MAX_TOOL_CALL_RESULT_LEN = 100
+    MAX_TOOL_CALL_ID_LEN = 5
+    status = Status(MODEL_CALL_STATUS_MSG, console=console)
 
     if not stream:
         with status:
@@ -287,26 +289,40 @@ async def ask_agent(
 
     with status, ExitStack() as stack:
         async with agent.iter(prompt, message_history=messages, deps=deps) as agent_run:
-            live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
+            final_output_live = None
             async for node in agent_run:
                 if Agent.is_model_request_node(node):
+                    status.update(MODEL_CALL_STATUS_MSG)
                     async with node.stream(agent_run.ctx) as handle_stream:
                         status.stop()  # stopping multiple times is idempotent
-                        stack.enter_context(live)  # entering multiple times is idempotent
 
                         async for content in handle_stream.stream_output(debounce_by=None):
-                            live.update(Markdown(str(content), code_theme=code_theme))
-                elif show_tool_calls and Agent.is_call_tools_node(node):
+                            if final_output_live is None:
+                                final_output_live = Live(
+                                    '', refresh_per_second=15, console=console, vertical_overflow='ellipsis'
+                                )
+                                stack.enter_context(final_output_live)  # entering multiple times is idempotent
+                            final_output_live.update(Markdown(str(content), code_theme=code_theme))
+                elif Agent.is_call_tools_node(node):
+                    status.update(TOOL_EXECUTION_STATUS_MSG)
                     async with node.stream(agent_run.ctx) as handle_stream:
                         async for event in handle_stream:
                             if isinstance(event, FunctionToolCallEvent):
+                                status.stop()  # stopping multiple times is idempotent
                                 console.print(
-                                    Markdown(f'[Tool] {event.part.tool_name!r} called with args={event.part.args}')
+                                    Markdown(
+                                        f'[Tool] {event.part.tool_name!r}[{event.part.tool_call_id[-5:]}] called with args={event.part.args}'
+                                    )
                                 )
+                                status.start()
                             elif isinstance(event, FunctionToolResultEvent):
+                                status.stop()  # stopping multiple times is idempotent
                                 console.print(
-                                    Markdown(f'[Tool] {event.result.tool_name!r} returned => {event.result.content}')
+                                    Markdown(
+                                        f'[Tool] {event.result.tool_name!r}[{event.result.tool_call_id[-MAX_TOOL_CALL_ID_LEN:]}] returned => {event.result.content if len(event.result.content) < MAX_TOOL_CALL_RESULT_LEN else str(event.result.content[:MAX_TOOL_CALL_RESULT_LEN]) + "..."}'
+                                    )
                                 )
+                                status.start()
 
         assert agent_run.result is not None
         return agent_run.result.all_messages()

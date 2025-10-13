@@ -1113,7 +1113,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         prog_name: str = 'pydantic-ai',
         message_history: list[_messages.ModelMessage] | None = None,
-        show_tool_calls: bool = False,
     ) -> None:
         """Run the agent in a CLI chat interface.
 
@@ -1121,7 +1120,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: The dependencies to pass to the agent.
             prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
             message_history: History of the conversation so far.
-            show_tool_calls: Whether to show tool calls in the CLI.
 
         Example:
         ```python {title="agent_to_cli.py" test="skip"}
@@ -1145,7 +1143,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             code_theme='monokai',
             prog_name=prog_name,
             message_history=message_history,
-            show_tool_calls=show_tool_calls,
         )
 
     def to_cli_sync(
@@ -1153,7 +1150,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         prog_name: str = 'pydantic-ai',
         message_history: list[_messages.ModelMessage] | None = None,
-        show_tool_calls: bool = False,
     ) -> None:
         """Run the agent in a CLI chat interface with the non-async interface.
 
@@ -1161,7 +1157,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: The dependencies to pass to the agent.
             prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
             message_history: History of the conversation so far.
-            show_tool_calls: Whether to show tool calls in the CLI.
 
         ```python {title="agent_to_cli_sync.py" test="skip"}
         from pydantic_ai import Agent
@@ -1172,7 +1167,5 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```
         """
         return get_event_loop().run_until_complete(
-            self.to_cli(
-                deps=deps, prog_name=prog_name, message_history=message_history, show_tool_calls=show_tool_calls
-            )
+            self.to_cli(deps=deps, prog_name=prog_name, message_history=message_history)
         )
