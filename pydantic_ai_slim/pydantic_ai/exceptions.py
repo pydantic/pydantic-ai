@@ -23,6 +23,7 @@ __all__ = (
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'ModelHTTPError',
+    'ToolExceedsTokenLimitError',
     'FallbackExceptionGroup',
 )
 
@@ -168,3 +169,7 @@ class ToolRetryError(Exception):
     def __init__(self, tool_retry: RetryPromptPart):
         self.tool_retry = tool_retry
         super().__init__()
+
+
+class ToolExceedsTokenLimitError(AgentRunError):
+    """Error raised when a model stops due to token limit while emitting a tool call."""

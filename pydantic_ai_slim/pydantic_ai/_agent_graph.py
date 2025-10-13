@@ -95,6 +95,19 @@ class GraphAgentState:
     def increment_retries(self, max_result_retries: int, error: BaseException | None = None) -> None:
         self.retries += 1
         if self.retries > max_result_retries:
+            if (
+                self.message_history
+                and isinstance(model_response := self.message_history[-1], _messages.ModelResponse)
+                and model_response.finish_reason == 'length'
+                and model_response.parts
+                and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
+            ):
+                try:
+                    tool_call.args_as_dict()
+                except Exception:
+                    raise exceptions.ToolExceedsTokenLimitError(
+                        'Model token limit exceeded while emitting a tool call. Increase max tokens or simplify tool call arguments.'
+                    )
             message = f'Exceeded maximum retries ({max_result_retries}) for output validation'
             if error:
                 if isinstance(error, exceptions.UnexpectedModelBehavior) and error.__cause__ is not None:
