@@ -145,6 +145,8 @@ class MermaidGraph:
                 node_lines = [f'  state {node.id} <<choice>>']
                 if node.note:
                     node_lines.append(f'  note right of {node.id}\n    {node.note}\n  end note')
+            else:  # pragma: no cover
+                assert_never(node.kind)
             lines.extend(node_lines)
 
         lines.append('')
