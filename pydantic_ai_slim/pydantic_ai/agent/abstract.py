@@ -586,12 +586,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> Iterator[result.CollectedRunResult[AgentDepsT, Any]]:
-        """Run the agent with a user prompt in collected streaming mode.
+    ) -> Iterator[result.SyncStreamedRunResult[AgentDepsT, Any]]:
+        """Run the agent with a user prompt in sync streaming mode.
 
         This method builds an internal agent graph (using system prompts, tools and output schemas) and then
         runs the graph until the model produces output matching the `output_type`, for example text or structured data.
-        At this point, a streaming run result object is collected and -- once this output has completed streaming -- you can iterate over the complete output, message history, and usage.
+        At this point, a streaming run result object is yielded from which you can stream the output as it comes in,
+        and -- once this output has completed streaming -- get the complete output, message history, and usage.
 
         As this method will consider the first output matching the `output_type` to be the final output,
         it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
@@ -647,7 +648,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             event_stream_handler=event_stream_handler,
         )
         async_result = get_event_loop().run_until_complete(async_cm.__aenter__())
-        yield result.CollectedRunResult.from_streamed_result(async_result)  # type: ignore[reportReturnType]
+        yield result.SyncStreamedRunResult.from_streamed_result(async_result)  # type: ignore[reportReturnType]
 
     @overload
     def run_stream_events(

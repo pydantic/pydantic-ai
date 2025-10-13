@@ -546,14 +546,14 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
 
 @dataclass(init=False)
-class CollectedRunResult(StreamedRunResult[AgentDepsT, OutputDataT]):
-    """Provides a synchronous API over 'StreamedRunResult' by eagerly loading the stream."""
+class SyncStreamedRunResult(StreamedRunResult[AgentDepsT, OutputDataT]):
+    """Provides a synchronous API over 'StreamedRunResult'."""
 
     @classmethod
     def from_streamed_result(
         cls, streamed_run_result: StreamedRunResult[AgentDepsT, OutputDataT]
-    ) -> CollectedRunResult[AgentDepsT, OutputDataT]:
-        """Create a CollectedRunResult from an existing StreamedRunResult."""
+    ) -> SyncStreamedRunResult[AgentDepsT, OutputDataT]:
+        """Create a 'SyncStreamedRunResult' from an existing 'StreamedRunResult'."""
         instance = cls.__new__(cls)
 
         instance._all_messages = streamed_run_result._all_messages
@@ -565,14 +565,19 @@ class CollectedRunResult(StreamedRunResult[AgentDepsT, OutputDataT]):
 
         return instance
 
-    def _collect_async_iterator(self, async_iter: AsyncIterator[T]) -> list[T]:
-        async def collect():
-            return [item async for item in async_iter]
+    def _lazy_async_iterator(self, async_iter: AsyncIterator[T]) -> Iterator[T]:
+        """Lazily yield items from async iterator as they're requested."""
+        loop = get_event_loop()
 
-        return get_event_loop().run_until_complete(collect())
+        while True:
+            try:
+                item = loop.run_until_complete(async_iter.__anext__())
+                yield item
+            except StopAsyncIteration:
+                break
 
     def stream_output(self, *, debounce_by: float | None = 0.1) -> Iterator[OutputDataT]:  # type: ignore[reportIncompatibleMethodOverride]
-        """Collect and stream the output as an iterable.
+        """Stream the output as an iterable.
 
         The pydantic validator for structured data will be called in
         [partial mode](https://docs.pydantic.dev/dev/concepts/experimental/#partial-validation)
@@ -587,10 +592,10 @@ class CollectedRunResult(StreamedRunResult[AgentDepsT, OutputDataT]):
             An iterable of the response data.
         """
         async_stream = super().stream_output(debounce_by=debounce_by)
-        yield from self._collect_async_iterator(async_stream)
+        yield from self._lazy_async_iterator(async_stream)
 
     def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> Iterator[str]:  # type: ignore[reportIncompatibleMethodOverride]
-        """Collect and stream the text result as an iterable.
+        """Stream the text result as an iterable.
 
         !!! note
             Result validators will NOT be called on the text result if `delta=True`.
@@ -603,10 +608,10 @@ class CollectedRunResult(StreamedRunResult[AgentDepsT, OutputDataT]):
                 performing validation as each token is received.
         """
         async_stream = super().stream_text(delta=delta, debounce_by=debounce_by)
-        yield from self._collect_async_iterator(async_stream)
+        yield from self._lazy_async_iterator(async_stream)
 
     def stream_responses(self, *, debounce_by: float | None = 0.1) -> Iterator[tuple[_messages.ModelResponse, bool]]:  # type: ignore[reportIncompatibleMethodOverride]
-        """Collect and stream the response as an iterable of Structured LLM Messages.
+        """Stream the response as an iterable of Structured LLM Messages.
 
         Args:
             debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
@@ -617,7 +622,7 @@ class CollectedRunResult(StreamedRunResult[AgentDepsT, OutputDataT]):
             An iterable of the structured response message and whether that is the last message.
         """
         async_stream = super().stream_responses(debounce_by=debounce_by)
-        yield from self._collect_async_iterator(async_stream)
+        yield from self._lazy_async_iterator(async_stream)
 
     def get_output(self) -> OutputDataT:  # type: ignore[reportIncompatibleMethodOverride]
         """Stream the whole response, validate and return it."""
