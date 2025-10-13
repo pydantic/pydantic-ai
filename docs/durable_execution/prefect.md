@@ -61,7 +61,7 @@ Any agent can be wrapped in a [`PrefectAgent`][pydantic_ai.durable_exec.prefect.
 * Wraps [tool calls](../tools.md) as Prefect tasks (configurable per-tool).
 * Wraps [MCP communication](../mcp/client.md) as Prefect tasks.
 
-Event stream handlers are **not automatically wrapped** by Prefect. If they involve I/O or non-deterministic behavior, you can explicitly decorate them with `@task` from Prefect.
+Event stream handlers are **not automatically wrapped** by Prefect. If they involve I/O or non-deterministic behavior, you can explicitly decorate them with `@task` from Prefect. For examples, see the [streaming docs](../agents.md#streaming-all-events)
 
 The original agent, model, and MCP server can still be used as normal outside the Prefect flow.
 

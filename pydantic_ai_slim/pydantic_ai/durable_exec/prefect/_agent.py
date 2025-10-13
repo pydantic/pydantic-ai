@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from typing import Any, overload
@@ -50,6 +50,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_task_config: TaskConfig | None = None,
         tool_task_config: TaskConfig | None = None,
         tool_task_config_by_name: dict[str, TaskConfig | None] | None = None,
+        prefectify_toolset_func: Callable[
+            [AbstractToolset[AgentDepsT], TaskConfig, TaskConfig, dict[str, TaskConfig | None]],
+            AbstractToolset[AgentDepsT],
+        ] = prefectify_toolset,
     ):
         """Wrap an agent to enable it with Prefect durable flows, by automatically offloading model requests, tool calls, and MCP server communication to Prefect tasks.
 
@@ -63,6 +67,9 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model_task_config: The Prefect task config to use for model request tasks. If no config is provided, use the default settings of Prefect.
             tool_task_config: The default Prefect task config to use for tool calls. If no config is provided, use the default settings of Prefect.
             tool_task_config_by_name: Per-tool task configuration. Keys are tool names, values are TaskConfig or None (None disables task wrapping for that tool).
+            prefectify_toolset_func: Optional function to use to prepare toolsets for Prefect by wrapping them in a `PrefectWrapperToolset` that moves methods that require IO to Prefect tasks.
+                If not provided, only `FunctionToolset` and `MCPServer` will be prepared for Prefect.
+                The function takes the toolset, the task config, the tool-specific task config, and the tool-specific task config by name.
         """
         super().__init__(wrapped)
 
@@ -91,21 +98,21 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         )
         self._model = prefect_model
 
-        prefect_toolsets = [toolset.visit_and_replace(self._prefectify_toolset) for toolset in wrapped.toolsets]
+        def _prefectify_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+            """Convert a toolset to its Prefect equivalent."""
+            return prefectify_toolset_func(
+                toolset,
+                self._mcp_task_config,
+                self._tool_task_config,
+                self._tool_task_config_by_name,
+            )
+
+        prefect_toolsets = [toolset.visit_and_replace(_prefectify_toolset) for toolset in wrapped.toolsets]
         self._toolsets = prefect_toolsets
 
         # Context variable to track when we're inside this agent's Prefect flow
         self._in_prefect_agent_flow: ContextVar[bool] = ContextVar(
             f'_in_prefect_agent_flow_{self._name}', default=False
-        )
-
-    def _prefectify_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        """Convert a toolset to its Prefect equivalent."""
-        return prefectify_toolset(
-            toolset,
-            mcp_task_config=self._mcp_task_config,
-            tool_task_config=self._tool_task_config,
-            tool_task_config_by_name=self._tool_task_config_by_name,
         )
 
     @property
@@ -812,7 +819,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             tools: The tools to use instead of the tools registered with the agent.
             instructions: The instructions to use instead of the instructions registered with the agent.
         """
-        if _utils.is_set(model) and not isinstance(model, (PrefectModel)):
+        if _utils.is_set(model) and not isinstance(model, PrefectModel):
             raise UserError(
                 'Non-Prefect model cannot be contextually overridden inside a Prefect flow, it must be set at agent creation time.'
             )

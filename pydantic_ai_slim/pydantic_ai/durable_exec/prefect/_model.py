@@ -117,12 +117,9 @@ class PrefectModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         """Make a model request, wrapped as a Prefect task when in a flow."""
-        # Get model name for task description
-        model_name = getattr(self.wrapped, 'model_name', 'unknown')
-
-        return await self._wrapped_request.with_options(name=f'Model Request: {model_name}', **self.task_config)(
-            messages, model_settings, model_request_parameters
-        )
+        return await self._wrapped_request.with_options(
+            name=f'Model Request: {self.wrapped.model_name}', **self.task_config
+        )(messages, model_settings, model_request_parameters)
 
     @asynccontextmanager
     async def request_stream(
@@ -149,10 +146,7 @@ class PrefectModel(WrapperModel):
                 return
 
         # If in a flow, consume the stream in a task and return the final response
-        # Get model name for task description
-        model_name = getattr(self.wrapped, 'model_name', 'unknown')
-
         response = await self._wrapped_request_stream.with_options(
-            name=f'Model Request (Streaming): {model_name}', **self.task_config
+            name=f'Model Request (Streaming): {self.wrapped.model_name}', **self.task_config
         )(messages, model_settings, model_request_parameters, run_context)
         yield PrefectStreamedResponse(model_request_parameters, response)
