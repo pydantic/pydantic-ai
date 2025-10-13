@@ -2059,7 +2059,11 @@ async def test_openai_responses_model_custom_tool_call_response_processing(allow
     )
 
 
-async def test_openai_responses_model_custom_tool_call_unknown_tool_error(allow_model_requests: None):
+async def test_openai_responses_model_custom_tool_call_unknown_tool_parsed(allow_model_requests: None):
+    """Test that unknown custom tool calls are parsed into ToolCallPart with 'input' as argument name.
+
+    Unknown tools are handled during execution (not response processing) per the architecture pattern.
+    """
     from pydantic_ai.models import ModelRequestParameters
 
     content_data = [
@@ -2075,10 +2079,18 @@ async def test_openai_responses_model_custom_tool_call_unknown_tool_error(allow_
     mock_client = MockOpenAIResponses.create_mock(mock_response)
     m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
 
-    params = ModelRequestParameters()
+    params = ModelRequestParameters()  # No tools defined
 
-    with pytest.raises(UnexpectedModelBehavior, match='Unknown tool called: unknown_analyzer'):
-        m._process_response(mock_response, params)  # type: ignore[reportPrivateUsage]
+    # Should not raise an error - unknown tools are handled during execution
+    response = m._process_response(mock_response, params)  # type: ignore[reportPrivateUsage]
+
+    # Verify that a ToolCallPart was created with 'input' as the default argument name
+    assert len(response.parts) == 1
+    tool_call = response.parts[0]
+    assert isinstance(tool_call, ToolCallPart)
+    assert tool_call.tool_name == 'unknown_analyzer'
+    assert tool_call.args == {'input': 'Some content'}
+    assert tool_call.tool_call_id == 'call_unknown_456'
 
 
 async def test_openai_responses_model_custom_tool_call_invalid_signature_error(allow_model_requests: None):
