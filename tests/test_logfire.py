@@ -2846,6 +2846,7 @@ def test_function_instructions_with_history_in_agent_run_span(
                         ]
                     )
                 ),
+                'pydantic_ai.new_message_index': 2,
                 'gen_ai.system_instructions': '[{"type": "text", "content": "Instructions for the current agent run"}]',
                 'logfire.json_schema': IsJson(
                     snapshot(
@@ -2853,6 +2854,7 @@ def test_function_instructions_with_history_in_agent_run_span(
                             'type': 'object',
                             'properties': {
                                 'pydantic_ai.all_messages': {'type': 'array'},
+                                'pydantic_ai.new_message_index': {},
                                 'gen_ai.system_instructions': {'type': 'array'},
                                 'final_result': {'type': 'object'},
                             },
