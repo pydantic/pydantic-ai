@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from abc import ABC
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Dict
+from typing import TYPE_CHECKING, Any, Literal
 
 from typing_extensions import TypedDict
 
@@ -291,8 +291,6 @@ class MCPServerTool(AbstractBuiltinTool):
 
     provider_metadata: dict[str, Any] | None = None
     """Extra data to send to the model.
-
-    Supported by:
 
     Supported by:
 
