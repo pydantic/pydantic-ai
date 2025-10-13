@@ -250,11 +250,6 @@ class MCPServerTool(AbstractBuiltinTool):
     * Anthropic
     """
 
-    LIST_TOOLS_KIND: str = 'mcp_list_tools'
-    CALL_KIND: str = 'mcp_call'
-
-    kind: str = 'mcp_server'
-
     id: str
     """The id of the MCP server to use."""
 
@@ -296,3 +291,8 @@ class MCPServerTool(AbstractBuiltinTool):
 
     * OpenAI Responses
     """
+
+    kind: str = 'mcp_server'
+
+    LIST_TOOLS_KIND: str = 'mcp_list_tools'
+    CALL_KIND: str = 'mcp_call'
