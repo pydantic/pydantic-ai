@@ -53,7 +53,6 @@ dependencies = [
 examples = ["pydantic-ai-examples=={{ version }}"]
 a2a = ["fasta2a>=0.4.1"]
 dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
-prefect = ["pydantic-ai-slim[prefect]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
