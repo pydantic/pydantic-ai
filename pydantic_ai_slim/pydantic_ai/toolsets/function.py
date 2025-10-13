@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
+import re
 from typing import Any, overload
 
+from contourpy import dechunk_filled
 from pydantic.json_schema import GenerateJsonSchema
 
 from .._run_context import AgentDepsT, RunContext
@@ -109,6 +111,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         /,
         *,
         name: str | None = None,
+        description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat | None = None,
@@ -126,6 +129,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         /,
         *,
         name: str | None = None,
+        description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat | None = None,
@@ -168,7 +172,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
         Args:
             func: The tool function to register.
-            name: The name of the tool, defaults to the function name.
+            name: The name of the tool, defaults to the function name.'
+            description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
@@ -197,18 +202,19 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         ) -> ToolFuncEither[AgentDepsT, ToolParams]:
             # noinspection PyTypeChecker
             self.add_function(
-                func_,
-                None,
-                name,
-                retries,
-                prepare,
-                docstring_format,
-                require_parameter_descriptions,
-                schema_generator,
-                strict,
-                sequential,
-                requires_approval,
-                metadata,
+                func=func_,
+                take_ctx=None,
+                name=name,
+                description=description,
+                retries=retries,
+                prepare=prepare,
+                docstring_format=docstring_format,
+                require_parameter_descriptions=require_parameter_descriptions,
+                schema_generator=schema_generator,
+                strict=strict,
+                sequential=sequential,
+                requires_approval=requires_approval,
+                metadata=metadata,
             )
             return func_
 
@@ -219,6 +225,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         func: ToolFuncEither[AgentDepsT, ToolParams],
         takes_ctx: bool | None = None,
         name: str | None = None,
+        description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat | None = None,
@@ -240,6 +247,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             func: The tool function to register.
             takes_ctx: Whether the function takes a [`RunContext`][pydantic_ai.tools.RunContext] as its first argument. If `None`, this is inferred from the function signature.
             name: The name of the tool, defaults to the function name.
+            description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
@@ -279,6 +287,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             func,
             takes_ctx=takes_ctx,
             name=name,
+            description=description,
             max_retries=retries,
             prepare=prepare,
             docstring_format=docstring_format,
