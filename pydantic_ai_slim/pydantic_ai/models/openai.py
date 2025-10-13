@@ -1289,7 +1289,7 @@ class OpenAIResponsesModel(Model):
                 )
             if not f.only_takes_string_argument:
                 raise UserError(f'`{f.name}` is set as a freeform function but does not take a single string argument.')
-            if f.text_format == 'text':
+            if f.text_format == 'plain':
                 format: CustomToolInputFormat = {'type': 'text'}
             else:
                 format = {'type': 'grammar', 'syntax': f.text_format.syntax, 'definition': f.text_format.grammar}

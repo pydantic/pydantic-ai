@@ -306,7 +306,7 @@ class Tool(Generic[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     strict: bool | None
-    text_format: Literal['text'] | FunctionTextFormat | None
+    text_format: Literal['plain'] | FunctionTextFormat | None
     sequential: bool
     requires_approval: bool
     metadata: dict[str, Any] | None
@@ -330,7 +330,7 @@ class Tool(Generic[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        text_format: Literal['text'] | FunctionTextFormat | None = None,
+        text_format: Literal['plain'] | FunctionTextFormat | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
@@ -538,7 +538,7 @@ class ToolDefinition:
     Note: this is currently only supported by OpenAI models.
     """
 
-    text_format: Literal['text'] | FunctionTextFormat | None = None
+    text_format: Literal['plain'] | FunctionTextFormat | None = None
     """Whether to invoke the function with freeform function calling for tool calls.
 
     Setting this to a format while using a supported model prevents parallel tool calling

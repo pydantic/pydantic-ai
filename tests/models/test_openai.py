@@ -3044,7 +3044,7 @@ def test_chat_model_ignores_text_mode_text_when_tool_mapping():
             'required': ['content'],
             'additionalProperties': False,
         },
-        text_format='text',
+        text_format='plain',
     )
 
     model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
@@ -3143,7 +3143,7 @@ def test_responses_model_uses_text_mode_text_when_tool_mapping():
             'required': ['content'],
             'additionalProperties': False,
         },
-        text_format='text',
+        text_format='plain',
     )
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))

@@ -1939,7 +1939,7 @@ def test_openai_responses_model_parallel_tool_calling_disabled_with_freeform():
             'properties': {'content': {'type': 'string'}},
             'required': ['content'],
         },
-        text_format='text',
+        text_format='plain',
     )
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
@@ -1958,7 +1958,7 @@ def test_openai_responses_model_parallel_tool_calling_disabled_with_freeform_out
             'properties': {'content': {'type': 'string'}},
             'required': ['content'],
         },
-        text_format='text',
+        text_format='plain',
     )
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
@@ -1977,7 +1977,7 @@ def test_openai_responses_model_freeform_function_unsupported_model_error():
             'properties': {'content': {'type': 'string'}},
             'required': ['content'],
         },
-        text_format='text',
+        text_format='plain',
     )
 
     # GPT-4 doesn't support freeform function calling
@@ -2001,7 +2001,7 @@ def test_openai_responses_model_freeform_function_invalid_signature_error():
             },
             'required': ['param1', 'param2'],
         },
-        text_format='text',
+        text_format='plain',
     )
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
@@ -2035,7 +2035,7 @@ async def test_openai_responses_model_custom_tool_call_response_processing(allow
             'properties': {'content': {'type': 'string'}},
             'required': ['content'],
         },
-        text_format='text',
+        text_format='plain',
     )
 
     params = ModelRequestParameters(function_tools=[freeform_tool])
