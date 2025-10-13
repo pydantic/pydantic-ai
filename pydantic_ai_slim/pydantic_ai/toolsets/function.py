@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
-import re
 from typing import Any, overload
 
-from contourpy import dechunk_filled
 from pydantic.json_schema import GenerateJsonSchema
 
 from .._run_context import AgentDepsT, RunContext
