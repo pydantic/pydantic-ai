@@ -50,6 +50,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_task_config: TaskConfig | None = None,
         tool_task_config: TaskConfig | None = None,
         tool_task_config_by_name: dict[str, TaskConfig | None] | None = None,
+        event_stream_handler_task_config: TaskConfig | None = None,
         prefectify_toolset_func: Callable[
             [AbstractToolset[AgentDepsT], TaskConfig, TaskConfig, dict[str, TaskConfig | None]],
             AbstractToolset[AgentDepsT],
@@ -67,6 +68,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model_task_config: The Prefect task config to use for model request tasks. If no config is provided, use the default settings of Prefect.
             tool_task_config: The default Prefect task config to use for tool calls. If no config is provided, use the default settings of Prefect.
             tool_task_config_by_name: Per-tool task configuration. Keys are tool names, values are TaskConfig or None (None disables task wrapping for that tool).
+            event_stream_handler_task_config: The Prefect task config to use for the event stream handler task. If no config is provided, use the default settings of Prefect.
             prefectify_toolset_func: Optional function to use to prepare toolsets for Prefect by wrapping them in a `PrefectWrapperToolset` that moves methods that require IO to Prefect tasks.
                 If not provided, only `FunctionToolset` and `MCPServer` will be prepared for Prefect.
                 The function takes the toolset, the task config, the tool-specific task config, and the tool-specific task config by name.
@@ -85,6 +87,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self._model_task_config = default_task_config | (model_task_config or {})
         self._tool_task_config = default_task_config | (tool_task_config or {})
         self._tool_task_config_by_name = tool_task_config_by_name or {}
+        self._event_stream_handler_task_config = default_task_config | (event_stream_handler_task_config or {})
 
         if not isinstance(wrapped.model, Model):
             raise UserError(
@@ -147,7 +150,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         assert handler is not None
 
         # Create a task to handle each event
-        @task(name='Handle Stream Event')
+        @task(name='Handle Stream Event', **self._event_stream_handler_task_config)
         async def event_stream_handler_task(event: _messages.AgentStreamEvent) -> None:
             async def streamed_response():
                 yield event

@@ -143,7 +143,6 @@ class Deps(BaseModel):
     country: str
 
 
-@task(name='event_stream_handler')
 async def event_stream_handler(
     ctx: RunContext[Deps],
     stream: AsyncIterable[AgentStreamEvent],
@@ -153,7 +152,6 @@ async def event_stream_handler(
         logfire.info('event', event=event)
 
 
-# This doesn't need to be a task
 async def get_country(ctx: RunContext[Deps]) -> str:
     return ctx.deps.country
 
@@ -269,18 +267,13 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(
                                             content=IsStr(regex=r'Model Request \(Streaming\): gpt-4o-\w+'),
                                             children=[
+                                                BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
-                                                    content=IsStr(regex=r'event_stream_handler-\w+'),
-                                                    children=[
-                                                        BasicSpan(content='ctx.run_step=1'),
-                                                        BasicSpan(
-                                                            content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","part_kind":"tool-call"},"event_kind":"part_start"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                    ],
-                                                )
+                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","id":null,"part_kind":"tool-call"},"event_kind":"part_start"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
                                             ],
                                         )
                                     ],
@@ -288,15 +281,10 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                 BasicSpan(
                                     content=IsStr(regex=r'Handle Stream Event-\w+'),
                                     children=[
+                                        BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content=IsStr(regex=r'event_stream_handler-\w+'),
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=1'),
-                                                BasicSpan(
-                                                    content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
-                                                ),
-                                            ],
-                                        )
+                                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","id":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                        ),
                                     ],
                                 ),
                                 BasicSpan(
@@ -309,17 +297,10 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(
                                             content=IsStr(regex=r'Handle Stream Event-\w+'),
                                             children=[
+                                                BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
-                                                    content=IsStr(regex=r'event_stream_handler-\w+'),
-                                                    children=[
-                                                        BasicSpan(content='ctx.run_step=1'),
-                                                        BasicSpan(
-                                                            content=IsStr(
-                                                                regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                            )
-                                                        ),
-                                                    ],
-                                                )
+                                                    content='{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","metadata":null,"timestamp":"2025-10-13T17:36:59.340579+00:00","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                                ),
                                             ],
                                         ),
                                     ],
@@ -330,49 +311,30 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(
                                             content=IsStr(regex=r'Model Request \(Streaming\): gpt-4o-\w+'),
                                             children=[
-                                                BasicSpan(
-                                                    content=IsStr(regex=r'event_stream_handler-\w+'),
-                                                    children=[
-                                                        BasicSpan(content='ctx.run_step=2'),
-                                                        BasicSpan(
-                                                            content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","part_kind":"tool-call"},"event_kind":"part_start"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"ci","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"ty\\": ","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"Mexic","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"o Ci","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"ty\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","part_kind":"tool-call"},"event_kind":"part_start"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                    ],
-                                                )
-                                            ],
-                                        )
-                                    ],
-                                ),
-                                BasicSpan(
-                                    content=IsStr(regex=r'Handle Stream Event-\w+'),
-                                    children=[
-                                        BasicSpan(
-                                            content=IsStr(regex=r'event_stream_handler-\w+'),
-                                            children=[
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
-                                                    content='{"part":{"tool_name":"get_weather","args":"{\\"city\\": \\"Mexico City\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","id":null,"part_kind":"tool-call"},"event_kind":"part_start"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"ci","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"ty\\": ","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"Mexic","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"o Ci","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"ty\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","id":null,"part_kind":"tool-call"},"event_kind":"part_start"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                             ],
                                         )
@@ -381,15 +343,19 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                 BasicSpan(
                                     content=IsStr(regex=r'Handle Stream Event-\w+'),
                                     children=[
+                                        BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content=IsStr(regex=r'event_stream_handler-\w+'),
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=2'),
-                                                BasicSpan(
-                                                    content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
-                                                ),
-                                            ],
-                                        )
+                                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\": \\"Mexico City\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","id":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                        ),
+                                    ],
+                                ),
+                                BasicSpan(
+                                    content=IsStr(regex=r'Handle Stream Event-\w+'),
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=2'),
+                                        BasicSpan(
+                                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","id":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                        ),
                                     ],
                                 ),
                                 BasicSpan(
@@ -404,17 +370,10 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(
                                             content=IsStr(regex=r'Handle Stream Event-\w+'),
                                             children=[
+                                                BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
-                                                    content=IsStr(regex=r'event_stream_handler-\w+'),
-                                                    children=[
-                                                        BasicSpan(content='ctx.run_step=2'),
-                                                        BasicSpan(
-                                                            content=IsStr(
-                                                                regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                            )
-                                                        ),
-                                                    ],
-                                                )
+                                                    content='{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","metadata":null,"timestamp":"2025-10-13T17:36:59.407064+00:00","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                                ),
                                             ],
                                         ),
                                         BasicSpan(
@@ -429,17 +388,10 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(
                                             content=IsStr(regex=r'Handle Stream Event-\w+'),
                                             children=[
+                                                BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
-                                                    content=IsStr(regex=r'event_stream_handler-\w+'),
-                                                    children=[
-                                                        BasicSpan(content='ctx.run_step=2'),
-                                                        BasicSpan(
-                                                            content=IsStr(
-                                                                regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                            )
-                                                        ),
-                                                    ],
-                                                )
+                                                    content='{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","metadata":null,"timestamp":"2025-10-13T17:36:59.442214+00:00","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                                ),
                                             ],
                                         ),
                                     ],
@@ -450,138 +402,133 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(
                                             content=IsStr(regex=r'Model Request \(Streaming\): gpt-4o-\w+'),
                                             children=[
+                                                BasicSpan(content='ctx.run_step=3'),
                                                 BasicSpan(
-                                                    content=IsStr(regex=r'event_stream_handler-\w+'),
-                                                    children=[
-                                                        BasicSpan(content='ctx.run_step=3'),
-                                                        BasicSpan(
-                                                            content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_kind":"tool-call"},"event_kind":"part_start"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"tool_name":"final_result","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","event_kind":"final_result"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answers","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":[","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Capital","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" of","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" country","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Weather","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" in","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" capital","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Sunny","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Product","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" name","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"P","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"yd","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"antic","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" AI","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                        BasicSpan(
-                                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
-                                                        ),
-                                                    ],
-                                                )
+                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","id":null,"part_kind":"tool-call"},"event_kind":"part_start"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"tool_name":"final_result","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","event_kind":"final_result"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answers","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":[","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Capital","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" of","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" country","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Weather","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" in","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" capital","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Sunny","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Product","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" name","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"P","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"yd","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"antic","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" AI","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
                                             ],
                                         )
                                     ],
