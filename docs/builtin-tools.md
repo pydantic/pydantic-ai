@@ -508,13 +508,13 @@ agent = Agent(
     'openai-responses:gpt-4o',
     builtin_tools=[
         MCPServerTool(
-            id='your-mcp-server',
-            url='https://api.githubcopilot.com/mcp/',
-            authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),
-            allowed_tools=['search_repositories', 'list_commits'],
-            description='Your MCP Server',
-            headers={'X-CUSTOM-HEADER': 'custom-value'},
-            provider_metadata={'connector_id': 'connector_googlecalendar'},
+            id='your-mcp-server',  # required field
+            url='https://api.githubcopilot.com/mcp/',  # optional field, use `url` or `provider_metadata`
+            authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),  # required field
+            allowed_tools=['search_repositories', 'list_commits'],  # optional field
+            description='Your MCP Server',  # optional field
+            headers={'X-CUSTOM-HEADER': 'custom-value'},  # optional field
+            provider_metadata={'connector_id': 'connector_googlecalendar'},  # optional field, use `url` or `provider_metadata`
         )
     ]
 )
