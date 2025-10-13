@@ -329,8 +329,8 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
                     pass
 
         def _handle_destination_node(d: AnyDestinationNode):
-            if id(d) in destination_ids:  # pragma: no cover
-                return  # prevent infinite recursion if there is a cycle of decisions; not sure if this is possible
+            if id(d) in destination_ids:
+                return  # prevent infinite recursion if there is a cycle of decisions
 
             destination_ids.add(id(d))
             destinations.append(d)
