@@ -1978,7 +1978,7 @@ def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
         call_id, id = combined_id.split('|', 1)
         return call_id, id
     else:
-        return combined_id, None  # pragma: no cover
+        return combined_id, None
 
 
 def _map_code_interpreter_tool_call(
