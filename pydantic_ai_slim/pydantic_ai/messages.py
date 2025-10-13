@@ -7,6 +7,8 @@ from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
+from os import PathLike
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
 
 import pydantic
@@ -524,6 +526,14 @@ class BinaryContent:
             raise ValueError('Data URI must start with "data:"')  # pragma: no cover
         media_type, data = data_uri[len(prefix) :].split(';base64,', 1)
         return cls(data=base64.b64decode(data), media_type=media_type)
+
+    @classmethod
+    def from_path(cls, path: PathLike[str], *, media_type: str) -> Self:
+        """Create a `BinaryContent` from a path."""
+        if not isinstance(path, Path):
+            path = Path(path)
+        # TODO(Marcelo): We should be able to infer the `media_type` from the filename.
+        return cls(data=path.read_bytes(), media_type=media_type)
 
     @pydantic.computed_field
     @property
