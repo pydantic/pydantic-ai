@@ -6837,7 +6837,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         provider_name='openai',
                     ),
                     TextPart(
-                        content="pydantic-ai is Pydantic's GenAI agent framework (Python), with ~12.9 K ⭐, ~1.3 K forks, 326 open issues; homepage: https://ai.pydantic.dev.",
+                        content='pydantic-ai is Pydantic GenAI agent framework (Python), with ~12.9 K ⭐, ~1.3 K forks, 326 open issues; homepage: https://ai.pydantic.dev.',
                         id='msg_04507193d793fa550068ed13f84688819697b035b4d76faaa5',
                     ),
                 ],
@@ -7977,7 +7977,7 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                     ),
                     TextPart(
                         content="""\
-I wasn't able to fetch it automatically (GitHub returned a 404), but you can see the latest commit hash here:  \n\
+I was not able to fetch it automatically (GitHub returned a 404), but you can see the latest commit hash here:  \n\
 https://github.com/birbland/pydantic-ai/commits/main\
 """,
                         id='msg_01264dba19113f900068ed20c0edd4819191da764a7494bab3',
@@ -8211,8 +8211,8 @@ https://github.com/birbland/pydantic-ai/commits/main\
                 index=13, part=TextPart(content='I', id='msg_01264dba19113f900068ed20c0edd4819191da764a7494bab3')
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' wasn')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta="'t")),
+            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' was')),
+            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' not')),
             PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' able')),
             PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' to')),
             PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' fetch')),
