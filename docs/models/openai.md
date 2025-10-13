@@ -321,23 +321,7 @@ agent = Agent(model, output_type=output_tool)
 
 ##### Best Practices
 
-Lark grammars can be tricky to perfect. While simple grammars perform most reliably, complex grammars often require iteration on the grammar definition itself, the prompt, and the tool description to ensure that the model does not go out of distribution.
-
-* Keep terminals bounded – use `/[^.\n]{0,10}*\./` rather than `/.*\./`. Limit matches both by content (negated character class) and by length (`{M,N}` quantifier).
-* Prefer explicit char‑classes over `.` wildcards.
-* Thread whitespace explicitly, e.g. using `SP = " "`, instead of a global %ignore.
-* Describe your tool: tell the model exactly what the CFG accepts and instruct it to reason heavily about compliance.
-
-Troubleshooting
-
-* API rejects the grammar because it is too complex ➜ Simplify rules and terminals, remove `%ignore.*`.
-* Unexpected tokens ➜ Confirm terminals aren't overlapping; check greedy lexer.
-* When the model drifts "out‑of‑distribution" (shows up as the model producing excessively long or repetitive outputs, it is syntactically valid but is semantically wrong):
-  - Tighten the grammar.
-  - Iterate on the prompt (add few-shot examples) and tool description (explain the grammar and instruct the model to reason to conform to it).
-  - Experiment with a higher reasoning effort (e.g, bump from medium to high).
-
-Resources:
+You can find recommended best practices in the [OpenAI Cookbook](https://cookbook.openai.com/examples/gpt-5/gpt-5_new_params_and_tools#35-best-practices).
 
 * [Lark Docs](https://lark-parser.readthedocs.io/en/stable/)
 * [Lark IDE](https://www.lark-parser.org/ide/)
