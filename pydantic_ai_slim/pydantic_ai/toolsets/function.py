@@ -201,7 +201,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             # noinspection PyTypeChecker
             self.add_function(
                 func=func_,
-                take_ctx=None,
+                takes_ctx=None,
                 name=name,
                 description=description,
                 retries=retries,
