@@ -1290,7 +1290,7 @@ class OpenAIResponsesModel(Model):
                     f'Tool {f.name!r} uses freeform function calling but {self._model_name!r} does not support freeform function calling.'
                 )
             if not f.only_takes_string_argument:
-                raise UserError(f'`{f.name}` is set as a freeform function but does not take a single string argument.')
+                raise UserError(f'`Tool {f.name!r}` is set as a freeform function but does not take a single string argument.')
             if f.text_format == 'plain':
                 format: CustomToolInputFormat = {'type': 'text'}
             else:
