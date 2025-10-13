@@ -39,7 +39,8 @@ from pydantic_ai.output import ToolOutput
 from pydantic_ai.tools import (
     DeferredToolRequests,
     DeferredToolResults,
-    FunctionTextFormat,
+    LarkTextFormat,
+    RegexTextFormat,
     ToolApproved,
     ToolDefinition,
     ToolDenied,
@@ -1854,27 +1855,25 @@ def test_parallel_tool_return_with_deferred():
 
 
 def test_function_text_format_regex_valid():
-    format = FunctionTextFormat(syntax='regex', grammar=r'\d+')
-    assert format.syntax == 'regex'
-    assert format.grammar == r'\d+'
+    format = RegexTextFormat(pattern=r'\d+')
+    assert format.pattern == r'\d+'
 
 
 def test_function_text_format_regex_invalid():
-    with pytest.raises(ValueError, match='Regex is invalid'):
-        FunctionTextFormat(syntax='regex', grammar='[')
+    with pytest.raises(ValueError, match='Regex pattern is invalid'):
+        RegexTextFormat(pattern='[')
 
 
 @pytest.mark.skipif(not importlib.util.find_spec('lark'), reason='lark not installed')
 def test_function_text_format_lark_valid():
-    format = FunctionTextFormat(syntax='lark', grammar='start: "hello"')
-    assert format.syntax == 'lark'
-    assert format.grammar == 'start: "hello"'
+    format = LarkTextFormat(definition='start: "hello"')
+    assert format.definition == 'start: "hello"'
 
 
 @pytest.mark.skipif(not importlib.util.find_spec('lark'), reason='lark not installed')
 def test_function_text_format_lark_invalid():
     with pytest.raises(ValueError, match='Lark grammar is invalid'):
-        FunctionTextFormat(syntax='lark', grammar='invalid grammar [')
+        LarkTextFormat(definition='invalid grammar [')
 
 
 def test_tool_definition_single_string_argument():
@@ -1962,7 +1961,7 @@ def test_agent_tool_with_text_format():
 def test_agent_tool_with_cfg_format():
     agent = Agent(TestModel())
 
-    cfg = FunctionTextFormat(syntax='regex', grammar=r'\d+')
+    cfg = RegexTextFormat(pattern=r'\d+')
 
     @agent.tool_plain(text_format=cfg)
     def parse_numbers(numbers: str) -> str:

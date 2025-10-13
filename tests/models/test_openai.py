@@ -41,7 +41,7 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import FunctionTextFormat, ToolDefinition
+from pydantic_ai.tools import LarkTextFormat, RegexTextFormat, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, try_import
@@ -3077,7 +3077,7 @@ def test_chat_model_ignores_text_mode_lark_when_tool_mapping():
             'required': ['data'],
             'additionalProperties': False,
         },
-        text_format=FunctionTextFormat(syntax='lark', grammar='start: "hello" " " "world"'),
+        text_format=LarkTextFormat(definition='start: "hello" " " "world"'),
     )
 
     model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
@@ -3110,7 +3110,7 @@ def test_chat_model_ignores_text_mode_regex_when_tool_mapping():
             'required': ['text'],
             'additionalProperties': False,
         },
-        text_format=FunctionTextFormat(syntax='regex', grammar=r'\d{4}-\d{2}-\d{2}'),
+        text_format=RegexTextFormat(pattern=r'\d{4}-\d{2}-\d{2}'),
     )
 
     model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
@@ -3169,7 +3169,7 @@ def test_responses_model_uses_text_mode_lark_when_tool_mapping():
             'required': ['data'],
             'additionalProperties': False,
         },
-        text_format=FunctionTextFormat(syntax='lark', grammar='start: "hello" " " "world"'),
+        text_format=LarkTextFormat(definition='start: "hello" " " "world"'),
     )
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
@@ -3195,7 +3195,7 @@ def test_responses_model_uses_text_mode_regex_when_tool_mapping():
             'required': ['text'],
             'additionalProperties': False,
         },
-        text_format=FunctionTextFormat(syntax='regex', grammar=r'\d{4}-\d{2}-\d{2}'),
+        text_format=RegexTextFormat(pattern=r'\d{4}-\d{2}-\d{2}'),
     )
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))

@@ -48,7 +48,7 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..tools import ToolDefinition
+from ..tools import LarkTextFormat, RegexTextFormat, ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 try:
@@ -1290,18 +1290,29 @@ class OpenAIResponsesModel(Model):
                     f'Tool {f.name!r} uses freeform function calling but {self._model_name!r} does not support freeform function calling.'
                 )
             if not f.only_takes_string_argument:
-                raise UserError(f'`Tool {f.name!r}` is set as a freeform function but does not take a single string argument.')
+                raise UserError(
+                    f'`Tool {f.name!r}` is set as a freeform function but does not take a single string argument.'
+                )
+
+            # Handle different text format types
+            format: CustomToolInputFormat | None = None
             if f.text_format == 'plain':
-                format: CustomToolInputFormat = {'type': 'text'}
-            else:
-                format = {'type': 'grammar', 'syntax': f.text_format.syntax, 'definition': f.text_format.grammar}
-            tool_param: responses.CustomToolParam = {
-                'name': f.name,
-                'type': 'custom',
-                'description': f.description or '',
-                'format': format,
-            }
-            return tool_param
+                format = {'type': 'text'}
+            elif isinstance(f.text_format, RegexTextFormat):
+                format = {'type': 'grammar', 'syntax': 'regex', 'definition': f.text_format.pattern}
+            elif isinstance(f.text_format, LarkTextFormat):
+                format = {'type': 'grammar', 'syntax': 'lark', 'definition': f.text_format.definition}
+
+            # If format was set (known type), return the custom tool param
+            # Otherwise fall through to return normal function tool (unknown text format type)
+            if format is not None:
+                tool_param: responses.CustomToolParam = {
+                    'name': f.name,
+                    'type': 'custom',
+                    'description': f.description or '',
+                    'format': format,
+                }
+                return tool_param
 
         return {
             'name': f.name,

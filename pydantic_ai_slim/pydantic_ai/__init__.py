@@ -93,8 +93,10 @@ from .settings import ModelSettings
 from .tools import (
     DeferredToolRequests,
     DeferredToolResults,
-    FunctionTextFormat,
+    LarkTextFormat,
+    RegexTextFormat,
     RunContext,
+    TextFormat,
     Tool,
     ToolApproved,
     ToolDefinition,
@@ -200,7 +202,9 @@ __all__ = (
     'DeferredToolResults',
     'ToolApproved',
     'ToolDenied',
-    'FunctionTextFormat',
+    'TextFormat',
+    'RegexTextFormat',
+    'LarkTextFormat',
     # toolsets
     'AbstractToolset',
     'ApprovalRequiredToolset',

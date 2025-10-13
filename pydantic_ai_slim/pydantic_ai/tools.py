@@ -34,6 +34,9 @@ __all__ = (
     'DeferredToolResults',
     'ToolApproved',
     'ToolDenied',
+    'TextFormat',
+    'RegexTextFormat',
+    'LarkTextFormat',
 )
 
 
@@ -219,54 +222,96 @@ A = TypeVar('A')
 
 
 @dataclass
-class FunctionTextFormat:
-    """Used to invoke the function with freeform function calling for tool calls.
+class RegexTextFormat:
+    """Text format using regular expression pattern matching.
 
-    This class encapsulates the settings related to freeform function calling
-    as well as constraining the function call argument to a specific grammar.
-    The function must take a single string argument.
+    The function must take a single string argument that will be validated
+    against the provided regex pattern by the model.
 
     Calling a function in this way prevents parallel tool calling.
+
+    Example:
+        ```python
+        from pydantic_ai import Agent, RegexTextFormat
+
+        agent = Agent('openai:gpt-5')
+
+        @agent.tool_plain(text_format=RegexTextFormat(r'\\d{3}-\\d{4}'))
+        def parse_phone(phone: str) -> str:
+            return f'Parsed phone: {phone}'
+        ```
 
     Note: this is currently only supported by OpenAI GPT-5 models.
     """
 
-    syntax: Literal['lark', 'regex']
-    """The syntax type for the grammar to constrain the freeform function call.
-
-    For 'lark' the grammar attribute contains the lark grammar that the text must
-    conform to.
-    For 'regex' the grammar attribute contains the regex pattern that the text must
-    conform to.
-    """
-    grammar: str
-    """The grammar to constrain the freeform function call.
-
-    When the syntax is 'lark' this attribute contains the lark grammar that the text must
-    conform to.
-    When the syntax is 'regex' this attribute contains the regex pattern that the text must
-    conform to.
-    """
+    pattern: str
+    """The regular expression pattern that the text must conform to."""
 
     def __post_init__(self) -> None:
-        if self.syntax == 'lark':
-            try:
-                import lark
-                from lark.exceptions import GrammarError
+        try:
+            re.compile(self.pattern)
+        except re.error as e:
+            raise ValueError('Regex pattern is invalid') from e
 
-                try:
-                    lark.Lark(self.grammar)
-                except GrammarError as e:
-                    raise ValueError('Lark grammar is invalid') from e
-            except ImportError:
-                warn(
-                    'Cannot validate lark grammar as the lark optional dependency group has not been installed'
-                )  # pragma: no cover
-        elif self.syntax == 'regex':  # pragma: no branch
+
+@dataclass
+class LarkTextFormat:
+    """Text format using Lark parser grammar.
+
+    The function must take a single string argument that will be validated
+    against the provided Lark grammar by the model.
+
+    Requires the `lark` package to be installed for validation during tool definition.
+
+    Calling a function in this way prevents parallel tool calling.
+
+    Example:
+        ```python
+        from pydantic_ai import Agent, LarkTextFormat
+
+        agent = Agent('openai:gpt-5')
+
+        grammar = '''
+        start: "hello" name
+        name: /[A-Za-z]+/
+        '''
+
+        @agent.tool_plain(text_format=LarkTextFormat(grammar))
+        def greet(text: str) -> str:
+            return f'Greeting: {text}'
+        ```
+
+    Note: this is currently only supported by OpenAI GPT-5 models.
+    """
+
+    definition: str
+    """The Lark grammar definition that the text must conform to."""
+
+    def __post_init__(self) -> None:
+        try:
+            import lark
+            from lark.exceptions import GrammarError
+
             try:
-                re.compile(self.grammar)
-            except re.error as e:
-                raise ValueError('Regex is invalid') from e
+                lark.Lark(self.definition)
+            except GrammarError as e:
+                raise ValueError('Lark grammar is invalid') from e
+        except ImportError:
+            warn(
+                'Cannot validate lark grammar as the lark optional dependency group has not been installed',
+                stacklevel=2,
+            )  # pragma: no cover
+
+
+TextFormat: TypeAlias = RegexTextFormat | LarkTextFormat
+"""Union of all supported text format types for freeform function calling.
+
+Text formats allow constraining the plain text passed to tools instead of using JSON.
+The function must take a single string argument and prevents parallel tool calling.
+
+Note: Support varies by model. Currently only OpenAI GPT-5 models support this feature.
+Unsupported formats will be silently ignored by models that don't support them.
+"""
 
 
 class GenerateToolJsonSchema(GenerateJsonSchema):
@@ -306,7 +351,7 @@ class Tool(Generic[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     strict: bool | None
-    text_format: Literal['plain'] | FunctionTextFormat | None
+    text_format: Literal['plain'] | TextFormat | None
     sequential: bool
     requires_approval: bool
     metadata: dict[str, Any] | None
@@ -330,7 +375,7 @@ class Tool(Generic[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        text_format: Literal['plain'] | FunctionTextFormat | None = None,
+        text_format: Literal['plain'] | TextFormat | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
@@ -538,7 +583,7 @@ class ToolDefinition:
     Note: this is currently only supported by OpenAI models.
     """
 
-    text_format: Literal['plain'] | FunctionTextFormat | None = None
+    text_format: Literal['plain'] | TextFormat | None = None
     """Whether to invoke the function with freeform function calling for tool calls.
 
     Setting this to a format while using a supported model prevents parallel tool calling
