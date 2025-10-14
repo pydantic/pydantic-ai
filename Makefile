@@ -1,5 +1,12 @@
 .DEFAULT_GOAL := all
 
+# Detect OS
+ifeq ($(OS),Windows_NT)
+	DETECTED_OS := Windows
+else
+	DETECTED_OS := $(shell uname -s)
+endif
+
 .PHONY: .uv
 .uv: ## Check that uv is installed
 	@uv --version || echo 'Please install uv: https://docs.astral.sh/uv/getting-started/installation/'
@@ -15,10 +22,17 @@ install: .uv .pre-commit ## Install the package, dependencies, and pre-commit fo
 
 .PHONY: install-all-python
 install-all-python: ## Install and synchronize an interpreter for every python version
+ifeq ($(DETECTED_OS),Windows)
+	@set UV_PROJECT_ENVIRONMENT=.venv310 & uv sync --python 3.10 --frozen --all-extras --all-packages --group lint --group docs
+	@set UV_PROJECT_ENVIRONMENT=.venv311 & uv sync --python 3.11 --frozen --all-extras --all-packages --group lint --group docs
+	@set UV_PROJECT_ENVIRONMENT=.venv312 & uv sync --python 3.12 --frozen --all-extras --all-packages --group lint --group docs
+	@set UV_PROJECT_ENVIRONMENT=.venv313 & uv sync --python 3.13 --frozen --all-extras --all-packages --group lint --group docs
+else
 	UV_PROJECT_ENVIRONMENT=.venv310 uv sync --python 3.10 --frozen --all-extras --all-packages --group lint --group docs
 	UV_PROJECT_ENVIRONMENT=.venv311 uv sync --python 3.11 --frozen --all-extras --all-packages --group lint --group docs
 	UV_PROJECT_ENVIRONMENT=.venv312 uv sync --python 3.12 --frozen --all-extras --all-packages --group lint --group docs
 	UV_PROJECT_ENVIRONMENT=.venv313 uv sync --python 3.13 --frozen --all-extras --all-packages --group lint --group docs
+endif
 
 .PHONY: sync
 sync: .uv ## Update local packages and uv.lock
@@ -36,8 +50,12 @@ lint: ## Lint the code
 
 .PHONY: typecheck-pyright
 typecheck-pyright:
+ifeq ($(DETECTED_OS),Windows)
+	@set PYRIGHT_PYTHON_IGNORE_WARNINGS=1 & uv run pyright
+else
 	@# PYRIGHT_PYTHON_IGNORE_WARNINGS avoids the overhead of making a request to github on every invocation
 	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright
+endif
 
 .PHONY: typecheck-mypy
 typecheck-mypy:
@@ -57,10 +75,17 @@ test: ## Run tests and collect coverage data
 
 .PHONY: test-all-python
 test-all-python: ## Run tests on Python 3.10 to 3.13
+ifeq ($(DETECTED_OS),Windows)
+	@set UV_PROJECT_ENVIRONMENT=.venv310 & uv run --python 3.10 --all-extras --all-packages coverage run -p -m pytest
+	@set UV_PROJECT_ENVIRONMENT=.venv311 & uv run --python 3.11 --all-extras --all-packages coverage run -p -m pytest
+	@set UV_PROJECT_ENVIRONMENT=.venv312 & uv run --python 3.12 --all-extras --all-packages coverage run -p -m pytest
+	@set UV_PROJECT_ENVIRONMENT=.venv313 & uv run --python 3.13 --all-extras --all-packages coverage run -p -m pytest
+else
 	UV_PROJECT_ENVIRONMENT=.venv310 uv run --python 3.10 --all-extras --all-packages coverage run -p -m pytest
 	UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --all-packages coverage run -p -m pytest
 	UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --all-packages coverage run -p -m pytest
 	UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras --all-packages coverage run -p -m pytest
+endif
 	@uv run coverage combine
 	@uv run coverage report
 
@@ -89,13 +114,11 @@ docs-serve: ## Build and serve the documentation
 
 .PHONY: .docs-insiders-install
 .docs-insiders-install: ## Install insiders packages for docs if necessary
-ifeq ($(shell uv pip show mkdocs-material | grep -q insiders && echo 'installed'), installed)
-	@echo 'insiders packages already installed'
-else ifeq ($(PPPR_TOKEN),)
-	@echo "Error: PPPR_TOKEN is not set, can't install insiders packages"
+ifeq ($(PPPR_TOKEN),)
+	@echo Error: PPPR_TOKEN is not set, cannot install insiders packages
 	@exit 1
 else
-	@echo 'installing insiders packages...'
+	@echo installing insiders packages...
 	@uv pip install --reinstall --no-deps \
 		--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/ \
 		mkdocs-material mkdocstrings-python
@@ -125,6 +148,11 @@ all: format lint typecheck testcov ## Run code formatting, linting, static type 
 
 .PHONY: help
 help: ## Show this help (usage: make help)
+ifeq ($(DETECTED_OS),Windows)
+	@echo Usage: make [recipe]
+	@echo Recipes:
+	@uv run python -c "import re; [print(f'  {m[0]:<20} {m[1]}') for m in re.findall(r'^([a-zA-Z0-9_-]+):.*?## (.*)$$', open('$(MAKEFILE_LIST)').read(), re.MULTILINE)]"
+else
 	@echo "Usage: make [recipe]"
 	@echo "Recipes:"
 	@awk '/^[a-zA-Z0-9_-]+:.*?##/ { \
@@ -135,3 +163,4 @@ help: ## Show this help (usage: make help)
 			printf "  \033[36m%-20s\033[0m %s\n", recipe, substr($$0, RSTART + 3, RLENGTH); \
 		} \
 	}' $(MAKEFILE_LIST)
+endif
