@@ -1247,10 +1247,8 @@ class OpenAIResponsesModel(Model):
                     require_approval='never',
                     headers=tool.headers,
                 )
-                connector_id = (  # pragma: no cover
-                    tool.provider_metadata.get('connector_id') if tool.provider_metadata else None
-                )
-                if tool.allowed_tools:  # pragma: no cover
+                connector_id = tool.provider_metadata.get('connector_id') if tool.provider_metadata else None
+                if tool.allowed_tools:
                     mcp_tool['allowed_tools'] = tool.allowed_tools
                 if tool.description:  # pragma: no cover
                     mcp_tool['server_description'] = tool.description
@@ -1493,10 +1491,10 @@ class OpenAIResponsesModel(Model):
                             elif item.tool_name == ImageGenerationTool.kind:
                                 # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
                                 pass
-                            elif item.tool_name == MCPServerTool.LIST_TOOLS_KIND:  # pragma: no cover
+                            elif item.tool_name == MCPServerTool.LIST_TOOLS_KIND:
                                 # MCP list result does not need to be sent back, just the fields off of `BuiltinToolCallPart`.
                                 pass
-                            elif item.tool_name == MCPServerTool.CALL_KIND:  # pragma: no cover
+                            elif item.tool_name == MCPServerTool.CALL_KIND:
                                 # MCP call result does not need to be sent back, just the fields off of `BuiltinToolCallPart`.
                                 pass
                     elif isinstance(item, FilePart):
@@ -1989,7 +1987,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseMcpCallInProgressEvent):
                 pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseMcpCallFailedEvent):  # pragma: no cover
+            elif isinstance(chunk, responses.ResponseMcpCallFailedEvent):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseMcpCallCompletedEvent):
