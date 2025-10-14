@@ -38,24 +38,37 @@ agent = Agent("openai:gpt-4.1", deps_type=AgentDeps)
 @agent.toolset(id="dynamic_mcp_tools")
 def dynamic_tools(ctx: RunContext[AgentDeps]):
     """Returns toolset based on MCP connections - can do I/O!"""
-    if not ctx.deps.mcp_connections:
-        return None
+    from pydantic_ai.toolsets import FunctionToolset
 
-    # Create MCP server for each connection config
     toolsets: list[AbstractToolset[AgentDeps]] = []
-    for conn in ctx.deps.mcp_connections:
-        # This creates MCP connection - I/O operation allowed in Temporal activity
-        mcp_server = MCPServerStdio(conn.command, conn.args, id=conn.id)
-        toolsets.append(mcp_server)
 
-    # Combine all MCP servers into one toolset
-    if len(toolsets) == 1:
+    # Add MCP servers
+    if ctx.deps.mcp_connections:
+        for conn in ctx.deps.mcp_connections:
+            # This creates MCP connection - I/O operation allowed in Temporal activity
+            mcp_server = MCPServerStdio(conn.command, conn.args, id=conn.id)
+            toolsets.append(mcp_server)
+
+    # Create a FunctionToolset for custom tools
+    custom_tools = FunctionToolset(id="custom_tools")
+
+    @custom_tools.tool
+    def get_weather(ctx: RunContext[AgentDeps]) -> str:
+        """Get the current weather information."""
+        return "The weather is +35 degrees Celsius, but it's raining heavily."
+
+    toolsets.append(custom_tools)
+
+    # Combine all toolsets
+    if len(toolsets) == 0:
+        return None
+    elif len(toolsets) == 1:
         return toolsets[0]
-    return CombinedToolset(toolsets)
+    else:
+        return CombinedToolset(toolsets)
 
 # Wrap for Temporal - automatically handles DynamicToolset!
 temporal_agent = TemporalAgent(agent, name="agent")
-
 
 async def main():
     """Main function demonstrating usage in a Temporal workflow."""
@@ -65,7 +78,7 @@ async def main():
         ],
         user_id="alice",
     )
-    result = await temporal_agent.run("What time is it?", deps=deps)
+    result = await temporal_agent.run("What time is it and also tell the weather?", deps=deps)
     print(result.output)
 
 
