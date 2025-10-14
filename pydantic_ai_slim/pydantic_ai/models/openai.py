@@ -1252,12 +1252,16 @@ class OpenAIResponsesModel(Model):
                     server_label=tool.id,
                     require_approval='never',
                 )
+
                 if tool.authorization_token:
                     mcp_tool['authorization'] = tool.authorization_token
+
                 if tool.allowed_tools:
                     mcp_tool['allowed_tools'] = tool.allowed_tools
+
                 if tool.description:  # pragma: no cover
                     mcp_tool['server_description'] = tool.description
+
                 if tool.headers:  # pragma: no cover
                     mcp_tool['headers'] = tool.headers
 
@@ -1266,10 +1270,12 @@ class OpenAIResponsesModel(Model):
                     _, connector_id = tool.url.split(':', maxsplit=1)
                 else:
                     url = tool.url
+
                 if url:
                     mcp_tool['server_url'] = tool.url
                 elif connector_id:  # pragma: no cover
                     mcp_tool['connector_id'] = connector_id  # pyright: ignore[reportGeneralTypeIssues]
+
                 tools.append(mcp_tool)
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                 has_image_generating_tool = True
