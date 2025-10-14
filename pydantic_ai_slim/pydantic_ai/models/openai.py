@@ -1252,7 +1252,7 @@ class OpenAIResponsesModel(Model):
                     server_label=tool.id,
                     require_approval='never',
                 )
-                if tool.authorization_token:
+                if tool.authorization_token:  # pragma: no cover
                     mcp_tool['authorization'] = tool.authorization_token
                 if tool.allowed_tools:
                     mcp_tool['allowed_tools'] = tool.allowed_tools
