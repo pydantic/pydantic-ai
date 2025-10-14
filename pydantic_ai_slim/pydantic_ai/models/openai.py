@@ -48,7 +48,7 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..tools import ToolDefinition
+from ..tools import LarkTextFormat, RegexTextFormat, ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 try:
@@ -81,6 +81,7 @@ try:
     from openai.types.responses.response_status import ResponseStatus
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
+    from openai.types.shared_params.custom_tool_input_format import CustomToolInputFormat
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
@@ -1034,9 +1035,25 @@ class OpenAIResponsesModel(Model):
             elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the ComputerUse built-in tool
                 pass
-            elif isinstance(item, responses.ResponseCustomToolCall):  # pragma: no cover
-                # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
-                pass
+            elif isinstance(item, responses.ResponseCustomToolCall):
+                # Handle custom tool calls (freeform function calling)
+                if item.name not in model_request_parameters.tool_defs:
+                    argument_name = 'input'
+                else:
+                    tool = model_request_parameters.tool_defs[item.name]
+                    tool_argument_name = tool.single_string_argument_name
+                    if tool_argument_name is None:
+                        raise UnexpectedModelBehavior(
+                            f'Custom tool call made to function {item.name} which has unexpected arguments'
+                        )
+                    argument_name = tool_argument_name
+                items.append(
+                    ToolCallPart(
+                        item.name,
+                        {argument_name: item.input},
+                        tool_call_id=_combine_tool_call_ids(item.call_id, item.id),
+                    )
+                )
             elif isinstance(item, responses.response_output_item.LocalShellCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the `codex-mini-latest` LocalShell built-in tool
                 pass
@@ -1172,11 +1189,14 @@ class OpenAIResponsesModel(Model):
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
+            parallel_tool_calls = self._get_parallel_tool_calling(
+                model_settings=model_settings, model_request_parameters=model_request_parameters
+            )
             return await self.client.responses.create(
                 input=openai_messages,
                 model=self._model_name,
                 instructions=instructions,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
+                parallel_tool_calls=parallel_tool_calls,
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
                 max_output_tokens=model_settings.get('max_tokens', NOT_GIVEN),
@@ -1218,7 +1238,16 @@ class OpenAIResponsesModel(Model):
             return NOT_GIVEN
         return Reasoning(effort=reasoning_effort, summary=reasoning_summary)
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
+    def _get_parallel_tool_calling(
+        self, model_settings: OpenAIResponsesModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> bool | NotGiven:
+        if any(tool_definition.text_format for tool_definition in model_request_parameters.tool_defs.values()):
+            return False
+        return model_settings.get('parallel_tool_calls', NOT_GIVEN)
+
+    def _get_tools(
+        self, model_request_parameters: ModelRequestParameters
+    ) -> list[responses.FunctionToolParam | responses.CustomToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
@@ -1261,15 +1290,44 @@ class OpenAIResponsesModel(Model):
             tools.append({'type': 'image_generation'})
         return tools
 
-    def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
+    def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam | responses.CustomToolParam:
+        model_profile = OpenAIModelProfile.from_profile(self.profile)
+        if f.text_format:
+            if not model_profile.openai_supports_freeform_function_calling:
+                raise UserError(
+                    f'Tool {f.name!r} uses freeform function calling but {self._model_name!r} does not support freeform function calling.'
+                )
+            if not f.only_takes_string_argument:
+                raise UserError(
+                    f'`Tool {f.name!r}` is set as a freeform function but does not take a single string argument.'
+                )
+
+            # Handle different text format types
+            format: CustomToolInputFormat | None = None
+            if f.text_format == 'plain':
+                format = {'type': 'text'}
+            elif isinstance(f.text_format, RegexTextFormat):
+                format = {'type': 'grammar', 'syntax': 'regex', 'definition': f.text_format.pattern}
+            elif isinstance(f.text_format, LarkTextFormat):
+                format = {'type': 'grammar', 'syntax': 'lark', 'definition': f.text_format.definition}
+
+            # If format was set (known type), return the custom tool param
+            # Otherwise fall through to return normal function tool (unknown text format type)
+            if format is not None:
+                tool_param: responses.CustomToolParam = {
+                    'name': f.name,
+                    'type': 'custom',
+                    'description': f.description or '',
+                    'format': format,
+                }
+                return tool_param
+
         return {
             'name': f.name,
             'parameters': f.parameters_json_schema,
             'type': 'function',
             'description': f.description,
-            'strict': bool(
-                f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition
-            ),
+            'strict': bool(f.strict and model_profile.openai_supports_strict_tool_definition),
         }
 
     def _get_previous_response_id_and_new_messages(

@@ -12,7 +12,7 @@ from typing_extensions import TypeAliasType, TypeVar, deprecated
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
 from .messages import ToolCallPart
-from .tools import DeferredToolRequests, ObjectJsonSchema, RunContext, ToolDefinition
+from .tools import DeferredToolRequests, ObjectJsonSchema, RunContext, TextFormat, ToolDefinition
 
 __all__ = (
     # classes
@@ -114,6 +114,8 @@ class ToolOutput(Generic[OutputDataT]):
     """The maximum number of retries for the tool."""
     strict: bool | None
     """Whether to use strict mode for the tool."""
+    text_format: Literal['plain'] | TextFormat | None = None
+    """Whether to invoke the function with freeform function calling for tool calls."""
 
     def __init__(
         self,
@@ -123,12 +125,14 @@ class ToolOutput(Generic[OutputDataT]):
         description: str | None = None,
         max_retries: int | None = None,
         strict: bool | None = None,
+        text_format: Literal['plain'] | TextFormat | None = None,
     ):
         self.output = type_
         self.name = name
         self.description = description
         self.max_retries = max_retries
         self.strict = strict
+        self.text_format = text_format
 
 
 @dataclass(init=False)
@@ -255,6 +259,7 @@ class OutputObjectDefinition:
     name: str | None = None
     description: str | None = None
     strict: bool | None = None
+    text_format: Literal['plain'] | TextFormat | None = None
 
 
 @dataclass
