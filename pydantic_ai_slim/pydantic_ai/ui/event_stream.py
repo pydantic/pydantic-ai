@@ -103,6 +103,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         try:
             async for event in stream:
                 # TODO (DouweM): Introduce, possibly, MessageStartEvent, MessageEndEvent with ModelRequest/Response?
+                # People have requested these before. We can store Request and Response
                 next_turn = turn
                 if isinstance(event, PartStartEvent):
                     next_turn = 'request'

@@ -135,10 +135,6 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
     def load_messages(cls, messages: Sequence[MessageT]) -> list[ModelMessage]:
         """Load messages from the request and return the loaded messages."""
 
-    @abstractmethod
-    def dump_messages(self, messages: Sequence[ModelMessage]) -> list[MessageT]:
-        """Dump messages to the request and return the dumped messages."""
-
     @property
     @abstractmethod
     def event_stream(self) -> BaseEventStream[RunRequestT, EventT, AgentDepsT]:

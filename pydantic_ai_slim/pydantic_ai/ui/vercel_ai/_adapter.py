@@ -71,11 +71,6 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT]
         """Validate a Vercel AI request."""
         return request_data_ta.validate_json(await request.body())
 
-    def dump_messages(self, messages: Sequence[ModelMessage]) -> list[UIMessage]:
-        """Dump messages to the request and return the dumped messages."""
-        # TODO (DouweM): implement
-        raise NotImplementedError
-
     @property
     def event_stream(self) -> BaseEventStream[RequestData, BaseChunk, AgentDepsT]:
         return VercelAIEventStream(self.request)
@@ -151,7 +146,7 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT]
                         try:
                             file = BinaryContent.from_data_uri(part.url)
                         except ValueError as e:
-                            # TODO (DouweM): handle this better
+                            # We don't yet handle non-data-URI file URLs returned by assistants, as no Pydantic AI models do this.
                             raise ValueError(
                                 'Vercel AI integration can currently only handle assistant file parts with data URIs.'
                             ) from e

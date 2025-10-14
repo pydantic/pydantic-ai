@@ -17,7 +17,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsNow, try_import
+from ..conftest import IsDatetime, IsNow, try_import
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
@@ -217,6 +217,12 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='hello world')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function::success_response_stream',
+                    timestamp=IsDatetime(),
                 ),
             ]
         )
@@ -449,6 +455,12 @@ async def test_first_success_streaming() -> None:
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
+                ModelResponse(
+                    parts=[TextPart(content='hello world')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function::success_response_stream',
+                    timestamp=IsDatetime(),
+                ),
             ]
         )
         assert result.is_complete
@@ -477,6 +489,12 @@ async def test_first_failed_streaming() -> None:
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='hello world')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function::success_response_stream',
+                    timestamp=IsDatetime(),
                 ),
             ]
         )

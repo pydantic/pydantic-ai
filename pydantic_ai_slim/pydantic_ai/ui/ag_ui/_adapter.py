@@ -100,11 +100,6 @@ class AGUIAdapter(BaseAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT]):
         """Validate the request and return the validated request."""
         return RunAgentInput.model_validate(await request.json())
 
-    def dump_messages(self, messages: Sequence[ModelMessage]) -> list[Message]:
-        """Dump messages to the request and return the dumped messages."""
-        # TODO (DouweM): bring in from https://github.com/pydantic/pydantic-ai/pull/3068
-        raise NotImplementedError
-
     @property
     def event_stream(self) -> BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]:
         """Create an event stream for the adapter."""

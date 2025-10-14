@@ -27,6 +27,7 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
@@ -409,7 +410,7 @@ async def test_stream_text(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            ['hello ', 'hello world', 'hello world']
+            ['hello ', 'hello world', 'hello world', 'hello world']
         )
         assert result.is_complete
 
@@ -423,7 +424,7 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            ['hello ', 'hello world', 'hello world.', 'hello world.']
+            ['hello ', 'hello world', 'hello world.', 'hello world.', 'hello world.']
         )
         assert result.is_complete
 
@@ -473,6 +474,7 @@ async def test_stream_structured(allow_model_requests: None):
             [
                 {},
                 {'first': 'One'},
+                {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
@@ -532,6 +534,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
             ]
         )
         assert result.is_complete
@@ -546,7 +549,7 @@ async def test_no_delta(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            ['hello ', 'hello world', 'hello world']
+            ['hello ', 'hello world', 'hello world', 'hello world']
         )
         assert result.is_complete
 
@@ -1293,6 +1296,19 @@ The weather in San Francisco today is partly cloudy with a temperature of 61°F 
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Francisco')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' today')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='?)\n')),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content="""\
+<think>
+To find the current weather in San Francisco, I will use the search tool to look up this information.
+
+<tool>
+search(What is the weather in San Francisco today?)
+"""
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
             PartStartEvent(
                 index=1,
                 part=BuiltinToolCallPart(
@@ -1301,6 +1317,17 @@ The weather in San Francisco today is partly cloudy with a temperature of 61°F 
                     tool_call_id=IsStr(),
                     provider_name='groq',
                 ),
+                previous_part_kind='thinking',
+            ),
+            PartEndEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'What is the weather in San Francisco today?'},
+                    tool_call_id=IsStr(),
+                    provider_name='groq',
+                ),
+                next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
                 index=2,
@@ -1411,6 +1438,7 @@ The weather in San Francisco today is partly cloudy with a temperature of 61°F 
                     timestamp=IsDatetime(),
                     provider_name='groq',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
             PartDeltaEvent(
                 index=0,
@@ -1676,7 +1704,7 @@ Score: 0.2700
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' high')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' humidity')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='.')),
-            PartStartEvent(index=3, part=TextPart(content='The')),
+            PartStartEvent(index=3, part=TextPart(content='The'), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' weather')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' in')),
@@ -1726,6 +1754,12 @@ Score: 0.2700
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='-')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='94')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='%.')),
+            PartEndEvent(
+                index=3,
+                part=TextPart(
+                    content='The weather in San Francisco today is partly cloudy with a temperature of 61°F (17°C) and high humidity. The current conditions include a wind speed of around 7-22 km/h and a humidity level of 90-94%.'
+                ),
+            ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
@@ -2553,7 +2587,33 @@ Enjoy your homemade Uruguayan alfajores!\
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' next')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' time')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='.\n')),
-            PartStartEvent(index=1, part=TextPart(content='To')),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content="""\
+
+Okay, so I want to make Uruguayan alfajores. I've heard they're a type of South American cookie sandwich with dulce de leche. I'm not entirely sure about the exact steps, but I can try to figure it out based on what I know.
+
+First, I think alfajores are cookies, so I'll need to make the cookie part. From what I remember, the dough is probably made with flour, sugar, butter, eggs, vanilla, and maybe some baking powder or baking soda. I should look up a typical cookie dough recipe and adjust it for alfajores.
+
+Once the dough is ready, I'll need to roll it out and cut into circles. I've seen people use a cookie cutter or even the rim of a glass. The thickness should be medium, not too thin to break easily.
+
+Baking them in the oven, I suppose at around 350°F for about 10-15 minutes until they're lightly golden. I should keep an eye on them to make sure they don't burn.
+
+After the cookies are baked and cooled, the next step is the dulce de leche filling. I can either make it from scratch or use store-bought. If I make it, I'll need to heat condensed milk until it thickens and turns golden. That might take some time, so I need to be patient and stir frequently to avoid burning.
+
+Then, I'll sandwich two cookies together with the dulce de leche in the middle. I think pressing them gently is important so they stick together without breaking.
+
+Finally, I've seen alfajores coated in powdered sugar. So, after assembling, I'll roll each sandwich in powdered sugar to coat them evenly. That should give them the classic look and extra sweetness.
+
+Wait, I should make sure the cookies are completely cool before filling, otherwise the dulce de leche might melt or the cookies could become soggy. Also, maybe I can add a pinch of salt to balance the sweetness. Oh, and the vanilla extract is important for flavor.
+
+I might have missed something, but this seems like a good start. I'll follow the steps, and if something doesn't turn out right, I can adjust next time.
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=1, part=TextPart(content='To'), previous_part_kind='thinking'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' make')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Ur')),
@@ -3173,6 +3233,63 @@ Enjoy your homemade Uruguayan alfajores!\
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='aj')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='ores')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='!')),
+            PartEndEvent(
+                index=1,
+                part=TextPart(
+                    content="""\
+To make Uruguayan alfajores, follow these organized steps for a delightful cookie sandwich with dulce de leche:
+
+### Ingredients:
+- **For the Cookies:**
+  - 2 cups all-purpose flour
+  - 1 cup powdered sugar
+  - 1/2 tsp baking powder
+  - 1/4 tsp baking soda
+  - 1/4 tsp salt
+  - 1/2 cup unsalted butter, softened
+  - 1 large egg
+  - 1 egg yolk
+  - 1 tsp vanilla extract
+
+- **For the Filling:**
+  - 1 can (14 oz) sweetened condensed milk (for dulce de leche)
+  - Powdered sugar (for coating)
+
+### Instructions:
+
+1. **Prepare the Cookie Dough:**
+   - In a large bowl, whisk together flour, powdered sugar, baking powder, baking soda, and salt.
+   - Add softened butter and mix until the mixture resembles coarse crumbs.
+   - In a separate bowl, whisk together egg, egg yolk, and vanilla extract. Pour into the dry mixture and mix until a dough forms.
+   - Wrap dough in plastic wrap and refrigerate for 30 minutes.
+
+2. **Roll and Cut Cookies:**
+   - Roll out dough on a floured surface to about 1/4 inch thickness.
+   - Cut into circles using a cookie cutter or glass rim.
+   - Place cookies on a parchment-lined baking sheet, leaving space between each.
+
+3. **Bake the Cookies:**
+   - Preheat oven to 350°F (180°C).
+   - Bake for 10-15 minutes until lightly golden. Allow to cool on the baking sheet for 5 minutes, then transfer to a wire rack to cool completely.
+
+4. **Make Dulce de Leche:**
+   - Pour sweetened condensed milk into a saucepan and heat over medium heat, stirring frequently, until thickened and golden (about 10-15 minutes).
+
+5. **Assemble Alfajores:**
+   - Spread a layer of dulce de leche on the flat side of one cookie. Sandwich with another cookie, pressing gently.
+   - Roll each sandwich in powdered sugar to coat evenly.
+
+6. **Serve:**
+   - Enjoy your alfajores with a dusting of powdered sugar. Store in an airtight container.
+
+### Tips:
+- Ensure cookies are completely cool before filling to prevent sogginess.
+- For an extra touch, add a pinch of salt to the dough for flavor balance.
+
+Enjoy your homemade Uruguayan alfajores!\
+"""
+                ),
+            ),
         ]
     )
 
@@ -4190,7 +4307,40 @@ By following these steps, you can create authentic Argentinian alfajores that sh
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' alf')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='ajor')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='.\n')),
-            PartStartEvent(index=1, part=TextPart(content='To')),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content="""\
+Alright, so I'm trying to figure out how to make Argentinian alfajores. I know that Uruguayan alfajores are these delicious cookie sandwiches filled with dulce de leche and coated in powdered sugar. But I heard that Argentinian alfajores are a bit different. I'm not exactly sure what makes them unique, so I need to look into that.
+
+First, I think about what I know about Argentinian desserts. They have a rich tradition of sweet treats, and alfajores are definitely one of them. Maybe the difference lies in the type of cookies used or the filling. I recall that in some South American countries, alfajores can be more like a biscuit or even a cake-like cookie, whereas in others, they might be crisper.
+
+I also remember that sometimes alfajores are coated in chocolate instead of just powdered sugar. That could be an Argentinian twist. I need to confirm that. Also, the filling might not just be dulce de leche; perhaps they use other ingredients like jam or chocolate ganache.
+
+Another thing to consider is the texture of the cookies. Uruguayan alfajores have a softer, more delicate cookie, while Argentinian ones might be crunchier. Or maybe they use a different type of flour or baking technique. I should check recipes from both countries to see the differences in ingredients and preparation methods.
+
+I also wonder about the history of alfajores in Argentina. They might have been influenced by European immigrants, especially from Spain or Italy, which could explain variations in the recipe. This cultural influence might contribute to differences in how the cookies are made and filled.
+
+Additionally, I think about the assembly of the alfajores. In Uruguay, it's typically two cookies sandwiching the dulce de leche and then coated in powdered sugar. Maybe in Argentina, they add more layers or use a different coating, like cinnamon or cocoa powder mixed with sugar.
+
+I also need to consider the availability of ingredients. Dulce de leche is a staple in many South American countries, but maybe in Argentina, they have a slightly different version of it or use it in combination with other fillings. Perhaps they also use nuts or other ingredients in the dough for added texture and flavor.
+
+Another aspect is the baking process. The Uruguayan cookies might be baked until just set, while Argentinian ones could be baked longer for a crisper texture. Or perhaps they use a different leavening agent to achieve a lighter or denser cookie.
+
+I also think about the size of the cookies. Are Argentinian alfajores larger or smaller than the Uruguayan ones? This could affect baking time and the overall appearance of the final product.
+
+Furthermore, I recall that in some regions, alfajores are dipped in chocolate after being filled. This could be a distinguishing feature of the Argentinian version. The chocolate coating might be milk, dark, or even white chocolate, adding another layer of flavor to the cookies.
+
+I also wonder about the storage and serving of Argentinian alfajores. Maybe they are best served fresh, or perhaps they can be stored for a few days like the Uruguayan ones. Understanding this can help in planning the baking and assembly process.
+
+Lastly, I think about potential variations within Argentina itself. Different regions might have their own take on alfajores, so there could be multiple authentic Argentinian recipes. It would be helpful to find a classic or widely recognized version to ensure authenticity.
+
+Overall, to cook Argentinian alfajores, I need to focus on the specific characteristics that distinguish them from their Uruguayan counterparts, whether it's the type of cookie, the filling, the coating, or the baking method. By identifying these differences, I can adapt the recipe accordingly to achieve an authentic Argentinian alfajor.
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=1, part=TextPart(content='To'), previous_part_kind='thinking'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' cook')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Arg')),
@@ -5017,6 +5167,75 @@ By following these steps, you can create authentic Argentinian alfajores that sh
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' chocolate')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' coating')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='.')),
+            PartEndEvent(
+                index=1,
+                part=TextPart(
+                    content="""\
+To cook Argentinian alfajores, follow these steps, which highlight the unique characteristics that distinguish them from their Uruguayan counterparts:
+
+### Ingredients:
+- **For the Cookies:**
+  - 2 cups all-purpose flour
+  - 1 cup powdered sugar
+  - 1/2 teaspoon baking powder
+  - 1/4 teaspoon baking soda
+  - 1/4 teaspoon salt
+  - 1/2 cup unsalted butter, softened
+  - 1 large egg
+  - 1 egg yolk
+  - 1 teaspoon vanilla extract
+
+- **For the Filling:**
+  - 1 can (14 oz) sweetened condensed milk (for dulce de leche)
+  - Optional: jam or chocolate ganache
+
+- **For the Coating:**
+  - Powdered sugar
+  - Optional: cinnamon or cocoa powder mixed with sugar
+  - Optional: melted chocolate (milk, dark, or white)
+
+### Instructions:
+
+1. **Prepare the Cookie Dough:**
+   - In a large bowl, whisk together flour, powdered sugar, baking powder, baking soda, and salt.
+   - Add softened butter and mix until the mixture resembles coarse crumbs.
+   - In a separate bowl, whisk together egg, egg yolk, and vanilla extract. Pour into the dry mixture and mix until a dough forms.
+   - Wrap dough in plastic wrap and refrigerate for 30 minutes.
+
+2. **Roll and Cut Cookies:**
+   - Roll out dough on a floured surface to about 1/4 inch thickness.
+   - Cut into circles using a cookie cutter or glass rim.
+   - Place cookies on a parchment-lined baking sheet, leaving space between each.
+
+3. **Bake the Cookies:**
+   - Preheat oven to 350°F (180°C).
+   - Bake for 15-20 minutes until golden. Argentinian cookies might be baked longer for a crisper texture.
+   - Allow to cool on the baking sheet for 5 minutes, then transfer to a wire rack to cool completely.
+
+4. **Make Dulce de Leche:**
+   - Pour sweetened condensed milk into a saucepan and heat over medium heat, stirring frequently, until thickened and golden (about 10-15 minutes).
+
+5. **Assemble Alfajores:**
+   - Spread a layer of dulce de leche on the flat side of one cookie. For added flavor, a thin layer of jam or chocolate ganache can also be used.
+   - Sandwich with another cookie, pressing gently.
+
+6. **Coat the Alfajores:**
+   - Roll each sandwich in powdered sugar to coat evenly.
+   - For an Argentinian twist, dip the filled alfajores in melted chocolate (milk, dark, or white) for a chocolate coating.
+   - Optionally, mix cinnamon or cocoa powder with powdered sugar for a different coating flavor.
+
+7. **Serve:**
+   - Enjoy your Argentinian alfajores with a dusting of powdered sugar or chocolate coating. Store in an airtight container for up to 5 days.
+
+### Tips:
+- Ensure cookies are completely cool before filling to prevent sogginess.
+- For an extra touch, add a pinch of salt to the dough for flavor balance.
+- Experiment with different fillings and coatings to explore various regional variations within Argentina.
+
+By following these steps, you can create authentic Argentinian alfajores that showcase their unique characteristics, such as a crisper texture and optional chocolate coating.\
+"""
+                ),
+            ),
         ]
     )
 
