@@ -171,7 +171,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         Args:
             func: The tool function to register.
             name: The name of the tool, defaults to the function name.
-            description: The description of the tool, defaults to the function docstring.
+            description: The description of the tool,defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
