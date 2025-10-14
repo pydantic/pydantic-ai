@@ -25,13 +25,16 @@ from .. import BaseEventStream
 from ._request_types import RequestData
 from ._response_types import (
     BaseChunk,
+    DoneChunk,
     ErrorChunk,
     FileChunk,
     FinishChunk,
+    FinishStepChunk,
     ReasoningDeltaChunk,
     ReasoningEndChunk,
     ReasoningStartChunk,
     StartChunk,
+    StartStepChunk,
     TextDeltaChunk,
     TextEndChunk,
     TextStartChunk,
@@ -57,16 +60,35 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
         """Initialize Vercel AI event stream state."""
         super().__init__(request)
 
+        self._step_started = False
+
     def encode_event(self, event: BaseChunk, accept: str | None = None) -> str:
+        if isinstance(event, DoneChunk):
+            return 'data: [DONE]\n\n'
         return f'data: {event.model_dump_json(by_alias=True, exclude_none=True)}\n\n'
 
     async def before_stream(self) -> AsyncIterator[BaseChunk]:
         """Yield events before agent streaming starts."""
         yield StartChunk()
 
+    async def before_request(self) -> AsyncIterator[BaseChunk]:
+        """Yield events before the request is processed."""
+        self._step_started = True
+        yield StartStepChunk()
+
+    async def after_response(self) -> AsyncIterator[BaseChunk]:
+        """Yield events after the response is processed."""
+        if self._step_started:
+            yield FinishStepChunk()
+            self._step_started = False
+
     async def after_stream(self) -> AsyncIterator[BaseChunk]:
         """Yield events after agent streaming completes."""
+        if self._step_started:
+            yield FinishStepChunk()
+
         yield FinishChunk()
+        yield DoneChunk()
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
         """Handle errors during streaming."""

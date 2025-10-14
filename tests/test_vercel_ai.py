@@ -253,10 +253,14 @@ I'd be happy to help you use a tool! However, I need more information about what
             ),
         ]
     )
-    events = [json.loads(event.removeprefix('data: ')) async for event in adapter.encode_stream(adapter.run_stream())]
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
     assert events == snapshot(
         [
             {'type': 'start'},
+            {'type': 'start-step'},
             {'type': 'reasoning-start', 'id': IsStr()},
             {'type': 'reasoning-end', 'id': IsStr()},
             {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
@@ -1010,6 +1014,8 @@ Want me to tailor\
             {'type': 'text-delta', 'delta': ' or accumulate chunked', 'id': IsStr()},
             {'type': 'text-delta', 'delta': ' bodies safely?', 'id': IsStr()},
             {'type': 'text-end', 'id': IsStr()},
+            {'type': 'finish-step'},
             {'type': 'finish'},
+            '[DONE]',
         ]
     )

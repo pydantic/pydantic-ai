@@ -9,7 +9,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeVar
 from uuid import uuid4
 
 from ..messages import (
@@ -87,7 +87,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         async for event in stream:
             yield self.encode_event(event, accept)
 
-    async def handle_stream(self, stream: AsyncIterator[SourceEvent]) -> AsyncIterator[EventT]:
+    async def handle_stream(self, stream: AsyncIterator[SourceEvent]) -> AsyncIterator[EventT]:  # noqa: C901
         """Handle a stream of agent events.
 
         Args:
@@ -99,14 +99,48 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         async for e in self.before_stream():
             yield e
 
+        turn: Literal['request', 'response'] | None = None
         try:
             async for event in stream:
+                # TODO (DouweM): Introduce, possibly, MessageStartEvent, MessageEndEvent with ModelRequest/Response?
+                next_turn = turn
+                if isinstance(event, PartStartEvent):
+                    next_turn = 'request'
+                elif isinstance(event, FunctionToolCallEvent):
+                    next_turn = 'response'
+                elif isinstance(event, AgentRunResultEvent):
+                    next_turn = None
+
+                if turn != next_turn:
+                    if turn == 'request':
+                        async for e in self.after_request():
+                            yield e
+                    elif turn == 'response':
+                        async for e in self.after_response():
+                            yield e
+
+                    turn = next_turn
+
+                    if turn == 'request':
+                        async for e in self.before_request():
+                            yield e
+                    elif turn == 'response':
+                        async for e in self.before_response():
+                            yield e
+
                 async for e in self.handle_event(event):
                     yield e
         except Exception as e:
             async for e in self.on_error(e):
                 yield e
         else:
+            if turn == 'request':
+                async for e in self.after_request():
+                    yield e
+            elif turn == 'response':
+                async for e in self.after_response():
+                    yield e
+
             async for e in self.after_stream():
                 yield e
 
@@ -439,6 +473,26 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Args:
             event: The event to handle.
         """
+        return
+        yield  # Make this an async generator
+
+    async def before_request(self) -> AsyncIterator[EventT]:
+        """Handle a request before it is processed."""
+        return
+        yield  # Make this an async generator
+
+    async def after_request(self) -> AsyncIterator[EventT]:
+        """Handle a request after it is processed."""
+        return
+        yield  # Make this an async generator
+
+    async def before_response(self) -> AsyncIterator[EventT]:
+        """Handle a response before it is processed."""
+        return
+        yield  # Make this an async generator
+
+    async def after_response(self) -> AsyncIterator[EventT]:
+        """Handle a response after it is processed."""
         return
         yield  # Make this an async generator
 

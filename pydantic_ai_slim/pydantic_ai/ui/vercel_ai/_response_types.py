@@ -237,3 +237,9 @@ class MessageMetadataChunk(BaseChunk):
 
     type: Literal['message-metadata'] = 'message-metadata'
     message_metadata: Any
+
+
+class DoneChunk(BaseChunk):
+    """Done chunk."""
+
+    type: Literal['done'] = 'done'
