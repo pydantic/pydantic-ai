@@ -661,7 +661,7 @@ If you want to reuse a network connection or session across tool listings and ca
 
 ### MCP Servers
 
-See the [MCP Client](./mcp/client.md) documentation for how to use MCP servers with Pydantic AI.
+Pydantic AI provides two ways to connect to and call tools on local and remote MCP Servers. There is the [MCP SDK-based Client](./mcp/mcp-client.md) which offers more direct control by leveraging the MCP SDK directly, and the [FastMCP-based Client](./mcp/fastmcp-client.md) which offers a higher-level API with additional capabilities like Tool Transformation, simpler OAuth configuration, and more.
 
 ### LangChain Tools {#langchain-tools}
 
