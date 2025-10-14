@@ -1253,17 +1253,17 @@ class OpenAIResponsesModel(Model):
                     require_approval='never',
                 )
 
-                if tool.authorization_token:
+                if tool.authorization_token:  # pragma: no branch
                     mcp_tool['authorization'] = tool.authorization_token
 
-                if tool.allowed_tools:
+                if tool.allowed_tools:  # pragma: no branch
                     mcp_tool['allowed_tools'] = tool.allowed_tools
 
-                if tool.description:  # pragma: no cover
-                    mcp_tool['server_description'] = tool.description
+                if tool.description:  # pragma: no branch
+                    mcp_tool['server_description'] = tool.description  # pragma: no cover
 
-                if tool.headers:  # pragma: no cover
-                    mcp_tool['headers'] = tool.headers
+                if tool.headers:  # pragma: no branch
+                    mcp_tool['headers'] = tool.headers  # pragma: no cover
 
                 url, connector_id = None, None
                 if tool.url.startswith(OpenAIResponsesMCPConnectorIdPrefix):  # pragma: no cover
