@@ -118,7 +118,7 @@ class AGUIAdapter(BaseAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT]):
         return None
 
     @cached_property
-    def raw_state(self) -> dict[str, Any] | None:
+    def state(self) -> dict[str, Any] | None:
         """Get the state of the agent run."""
         return self.request.state
 

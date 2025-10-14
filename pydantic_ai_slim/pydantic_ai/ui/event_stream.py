@@ -100,7 +100,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         turn: Literal['request', 'response'] | None = None
         try:
             async for event in stream:
-                # TODO (DouweM): Should this be a TurnChange event?
+                # TODO (DouweM): Introduce PartEndEvent, possible MessageStartEvent, MessageEndEvent with ModelRequest/Response
                 previous_part = part
                 next_turn = turn
                 next_part = part

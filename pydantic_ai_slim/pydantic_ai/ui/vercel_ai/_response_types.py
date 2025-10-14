@@ -1,10 +1,12 @@
 """Vercel AI response types (SSE chunks).
 
 Converted to Python from:
-https://github.com/vercel/ai/blob/ai%405.0.34/packages/ai/src/ui/ui-messages.ts
+https://github.com/vercel/ai/blob/ai%405.0.59/packages/ai/src/ui/ui-messages.ts
 """
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
+
+from pydantic import Field
 
 from ._utils import CamelBaseModel, ProviderMetadata
 
@@ -26,7 +28,7 @@ __all__ = [
     'SourceUrlChunk',
     'SourceDocumentChunk',
     'FileChunk',
-    'DataUIMessageChunk',
+    'DataChunk',
     'StartStepChunk',
     'FinishStepChunk',
     'StartChunk',
@@ -126,13 +128,6 @@ class ToolOutputAvailableChunk(BaseChunk):
     preliminary: bool | None = None
 
 
-class FinishChunk(BaseChunk):
-    """Finish chunk."""
-
-    type: Literal['finish'] = 'finish'
-    message_metadata: Any | None = None
-
-
 class ToolInputAvailableChunk(BaseChunk):
     """Tool input available chunk."""
 
@@ -197,10 +192,10 @@ class FileChunk(BaseChunk):
     media_type: str
 
 
-class DataUIMessageChunk(BaseChunk):
-    """Data UI message chunk with dynamic type."""
+class DataChunk(BaseChunk):
+    """Data chunk with dynamic type."""
 
-    type: str  # Will be f"data-{NAME}"
+    type: Annotated[str, Field(pattern=r'^data-')]
     data: Any
 
 
@@ -221,6 +216,13 @@ class StartChunk(BaseChunk):
 
     type: Literal['start'] = 'start'
     message_id: str | None = None
+    message_metadata: Any | None = None
+
+
+class FinishChunk(BaseChunk):
+    """Finish chunk."""
+
+    type: Literal['finish'] = 'finish'
     message_metadata: Any | None = None
 
 

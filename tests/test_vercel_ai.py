@@ -7,6 +7,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.ui.vercel_ai._request_types import (
     SubmitMessage,
@@ -15,7 +16,7 @@ from pydantic_ai.ui.vercel_ai._request_types import (
     UIMessage,
 )
 
-from .conftest import IsStr, try_import
+from .conftest import IsDatetime, IsStr, try_import
 
 with try_import() as openai_import_successful:
     from pydantic_ai.models.openai import OpenAIResponsesModel
@@ -147,128 +148,261 @@ async def test_run(allow_model_requests: None, openai_api_key: str):
     )
 
     adapter = VercelAIAdapter(agent, request=data)
+    assert adapter.messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content="""\
+Use a tool
+
+    \
+""",
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+I'd be happy to help you use a tool! However, I need more information about what you'd like to do. I have access to tools for searching and retrieving documentation for two products:
+
+    1. **Pydantic AI** (pydantic-ai) - an open source agent framework library
+    2. **Pydantic Logfire** (logfire) - an observability platform
+
+    I can help you with:
+    - Searching the documentation for specific topics or questions
+    - Getting the table of contents to see what documentation is available
+    - Retrieving specific documentation files
+
+    What would you like to learn about or search for? Please let me know:
+    - Which product you're interested in (Pydantic AI or Logfire)
+    - What specific topic, feature, or question you have
+
+    For example, you could ask something like "How do I get started with Pydantic AI?" or "Show me the table of contents for Logfire documentation."\
+"""
+                    )
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Give me the ToCs',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content="I'll get the table of contents for both repositories."),
+                    ToolCallPart(
+                        tool_name='get_table_of_contents',
+                        args={'repo': 'pydantic-ai'},
+                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
+                    ),
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_table_of_contents',
+                        content="[Scrubbed due to 'API Key']",
+                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_table_of_contents',
+                        args={'repo': 'logfire'},
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
+                    )
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_table_of_contents',
+                        content="[Scrubbed due to 'Auth']",
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='Here are the Table of Contents for both repositories:... Both products are designed to work together - Pydantic AI for building AI agents and Logfire for observing and monitoring them in production.'
+                    )
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='How do I get FastAPI instrumentation to include the HTTP request and response',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
     events = [json.loads(event.removeprefix('data: ')) async for event in adapter.encode_stream(adapter.run_stream())]
     assert events == snapshot(
         [
             {'type': 'start'},
             {'type': 'reasoning-start', 'id': IsStr()},
             {'type': 'reasoning-end', 'id': IsStr()},
-            {
-                'type': 'tool-input-start',
-                'toolCallId': IsStr(),
-                'toolName': 'web_search',
-            },
+            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
                 'inputTextDelta': '{"query":"OpenTelemetry FastAPI instrumentation capture request and response body","type":"search"}',
             },
             {
+                'type': 'tool-input-available',
+                'toolCallId': 'ws_00e767404995b9950068e647f909248191bfe8d05eeed67645',
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
+            {
                 'type': 'tool-output-available',
                 'toolCallId': IsStr(),
                 'output': {'status': 'completed'},
+                'providerExecuted': True,
             },
             {'type': 'reasoning-start', 'id': IsStr()},
             {'type': 'reasoning-end', 'id': IsStr()},
-            {
-                'type': 'tool-input-start',
-                'toolCallId': IsStr(),
-                'toolName': 'web_search',
-            },
+            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
                 'inputTextDelta': '{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY Python","type":"search"}',
             },
             {
+                'type': 'tool-input-available',
+                'toolCallId': 'ws_00e767404995b9950068e647fb73c48191b0bdb147c3a0d22c',
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
+            {
                 'type': 'tool-output-available',
                 'toolCallId': IsStr(),
                 'output': {'status': 'completed'},
+                'providerExecuted': True,
             },
             {'type': 'reasoning-start', 'id': IsStr()},
             {'type': 'reasoning-end', 'id': IsStr()},
-            {
-                'type': 'tool-input-start',
-                'toolCallId': IsStr(),
-                'toolName': 'web_search',
-            },
+            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
                 'inputTextDelta': '{"query":"OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY opentelemetry python","type":"search"}',
             },
             {
+                'type': 'tool-input-available',
+                'toolCallId': 'ws_00e767404995b9950068e647fee97c8191919865e0c0a78bba',
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
+            {
                 'type': 'tool-output-available',
                 'toolCallId': IsStr(),
                 'output': {'status': 'completed'},
+                'providerExecuted': True,
             },
             {'type': 'reasoning-start', 'id': IsStr()},
             {'type': 'reasoning-end', 'id': IsStr()},
-            {
-                'type': 'tool-input-start',
-                'toolCallId': IsStr(),
-                'toolName': 'web_search',
-            },
+            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
                 'inputTextDelta': '{"query":"site:github.com open-telemetry/opentelemetry-python-contrib OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY","type":"search"}',
             },
             {
+                'type': 'tool-input-available',
+                'toolCallId': 'ws_00e767404995b9950068e64803f27c81918a39ce50cb8dfbc2',
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
+            {
                 'type': 'tool-output-available',
                 'toolCallId': IsStr(),
                 'output': {'status': 'completed'},
+                'providerExecuted': True,
             },
             {'type': 'reasoning-start', 'id': IsStr()},
             {'type': 'reasoning-end', 'id': IsStr()},
-            {
-                'type': 'tool-input-start',
-                'toolCallId': IsStr(),
-                'toolName': 'web_search',
-            },
+            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
                 'inputTextDelta': '{"query":null,"type":"search"}',
             },
             {
+                'type': 'tool-input-available',
+                'toolCallId': 'ws_00e767404995b9950068e6480ac0888191a7897231e6ca9911',
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
+            {
                 'type': 'tool-output-available',
                 'toolCallId': IsStr(),
                 'output': {'status': 'completed'},
+                'providerExecuted': True,
             },
             {'type': 'reasoning-start', 'id': IsStr()},
             {'type': 'reasoning-end', 'id': IsStr()},
-            {
-                'type': 'tool-input-start',
-                'toolCallId': IsStr(),
-                'toolName': 'web_search',
-            },
+            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
                 'inputTextDelta': '{"query":null,"type":"search"}',
             },
             {
+                'type': 'tool-input-available',
+                'toolCallId': 'ws_00e767404995b9950068e6480e11208191834104e1aaab1148',
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
+            {
                 'type': 'tool-output-available',
                 'toolCallId': IsStr(),
                 'output': {'status': 'completed'},
+                'providerExecuted': True,
             },
             {'type': 'reasoning-start', 'id': IsStr()},
             {'type': 'reasoning-end', 'id': IsStr()},
-            {
-                'type': 'tool-input-start',
-                'toolCallId': IsStr(),
-                'toolName': 'web_search',
-            },
+            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'web_search', 'providerExecuted': True},
             {
                 'type': 'tool-input-delta',
                 'toolCallId': IsStr(),
                 'inputTextDelta': '{"query":"OTEL_PYTHON_LOG_CORRELATION environment variable","type":"search"}',
             },
             {
+                'type': 'tool-input-available',
+                'toolCallId': 'ws_00e767404995b9950068e648118bf88191aa7f804637c45b32',
+                'toolName': 'web_search',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+            },
+            {
                 'type': 'tool-output-available',
                 'toolCallId': IsStr(),
                 'output': {'status': 'completed'},
+                'providerExecuted': True,
             },
             {'type': 'reasoning-start', 'id': IsStr()},
             {'type': 'reasoning-end', 'id': IsStr()},

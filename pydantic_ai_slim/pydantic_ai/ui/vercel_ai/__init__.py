@@ -15,13 +15,13 @@ from ._request_types import (
     TextUIPart,
     ToolOutputAvailablePart,
     UIMessage,
-    UIPart,
+    UIMessagePart,
     request_data_ta,
 )
 from ._response_types import (
     AbortChunk,
     BaseChunk,
-    DataUIMessageChunk,
+    DataChunk,
     ErrorChunk,
     FileChunk,
     FinishChunk,
@@ -54,7 +54,7 @@ __all__ = [
     'TextUIPart',
     'UIMessage',
     'ToolOutputAvailablePart',
-    'UIPart',
+    'UIMessagePart',
     'SubmitMessage',
     'request_data_ta',
     # Response types
@@ -75,7 +75,7 @@ __all__ = [
     'SourceUrlChunk',
     'SourceDocumentChunk',
     'FileChunk',
-    'DataUIMessageChunk',
+    'DataChunk',
     'StartStepChunk',
     'FinishStepChunk',
     'StartChunk',

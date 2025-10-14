@@ -10,6 +10,7 @@ from pydantic_core import to_json
 from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    FilePart,
     FinalResultEvent,
     FunctionToolResultEvent,
     RetryPromptPart,
@@ -26,6 +27,7 @@ from ._request_types import RequestData
 from ._response_types import (
     BaseChunk,
     ErrorChunk,
+    FileChunk,
     FinishChunk,
     ReasoningDeltaChunk,
     ReasoningEndChunk,
@@ -34,9 +36,11 @@ from ._response_types import (
     TextDeltaChunk,
     TextEndChunk,
     TextStartChunk,
+    ToolInputAvailableChunk,
     ToolInputDeltaChunk,
     ToolInputStartChunk,
     ToolOutputAvailableChunk,
+    ToolOutputErrorChunk,
 )
 
 __all__ = ['VercelAIEventStream']
@@ -133,14 +137,21 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
         self._builtin_tool_call_ids[tool_call_id] = builtin_tool_call_id
         tool_call_id = builtin_tool_call_id
 
-        return self._handle_tool_call_start(part)
+        return self._handle_tool_call_start(part, provider_executed=True)
 
     async def _handle_tool_call_start(
-        self, part: ToolCallPart | BuiltinToolCallPart, tool_call_id: str | None = None
+        self,
+        part: ToolCallPart | BuiltinToolCallPart,
+        tool_call_id: str | None = None,
+        provider_executed: bool | None = None,
     ) -> AsyncIterator[BaseChunk]:
         """Handle a ToolCallPart or BuiltinToolCallPart at start."""
         tool_call_id = tool_call_id or part.tool_call_id
-        yield ToolInputStartChunk(tool_call_id=tool_call_id, tool_name=part.tool_name)
+        yield ToolInputStartChunk(
+            tool_call_id=tool_call_id,
+            tool_name=part.tool_name,
+            provider_executed=provider_executed,
+        )
         if part.args:
             yield ToolInputDeltaChunk(tool_call_id=tool_call_id, input_text_delta=part.args_as_json_str())
 
@@ -159,31 +170,39 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
         """Handle a ToolCallPart at end."""
         # TODO (DouweM): We don't have the full args available here,
         # and we don't seem to need to send this anyway if we've already sent deltas
-        # yield ToolInputAvailableChunk(
-        #     tool_call_id=part.tool_call_id,
-        #     tool_name=part.tool_name,
-        #     input=part.args,
-        #     provider_executed=True,
-        #     dynamic=False,
-        # )
-        # TODO (DouweM): What are ToolInputAvailableChunk.provider_executed and dynamic?
-        # Likely use for builtin and external tools.
         return
         yield  # Make this an async generator
 
-    # async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
-    #     """Handle a BuiltinToolCallPart at end."""
-    #     pass
+    async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
+        """Handle a BuiltinToolCallPart at end."""
+        yield ToolInputAvailableChunk(
+            tool_call_id=part.tool_call_id,
+            tool_name=part.tool_name,
+            input=part.args,  # TODO (DouweM): This should match the full tool input
+            provider_executed=True,
+            provider_metadata={'pydantic_ai': {'provider_name': part.provider_name}},
+        )
 
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseChunk]:
         """Handle a BuiltinToolReturnPart."""
-        yield ToolOutputAvailableChunk(tool_call_id=part.tool_call_id, output=part.content)
+        yield ToolOutputAvailableChunk(
+            tool_call_id=part.tool_call_id,
+            output=part.content,
+            provider_executed=True,
+        )
+
+    async def handle_file(self, part: FilePart) -> AsyncIterator[BaseChunk]:
+        """Handle a FilePart."""
+        file = part.content
+        yield FileChunk(url=file.data_uri, media_type=file.media_type)
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
         """Handle a FunctionToolResultEvent, emitting tool result events."""
         result = event.result
-        output = result.model_response() if isinstance(result, RetryPromptPart) else result.content
-        yield ToolOutputAvailableChunk(tool_call_id=result.tool_call_id, output=output)
+        if isinstance(result, RetryPromptPart):
+            yield ToolOutputErrorChunk(tool_call_id=result.tool_call_id, error_text=result.model_response())
+        else:
+            yield ToolOutputAvailableChunk(tool_call_id=result.tool_call_id, output=result.content)
 
         # TODO (DouweM): Stream ToolCallResultEvent.content as user parts?
 

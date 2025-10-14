@@ -49,15 +49,15 @@ __all__ = [
     'BaseAdapter',
 ]
 
-EventT = TypeVar('EventT')
-"""Type variable for protocol-specific event types."""
-
 
 RunRequestT = TypeVar('RunRequestT')
 """Type variable for protocol-specific request types."""
 
 MessageT = TypeVar('MessageT')
 """Type variable for protocol-specific message types."""
+
+EventT = TypeVar('EventT')
+"""Type variable for protocol-specific event types."""
 
 OnCompleteFunc: TypeAlias = Callable[[AgentRunResult[Any]], None] | Callable[[AgentRunResult[Any]], Awaitable[None]]
 """Callback function type that receives the `AgentRunResult` of the completed run. Can be sync or async."""
@@ -161,7 +161,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
         return None
 
     @cached_property
-    def raw_state(self) -> dict[str, Any] | None:
+    def state(self) -> dict[str, Any] | None:
         """Get the state of the agent run."""
         return None
 
@@ -248,14 +248,14 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
             toolsets = [*toolsets, toolset] if toolsets else [toolset]
 
         if isinstance(deps, StateHandler):
-            raw_state = self.raw_state or {}
+            raw_state = self.state or {}
             if isinstance(deps.state, BaseModel):
                 state = type(deps.state).model_validate(raw_state)
             else:
                 state = raw_state
 
             deps = replace(deps, state=state)
-        elif self.raw_state:
+        elif self.state:
             raise UserError(
                 f'State is provided but `deps` of type `{type(deps).__name__}` does not implement the `StateHandler` protocol: it needs to be a dataclass with a non-optional `state` field.'
             )

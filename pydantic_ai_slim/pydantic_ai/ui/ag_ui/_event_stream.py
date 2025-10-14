@@ -13,6 +13,7 @@ from typing import Final
 from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    FinalResultEvent,
     FunctionToolResultEvent,
     RetryPromptPart,
     TextPart,
@@ -109,6 +110,20 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
     async def on_error(self, error: Exception) -> AsyncIterator[BaseEvent]:
         """Handle errors during streaming."""
         yield RunErrorEvent(message=str(error))
+
+    async def after_response(self) -> AsyncIterator[BaseEvent]:
+        """Yield events after agent response completes."""
+        # Close the final result tool if there was one
+        # TODO (DouweM): Both AG-UI and Vercel AI do this to wrap up output tools, so consider if it should be a separate event,
+        # or if the tool ID should at least on the AgentRunResult(Event).
+        if tool_call_id := self._final_result_tool_id:
+            yield ToolCallResultEvent(
+                message_id=self.new_message_id(),
+                type=EventType.TOOL_CALL_RESULT,
+                role='tool',
+                tool_call_id=tool_call_id,
+                content='',
+            )
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseEvent]:
         """Handle a TextPart at start."""
@@ -246,3 +261,10 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
                         yield item
 
         # TODO (DouweM): Stream ToolCallResultEvent.content as user parts?
+
+    async def handle_final_result(self, event: FinalResultEvent) -> AsyncIterator[BaseEvent]:
+        """Handle a FinalResultEvent, tracking the final result tool."""
+        if event.tool_call_id and event.tool_name:
+            self._final_result_tool_id = event.tool_call_id
+        return
+        yield  # Make this an async generator
