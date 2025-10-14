@@ -6,7 +6,6 @@ from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
-from openai.types.responses.response_output_item import McpListToolsTool
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
@@ -52,6 +51,7 @@ from ..conftest import IsBytes, IsDatetime, IsStr, TestEnv, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
+    from openai.types.responses.response_output_item import McpListToolsTool
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
     from openai.types.responses.response_reasoning_item import ResponseReasoningItem, Summary
     from openai.types.responses.response_usage import ResponseUsage
