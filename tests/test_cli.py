@@ -155,6 +155,15 @@ def test_list_models(capfd: CaptureFixture[str]):
     assert models == set(), models
 
 
+def test_help_uses_overridden_default_model(capfd: CaptureFixture[str]):
+    custom_default = 'anthropic:claude-3-5-sonnet'
+    with pytest.raises(SystemExit) as exc:
+        cli(['--help'], default_model=custom_default)
+    assert exc.value.code == 0
+    out = capfd.readouterr().out
+    assert f'Defaults to "{custom_default}".' in out
+
+
 def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     with cli_agent.override(model=TestModel(custom_output_text='# result\n\n```py\nx = 1\n```')):

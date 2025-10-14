@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 from typing_inspection.introspection import get_literal_values
@@ -81,6 +81,12 @@ Markdown.elements.update(
     heading_open=LeftHeading,
 )
 
+_DEFAULT_CLI_MODEL = 'openai:gpt-4.1'
+_MODEL_OPTION_HELP_TEMPLATE = (
+    'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4.1" or '
+    '"anthropic:claude-sonnet-4-0". Defaults to "{default_model}".'
+)
+_CLI_CONTEXT_DEFAULTS_KEY = 'default_model'
 
 cli_agent = Agent()
 
@@ -96,13 +102,146 @@ The current date and time is {datetime.now()} {tzname}.
 The user is running {sys.platform}."""
 
 
+@click.command(
+    context_settings={
+        'help_option_names': ['-h', '--help'],
+    },
+    help=(
+        f'Pydantic AI CLI v{__version__}\n\n'
+        'Special prompts:\n'
+        '* `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)\n'
+        '* `/markdown` - show the last markdown output of the last question\n'
+        '* `/multiline` - toggle multiline mode\n'
+        '* `/cp` - copy the last response to clipboard\n'
+    ),
+)
+@click.argument('prompt', required=False)
+@click.option(
+    '-m',
+    '--model',
+    metavar='MODEL',
+    help=_MODEL_OPTION_HELP_TEMPLATE.format(default_model=_DEFAULT_CLI_MODEL),
+)
+@click.option(
+    '-a',
+    '--agent',
+    metavar='MODULE:VAR',
+    help=('Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"'),
+)
+@click.option('-l', '--list-models', is_flag=True, help='List all available models and exit')
+@click.option(
+    '-t',
+    '--code-theme',
+    default='dark',
+    metavar='THEME',
+    help=(
+        'Which colors to use for code, can be "dark", "light" or any theme from '
+        'pygments.org/styles/. Defaults to "dark" which works well on dark terminals.'
+    ),
+    show_default=True,
+)
+@click.option('--no-stream', is_flag=True, help='Disable streaming from the model')
+@click.option('--version', is_flag=True, help='Show version and exit')
+@click.pass_context
+def _click_main(  # noqa: C901
+    ctx: click.Context,
+    prompt: str | None,
+    model: str | None,
+    agent: str | None,
+    list_models: bool,
+    code_theme: str,
+    no_stream: bool,
+    version: bool,
+) -> int | None:
+    """Command body (invoked by Click)."""
+    context_defaults: dict[str, Any] = ctx.obj or {}
+    default_model = context_defaults.get(_CLI_CONTEXT_DEFAULTS_KEY, _DEFAULT_CLI_MODEL)
+    prog_name = ctx.info_name or 'pai'
+
+    # we don't want to autocomplete or list models that don't include the provider,
+    # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
+    qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
+
+    console = Console()
+    name_version = f'[green]{prog_name} - Pydantic AI CLI v{__version__}[/green]'
+    if version:
+        console.print(name_version, highlight=False)
+        return 0
+    if list_models:
+        console.print(f'{name_version}\n\n[green]Available models:[/green]')
+        for m in qualified_model_names:
+            console.print(f'  {m}', highlight=False)
+        return 0
+
+    agent_obj: Agent[None, str] = cli_agent
+    if agent:
+        sys.path.append(os.getcwd())
+        try:
+            module_path, variable_name = agent.split(':')
+        except ValueError:
+            console.print('[red]Error: Agent must be specified in "module:variable" format[/red]')
+            raise click.exceptions.Exit(1)
+
+        module = importlib.import_module(module_path)
+        agent_obj = getattr(module, variable_name)
+        if not isinstance(agent_obj, Agent):
+            console.print(f'[red]Error: {agent} is not an Agent instance[/red]')
+            raise click.exceptions.Exit(1)
+
+    model_arg_set = model is not None
+    if agent_obj.model is None or model_arg_set:
+        try:
+            agent_obj.model = infer_model(model or default_model)
+        except UserError as e:
+            console.print(f'Error initializing [magenta]{model}[/magenta]:\n[red]{e}[/red]')
+            raise click.exceptions.Exit(1)
+
+    model_name = (
+        agent_obj.model
+        if isinstance(agent_obj.model, str)
+        else f'{agent_obj.model.system}:{agent_obj.model.model_name}'
+    )
+    if agent and model_arg_set:
+        console.print(
+            f'{name_version} using custom agent [magenta]{agent}[/magenta] with [magenta]{model_name}[/magenta]',
+            highlight=False,
+        )
+    elif agent:
+        console.print(f'{name_version} using custom agent [magenta]{agent}[/magenta]', highlight=False)
+    else:
+        console.print(f'{name_version} with [magenta]{model_name}[/magenta]', highlight=False)
+
+    stream = not no_stream
+    if code_theme == 'light':
+        code_theme_name = 'default'
+    elif code_theme == 'dark':
+        code_theme_name = 'monokai'
+    else:
+        code_theme_name = code_theme  # pragma: no cover
+
+    if prompt:
+        try:
+            asyncio.run(ask_agent(agent_obj, prompt, stream, console, code_theme_name))
+        except KeyboardInterrupt:
+            pass
+        return 0
+
+    try:
+        return asyncio.run(run_chat(stream, agent_obj, console, code_theme_name, prog_name))
+    except KeyboardInterrupt:  # pragma: no cover
+        return 0
+
+
+_MODEL_OPTION = cast(click.Option, next(param for param in _click_main.params if param.name == 'model'))
+
+
 def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
     """Run the CLI and exit."""
     sys.exit(cli(prog_name=prog_name))
 
 
-def cli(  # noqa: C901
-    args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', default_model: str = 'openai:gpt-4.1'
+def cli(
+    args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', default_model: str = _DEFAULT_CLI_MODEL
 ) -> int:
     """Run the CLI and return the exit code for the process.
 
@@ -110,146 +249,26 @@ def cli(  # noqa: C901
     - Raises SystemExit on `--help` to satisfy the README hook test.
     - Returns an int exit code for other invocations.
     """
-
-    @click.command(
-        context_settings={
-            'help_option_names': ['-h', '--help'],
-        },
-        help=(
-            f'Pydantic AI CLI v{__version__}\n\n'
-            'Special prompts:\n'
-            '* `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)\n'
-            '* `/markdown` - show the last markdown output of the last question\n'
-            '* `/multiline` - toggle multiline mode\n'
-            '* `/cp` - copy the last response to clipboard\n'
-        ),
-    )
-    @click.argument('prompt', required=False)
-    @click.option(
-        '-m',
-        '--model',
-        metavar='MODEL',
-        help=(
-            f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4.1" or '
-            f'"anthropic:claude-sonnet-4-0". Defaults to "{default_model}".'
-        ),
-    )
-    @click.option(
-        '-a',
-        '--agent',
-        metavar='MODULE:VAR',
-        help=('Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"'),
-    )
-    @click.option('-l', '--list-models', is_flag=True, help='List all available models and exit')
-    @click.option(
-        '-t',
-        '--code-theme',
-        default='dark',
-        metavar='THEME',
-        help=(
-            'Which colors to use for code, can be "dark", "light" or any theme from '
-            'pygments.org/styles/. Defaults to "dark" which works well on dark terminals.'
-        ),
-        show_default=True,
-    )
-    @click.option('--no-stream', is_flag=True, help='Disable streaming from the model')
-    @click.option('--version', is_flag=True, help='Show version and exit')
-    def _click_main(  # noqa: C901
-        prompt: str | None,
-        model: str | None,
-        agent: str | None,
-        list_models: bool,
-        code_theme: str,
-        no_stream: bool,
-        version: bool,
-    ) -> int | None:
-        """Command body (invoked by Click)."""
-        # we don't want to autocomplete or list models that don't include the provider,
-        # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
-        qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
-
-        console = Console()
-        name_version = f'[green]{prog_name} - Pydantic AI CLI v{__version__}[/green]'
-        if version:
-            console.print(name_version, highlight=False)
-            return 0
-        if list_models:
-            console.print(f'{name_version}\n\n[green]Available models:[/green]')
-            for m in qualified_model_names:
-                console.print(f'  {m}', highlight=False)
-            return 0
-
-        agent_obj: Agent[None, str] = cli_agent
-        if agent:
-            sys.path.append(os.getcwd())
-            try:
-                module_path, variable_name = agent.split(':')
-            except ValueError:
-                console.print('[red]Error: Agent must be specified in "module:variable" format[/red]')
-                raise click.exceptions.Exit(1)
-
-            module = importlib.import_module(module_path)
-            agent_obj = getattr(module, variable_name)
-            if not isinstance(agent_obj, Agent):
-                console.print(f'[red]Error: {agent} is not an Agent instance[/red]')
-                raise click.exceptions.Exit(1)
-
-        model_arg_set = model is not None
-        if agent_obj.model is None or model_arg_set:
-            try:
-                agent_obj.model = infer_model(model or default_model)
-            except UserError as e:
-                console.print(f'Error initializing [magenta]{model}[/magenta]:\n[red]{e}[/red]')
-                raise click.exceptions.Exit(1)
-
-        model_name = (
-            agent_obj.model
-            if isinstance(agent_obj.model, str)
-            else f'{agent_obj.model.system}:{agent_obj.model.model_name}'
-        )
-        if agent and model_arg_set:
-            console.print(
-                f'{name_version} using custom agent [magenta]{agent}[/magenta] with [magenta]{model_name}[/magenta]',
-                highlight=False,
-            )
-        elif agent:
-            console.print(f'{name_version} using custom agent [magenta]{agent}[/magenta]', highlight=False)
-        else:
-            console.print(f'{name_version} with [magenta]{model_name}[/magenta]', highlight=False)
-
-        stream = not no_stream
-        if code_theme == 'light':
-            code_theme_name = 'default'
-        elif code_theme == 'dark':
-            code_theme_name = 'monokai'
-        else:
-            code_theme_name = code_theme  # pragma: no cover
-
-        if prompt:
-            try:
-                asyncio.run(ask_agent(agent_obj, prompt, stream, console, code_theme_name))
-            except KeyboardInterrupt:
-                pass
-            return 0
-
-        try:
-            return asyncio.run(run_chat(stream, agent_obj, console, code_theme_name, prog_name))
-        except KeyboardInterrupt:  # pragma: no cover
-            return 0
-
     args = list(args_list or [])
+
+    # keep the option help text in sync with the caller-provided default model
+    _MODEL_OPTION.help = _MODEL_OPTION_HELP_TEMPLATE.format(default_model=default_model)
+
+    context_defaults = {_CLI_CONTEXT_DEFAULTS_KEY: default_model}
+
     if any(a in ('-h', '--help') for a in args):  # pragma: no cover - exercised via hook
-        _click_main.main(args=args, prog_name=prog_name, standalone_mode=True)
+        _click_main.main(args=args, prog_name=prog_name, standalone_mode=True, obj=context_defaults)
         # should not get here
         return 0
 
     try:
-        _click_main.main(args=args, prog_name=prog_name, standalone_mode=True)
+        _click_main.main(args=args, prog_name=prog_name, standalone_mode=True, obj=context_defaults)
     except SystemExit as e:
         code = e.code
         if isinstance(code, int):
             return code
         return 0 if code is None else 1  # pragma: no cover
+    return 0  # pragma: no cover
 
 
 async def run_chat(
