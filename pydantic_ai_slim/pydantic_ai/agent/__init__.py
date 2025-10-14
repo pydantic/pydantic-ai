@@ -426,6 +426,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -443,6 +444,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -460,6 +462,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -532,6 +535,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
+            builtin_tools: Optional additional builtin tools for this run.
 
         Returns:
             The result of the run.
@@ -603,7 +607,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             instrumentation_settings = None
             tracer = NoOpTracer()
-
+        if builtin_tools:
+            # Deduplicate builtin tools passed to the agent and the run based on type
+            builtin_tools = list(
+                {
+                    **({type(tool): tool for tool in self._builtin_tools or []}),
+                    **({type(tool): tool for tool in builtin_tools}),
+                }.values()
+            )
+        else:
+            builtin_tools = list(self._builtin_tools)
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,
             prompt=user_prompt,
@@ -616,7 +629,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_schema=output_schema,
             output_validators=output_validators,
             history_processors=self.history_processors,
-            builtin_tools=list(self._builtin_tools),
+            builtin_tools=builtin_tools,
             tool_manager=tool_manager,
             tracer=tracer,
             get_instructions=get_instructions,
@@ -672,29 +685,52 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         finally:
             try:
                 if instrumentation_settings and run_span.is_recording():
-                    run_span.set_attributes(self._run_span_end_attributes(state, usage, instrumentation_settings))
+                    run_span.set_attributes(
+                        self._run_span_end_attributes(
+                            instrumentation_settings, usage, state.message_history, graph_deps.new_message_index
+                        )
+                    )
             finally:
                 run_span.end()
 
     def _run_span_end_attributes(
-        self, state: _agent_graph.GraphAgentState, usage: _usage.RunUsage, settings: InstrumentationSettings
+        self,
+        settings: InstrumentationSettings,
+        usage: _usage.RunUsage,
+        message_history: list[_messages.ModelMessage],
+        new_message_index: int,
     ):
-        literal_instructions, _ = self._get_instructions()
-
         if settings.version == 1:
             attrs = {
                 'all_messages_events': json.dumps(
-                    [
-                        InstrumentedModel.event_to_dict(e)
-                        for e in settings.messages_to_otel_events(state.message_history)
-                    ]
+                    [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(message_history)]
                 )
             }
         else:
-            attrs = {
-                'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(list(state.message_history))),
-                **settings.system_instructions_attributes(literal_instructions),
+            # Store the last instructions here for convenience
+            last_instructions = InstrumentedModel._get_instructions(message_history)  # pyright: ignore[reportPrivateUsage]
+            attrs: dict[str, Any] = {
+                'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(list(message_history))),
+                **settings.system_instructions_attributes(last_instructions),
             }
+
+            # If this agent run was provided with existing history, store an attribute indicating the point at which the
+            # new messages begin.
+            if new_message_index > 0:
+                attrs['pydantic_ai.new_message_index'] = new_message_index
+
+            # If the instructions for this agent run were not always the same, store an attribute that indicates that.
+            # This can signal to an observability UI that different steps in the agent run had different instructions.
+            # Note: We purposely only look at "new" messages because they are the only ones produced by this agent run.
+            if any(
+                (
+                    isinstance(m, _messages.ModelRequest)
+                    and m.instructions is not None
+                    and m.instructions != last_instructions
+                )
+                for m in message_history[new_message_index:]
+            ):
+                attrs['pydantic_ai.variable_instructions'] = True
 
         return {
             **usage.opentelemetry_attributes(),
@@ -703,7 +739,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 {
                     'type': 'object',
                     'properties': {
-                        **{attr: {'type': 'array'} for attr in attrs.keys()},
+                        **{k: {'type': 'array'} if isinstance(v, str) else {} for k, v in attrs.items()},
                         'final_result': {'type': 'object'},
                     },
                 }
