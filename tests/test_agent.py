@@ -632,6 +632,46 @@ class Bar(BaseModel):
     assert got_tool_call_name == snapshot('final_result_Bar')
 
 
+def test_output_type_generic_class_name_sanitization(create_module: Callable[[str], Any]):
+    """Test that generic class names with brackets are properly sanitized."""
+    module_code = '''
+from pydantic import BaseModel
+from typing import Generic, TypeVar
+
+T = TypeVar('T')
+
+class Result(BaseModel, Generic[T]):
+    """A generic result class."""
+    value: T
+    success: bool
+
+class StringData(BaseModel):
+    text: str
+
+# This will have a name like "Result[StringData]" which needs sanitization
+OutputType = [Result[StringData], Result[int]]
+    '''
+
+    mod = create_module(module_code)
+
+    m = TestModel()
+    agent = Agent(m, output_type=mod.OutputType)
+    agent.run_sync('Hello')
+
+    # The sanitizer should remove brackets from the generic type name
+    assert m.last_model_request_parameters is not None
+    assert m.last_model_request_parameters.output_tools is not None
+    assert len(m.last_model_request_parameters.output_tools) == 2
+
+    # Check that tool names don't contain brackets
+    tool_names = [tool.name for tool in m.last_model_request_parameters.output_tools]
+    for tool_name in tool_names:
+        assert '[' not in tool_name, f"Tool name '{tool_name}' contains brackets"
+        assert ']' not in tool_name, f"Tool name '{tool_name}' contains brackets"
+        # Verify the name follows the pattern [a-zA-Z0-9_-]
+        assert re.match(r'^[a-zA-Z0-9_-]+$', tool_name), f"Tool name '{tool_name}' contains invalid characters"
+
+
 def test_output_type_with_two_descriptions():
     class MyOutput(BaseModel):
         """Description from docstring"""

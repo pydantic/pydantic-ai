@@ -71,7 +71,7 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
-OUTPUT_TOOL_NAME_SANITIZER = re.compile(r'[^a-z0-9-_]')
+OUTPUT_TOOL_NAME_SANITIZER = re.compile(r'[^a-zA-Z0-9-_]')
 
 
 async def execute_traced_output_function(
