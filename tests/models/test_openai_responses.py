@@ -3346,7 +3346,7 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
                     assert response_stream.usage() == snapshot(
                         RunUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448}, requests=1)
                     )
-                    assert run.usage() == snapshot(RunUsage())
+                    assert run.usage() == snapshot(RunUsage(requests=1))
                 assert run.usage() == snapshot(
                     RunUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448}, requests=1)
                 )

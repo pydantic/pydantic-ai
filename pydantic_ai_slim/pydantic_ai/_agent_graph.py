@@ -408,6 +408,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             message_history, model_settings, model_request_parameters, run_context
         ) as streamed_response:
             self._did_stream = True
+            ctx.state.usage.requests += 1
             agent_stream = result.AgentStream[DepsT, T](
                 _raw_stream_response=streamed_response,
                 _output_schema=ctx.deps.output_schema,
@@ -418,6 +419,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 _tool_manager=ctx.deps.tool_manager,
             )
             yield agent_stream
+            # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
+            # otherwise usage won't be properly counted:
             async for _ in agent_stream:
                 pass
 
@@ -434,6 +437,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_settings, model_request_parameters, message_history, _ = await self._prepare_request(ctx)
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
+        ctx.state.usage.requests += 1
 
         return await self._finish_handling(ctx, model_response)
 
@@ -911,14 +915,12 @@ async def _call_tools(
         async def handle_call_or_result(
             coro_or_task: Awaitable[
                 tuple[
-                    _messages.ToolReturnPart | _messages.RetryPromptPart,
-                    str | Sequence[_messages.UserContent] | None,
+                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
                 ]
             ]
             | Task[
                 tuple[
-                    _messages.ToolReturnPart | _messages.RetryPromptPart,
-                    str | Sequence[_messages.UserContent] | None,
+                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
                 ]
             ],
             index: int,
