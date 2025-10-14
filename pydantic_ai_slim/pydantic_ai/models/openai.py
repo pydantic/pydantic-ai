@@ -1246,7 +1246,7 @@ class OpenAIResponsesModel(Model):
             elif isinstance(tool, CodeExecutionTool):
                 has_image_generating_tool = True
                 tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
-            elif isinstance(tool, MCPServerTool):  # pragma: no branch
+            elif isinstance(tool, MCPServerTool):
                 mcp_tool = responses.tool_param.Mcp(
                     type='mcp',
                     server_label=tool.id,
