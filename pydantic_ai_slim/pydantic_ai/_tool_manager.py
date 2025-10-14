@@ -242,7 +242,7 @@ class ToolManager(Generic[AgentDepsT]):
             try:
                 tool_result = await self._call_tool(call, allow_partial, wrap_validation_errors)
                 async with self._usage_lock:
-                    usage.incr(RunUsage(tool_calls=1))
+                    usage.tool_calls += 1
 
             except ToolRetryError as e:
                 part = e.tool_retry

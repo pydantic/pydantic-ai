@@ -204,8 +204,6 @@ class RunUsage(UsageBase):
         """Add two RunUsages together.
 
         This is provided so it's trivial to sum usage information from multiple runs.
-
-        **WARNING:** this CANNOT be used to sum multiple requests without breaking some pricing calculations.
         """
         new_usage = copy(self)
         new_usage.incr(other)
