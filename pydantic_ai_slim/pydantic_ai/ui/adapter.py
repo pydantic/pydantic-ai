@@ -26,6 +26,7 @@ from starlette.responses import StreamingResponse
 
 from .. import DeferredToolRequests, DeferredToolResults, _utils
 from ..agent import AbstractAgent, AgentDepsT, AgentRunResult
+from ..builtin_tools import AbstractBuiltinTool
 from ..exceptions import UserError
 from ..messages import ModelMessage
 from ..models import KnownModelName, Model
@@ -218,6 +219,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
         usage: RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc | None = None,
     ) -> AsyncIterator[EventT]:
         """Run the agent with the AG-UI run input and stream AG-UI protocol events.
@@ -234,6 +236,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
+            builtin_tools: Optional additional builtin tools to use for this run.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
 
@@ -273,6 +276,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
                 usage=usage,
                 infer_name=infer_name,
                 toolsets=toolsets,
+                builtin_tools=builtin_tools,
             ),
             on_complete=on_complete,
         ):
@@ -309,6 +313,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
         usage: RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc | None = None,
     ) -> Response:
         """Handle an AG-UI request and return a streaming response.
@@ -327,6 +332,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
+            builtin_tools: Optional additional builtin tools to use for this run.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
 
@@ -355,6 +361,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
             usage=usage,
             infer_name=infer_name,
             toolsets=toolsets,
+            builtin_tools=builtin_tools,
             on_complete=on_complete,
         )
 

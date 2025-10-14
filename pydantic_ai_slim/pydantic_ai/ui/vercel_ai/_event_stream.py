@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any, Final
+from typing import Any
 
 from pydantic_core import to_json
 
@@ -51,9 +51,6 @@ def _json_dumps(obj: Any) -> str:
     return to_json(obj).decode('utf-8')
 
 
-BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
-
-
 class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
     """TODO (DouwM): Docstring."""
 
@@ -61,7 +58,6 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
         """Initialize Vercel AI event stream state."""
         super().__init__(request)
         self._final_result_tool_id: str | None = None
-        self._builtin_tool_call_ids: dict[str, str] = {}
 
     def encode_event(self, event: BaseChunk, accept: str | None = None) -> str:
         return f'data: {event.model_dump_json(by_alias=True, exclude_none=True)}\n\n'
@@ -131,12 +127,6 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
 
     def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
         """Handle a BuiltinToolCallEvent, emitting tool input events."""
-        # TODO (DouweM): Reduce duplication with AGUIEventStream
-        tool_call_id = part.tool_call_id
-        builtin_tool_call_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', tool_call_id])
-        self._builtin_tool_call_ids[tool_call_id] = builtin_tool_call_id
-        tool_call_id = builtin_tool_call_id
-
         return self._handle_tool_call_start(part, provider_executed=True)
 
     async def _handle_tool_call_start(
@@ -159,8 +149,6 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
         """Handle a ToolCallPartDelta."""
         tool_call_id = delta.tool_call_id or ''
         assert tool_call_id, '`ToolCallPartDelta.tool_call_id` must be set'
-        if tool_call_id in self._builtin_tool_call_ids:
-            tool_call_id = self._builtin_tool_call_ids[tool_call_id]
         yield ToolInputDeltaChunk(
             tool_call_id=tool_call_id,
             input_text_delta=delta.args_delta if isinstance(delta.args_delta, str) else _json_dumps(delta.args_delta),
@@ -178,7 +166,7 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
         yield ToolInputAvailableChunk(
             tool_call_id=part.tool_call_id,
             tool_name=part.tool_name,
-            input=part.args,  # TODO (DouweM): This should match the full tool input
+            input=part.args,  # TODO (DouweM): This should match the full tool input, now erases the input from the UI!
             provider_executed=True,
             provider_metadata={'pydantic_ai': {'provider_name': part.provider_name}},
         )

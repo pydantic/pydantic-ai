@@ -82,6 +82,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
             accept: The accept header value for encoding format.
         """
         async for event in stream:
+            print(event)
             yield self.encode_event(event, accept)
 
     async def handle_stream(self, stream: AsyncIterator[SourceEvent]) -> AsyncIterator[EventT]:  # noqa: C901

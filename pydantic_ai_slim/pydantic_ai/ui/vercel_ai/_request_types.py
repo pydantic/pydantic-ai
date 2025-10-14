@@ -117,7 +117,7 @@ class ToolInputAvailablePart(CamelBaseModel):
     type: Annotated[str, Field(pattern=r'^tool-')]
     tool_call_id: str
     state: Literal['input-available'] = 'input-available'
-    input: Any
+    input: Any | None = None
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
 
@@ -128,8 +128,8 @@ class ToolOutputAvailablePart(CamelBaseModel):
     type: Annotated[str, Field(pattern=r'^tool-')]
     tool_call_id: str
     state: Literal['output-available'] = 'output-available'
-    input: Any
-    output: Any
+    input: Any | None = None
+    output: Any | None = None
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     preliminary: bool | None = None
