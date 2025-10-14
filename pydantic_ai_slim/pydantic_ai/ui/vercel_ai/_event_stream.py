@@ -11,7 +11,6 @@ from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FilePart,
-    FinalResultEvent,
     FunctionToolResultEvent,
     RetryPromptPart,
     TextPart,
@@ -57,7 +56,6 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
     def __init__(self, request: RequestData) -> None:
         """Initialize Vercel AI event stream state."""
         super().__init__(request)
-        self._final_result_tool_id: str | None = None
 
     def encode_event(self, event: BaseChunk, accept: str | None = None) -> str:
         return f'data: {event.model_dump_json(by_alias=True, exclude_none=True)}\n\n'
@@ -73,12 +71,6 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
     async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
         """Handle errors during streaming."""
         yield ErrorChunk(error_text=str(error))
-
-    async def after_response(self) -> AsyncIterator[BaseChunk]:
-        """Yield events after agent response completes."""
-        # Close the final result tool if there was one
-        if tool_call_id := self._final_result_tool_id:
-            yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=None)
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseChunk]:
         """Handle a TextPart at start."""
@@ -156,17 +148,14 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
 
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseChunk]:
         """Handle a ToolCallPart at end."""
-        # TODO (DouweM): We don't have the full args available here,
-        # and we don't seem to need to send this anyway if we've already sent deltas
-        return
-        yield  # Make this an async generator
+        yield ToolInputAvailableChunk(tool_call_id=part.tool_call_id, tool_name=part.tool_name, input=part.args)
 
     async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
         """Handle a BuiltinToolCallPart at end."""
         yield ToolInputAvailableChunk(
             tool_call_id=part.tool_call_id,
             tool_name=part.tool_name,
-            input=part.args,  # TODO (DouweM): This should match the full tool input, now erases the input from the UI!
+            input=part.args,
             provider_executed=True,
             provider_metadata={'pydantic_ai': {'provider_name': part.provider_name}},
         )
@@ -193,10 +182,3 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
             yield ToolOutputAvailableChunk(tool_call_id=result.tool_call_id, output=result.content)
 
         # TODO (DouweM): Stream ToolCallResultEvent.content as user parts?
-
-    async def handle_final_result(self, event: FinalResultEvent) -> AsyncIterator[BaseChunk]:
-        """Handle a FinalResultEvent, tracking the final result tool."""
-        if event.tool_call_id and event.tool_name:
-            self._final_result_tool_id = event.tool_call_id
-        return
-        yield  # Make this an async generator

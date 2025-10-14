@@ -1612,6 +1612,11 @@ class PartStartEvent:
     part: ModelResponsePart
     """The newly started `ModelResponsePart`."""
 
+    previous_part_kind: (
+        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+    ) = None
+    """The kind of the previous part, if known."""
+
     event_kind: Literal['part_start'] = 'part_start'
     """Event type identifier, used as a discriminator."""
 
@@ -1635,6 +1640,27 @@ class PartDeltaEvent:
 
 
 @dataclass(repr=False, kw_only=True)
+class PartEndEvent:
+    """An event indicating that a part is complete."""
+
+    index: int
+    """The index of the part within the overall response parts list."""
+
+    part: ModelResponsePart
+    """The complete `ModelResponsePart`."""
+
+    next_part_kind: (
+        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+    ) = None
+    """The kind of the next part, if known."""
+
+    event_kind: Literal['part_end'] = 'part_end'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
 class FinalResultEvent:
     """An event indicating the response to the current model request matches the output schema and will produce a result."""
 
@@ -1649,9 +1675,9 @@ class FinalResultEvent:
 
 
 ModelResponseStreamEvent = Annotated[
-    PartStartEvent | PartDeltaEvent | FinalResultEvent, pydantic.Discriminator('event_kind')
+    PartStartEvent | PartDeltaEvent | PartEndEvent | FinalResultEvent, pydantic.Discriminator('event_kind')
 ]
-"""An event in the model response stream, starting a new part, applying a delta to an existing one, or indicating the final result."""
+"""An event in the model response stream, starting a new part, applying a delta to an existing one, indicating a part is complete, or indicating the final result."""
 
 
 @dataclass(repr=False)

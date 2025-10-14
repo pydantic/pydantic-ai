@@ -9,7 +9,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Generic, Literal, TypeVar
+from typing import Generic, TypeVar
 from uuid import uuid4
 
 from ..messages import (
@@ -20,8 +20,8 @@ from ..messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    ModelResponsePart,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     TextPart,
     TextPartDelta,
@@ -29,6 +29,7 @@ from ..messages import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolReturnPart,
 )
 from ..run import AgentRunResult, AgentRunResultEvent
 from ..tools import AgentDepsT
@@ -54,6 +55,8 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
     result: AgentRunResult | None = None
 
     message_id: str = field(default_factory=lambda: str(uuid4()))
+
+    _final_result_event: FinalResultEvent | None = None
 
     def new_message_id(self) -> str:
         """Generate and store a new message ID.
@@ -82,10 +85,9 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
             accept: The accept header value for encoding format.
         """
         async for event in stream:
-            print(event)
             yield self.encode_event(event, accept)
 
-    async def handle_stream(self, stream: AsyncIterator[SourceEvent]) -> AsyncIterator[EventT]:  # noqa: C901
+    async def handle_stream(self, stream: AsyncIterator[SourceEvent]) -> AsyncIterator[EventT]:
         """Handle a stream of agent events.
 
         Args:
@@ -97,49 +99,9 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         async for e in self.before_stream():
             yield e
 
-        part: ModelResponsePart | None = None
-        turn: Literal['request', 'response'] | None = None
         try:
             async for event in stream:
-                # TODO (DouweM): Introduce PartEndEvent, possible MessageStartEvent, MessageEndEvent with ModelRequest/Response
-                previous_part = part
-                next_turn = turn
-                next_part = part
-                if isinstance(event, PartStartEvent):
-                    next_turn = 'request'
-                    next_part = event.part
-                elif isinstance(event, FunctionToolCallEvent):
-                    next_turn = 'response'
-                    next_part = None
-                elif isinstance(event, AgentRunResultEvent):
-                    next_turn = None
-                    next_part = None
-
-                if next_part != part:
-                    if part:
-                        async for e in self.handle_part_end(part, next_part):
-                            yield e
-
-                    part = next_part
-
-                if turn != next_turn:
-                    if turn == 'request':
-                        async for e in self.after_request():
-                            yield e
-                    elif turn == 'response':
-                        async for e in self.after_response():
-                            yield e
-
-                    turn = next_turn
-
-                    if turn == 'request':
-                        async for e in self.before_request():
-                            yield e
-                    elif turn == 'response':
-                        async for e in self.before_response():
-                            yield e
-
-                async for e in self.handle_event(event, previous_part):
+                async for e in self.handle_event(event):
                     yield e
         except Exception as e:
             async for e in self.on_error(e):
@@ -148,9 +110,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
             async for e in self.after_stream():
                 yield e
 
-    async def handle_event(
-        self, event: SourceEvent, previous_part: ModelResponsePart | None = None
-    ) -> AsyncIterator[EventT]:
+    async def handle_event(self, event: SourceEvent) -> AsyncIterator[EventT]:  # noqa: C901
         """Transform a Pydantic AI agent event into protocol-specific events.
 
         This method dispatches to specific `handle_*` methods based on event and part type.
@@ -158,7 +118,6 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
 
         Args:
             event: The Pydantic AI agent event to transform.
-            previous_part: The previous part.
 
         Yields:
             Protocol-specific events.
@@ -168,12 +127,16 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
 
         match event:
             case PartStartEvent():
-                async for e in self.handle_part_start(event, previous_part):
+                async for e in self.handle_part_start(event):
                     yield e
             case PartDeltaEvent():
                 async for e in self.handle_part_delta(event):
                     yield e
+            case PartEndEvent():
+                async for e in self.handle_part_end(event):
+                    yield e
             case FinalResultEvent():
+                self._final_result_event = event
                 async for e in self.handle_final_result(event):
                     yield e
             case FunctionToolCallEvent():
@@ -183,6 +146,22 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
                 async for e in self.handle_function_tool_result(event):
                     yield e
             case AgentRunResultEvent():
+                if (
+                    self._final_result_event
+                    and (tool_call_id := self._final_result_event.tool_call_id)
+                    and (tool_name := self._final_result_event.tool_name)
+                ):
+                    self._final_result_event = None
+                    output_tool_result_event = FunctionToolResultEvent(
+                        result=ToolReturnPart(
+                            tool_call_id=tool_call_id,
+                            tool_name=tool_name,
+                            content='Final result processed.',
+                        )
+                    )
+                    async for e in self.handle_function_tool_result(output_tool_result_event):
+                        yield e
+
                 self.result = event.result
                 async for e in self.handle_run_result(event):
                     yield e
@@ -192,24 +171,20 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         async for e in self.after_event(event):
             yield e
 
-    async def handle_part_start(
-        self, event: PartStartEvent, previous_part: ModelResponsePart | None = None
-    ) -> AsyncIterator[EventT]:
+    async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:
         """Handle a PartStartEvent.
 
         Args:
             event: The PartStartEvent.
-            previous_part: The previous part.
         """
         part = event.part
+        previous_part_kind = event.previous_part_kind
         match part:
             case TextPart():
-                async for e in self.handle_text_start(part, follows_text=isinstance(previous_part, TextPart)):
+                async for e in self.handle_text_start(part, follows_text=previous_part_kind == 'text'):
                     yield e
             case ThinkingPart():
-                async for e in self.handle_thinking_start(
-                    part, follows_thinking=isinstance(previous_part, ThinkingPart)
-                ):
+                async for e in self.handle_thinking_start(part, follows_thinking=previous_part_kind == 'thinking'):
                     yield e
             case ToolCallPart():
                 async for e in self.handle_tool_call_start(part):
@@ -242,22 +217,20 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
                 async for e in self.handle_tool_call_delta(delta):
                     yield e
 
-    async def handle_part_end(
-        self, part: ModelResponsePart, next_part: ModelResponsePart | None = None
-    ) -> AsyncIterator[EventT]:
-        """Handle the end of a part.
+    async def handle_part_end(self, event: PartEndEvent) -> AsyncIterator[EventT]:
+        """Handle a PartEndEvent.
 
         Args:
-            part: The part that ended.
-            next_part: The new part that started.
+            event: The PartEndEvent.
         """
-        # TODO (DouweM): Make this a proper event. Figure out a proper way to do context manager style wrapping
+        part = event.part
+        next_part_kind = event.next_part_kind
         match part:
             case TextPart():
-                async for e in self.handle_text_end(part, followed_by_text=isinstance(next_part, TextPart)):
+                async for e in self.handle_text_end(part, followed_by_text=next_part_kind == 'text'):
                     yield e
             case ThinkingPart():
-                async for e in self.handle_thinking_end(part, followed_by_thinking=isinstance(next_part, ThinkingPart)):
+                async for e in self.handle_thinking_end(part, followed_by_thinking=next_part_kind == 'thinking'):
                     yield e
             case ToolCallPart():
                 async for e in self.handle_tool_call_end(part):
@@ -466,26 +439,6 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Args:
             event: The event to handle.
         """
-        return
-        yield  # Make this an async generator
-
-    async def before_request(self) -> AsyncIterator[EventT]:
-        """Handle a request before it is processed."""
-        return
-        yield  # Make this an async generator
-
-    async def after_request(self) -> AsyncIterator[EventT]:
-        """Handle a request after it is processed."""
-        return
-        yield  # Make this an async generator
-
-    async def before_response(self) -> AsyncIterator[EventT]:
-        """Handle a response before it is processed."""
-        return
-        yield  # Make this an async generator
-
-    async def after_response(self) -> AsyncIterator[EventT]:
-        """Yield events after agent streaming completes."""
         return
         yield  # Make this an async generator
 
