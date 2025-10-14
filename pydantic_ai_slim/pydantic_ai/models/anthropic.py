@@ -420,19 +420,24 @@ class AnthropicModel(Model):
                 tools.append(BetaMemoryTool20250818Param(name='memory', type='memory_20250818'))
                 beta_features.append('context-management-2025-06-27')
             elif isinstance(tool, MCPServerTool) and tool.url:
-                tool_configuration = BetaRequestMCPServerToolConfigurationParam(
-                    enabled=True,
-                    allowed_tools=tool.allowed_tools,
-                )
-                mcp_servers.append(
-                    BetaRequestMCPServerURLDefinitionParam(
-                        type='url',
-                        name=tool.id,
-                        url=tool.url,
-                        authorization_token=tool.authorization_token,
-                        tool_configuration=tool_configuration,
+                tool_configuration = (
+                    BetaRequestMCPServerToolConfigurationParam(
+                        enabled=True,
+                        allowed_tools=tool.allowed_tools,
                     )
+                    if tool.allowed_tools
+                    else None
                 )
+                mcp_server_url_definition_param = BetaRequestMCPServerURLDefinitionParam(
+                    type='url',
+                    name=tool.id,
+                    url=tool.url,
+                )
+                if tool_configuration:  # pragma: no branch
+                    mcp_server_url_definition_param['tool_configuration'] = tool_configuration
+                if tool.authorization_token:  # pragma: no branch
+                    mcp_server_url_definition_param['authorization_token'] = tool.authorization_token
+                mcp_servers.append(mcp_server_url_definition_param)
                 beta_features.append('mcp-client-2025-04-04')
             else:  # pragma: no cover
                 raise UserError(
@@ -894,6 +899,6 @@ def _map_mcp_server_result_block(item: BetaMCPToolResultBlock, provider_name: st
     return BuiltinToolReturnPart(
         provider_name=provider_name,
         tool_name=MCPServerTool.CALL_KIND,
-        content=item.model_dump(mode='json'),
+        content=item.model_dump(mode='json', exclude={'tool_use_id', 'type'}),
         tool_call_id=item.tool_use_id,
     )

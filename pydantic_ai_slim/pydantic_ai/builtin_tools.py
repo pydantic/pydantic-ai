@@ -253,13 +253,13 @@ class MCPServerTool(AbstractBuiltinTool):
     id: str
     """The id of the MCP server to use."""
 
-    authorization_token: str
+    authorization_token: str | None = None
     """Authorization header to use when making requests to the MCP server."""
 
-    url: str | None = None
+    url: str
     """The URL of the MCP server to use.
 
-    For OpenAI Responses, one of `url` or `connector_id` must be provided.
+    For OpenAI Responses, it is possible to use `connector_id` by providing it as `x-openai-connector:<connector_id>`.
     """
 
     description: str | None = None
@@ -294,5 +294,5 @@ class MCPServerTool(AbstractBuiltinTool):
 
     kind: str = 'mcp_server'
 
-    LIST_TOOLS_KIND: str = 'mcp_list_tools'
-    CALL_KIND: str = 'mcp_call'
+    LIST_TOOLS_KIND: Literal['mcp_server:mcp_list_tools'] = 'mcp_server:mcp_list_tools'
+    CALL_KIND: Literal['mcp_server:mcp_call'] = 'mcp_server:mcp_call'

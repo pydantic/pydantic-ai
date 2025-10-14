@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import json
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -107,6 +108,12 @@ See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 
 Using this more broad type for the model name instead of the ChatModel definition
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
+"""
+
+OpenAIResponsesMCPConnectorIdPrefix: Literal['x-openai-connector'] = 'x-openai-connector'
+"""
+Prefix for OpenAI connector IDs. OpenAI supports either a URL or a connector ID when passing MCP configuration to a model,
+by using that prefix like `x-openai-connector:<connector-id>` in a URL, you can pass a connector ID to a model.
 """
 
 _CHAT_FINISH_REASON_MAP: dict[
@@ -1243,19 +1250,26 @@ class OpenAIResponsesModel(Model):
                 mcp_tool = responses.tool_param.Mcp(
                     type='mcp',
                     server_label=tool.id,
-                    authorization=tool.authorization_token,
                     require_approval='never',
-                    headers=tool.headers,
                 )
-                connector_id = tool.provider_metadata.get('connector_id') if tool.provider_metadata else None
-                if tool.allowed_tools:
+                if tool.authorization_token:  # pragma: no cover
+                    mcp_tool['authorization'] = tool.authorization_token
+                if tool.allowed_tools:  # pragma: no cover
                     mcp_tool['allowed_tools'] = tool.allowed_tools
                 if tool.description:  # pragma: no cover
                     mcp_tool['server_description'] = tool.description
-                if tool.url:
+                if tool.headers:  # pragma: no cover
+                    mcp_tool['headers'] = tool.headers
+
+                url, connector_id = None, None
+                if tool.url.startswith(OpenAIResponsesMCPConnectorIdPrefix):  # pragma: no cover
+                    _, connector_id = tool.url.split(':', maxsplit=1)
+                else:
+                    url = tool.url
+                if url:
                     mcp_tool['server_url'] = tool.url
                 elif connector_id:  # pragma: no cover
-                    mcp_tool['connector_id'] = connector_id
+                    mcp_tool['connector_id'] = connector_id  # pyright: ignore[reportGeneralTypeIssues]
                 tools.append(mcp_tool)
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                 has_image_generating_tool = True
@@ -1973,7 +1987,16 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseMcpCallArgumentsDeltaEvent):
-                pass  # there's nothing we need to do here
+                try:
+                    json_args_delta = json.loads(chunk.delta)
+                except json.JSONDecodeError:  # pragma: no cover
+                    json_args_delta = {}
+                maybe_event = self._parts_manager.handle_tool_call_delta(
+                    vendor_part_id=f'{chunk.item_id}-call',
+                    args=json_args_delta,  # pyright: ignore[reportUnknownArgumentType]
+                )
+                if maybe_event is not None:  # pragma: no branch
+                    yield maybe_event
 
             elif isinstance(chunk, responses.ResponseMcpListToolsInProgressEvent):
                 pass  # there's nothing we need to do here
@@ -2205,21 +2228,27 @@ def _map_image_generation_tool_call(
 def _map_mcp_list_tools(
     item: responses.response_output_item.McpListTools, provider_name: str
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
+    # OpenAI specifies the return type of `error` as `Optional[str]`; however, tests have shown that it might be a dict
     error = item.error
-    item_serialized = item.model_dump(mode='json', exclude={'error'})
-    item_serialized['error'] = error
+    tools = item.tools
+    call_serialized = item.model_dump(mode='json', exclude={'error', 'tools', 'id', 'type'})
+    result_serialized = {
+        **call_serialized,
+        'error': error,
+        'tools': tools,
+    }
 
     return (
         BuiltinToolCallPart(
             tool_name=MCPServerTool.LIST_TOOLS_KIND,
             tool_call_id=item.id,
-            args=item_serialized,
+            args=call_serialized,
             provider_name=provider_name,
         ),
         BuiltinToolReturnPart(
             tool_name=MCPServerTool.LIST_TOOLS_KIND,
             tool_call_id=item.id,
-            content=item_serialized,
+            content=result_serialized,
             provider_name=provider_name,
         ),
     )
@@ -2228,22 +2257,27 @@ def _map_mcp_list_tools(
 def _map_mcp_call(
     item: responses.response_output_item.McpCall, provider_name: str
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
-    # OpenAI specifies the return type of `error` as Optional[str], however, tests have shown that it might be a dict'
+    # OpenAI specifies the return type of `error` as `Optional[str]`; however, tests have shown that it might be a dict
     error = item.error
-    item_serialized = item.model_dump(mode='json', exclude={'error'})
-    item_serialized['error'] = error
+    output = item.output
+    call_serialized = item.model_dump(mode='json', exclude={'error', 'output', 'id', 'type'})
+    result_serialized = {
+        **call_serialized,
+        'error': error,
+        'output': output,
+    }
 
     return (
         BuiltinToolCallPart(
             tool_name=MCPServerTool.CALL_KIND,
             tool_call_id=item.id,
-            args=item_serialized,
+            args=call_serialized,
             provider_name=provider_name,
         ),
         BuiltinToolReturnPart(
             tool_name=MCPServerTool.CALL_KIND,
             tool_call_id=item.id,
-            content=item_serialized,
+            content=result_serialized,
             provider_name=provider_name,
         ),
     )

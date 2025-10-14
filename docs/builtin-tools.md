@@ -497,9 +497,9 @@ _(This example is complete, it can be run "as is")_
 
 ### Configuration Options
 
-The `MCPServerTool` supports several configuration parameters:
+The `MCPServerTool` supports several configuration parameters for custom MCP servers:
 
-```py {title="mcp_server_configured.py"}
+```py {title="mcp_server_configured_url.py"}
 import os
 
 from pydantic_ai import Agent, MCPServerTool
@@ -510,11 +510,38 @@ agent = Agent(
         MCPServerTool(
             id='your-mcp-server',  # required field
             url='https://api.githubcopilot.com/mcp/',  # optional field, use `url` or `provider_metadata`
-            authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),  # required field
+            authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),  # optional field
             allowed_tools=['search_repositories', 'list_commits'],  # optional field
             description='Your MCP Server',  # optional field
             headers={'X-CUSTOM-HEADER': 'custom-value'},  # optional field
-            provider_metadata={'connector_id': 'connector_googlecalendar'},  # optional field, use `url` or `provider_metadata`
+        )
+    ]
+)
+
+result = agent.run_sync('Give me some examples of my products.')
+print(result.output)
+#> Here are some examples of my data: Pen, Paper, Pencil.
+```
+
+For OpenAI Responses, you can use connector ID instead of URL:
+
+_(This example is complete, it can be run "as is")_
+
+```py {title="mcp_server_configured_connector_id.py"}
+import os
+
+from pydantic_ai import Agent, MCPServerTool
+
+agent = Agent(
+    'openai-responses:gpt-4o',
+    builtin_tools=[
+        MCPServerTool(
+            id='your-mcp-server',  # required field
+            url='x-openai-connector:connector_googlecalendar',  # required field
+            authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),  # optional field
+            allowed_tools=['search_repositories', 'list_commits'],  # optional field
+            description='Your MCP Server',  # optional field
+            headers={'X-CUSTOM-HEADER': 'custom-value'},  # optional field
         )
     ]
 )
@@ -528,12 +555,11 @@ _(This example is complete, it can be run "as is")_
 
 #### Provider Support
 
-| Parameter           | OpenAI | Anthropic | Notes                                                                                                       |
-|---------------------|--------|-----------|-------------------------------------------------------------------------------------------------------------|
-| `url`               | ✅ | ✅ | Optional for OpenAI (can use either `url` or `provider_metadata.connector_id`). Required for Anthropic)     |
-| `allowed_tools`     | ✅ | ✅ | -----------                                                                                                 |
-| `provider_metadata` | ✅ | ❌ | Optional for OpenAI (can use either `url` or `provider_metadata.connector_id`, not supported for Anthropic) |
-| `headers`           | ✅ | ❌ | -----------                                                                                                 |
+| Parameter           | OpenAI | Anthropic | Notes                                                                                                               |
+|---------------------|--------|-----------|---------------------------------------------------------------------------------------------------------------------|
+| `url`               | ✅ | ✅ | For OpenAI Responses, it is possible to use `connector_id` by providing it as `x-openai-connector:<connector_id>`   |
+| `allowed_tools`     | ✅ | ✅ | -----------                                                                                                         |
+| `headers`           | ✅ | ❌ | -----------                                                                                                         |
 
 ## API Reference
 

@@ -3100,13 +3100,13 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_call',
+                        tool_name='mcp_server:mcp_call',
                         args={'query': 'pydantic-ai in:name'},
                         tool_call_id='mcptoolu_01AmgVfcYg7HkjXerTSn1F93',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_call',
+                        tool_name='mcp_server:mcp_call',
                         content={
                             'content': [
                                 {
@@ -3116,8 +3116,6 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                                 }
                             ],
                             'is_error': False,
-                            'tool_use_id': 'mcptoolu_01AmgVfcYg7HkjXerTSn1F93',
-                            'type': 'mcp_tool_result',
                         },
                         tool_call_id='mcptoolu_01AmgVfcYg7HkjXerTSn1F93',
                         timestamp=IsDatetime(),
@@ -3178,13 +3176,13 @@ The framework emphasizes the "Pydantic way" of building AI agents with structure
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_call',
+                        tool_name='mcp_server:mcp_call',
                         args={'query': 'pydantic-ai in:name'},
                         tool_call_id='mcptoolu_01AmgVfcYg7HkjXerTSn1F93',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_call',
+                        tool_name='mcp_server:mcp_call',
                         content={
                             'content': [
                                 {
@@ -3194,8 +3192,6 @@ The framework emphasizes the "Pydantic way" of building AI agents with structure
                                 }
                             ],
                             'is_error': False,
-                            'tool_use_id': 'mcptoolu_01AmgVfcYg7HkjXerTSn1F93',
-                            'type': 'mcp_tool_result',
                         },
                         tool_call_id='mcptoolu_01AmgVfcYg7HkjXerTSn1F93',
                         timestamp=IsDatetime(),
@@ -3338,13 +3334,13 @@ I'll use the search_repositories function with a query for "pydantic-ai".\
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_call',
+                        tool_name='mcp_server:mcp_call',
                         args='{"query": "pydantic-ai in:name", "minimal_output": false}',
                         tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_call',
+                        tool_name='mcp_server:mcp_call',
                         content={
                             'content': [
                                 {
@@ -3354,8 +3350,6 @@ I'll use the search_repositories function with a query for "pydantic-ai".\
                                 }
                             ],
                             'is_error': False,
-                            'tool_use_id': 'mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq',
-                            'type': 'mcp_tool_result',
                         },
                         tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq',
                         timestamp=IsDatetime(),
@@ -3431,7 +3425,9 @@ I'll use the search_\
             PartStartEvent(
                 index=1,
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_call', tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq', provider_name='anthropic'
+                    tool_name='mcp_server:mcp_call',
+                    tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq',
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
@@ -3467,7 +3463,7 @@ I'll use the search_\
             PartStartEvent(
                 index=2,
                 part=BuiltinToolReturnPart(
-                    tool_name='mcp_call',
+                    tool_name='mcp_server:mcp_call',
                     content={
                         'content': [
                             {
@@ -3477,8 +3473,6 @@ I'll use the search_\
                             }
                         ],
                         'is_error': False,
-                        'tool_use_id': 'mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq',
-                        'type': 'mcp_tool_result',
                     },
                     tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq',
                     timestamp=IsDatetime(),
@@ -3503,7 +3497,7 @@ I'll use the search_\
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='.pydantic.dev')),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_call',
+                    tool_name='mcp_server:mcp_call',
                     args='{"query": "pydantic-ai in:name", "minimal_output": false}',
                     tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq',
                     provider_name='anthropic',
@@ -3511,7 +3505,7 @@ I'll use the search_\
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
-                    tool_name='mcp_call',
+                    tool_name='mcp_server:mcp_call',
                     content={
                         'content': [
                             {
@@ -3521,8 +3515,6 @@ I'll use the search_\
                             }
                         ],
                         'is_error': False,
-                        'tool_use_id': 'mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq',
-                        'type': 'mcp_tool_result',
                     },
                     tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq',
                     timestamp=IsDatetime(),
