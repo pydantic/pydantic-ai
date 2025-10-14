@@ -184,6 +184,7 @@ def test_docs_examples(  # noqa: C901
     env.set('GROK_API_KEY', 'testing')
     env.set('MOONSHOTAI_API_KEY', 'testing')
     env.set('DEEPSEEK_API_KEY', 'testing')
+    env.set('OVHCLOUD_AI_ENDPOINTS_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
