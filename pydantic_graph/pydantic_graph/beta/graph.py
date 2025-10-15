@@ -10,13 +10,12 @@ from __future__ import annotations as _annotations
 import inspect
 import types
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Iterable, Sequence
 from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast, get_args, get_origin, overload
 
-import anyio
-from anyio import CancelScope, WouldBlock, create_memory_object_stream, create_task_group
+from anyio import CancelScope, create_memory_object_stream, create_task_group
 from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from typing_extensions import TypeVar, assert_never
@@ -377,9 +376,8 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         run_id = GraphRunID(str(uuid.uuid4()))
         initial_fork_stack: ForkStack = (ForkStackItem(StartNode.id, NodeRunID(run_id), 0),)
         self._first_task = GraphTask(node_id=StartNode.id, inputs=inputs, fork_stack=initial_fork_stack)
-        self._iterator = _GraphIterator[StateT, DepsT, OutputT](self.graph, self.state, self.deps).iter_graph(
-            self._first_task
-        )
+        self._iterator_instance = _GraphIterator[StateT, DepsT, OutputT](self.graph, self.state, self.deps)
+        self._iterator = self._iterator_instance.iter_graph(self._first_task)
 
         self.__traceparent = traceparent
 
@@ -387,6 +385,8 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any):
+        self._iterator_instance.iter_stream_sender.close()
+        self._iterator_instance.iter_stream_receiver.close()
         await self._iterator.aclose()
 
     @overload
@@ -473,9 +473,16 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
 
 
 @dataclass
+class _GraphTaskAsyncIterable:
+    iterable: AsyncIterable[Sequence[GraphTask]]
+    fork_stack: ForkStack
+
+
+@dataclass
 class _GraphTaskResult:
     source: GraphTask
-    result: EndMarker[Any] | Sequence[GraphTask]
+    result: EndMarker[Any] | Sequence[GraphTask] | JoinItem
+    source_is_finished: bool = True
 
 
 @dataclass
@@ -486,6 +493,8 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
 
     cancel_scopes: dict[TaskID, CancelScope] = field(init=False)
     active_tasks: dict[TaskID, GraphTask] = field(init=False)
+    pending_task_results: set[TaskID] = field(init=False)
+    cancelled_tasks: set[TaskID] = field(init=False)
     active_reducers: dict[tuple[JoinID, NodeRunID], JoinState] = field(init=False)
     iter_stream_sender: MemoryObjectSendStream[_GraphTaskResult] = field(init=False)
     iter_stream_receiver: MemoryObjectReceiveStream[_GraphTaskResult] = field(init=False)
@@ -496,6 +505,9 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         self.active_tasks = {}
         self.active_reducers = {}
         self.iter_stream_sender, self.iter_stream_receiver = create_memory_object_stream[_GraphTaskResult]()
+
+        self.pending_task_results = set()
+        self.cancelled_tasks = set()
 
     @property
     def task_group(self) -> TaskGroup:
@@ -516,30 +528,70 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                     # Handle task results
                     async with self.iter_stream_receiver:
                         while self.active_tasks or self.active_reducers:
-                            while self.active_tasks:
-                                try:
-                                    task_result = self.iter_stream_receiver.receive_nowait()
-                                except WouldBlock:
-                                    await anyio.sleep(0.0)
+                            async for task_result in self.iter_stream_receiver:
+                                # If we encounter a mock task, add it to the active tasks to ensure we don't proceed until everything downstream is handled
+                                if (
+                                    not task_result.source_is_finished
+                                    and task_result.source.task_id not in self.active_tasks
+                                ):
+                                    self.active_tasks[task_result.source.task_id] = task_result.source
+
+                                if task_result.source.task_id in self.cancelled_tasks:
+                                    if task_result.source_is_finished:
+                                        self.cancelled_tasks.remove(task_result.source.task_id)
                                     continue
 
-                                maybe_overridden_result = yield task_result.result
+                                if task_result.source_is_finished:
+                                    self.pending_task_results.discard(task_result.source.task_id)
+
+                                if isinstance(task_result.result, JoinItem):
+                                    maybe_overridden_result = task_result.result
+                                else:
+                                    maybe_overridden_result = yield task_result.result
                                 if isinstance(maybe_overridden_result, EndMarker):
                                     self.task_group.cancel_scope.cancel()
                                     return
-                                for new_task in maybe_overridden_result:
-                                    self.active_tasks[new_task.task_id] = new_task
-                                await self._finish_task(task_result.source.task_id)
+                                elif isinstance(maybe_overridden_result, JoinItem):
+                                    result = maybe_overridden_result
+                                    parent_fork_id = self.graph.get_parent_fork(result.join_id).fork_id
+                                    for i, x in enumerate(result.fork_stack[::-1]):
+                                        if x.fork_id == parent_fork_id:
+                                            downstream_fork_stack = result.fork_stack[: len(result.fork_stack) - i]
+                                            fork_run_id = x.node_run_id
+                                            break
+                                    else:  # pragma: no cover
+                                        raise RuntimeError('Parent fork run not found')
+
+                                    join_node = self.graph.nodes[result.join_id]
+                                    assert isinstance(join_node, Join), f'Expected a `Join` but got {join_node}'
+                                    join_state = self.active_reducers.get((result.join_id, fork_run_id))
+                                    if join_state is None:
+                                        current = join_node.initial_factory()
+                                        join_state = self.active_reducers[(result.join_id, fork_run_id)] = JoinState(
+                                            current, downstream_fork_stack
+                                        )
+                                    context = ReducerContext(state=self.state, deps=self.deps, join_state=join_state)
+                                    join_state.current = join_node.reduce(context, join_state.current, result.inputs)
+                                    if join_state.cancelled_sibling_tasks:
+                                        await self._cancel_sibling_tasks(parent_fork_id, fork_run_id)
+                                    if task_result.source_is_finished:
+                                        await self._finish_task(task_result.source.task_id)
+                                else:
+                                    for new_task in maybe_overridden_result:
+                                        self.active_tasks[new_task.task_id] = new_task
+                                    if task_result.source_is_finished:
+                                        await self._finish_task(task_result.source.task_id)
 
                                 tasks_by_id_values = list(self.active_tasks.values())
                                 join_tasks: list[GraphTask] = []
+
                                 for join_id, fork_run_id in self._get_completed_fork_runs(
                                     task_result.source, tasks_by_id_values
                                 ):
                                     join_state = self.active_reducers.pop((join_id, fork_run_id))
                                     join_node = self.graph.nodes[join_id]
                                     assert isinstance(join_node, Join), f'Expected a `Join` but got {join_node}'
-                                    new_tasks = self._handle_edges(
+                                    new_tasks = self._handle_non_fork_edges(
                                         join_node, join_state.current, join_state.downstream_fork_stack
                                     )
                                     join_tasks.extend(new_tasks)
@@ -548,14 +600,17 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                         self.active_tasks[new_task.task_id] = new_task
                                     self._handle_execution_request(join_tasks)
 
-                                if not isinstance(task_result.result, EndMarker):
-                                    new_task_ids = {t.task_id for t in maybe_overridden_result}
-                                    for t in task_result.result:
-                                        if t.task_id not in new_task_ids:
-                                            await self._finish_task(
-                                                t.task_id
-                                            )  # TODO: Rename to cancel_task or something, instead of "finish", these didn't really get started
-                                self._handle_execution_request(maybe_overridden_result)
+                                if isinstance(maybe_overridden_result, Sequence):
+                                    if isinstance(task_result.result, Sequence):
+                                        new_task_ids = {t.task_id for t in maybe_overridden_result}
+                                        for t in task_result.result:
+                                            if t.task_id not in new_task_ids:
+                                                await self._finish_task(t.task_id)
+                                    self._handle_execution_request(maybe_overridden_result)
+
+                                if not self.active_tasks:
+                                    # if there are no active tasks, we'll be waiting forever for the next result..
+                                    break
 
                             if self.active_reducers:  # pragma: no branch
                                 # In this case, there are no pending tasks. We can therefore finalize all active reducers whose
@@ -577,7 +632,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                     )  # we're handling it now, so we can pop it
                                     join_node = self.graph.nodes[join_id]
                                     assert isinstance(join_node, Join), f'Expected a `Join` but got {join_node}'
-                                    new_tasks = self._handle_edges(
+                                    new_tasks = self._handle_non_fork_edges(
                                         join_node, join_state.current, join_state.downstream_fork_stack
                                     )
                                     maybe_overridden_result = yield new_tasks
@@ -620,45 +675,18 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         with CancelScope() as scope:
             self.cancel_scopes[t_.task_id] = scope
             result = await self._run_task(t_)
-
-            if isinstance(result, EndMarker):
-                await self.iter_stream_sender.send(_GraphTaskResult(t_, result))
-                return
-
-            new_tasks: list[GraphTask] = []
-            if isinstance(result, JoinItem):
-                parent_fork_id = self.graph.get_parent_fork(result.join_id).fork_id
-                for i, x in enumerate(result.fork_stack[::-1]):
-                    if x.fork_id == parent_fork_id:
-                        downstream_fork_stack = result.fork_stack[: len(result.fork_stack) - i]
-                        fork_run_id = x.node_run_id
-                        break
-                else:  # pragma: no cover
-                    raise RuntimeError('Parent fork run not found')
-
-                join_node = self.graph.nodes[result.join_id]
-                assert isinstance(join_node, Join), f'Expected a `Join` but got {join_node}'
-                join_state = self.active_reducers.get((result.join_id, fork_run_id))
-                if join_state is None:
-                    current = join_node.initial_factory()
-                    join_state = self.active_reducers[(result.join_id, fork_run_id)] = JoinState(
-                        current, downstream_fork_stack
-                    )
-
-                context = ReducerContext(state=self.state, deps=self.deps, join_state=join_state)
-                join_state.current = join_node.reduce(context, join_state.current, result.inputs)
-                if join_state.cancelled_sibling_tasks:
-                    await self._cancel_sibling_tasks(parent_fork_id, fork_run_id)
+            if isinstance(result, _GraphTaskAsyncIterable):
+                async for new_tasks in result.iterable:
+                    await self.iter_stream_sender.send(_GraphTaskResult(t_, new_tasks, False))
                 await self.iter_stream_sender.send(_GraphTaskResult(t_, []))
             else:
-                new_tasks.extend(result)
-
-            await self.iter_stream_sender.send(_GraphTaskResult(t_, new_tasks))
+                self.pending_task_results.add(t_.task_id)
+                await self.iter_stream_sender.send(_GraphTaskResult(t_, result))
 
     async def _run_task(
         self,
         task: GraphTask,
-    ) -> EndMarker[OutputT] | Sequence[GraphTask] | JoinItem:
+    ) -> EndMarker[OutputT] | Sequence[GraphTask] | _GraphTaskAsyncIterable | JoinItem:
         state = self.state
         deps = self.deps
 
@@ -769,7 +797,23 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         else:
             assert_never(item)
 
-    def _handle_edges(self, node: AnyNode, inputs: Any, fork_stack: ForkStack) -> Sequence[GraphTask]:
+    def _handle_edges(
+        self, node: AnyNode, inputs: Any, fork_stack: ForkStack
+    ) -> Sequence[GraphTask] | _GraphTaskAsyncIterable:
+        if isinstance(node, Fork):
+            return self._handle_fork_edges(node, inputs, fork_stack)
+        else:
+            return self._handle_non_fork_edges(node, inputs, fork_stack)
+
+    def _handle_non_fork_edges(self, node: AnyNode, inputs: Any, fork_stack: ForkStack) -> Sequence[GraphTask]:
+        # TODO: Replace `node` with a type that implies it is not a Fork
+        edges = self.graph.edges_by_source.get(node.id, [])
+        assert len(edges) == 1  # this should have already been ensured during graph building
+        return self._handle_path(edges[0], inputs, fork_stack)
+
+    def _handle_fork_edges(
+        self, node: Fork[Any, Any], inputs: Any, fork_stack: ForkStack
+    ) -> Sequence[GraphTask] | _GraphTaskAsyncIterable:
         edges = self.graph.edges_by_source.get(node.id, [])
         assert len(edges) == 1 or (isinstance(node, Fork) and not node.is_map), (
             edges,
@@ -777,45 +821,39 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         )  # this should have already been ensured during graph building
 
         new_tasks: list[GraphTask] = []
+        node_run_id = NodeRunID(str(uuid.uuid4()))
+        if node.is_map:
+            # If the map specifies a downstream join id, eagerly create a join state for it
+            if (join_id := node.downstream_join_id) is not None:
+                join_node = self.graph.nodes[join_id]
+                assert isinstance(join_node, Join)
+                self.active_reducers[(join_id, node_run_id)] = JoinState(join_node.initial_factory(), fork_stack)
 
-        if isinstance(node, Fork):
-            node_run_id = NodeRunID(str(uuid.uuid4()))
-            if node.is_map:
-                # If the map specifies a downstream join id, eagerly create a join state for it
-                if (join_id := node.downstream_join_id) is not None:
-                    join_node = self.graph.nodes[join_id]
-                    assert isinstance(join_node, Join)
-                    self.active_reducers[(join_id, node_run_id)] = JoinState(join_node.initial_factory(), fork_stack)
+            # Eagerly raise a clear error if the input value is not iterable as expected
+            if _is_any_iterable(inputs):
+                for thread_index, input_item in enumerate(inputs):
+                    item_tasks = self._handle_path(
+                        edges[0], input_item, fork_stack + (ForkStackItem(node.id, node_run_id, thread_index),)
+                    )
+                    new_tasks += item_tasks
+            elif _is_any_async_iterable(inputs):
 
-                # Eagerly raise a clear error if the input value is not iterable as expected
-                if _is_any_iterable(inputs):
-                    for thread_index, input_item in enumerate(inputs):
+                async def handle_async_iterable() -> AsyncIterator[Sequence[GraphTask]]:
+                    thread_index = 0
+                    async for input_item in inputs:
                         item_tasks = self._handle_path(
                             edges[0], input_item, fork_stack + (ForkStackItem(node.id, node_run_id, thread_index),)
                         )
-                        new_tasks += item_tasks
-                # elif isinstance(inputs, AsyncIterable):
-                #
-                #     async def handle_async_iterable():
-                #         thread_index = 0
-                #         async for input_item in inputs:
-                #             item_tasks = self._handle_path(
-                #                 edges[0], input_item, fork_stack + (ForkStackItem(node.id, node_run_id, thread_index),)
-                #             )
-                #             yield item_tasks
-                #             thread_index += 1
-                #
-                #     task = GraphTask(node.id, inputs, fork_stack)
-                #
-                #     self.tg.start_soon(self._run_tracked_task, task)
-                else:
-                    raise RuntimeError(f'Cannot map non-iterable value: {inputs!r}')
-            else:
-                for i, path in enumerate(edges):
-                    new_tasks += self._handle_path(path, inputs, fork_stack + (ForkStackItem(node.id, node_run_id, i),))
-        else:
-            new_tasks += self._handle_path(edges[0], inputs, fork_stack)
+                        yield item_tasks
+                        thread_index += 1
 
+                return _GraphTaskAsyncIterable(handle_async_iterable(), fork_stack)
+
+            else:
+                raise RuntimeError(f'Cannot map non-iterable value: {inputs!r}')
+        else:
+            for i, path in enumerate(edges):
+                new_tasks += self._handle_path(path, inputs, fork_stack + (ForkStackItem(node.id, node_run_id, i),))
         return new_tasks
 
     def _is_fork_run_completed(self, tasks: Iterable[GraphTask], join_id: JoinID, fork_run_id: NodeRunID) -> bool:
@@ -840,8 +878,14 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 else:
                     pass
         for task_id in task_ids_to_cancel:
+            if task_id in self.pending_task_results:
+                self.cancelled_tasks.add(task_id)
             await self._finish_task(task_id)
 
 
 def _is_any_iterable(x: Any) -> TypeGuard[Iterable[Any]]:
     return isinstance(x, Iterable)
+
+
+def _is_any_async_iterable(x: Any) -> TypeGuard[AsyncIterable[Any]]:
+    return isinstance(x, AsyncIterable)
