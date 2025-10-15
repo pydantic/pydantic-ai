@@ -14,6 +14,7 @@ from re import sub
 from pydantic import ValidationError
 from typing_extensions import TypeVar
 
+from pydantic_ai._utils import strip_markdown_fences
 from pydantic_ai import Agent, models
 from pydantic_evals import Dataset
 from pydantic_evals.evaluators.evaluator import Evaluator
@@ -74,8 +75,7 @@ async def generate_dataset(
     )
 
     result = await agent.run(extra_instructions or 'Please generate the object.')
-    output = result.output.strip()
-    output = sub(r'^```(?:json)?\s*|\s*```$', '', output).strip()
+    output = strip_markdown_fences(result.output)
     try:
         result = dataset_type.from_text(output, fmt='json', custom_evaluator_types=custom_evaluator_types)
     except ValidationError as e:  # pragma: no cover
