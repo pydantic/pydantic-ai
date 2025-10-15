@@ -17,6 +17,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     RunContext,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UsageLimitExceeded,
@@ -353,6 +354,41 @@ def test_deprecated_usage_limits():
         snapshot(['DeprecationWarning: `response_tokens_limit` is deprecated, use `output_tokens_limit` instead'])
     ):
         assert UsageLimits(output_tokens_limit=100).response_tokens_limit == 100  # type: ignore
+
+
+async def test_race_condition_parallel_tool_calls():
+    """Test that demonstrates race condition in parallel tool execution.
+
+    This test would fail intermittently on main without the fix because multiple
+    asyncio tasks calling usage.incr() can interleave their read-modify-write operations.
+    """
+    # Run multiple iterations to increase chance of catching race condition
+    for iteration in range(20):
+        call_count = 0
+
+        def parallel_tools_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # Return 10 parallel tool calls for more contention
+                return ModelResponse(parts=[ToolCallPart('tool_a', {}, f'call_{i}') for i in range(10)])
+            else:
+                # Return final text response
+                return ModelResponse(parts=[TextPart(content='done')])
+
+        agent = Agent(FunctionModel(parallel_tools_model))
+
+        @agent.tool_plain
+        async def tool_a() -> str:
+            # Add multiple await points to increase chance of task interleaving
+            await asyncio.sleep(0.0001)
+            await asyncio.sleep(0.0001)
+            return 'result'
+
+        result = await agent.run('test')
+        # Without proper synchronization, tool_calls might be undercounted
+        actual = result.usage().tool_calls
+        assert actual == 10, f'Iteration {iteration}: Expected 10 tool calls, got {actual}'
 
 
 async def test_parallel_tool_calls_limit_enforced():
