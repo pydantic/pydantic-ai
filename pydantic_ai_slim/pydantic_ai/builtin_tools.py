@@ -45,7 +45,7 @@ class AbstractBuiltinTool(ABC):
             return handler(cls)
 
         tools = _BUILTIN_TOOL_TYPES.values()
-        if len(tools) == 1:
+        if len(tools) == 1:  # pragma: no cover
             tools_type = next(iter(tools))
         else:
             tools_annotated = [Annotated[tool, pydantic.Tag(tool.kind)] for tool in tools]
