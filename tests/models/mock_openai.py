@@ -29,6 +29,7 @@ class MockOpenAI:
     stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
     index: int = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
+    base_url: str = 'https://api.openai.com/v1'
 
     @cached_property
     def chat(self) -> Any:
@@ -98,6 +99,7 @@ class MockOpenAIResponses:
     stream: Sequence[MockResponseStreamEvent] | Sequence[Sequence[MockResponseStreamEvent]] | None = None
     index: int = 0
     response_kwargs: list[dict[str, Any]] = field(default_factory=list)
+    base_url: str = 'https://api.openai.com/v1'
 
     @cached_property
     def responses(self) -> Any:
