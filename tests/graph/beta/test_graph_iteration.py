@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.graph import EndMarker, GraphTask, JoinItem
+from pydantic_graph.beta.graph import EndMarker, GraphTask
 from pydantic_graph.beta.id_types import NodeID
 from pydantic_graph.beta.join import reduce_list_append
 
@@ -112,44 +112,6 @@ async def test_iter_inspect_tasks():
                     task_nodes.append(task.node_id)
 
     assert 'my_step' in [str(n) for n in task_nodes]
-
-
-async def test_iter_with_broadcast():
-    """Test iteration with parallel broadcast operations."""
-    g = GraphBuilder(state_type=IterState, output_type=list[int])
-
-    @g.step
-    async def source(ctx: StepContext[IterState, None, None]) -> int:
-        return 5
-
-    @g.step
-    async def add_one(ctx: StepContext[IterState, None, int]) -> int:
-        return ctx.inputs + 1
-
-    @g.step
-    async def add_two(ctx: StepContext[IterState, None, int]) -> int:
-        return ctx.inputs + 2
-
-    collect = g.join(reduce_list_append, initial_factory=list[int])
-
-    g.add(
-        g.edge_from(g.start_node).to(source),
-        g.edge_from(source).to(add_one, add_two),
-        g.edge_from(add_one, add_two).to(collect),
-        g.edge_from(collect).to(g.end_node),
-    )
-
-    graph = g.build()
-    state = IterState()
-
-    join_items_seen = 0
-    async with graph.iter(state=state) as run:
-        async for event in run:
-            if isinstance(event, JoinItem):
-                join_items_seen += 1
-
-    # Should see 2 join items (one from each parallel path)
-    assert join_items_seen == 2
 
 
 async def test_iter_output_property():

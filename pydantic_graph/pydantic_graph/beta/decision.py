@@ -8,7 +8,7 @@ to choose different execution paths based on runtime conditions.
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import AsyncIterable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, get_origin
 
@@ -232,7 +232,8 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
         )
 
     def map(
-        self: DecisionBranchBuilder[StateT, DepsT, Iterable[T], SourceT, HandledT],
+        self: DecisionBranchBuilder[StateT, DepsT, Iterable[T], SourceT, HandledT]
+        | DecisionBranchBuilder[StateT, DepsT, AsyncIterable[T], SourceT, HandledT],
         *,
         fork_id: str | None = None,
         downstream_join_id: str | None = None,

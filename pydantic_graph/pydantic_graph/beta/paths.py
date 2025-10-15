@@ -8,7 +8,7 @@ Paths enable complex data flow patterns in graph execution.
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import AsyncIterable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, get_origin
 
@@ -230,7 +230,7 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
         return PathBuilder[StateT, DepsT, T](working_items=[*self.working_items, next_item])
 
     def map(
-        self: PathBuilder[StateT, DepsT, Iterable[T]],
+        self: PathBuilder[StateT, DepsT, Iterable[T]] | PathBuilder[StateT, DepsT, AsyncIterable[T]],
         *,
         fork_id: str | None = None,
         downstream_join_id: str | None = None,
@@ -371,7 +371,7 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
         )
 
     def map(
-        self: EdgePathBuilder[StateT, DepsT, Iterable[T]],
+        self: EdgePathBuilder[StateT, DepsT, Iterable[T]] | EdgePathBuilder[StateT, DepsT, AsyncIterable[T]],
         *,
         fork_id: str | None = None,
         downstream_join_id: JoinID | None = None,

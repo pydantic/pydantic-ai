@@ -145,7 +145,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self,
     ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
         """Advance to the next node automatically based on the last returned node."""
-        task = await self._graph_run.__anext__()
+        task = await anext(self._graph_run)
         return self._task_to_node(task)
 
     def _task_to_node(
