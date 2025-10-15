@@ -244,7 +244,6 @@ async def test_streamed_text_stream():
                 'THE CAT SAT ON THE ',
                 'THE CAT SAT ON THE MAT.',
                 'THE CAT SAT ON THE MAT.',
-                'THE CAT SAT ON THE MAT.',
             ]
         )
 
@@ -1137,13 +1136,11 @@ async def test_iter_stream_output():
 
     assert messages == snapshot(
         [
-            '',
             'The ',
             'The cat ',
             'The bat sat ',
             'The bat sat on ',
             'The bat sat on the ',
-            'The bat sat on the mat.',
             'The bat sat on the mat.',
             'The bat sat on the mat.',
         ]
@@ -1215,9 +1212,7 @@ async def test_stream_iter_structured_validator() -> None:
                 async with node.stream(run.ctx) as stream:
                     async for output in stream.stream_output(debounce_by=None):
                         outputs.append(output)
-    assert outputs == snapshot(
-        [OutputType(value='a (validated)'), OutputType(value='a (validated)'), OutputType(value='a (validated)')]
-    )
+    assert outputs == snapshot([OutputType(value='a (validated)')])
 
 
 async def test_unknown_tool_call_events():
@@ -1356,7 +1351,6 @@ async def test_stream_structured_output():
                 CityLocation(city='Mexico City'),
                 CityLocation(city='Mexico City', country='Mexico'),
                 CityLocation(city='Mexico City', country='Mexico'),
-                CityLocation(city='Mexico City', country='Mexico'),
             ]
         )
         assert result.is_complete
@@ -1380,7 +1374,6 @@ async def test_iter_stream_structured_output():
                             CityLocation(city='Mexico '),
                             CityLocation(city='Mexico City'),
                             CityLocation(city='Mexico City'),
-                            CityLocation(city='Mexico City', country='Mexico'),
                             CityLocation(city='Mexico City', country='Mexico'),
                             CityLocation(city='Mexico City', country='Mexico'),
                         ]
@@ -1417,7 +1410,6 @@ async def test_iter_stream_output_tool_dont_hit_retry_limit():
                             CityLocation(city='Mex'),
                             CityLocation(city='Mexico City'),
                             CityLocation(city='Mexico City'),
-                            CityLocation(city='Mexico City', country='Mexico'),
                             CityLocation(city='Mexico City', country='Mexico'),
                             CityLocation(city='Mexico City', country='Mexico'),
                         ]
@@ -1789,7 +1781,7 @@ async def test_run_stream_event_stream_handler():
 
     async with test_agent.run_stream('Hello', event_stream_handler=event_stream_handler) as result:
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            ['{"ret_a":', '{"ret_a":"a-apple"}', '{"ret_a":"a-apple"}', '{"ret_a":"a-apple"}']
+            ['{"ret_a":', '{"ret_a":"a-apple"}', '{"ret_a":"a-apple"}']
         )
 
     assert events == snapshot(

@@ -60,7 +60,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""
+        last_response: _messages.ModelResponse | None = None
         async for response in self.stream_responses(debounce_by=debounce_by):
+            if response == last_response:
+                continue
+            last_response = response
+
             if self._raw_stream_response.final_result_event is not None:
                 try:
                     yield await self.validate_response_output(response, allow_partial=True)
