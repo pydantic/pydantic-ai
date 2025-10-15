@@ -534,9 +534,15 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                     output_parts=parts,
                                 ):
                                     pass
+
+                                # For backwards compatibility, append a new ModelRequest using the tool returns and retries
                                 if parts:
                                     messages.append(_messages.ModelRequest(parts))
 
+                                # Set the final result on the graph run
+                                await agent_run.next(_agent_graph.SetRunResult(final_result))
+
+                            # Yield the final result
                             yield StreamedRunResult(
                                 messages,
                                 graph_ctx.deps.new_message_index,
