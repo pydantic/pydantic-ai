@@ -64,6 +64,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import StructuredDict, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResultEvent
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
@@ -2459,7 +2460,13 @@ def test_tool_exceeds_token_limit_error():
 
     with pytest.raises(
         ToolExceedsTokenLimitError,
-        match='Model token limit exceeded while emitting a tool call. Increase max tokens or simplify tool call arguments.',
+        match=r'Model token limit \(10\) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.',
+    ):
+        agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+
+    with pytest.raises(
+        ToolExceedsTokenLimitError,
+        match=r'Model token limit \(provider default\) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.',
     ):
         agent.run_sync('Hello')
 

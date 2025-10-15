@@ -92,7 +92,9 @@ class GraphAgentState:
     retries: int = 0
     run_step: int = 0
 
-    def increment_retries(self, max_result_retries: int, error: BaseException | None = None) -> None:
+    def increment_retries(
+        self, max_result_retries: int, error: BaseException | None = None, max_tokens: int | None = None
+    ) -> None:
         self.retries += 1
         if self.retries > max_result_retries:
             if (
@@ -106,7 +108,7 @@ class GraphAgentState:
                     tool_call.args_as_dict()
                 except Exception:
                     raise exceptions.ToolExceedsTokenLimitError(
-                        'Model token limit exceeded while emitting a tool call. Increase max tokens or simplify tool call arguments.'
+                        f'Model token limit ({max_tokens if max_tokens is not None else "provider default"}) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.'
                     )
             message = f'Exceeded maximum retries ({max_result_retries}) for output validation'
             if error:
@@ -581,7 +583,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # resubmit the most recent request that resulted in an empty response,
                     # as the empty response and request will not create any items in the API payload,
                     # in the hope the model will return a non-empty response this time.
-                    ctx.state.increment_retries(ctx.deps.max_result_retries)
+                    max_tokens = (ctx.deps.model_settings or {}).get('max_tokens') if ctx.deps.model_settings else None
+                    ctx.state.increment_retries(ctx.deps.max_result_retries, max_tokens=max_tokens)
                     self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[]))
                     return
 
@@ -643,7 +646,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     )
                     raise ToolRetryError(m)
                 except ToolRetryError as e:
-                    ctx.state.increment_retries(ctx.deps.max_result_retries, e)
+                    max_tokens = (ctx.deps.model_settings or {}).get('max_tokens') if ctx.deps.model_settings else None
+                    ctx.state.increment_retries(ctx.deps.max_result_retries, error=e, max_tokens=max_tokens)
                     self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
             self._events_iterator = _run_stream()
@@ -789,10 +793,12 @@ async def process_tool_calls(  # noqa: C901
             try:
                 result_data = await tool_manager.handle_call(call)
             except exceptions.UnexpectedModelBehavior as e:
-                ctx.state.increment_retries(ctx.deps.max_result_retries, e)
+                max_tokens = (ctx.deps.model_settings or {}).get('max_tokens') if ctx.deps.model_settings else None
+                ctx.state.increment_retries(ctx.deps.max_result_retries, error=e, max_tokens=max_tokens)
                 raise e  # pragma: lax no cover
             except ToolRetryError as e:
-                ctx.state.increment_retries(ctx.deps.max_result_retries, e)
+                max_tokens = (ctx.deps.model_settings or {}).get('max_tokens') if ctx.deps.model_settings else None
+                ctx.state.increment_retries(ctx.deps.max_result_retries, error=e, max_tokens=max_tokens)
                 yield _messages.FunctionToolCallEvent(call)
                 output_parts.append(e.tool_retry)
                 yield _messages.FunctionToolResultEvent(e.tool_retry)
@@ -821,7 +827,8 @@ async def process_tool_calls(  # noqa: C901
 
     # Then, we handle unknown tool calls
     if tool_calls_by_kind['unknown']:
-        ctx.state.increment_retries(ctx.deps.max_result_retries)
+        max_tokens = (ctx.deps.model_settings or {}).get('max_tokens') if ctx.deps.model_settings else None
+        ctx.state.increment_retries(ctx.deps.max_result_retries, max_tokens=max_tokens)
         calls_to_run.extend(tool_calls_by_kind['unknown'])
 
     calls_to_run_results: dict[str, DeferredToolResult] = {}
