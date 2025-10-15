@@ -16,6 +16,7 @@ from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    AudioUrl,
     BinaryContent,
     BinaryImage,
     FilePart,
@@ -145,7 +146,6 @@ def transformers_multimodal_model() -> OutlinesModel:
         hf_model,
         hf_processor,  # type: ignore
     )
-    print('HEREEEEE', outlines_model)
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
 
 
@@ -182,6 +182,13 @@ def vllm_model_offline() -> OutlinesModel:
         vllm.LLM('microsoft/Phi-3-mini-4k-instruct')  # type: ignore
     )
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
+
+
+@pytest.fixture
+def binary_image() -> BinaryImage:
+    image_path = Path(__file__).parent.parent / 'assets' / 'kiwi.png'
+    image_bytes = image_path.read_bytes()
+    return BinaryImage(data=image_bytes, media_type='image/png')
 
 
 outlines_parameters = [
@@ -417,10 +424,7 @@ async def test_request_streaming_async_model(mock_async_model: OutlinesModel) ->
 
 
 @skip_if_transformers_imports_unsuccessful
-def test_request_multimodal(transformers_multimodal_model: OutlinesModel) -> None:
-    image_path = Path(__file__).parent.parent / 'assets' / 'kiwi.png'
-    image_bytes = image_path.read_bytes()
-    binary_image = BinaryImage(data=image_bytes, media_type='image/png')
+def test_request_image_binary(transformers_multimodal_model: OutlinesModel, binary_image: BinaryImage) -> None:
     agent = Agent(transformers_multimodal_model)
     result = agent.run_sync(
         ["What's on the image?", binary_image], model_settings=ModelSettings(extra_body={'max_new_tokens': 100})
@@ -433,6 +437,39 @@ def test_request_multimodal(transformers_multimodal_model: OutlinesModel) -> Non
                         content=[
                             "What's on the image?",
                             BinaryImage(data=IsBytes(), media_type='image/png'),
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+@skip_if_transformers_imports_unsuccessful
+def test_request_image_url(transformers_multimodal_model: OutlinesModel) -> None:
+    agent = Agent(transformers_multimodal_model)
+    result = agent.run_sync(
+        [
+            "What's on the image?",
+            ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
+        ],
+        model_settings=ModelSettings(extra_body={'max_new_tokens': 100}),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            "What's on the image?",
+                            ImageUrl(
+                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                            ),
                         ],
                         timestamp=IsDatetime(),
                     )
@@ -488,9 +525,9 @@ def test_output_type(llamacpp_model: OutlinesModel) -> None:
     assert isinstance(result.output, Box)
 
 
-@skip_if_llama_cpp_imports_unsuccessful
-def test_input_format(llamacpp_model: OutlinesModel) -> None:
-    agent = Agent(llamacpp_model)
+@skip_if_transformers_imports_unsuccessful
+def test_input_format(transformers_multimodal_model: OutlinesModel, binary_image: BinaryImage) -> None:
+    agent = Agent(transformers_multimodal_model)
 
     # all accepted message types
     message_history: list[ModelMessage] = [
@@ -505,6 +542,7 @@ def test_input_format(llamacpp_model: OutlinesModel) -> None:
             parts=[
                 ThinkingPart('Thinking...'),  # ignored by the model
                 TextPart('Hello there!'),
+                FilePart(content=binary_image),
             ]
         ),
     ]
@@ -516,14 +554,16 @@ def test_input_format(llamacpp_model: OutlinesModel) -> None:
             parts=[
                 UserPromptPart(
                     content=[
-                        'Each element of the content sequence must be a string or a `BinaryImage`.',
-                        ImageUrl(url='https://example.com/image.png'),
+                        'Hello there!',
+                        AudioUrl('https://example.com/audio.mp3'),
                     ]
                 )
             ]
         )
     ]
-    with pytest.raises(UserError, match='Each element of the content sequence must be a string or a `BinaryImage`.'):
+    with pytest.raises(
+        UserError, match='Each element of the content sequence must be a string, an `ImageUrl` or a `BinaryImage`.'
+    ):
         agent.run_sync('How are you doing?', message_history=multi_modal_message_history)
 
     # unsupported: tool calls
@@ -541,11 +581,13 @@ def test_input_format(llamacpp_model: OutlinesModel) -> None:
     with pytest.raises(UserError, match='Tool calls are not supported for Outlines models yet.'):
         agent.run_sync('How are you doing?', message_history=tool_return_message_history)
 
-    # unsupported: file parts
+    # unsupported: non-image file parts
     file_part_message_history: list[ModelMessage] = [
         ModelResponse(parts=[FilePart(content=BinaryContent(data=b'test', media_type='text/plain'))])
     ]
-    with pytest.raises(UserError, match='File parts are not supported for Outlines models yet.'):
+    with pytest.raises(
+        UserError, match='File parts other than `BinaryImage` are not supported for Outlines models yet.'
+    ):
         agent.run_sync('How are you doing?', message_history=file_part_message_history)
 
 

@@ -21,6 +21,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FilePart,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -38,9 +39,11 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from . import (
+    DownloadedItem,
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    download_item,
 )
 
 try:
@@ -245,7 +248,7 @@ class OutlinesModel(Model):
             or model_request_parameters.output_tools
         ):
             raise UserError('Outlines does not support function tools and builtin tools yet.')
-        prompt = self._format_prompt(messages)
+        prompt = await self._format_prompt(messages)
         output_type = (
             JsonSchema(model_request_parameters.output_object.json_schema)
             if model_request_parameters.output_object
@@ -270,7 +273,7 @@ class OutlinesModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         if model_request_parameters.function_tools or model_request_parameters.builtin_tools:
             raise UserError('Outlines does not support function tools and builtin tools yet.')
-        prompt = self._format_prompt(messages)
+        prompt = await self._format_prompt(messages)
         output_type = (
             JsonSchema(model_request_parameters.output_object.json_schema)
             if model_request_parameters.output_object
@@ -394,7 +397,7 @@ class OutlinesModel(Model):
 
         return filtered_settings
 
-    def _format_prompt(self, messages: list[ModelMessage]) -> Chat:  # noqa: C901
+    async def _format_prompt(self, messages: list[ModelMessage]) -> Chat:  # noqa: C901
         """Turn the model messages into an Outlines Chat instance."""
         chat = Chat()
         for message in messages:
@@ -413,13 +416,21 @@ class OutlinesModel(Model):
                                 for item in part.content:
                                     if isinstance(item, str):
                                         outlines_input.append(item)
+                                    elif isinstance(item, ImageUrl):
+                                        image_content: DownloadedItem[bytes] = await download_item(
+                                            item, data_format='bytes', type_format='mime'
+                                        )
+                                        image = self._create_PIL_image(
+                                            image_content['data'], image_content['data_type']
+                                        )
+                                        outlines_input.append(Image(image))
                                     elif isinstance(item, BinaryImage):
-                                        image = PILImage.open(io.BytesIO(item.data))
-                                        image.format = item.media_type.split('/')[-1]
+                                        image = self._create_PIL_image(item.data, item.media_type)
                                         outlines_input.append(Image(image))
                                     else:
                                         raise UserError(
-                                            'Each element of the content sequence must be a string or a `BinaryImage`.'
+                                            'Each element of the content sequence must be a string, an `ImageUrl`'
+                                            + ' or a `BinaryImage`.'
                                         )
                                 chat.add_user_message(outlines_input)
                             else:
@@ -433,21 +444,39 @@ class OutlinesModel(Model):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
+                text_parts: list[str] = []
+                image_parts: list[Image] = []
                 for part in message.parts:
                     if isinstance(part, TextPart):
-                        chat.add_assistant_message(part.content)
+                        text_parts.append(part.content)
                     elif isinstance(part, ThinkingPart):
                         # NOTE: We don't send ThinkingPart to the providers yet.
                         pass
                     elif isinstance(part, ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart):
                         raise UserError('Tool calls are not supported for Outlines models yet.')
                     elif isinstance(part, FilePart):
-                        raise UserError('File parts are not supported for Outlines models yet.')
+                        if isinstance(part.content, BinaryImage):
+                            image = self._create_PIL_image(part.content.data, part.content.media_type)
+                            image_parts.append(Image(image))
+                        else:
+                            raise UserError(
+                                'File parts other than `BinaryImage` are not supported for Outlines models yet.'
+                            )
                     else:
                         assert_never(part)
+                if len(text_parts) == 1 or len(image_parts) == 0:
+                    chat.add_assistant_message(text_parts[0])
+                else:
+                    chat.add_assistant_message([*text_parts, *image_parts])
             else:
                 assert_never(message)
         return chat
+
+    def _create_PIL_image(self, data: bytes, data_type: str) -> PILImage.Image:
+        """Create a PIL Image from the data and data type."""
+        image = PILImage.open(io.BytesIO(data))
+        image.format = data_type.split('/')[-1]
+        return image
 
     def _process_response(self, response: str) -> ModelResponse:
         """Turn the Outlines text response into a Pydantic AI model response instance."""
