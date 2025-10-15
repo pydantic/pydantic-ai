@@ -685,6 +685,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         'grok',
         'heroku',
         'moonshotai',
+        'ollama',
         'openai',
         'openai-chat',
         'openrouter',
