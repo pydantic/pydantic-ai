@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from abc import ABC
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from typing_extensions import TypedDict
 
@@ -253,14 +253,14 @@ class MCPServerTool(AbstractBuiltinTool):
     id: str
     """The id of the MCP server to use."""
 
-    authorization_token: str | None = None
-    """Authorization header to use when making requests to the MCP server."""
-
     url: str
     """The URL of the MCP server to use.
 
     For OpenAI Responses, it is possible to use `connector_id` by providing it as `x-openai-connector:<connector_id>`.
     """
+
+    authorization_token: str | None = None
+    """Authorization header to use when making requests to the MCP server."""
 
     description: str | None = None
     """A description of the MCP server."""
@@ -278,14 +278,6 @@ class MCPServerTool(AbstractBuiltinTool):
     """Optional HTTP headers to send to the MCP server.
 
     Use for authentication or other purposes.
-
-    Supported by:
-
-    * OpenAI Responses
-    """
-
-    provider_metadata: dict[str, Any] | None = None
-    """Extra data to send to the model.
 
     Supported by:
 

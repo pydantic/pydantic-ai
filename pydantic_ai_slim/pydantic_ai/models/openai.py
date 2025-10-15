@@ -110,7 +110,7 @@ Using this more broad type for the model name instead of the ChatModel definitio
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
 """
 
-OpenAIResponsesMCPConnectorIdPrefix: Literal['x-openai-connector'] = 'x-openai-connector'
+MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
 """
 Prefix for OpenAI connector IDs. OpenAI supports either a URL or a connector ID when passing MCP configuration to a model,
 by using that prefix like `x-openai-connector:<connector-id>` in a URL, you can pass a connector ID to a model.
@@ -1265,16 +1265,11 @@ class OpenAIResponsesModel(Model):
                 if tool.headers:  # pragma: no branch
                     mcp_tool['headers'] = tool.headers  # pragma: no cover
 
-                url, connector_id = None, None
-                if tool.url.startswith(OpenAIResponsesMCPConnectorIdPrefix):  # pragma: no cover
+                if tool.url.startswith(MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME + ':'):  # pragma: no cover
                     _, connector_id = tool.url.split(':', maxsplit=1)
-                else:
-                    url = tool.url
-
-                if url:
-                    mcp_tool['server_url'] = tool.url
-                elif connector_id:  # pragma: no cover
                     mcp_tool['connector_id'] = connector_id  # pyright: ignore[reportGeneralTypeIssues]
+                else:
+                    mcp_tool['server_url'] = tool.url
 
                 tools.append(mcp_tool)
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch

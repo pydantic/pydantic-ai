@@ -425,9 +425,8 @@ _(This example is complete, it can be run "as is")_
 The [`MCPServerTool`][pydantic_ai.builtin_tools.MCPServerTool] allows your agent to pass MCP configurations in context,
 so that the agent can offload MCP calls and parsing to the provider.
 
-This tool is useful for models that support passing MCP servers as tools in parameters, so the model handles calls to remote servers by itself.
-
-However, a vast majority of models do not support this feature, in which case can use Pydantic AI's agent-side [MCP support](mcp/client.md).
+This requires the MCP server to live at a public URL the provider can reach and does not support many of the advanced features of Pydantic AI's agent-side [MCP support](mcp/client.md),
+but can result in optimized context use and caching, and faster performance due to the lack of a round-trip back to Pydantic AI.
 
 ### Provider Support
 
@@ -456,8 +455,6 @@ agent = Agent(
         MCPServerTool(
             id='your-mcp-server',
             url='https://api.githubcopilot.com/mcp/',
-            authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),
-            allowed_tools=['search_repositories', 'list_commits'],
         )
     ]
 )
@@ -482,8 +479,6 @@ agent = Agent(
         MCPServerTool(
             id='your-mcp-server',
             url='https://api.githubcopilot.com/mcp/',
-            authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),
-            allowed_tools=['search_repositories', 'list_commits'],
         )
     ]
 )
@@ -509,11 +504,7 @@ agent = Agent(
     builtin_tools=[
         MCPServerTool(
             id='your-mcp-server',  # required field
-            url='https://api.githubcopilot.com/mcp/',  # optional field, use `url` or `provider_metadata`
-            authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),  # optional field
-            allowed_tools=['search_repositories', 'list_commits'],  # optional field
-            description='Your MCP Server',  # optional field
-            headers={'X-CUSTOM-HEADER': 'custom-value'},  # optional field
+            url='https://api.githubcopilot.com/mcp/',  # required field
         )
     ]
 )
@@ -523,7 +514,7 @@ print(result.output)
 #> Here are some examples of my data: Pen, Paper, Pencil.
 ```
 
-For OpenAI Responses, you can use connector ID instead of URL:
+For OpenAI Responses, you can use a connector by specifying a special `x-openai-connector:` URL:
 
 _(This example is complete, it can be run "as is")_
 
@@ -536,12 +527,12 @@ agent = Agent(
     'openai-responses:gpt-4o',
     builtin_tools=[
         MCPServerTool(
-            id='your-mcp-server',  # required field
-            url='x-openai-connector:connector_googlecalendar',  # required field
-            authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),  # optional field
-            allowed_tools=['search_repositories', 'list_commits'],  # optional field
-            description='Your MCP Server',  # optional field
-            headers={'X-CUSTOM-HEADER': 'custom-value'},  # optional field
+            id='your-mcp-server',
+            url='x-openai-connector:connector_googlecalendar',
+            authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),
+            allowed_tools=['search_repositories', 'list_commits'],
+            description='Your MCP Server',
+            headers={'X-CUSTOM-HEADER': 'custom-value'},
         )
     ]
 )
@@ -555,11 +546,13 @@ _(This example is complete, it can be run "as is")_
 
 #### Provider Support
 
-| Parameter           | OpenAI | Anthropic | Notes                                                                                                               |
-|---------------------|--------|-----------|---------------------------------------------------------------------------------------------------------------------|
-| `url`               | ✅ | ✅ | For OpenAI Responses, it is possible to use `connector_id` by providing it as `x-openai-connector:<connector_id>`   |
-| `allowed_tools`     | ✅ | ✅ | -----------                                                                                                         |
-| `headers`           | ✅ | ❌ | -----------                                                                                                         |
+| Parameter             | OpenAI | Anthropic |
+|-----------------------|--------|-----------|
+| `url`                 | ✅ | ✅ |
+| `allowed_tools`       | ✅ | ✅ |
+| `authorization_token` | ✅ | ✅ |
+| `description`         | ✅ | ❌ |
+| `headers`             | ✅ | ❌ |
 
 ## API Reference
 

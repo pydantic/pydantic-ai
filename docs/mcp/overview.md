@@ -1,9 +1,10 @@
 # Model Context Protocol (MCP)
 
-Pydantic AI supports [Model Context Protocol (MCP)](https://modelcontextprotocol.io) in two ways:
+Pydantic AI supports [Model Context Protocol (MCP)](https://modelcontextprotocol.io) in three ways:
 
 1. [Agents](../agents.md) act as an MCP Client, connecting to MCP servers to use their tools, [learn more …](client.md)
 2. Agents can be used within MCP servers, [learn more …](server.md)
+3. Agents cab pass MCP Servers as built in tools into models, [learn more …](../builtin-tools.md)
 
 ## What is MCP?
 
