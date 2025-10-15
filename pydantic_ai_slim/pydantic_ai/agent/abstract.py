@@ -539,10 +539,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 if parts:
                                     messages.append(_messages.ModelRequest(parts))
 
-                                # Set the final result on the graph run
+                                # We can't use `CallToolsNode` here as we've already determined the output,
+                                # and it would unnecessarily do it again or differently (e.g. when text output is followed by tool calls).
                                 await agent_run.next(_agent_graph.SetRunResult(final_result))
 
-                            # Yield the final result
                             yield StreamedRunResult(
                                 messages,
                                 graph_ctx.deps.new_message_index,

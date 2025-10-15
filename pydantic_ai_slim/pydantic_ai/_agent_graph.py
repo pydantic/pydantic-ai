@@ -712,7 +712,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
 @dataclasses.dataclass
 class SetRunResult(AgentNode[DepsT, NodeRunEndT]):
-    """The node that immediately ends the graph run after a streaming response produced a final result."""
+    """A node that immediately ends the graph run after a streaming response produced a final result."""
 
     final_result: result.FinalResult[NodeRunEndT]
 
