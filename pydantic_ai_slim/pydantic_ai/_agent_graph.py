@@ -426,7 +426,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_response = streamed_response.get()
 
-        self._finish_handling(ctx, model_response)
+        await self._finish_handling(ctx, model_response)
         assert self._result is not None  # this should be set by the previous line
 
     async def _make_request(
@@ -439,7 +439,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.requests += 1
 
-        return self._finish_handling(ctx, model_response)
+        return await self._finish_handling(ctx, model_response)
 
     async def _prepare_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -481,7 +481,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         return model_settings, model_request_parameters, message_history, run_context
 
-    def _finish_handling(
+    async def _finish_handling(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
