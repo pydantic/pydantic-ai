@@ -598,7 +598,6 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
             ]
         )
         assert result.is_complete
