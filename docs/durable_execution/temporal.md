@@ -187,6 +187,335 @@ As the streaming model request activity, workflow, and workflow execution call a
 - To get data from the workflow call site or workflow to the event stream handler, you can use a [dependencies object](#agent-run-context-and-dependencies).
 - To get data from the event stream handler to the workflow, workflow call site, or a frontend, you need to use an external system that the event stream handler can write to and the event consumer can read from, like a message queue. You can use the dependency object to make sure the same connection string or other unique ID is available in all the places that need it.
 
+#### Example
+
+Run the following
+`pip install pydantic-ai temporalio mcp-run-python`
+
+Assuming your project has the following structure:
+```
+  project/
+  ├── src/
+  │   ├── agents.py
+  │   ├── datamodels.py
+  │   ├── streaming_handler.py
+  │   ├── utils.py
+  │   └── workflow.py
+  └── pyproject.toml
+
+```
+`utils.py`
+```python
+import yaml
+from copy import copy
+
+def recursively_modify_api_key(conf):
+    """
+    Recursively replace API key placeholders with environment variable values.
+
+    This function traverses a configuration dictionary and replaces any keys
+    containing 'api_key' with the corresponding environment variable value.
+    It handles nested dictionaries and lists recursively.
+
+    Args:
+        conf: The configuration dictionary to process.
+
+    Returns:
+        A copy of the configuration with API keys replaced by environment variable values.
+    """
+
+    def inner(_conf):
+        for key, value in _conf.items():
+            if isinstance(value, dict):
+                inner(value)
+            elif isinstance(value, list):
+                if len(value) > 0 and isinstance(value[0], dict):
+                    for item in value:
+                        inner(item)
+                else:
+                    _conf[key] = [os.environ.get(str(v), v) for v in value]
+            elif isinstance(value, str):
+                _conf[key] = os.environ.get(value, value)
+            else:
+                _conf[key] = value
+
+    copy_conf = copy(conf)
+    inner(copy_conf)
+    return copy_conf
+
+def read_config_yml(path):
+    """
+    Read and process a YAML configuration file.
+
+    This function reads a YAML file, processes it to replace API key placeholders
+    with environment variable values, and returns the processed configuration.
+
+    Args:
+        path: The path to the YAML configuration file.
+
+    Returns:
+        dict: The parsed and processed YAML content as a Python dictionary.
+    """
+    with open(path, "r") as f:
+        configs = yaml.safe_load(f)
+    recursively_modify_api_key(configs)
+    return configs
+```
+
+`datamodels.py`
+
+```python
+from enum import Enum
+from typing import Any, Dict, Deque, AsyncIterable, Optional
+from pydantic import BaseModel
+
+class AgentDependencies(BaseModel):
+    workflow_id: str
+    run_id: str
+
+class EventKind(str, Enum):
+    CONTINUE_CHAT = 'continue_chat'
+    EVENT = 'event'
+    RESULT = 'result'
+
+
+class EventStream(BaseModel):
+    kind: EventKind
+    content: str
+```
+`agents.py`
+```python
+from temporalio import workflow
+from temporalio.common import RetryPolicy
+from temporalio.workflow import ActivityConfig
+with workflow.unsafe.imports_passed_through():
+    from pydantic_ai import Agent, FilteredToolset, RunContext, ModelSettings
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.mcp import MCPServerStdio
+    from pydantic_ai.durable_exec.temporal import TemporalAgent
+    from datamodels import AgentDependencies
+    from mcp_run_python import code_sandbox
+    from typing import Dict
+    from datetime import timedelta
+    
+
+async def get_mcp_toolsets() -> Dict[str, FilteredToolset]:
+    yf_server = MCPServerStdio(
+        command="uvx",
+        args=["mcp-yahoo-finance"],
+        timeout=240,
+        read_timeout=240,
+        id='yahoo'
+    )
+    return {
+        'yahoo': yf_server.filtered(lambda ctx, tool_def: True)
+    }
+
+async def get_claude_model(parallel_tool_calls: bool = True, **env_vars):
+    model_name = 'claude-sonnet-4-5-20250929'
+    api_key = env_vars.get('anthropic_api_key')
+    model = AnthropicModel(model_name=model_name,
+                           provider=AnthropicProvider(api_key=api_key),
+                           settings=ModelSettings(**{
+                               "temperature": 0.5,
+                               "n": 1,
+                               "max_completion_tokens": 64000,
+                               "max_tokens": 64000,
+                               "parallel_tool_calls": parallel_tool_calls,
+                           }))
+
+    return model
+
+async def build_agent(stream_handler=None, **env_vars):
+    
+    system_prompt = """
+    You are an expert travel agent that knows perfectly how to search for hotels on the web.
+    You also have a Data Analyst background, mastering well how to use pandas for tabular operations. 
+    """
+    agent_name = "YahooFinanceSearchAgent"
+    
+    toolsets = await get_mcp_toolsets()
+    agent = Agent(name=agent_name,
+                  model=await get_claude_model(**env_vars), # Here you place your Model instance
+                  toolsets=[*toolsets.values()],
+                  system_prompt=system_prompt,
+                  event_stream_handler=stream_handler,
+                  deps_type=AgentDependencies,
+                  )
+    
+    @agent.tool(name='run_python_code')
+    async def run_python_code(ctx: RunContext[None], code: str) -> str:
+        async with code_sandbox(dependencies=['pandas', 'numpy']) as sandbox:
+            result = await sandbox.eval(code)
+            return result
+        
+        
+    temporal_agent = TemporalAgent(wrapped=agent,
+                                       model_activity_config=ActivityConfig(
+                                           start_to_close_timeout=timedelta(minutes=5),
+                                           retry_policy=RetryPolicy(maximum_attempts=50)
+                                       ),
+                                       toolset_activity_config={
+                                           toolset_id: ActivityConfig(
+                                               start_to_close_timeout=timedelta(minutes=3),
+                                               retry_policy=RetryPolicy(maximum_attempts=3,
+                                                                        non_retryable_error_types=['ToolRetryError']
+                                                                        )
+                                           ) for toolset_id in toolsets.keys()})
+    return temporal_agent
+```
+
+`streaming_handler.py`
+```python
+from temporalio import activity
+from typing import Any, Dict, Deque, AsyncIterable, Optional
+from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent, \
+        PartStartEvent, FunctionToolResultEvent, TextPart, ToolCallPart, PartDeltaEvent, UsageLimits, TextPartDelta, \
+        ThinkingPartDelta
+from datamodels import EventStream, EventKind, AgentDependencies
+
+async def streaming_handler(ctx,
+                            event_stream_events: AsyncIterable[AgentStreamEvent]):
+    """
+    This function is used by the agent to stream-out the actions that are being performed (tool calls, llm call, streaming results, etc etc.
+    Feel free to change it as you like or need - skipping events or enriching the content
+    """
+    
+    output_delta = ""
+    output = ""
+    output_tool_delta = dict(
+        tool_call_id='',
+        tool_name_delta='',
+        args_delta='',
+    )
+    # If TextPart and output delta is empty
+    async for event in event_stream_events:
+        if isinstance(event, PartStartEvent):
+            if isinstance(event.part, TextPart):
+                output_delta += f"{event.part.content}"
+            elif isinstance(event.part, ToolCallPart):
+                output += f"\nTool Call Id: {event.part.tool_call_id}"
+                output += f"\nTool Name: {event.part.tool_name}"
+                output += f"\nTool Args: {event.part.args}"
+            else:
+                pass
+        elif isinstance(event, FunctionToolCallEvent):
+            output += f"\nTool Call Id: {event.part.tool_call_id}"
+            output += f"\nTool Name: {event.part.tool_name}"
+            output += f"\nTool Args: {event.part.args}"
+        elif isinstance(event, FunctionToolResultEvent):
+            output += f"\nTool Call Id: {event.result.tool_call_id}"
+            output += f"\nTool Name: {event.result.tool_name}"
+            output += f"\nContent: {event.result.content}"
+        elif isinstance(event, PartDeltaEvent):
+            if isinstance(event.delta, TextPartDelta) or isinstance(event.delta, ThinkingPartDelta):
+                output_delta += f"{event.delta.content_delta}"
+            else:
+                if len(output_tool_delta['tool_call_id']) == 0:
+                    output_tool_delta['tool_call_id'] += event.delta.tool_call_id or ''
+                output_tool_delta['tool_name_delta'] += event.delta.tool_name_delta or ''
+                output_tool_delta['args_delta'] += event.delta.args_delta or ''
+
+    if len(output_tool_delta['tool_call_id']):
+        output += f"\nTool Call Id: {output_tool_delta['tool_call_id']}"
+        output += f"\nTool Name: {output_tool_delta['tool_name_delta']}"
+        output += f"\nTool Args: {output_tool_delta['args_delta']}"
+
+    events = []
+
+    if output:
+        event = EventStream(kind=EventKind.EVENT, content=output)
+        events.append(event)
+    if output_delta:
+        event = EventStream(kind=EventKind.RESULT, content=output_delta)
+        events.append(event)
+
+    if activity.in_activity():
+        deps: AgentDependencies = ctx.deps
+
+        workflow_id = deps.workflow_id
+        run_id = deps.run_id
+        workflow_handle = activity.client().get_workflow_handle(workflow_id=workflow_id, run_id=run_id)
+        for event in events:
+            await workflow_handle.signal('append_event', arg=event)
+```
+
+`workflow.py`
+
+```python
+
+import asyncio
+from collections import deque
+from datetime import timedelta
+from typing import Any, Dict, Deque, Optional
+
+from temporalio import workflow, activity
+
+with workflow.unsafe.imports_passed_through():
+    from datamodels import EventStream, AgentDependencies
+    from agents import YahooFinanceSearchAgent
+    from pydanticai import UsageLimits
+    from agents import streaming_handler, build_agent
+    from utils import read_config_yml
+
+
+@workflow.defn
+class YahooFinanceSearchWorkflow:
+    def __init__(self):
+        self.events: Deque[EventStream] = deque()
+
+    @workflow.run
+    async def run(self, user_prompt: str):
+
+        wf_vars = await workflow.execute_activity(
+            activity='retrieve_env_vars',
+            start_to_close_timeout=timedelta(seconds=10),
+            result_type=Dict[str, Any],
+        )
+        deps = AgentDependencies(workflow_id=workflow.info().workflow_id, run_id=workflow.info().run_id)
+
+        agent = await build_agent(streaming_handler, **wf_vars)
+        result = await agent.run(user_prompt=user_prompt,
+                                 usage_limits=UsageLimits(request_limit=50),
+                                 deps=deps
+                                 )
+
+        try:
+            await workflow.wait_condition(
+                lambda: len(self.events) == 0,
+                timeout=timedelta(seconds=10),
+                timeout_summary='Waiting for events to be consumed'
+            )
+            return result.output
+        except asyncio.TimeoutError:
+            return result.output
+
+    @staticmethod
+    @activity.defn(name='retrieve_env_vars')
+    async def retrieve_env_vars():
+        with workflow.unsafe.imports_passed_through():
+            import os
+            config_path = os.getenv('APP_CONFIG_PATH', './app_conf.yml')
+            configs = read_config_yml(config_path)
+            return {
+                'anthropic_api_key': configs['llm']['anthropic_api_key']
+            }
+
+    @workflow.query
+    def event_stream(self) -> Optional[EventStream]:
+        if self.events:
+            return self.events.popleft()
+        return None
+
+    @workflow.signal
+    async def append_event(self, event_stream: EventStream):
+        # This signal is invoked by streaming_handler, pushing event for every async loop
+        self.events.append(event_stream)
+```
+
+
+
 ## Activity Configuration
 
 Temporal activity configuration, like timeouts and retry policies, can be customized by passing [`temporalio.workflow.ActivityConfig`](https://python.temporal.io/temporalio.workflow.ActivityConfig.html) objects to the `TemporalAgent` constructor:
