@@ -103,6 +103,9 @@ async def main():
         FinalResultEvent(tool_name=None, tool_call_id=None),
         PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='Mexico is Mexico ')),
         PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='City.')),
+        PartEndEvent(
+            index=0, part=TextPart(content='The capital of Mexico is Mexico City.')
+        ),
         AgentRunResultEvent(
             result=AgentRunResult(output='The capital of Mexico is Mexico City.')
         ),

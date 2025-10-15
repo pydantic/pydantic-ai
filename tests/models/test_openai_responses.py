@@ -2885,11 +2885,7 @@ I\
             PartEndEvent(
                 index=0,
                 part=ThinkingPart(
-                    content="""\
-**Calculating a large integer**
-
-I need to compute 123456 raised to the power of 123. That's an enormous integer, and the user probably wants the exact value. I can use Python's ability to handle big integers, but the output will likely be extremely long — potentially hundreds of digits. I should consider that and prepare to return the result as plain text, even if it ends up being around 627 digits. So, let's go ahead and compute that!\
-""",
+                    content=IsStr(),
                     id='rs_68c3509b2ee0819eba32735182d275ad0f2d670b80edc507',
                     signature='gAAAAABow1CfwMTF6GjgPzWVr8oKbF3qM2qnldMGM_sXMoJ2SSXHrcL4lsIK69rnKn43STNM_YZ3f5AcwxF4oThzCOPl1g9-u4GGFd5sISVWJYruCukTVDPaEEzdmJqCU1JMSIZvlvqo7b5PsUGyQU5ldX4KXDq8zs4NmRyLIJe-34SCmDG3BYVWR_O-CtcjH0tF9e3XnJ5T9TvxioDEGbASqXMKx5XB9P_b1ser8P9WIQk6hxZ8YX-FAmWSt-sad-zScdeTmyPcakDb7Z4NVcXmL_I-hoQYH_lu-HPFVwcXU8R7yeXU-7YF3vZBE84cmFuv25lftyojbdGq2A7uxGJZBPMCoUBDGBNG2_7mVvKyGz_ZZ6vXIO0GVDhHdW4Y012pkoDfLp6B-B9CGvANOH3ORlcbhB8aT9qN5bY773wW44JIxRU3umkmNzwF7lkbmuMCbGybHYSzqtkOrMIRgqxaXOx3bGbsreM4kGwgD3EXWqQ1PVye_K7gRkToVQpfpID5iuH4jJZDkvNjjJI09JR2yqlR6QkQayVg2x1y8VHXoMYjNdQdZeP62AguqYbgrlBRcjaUnw78KcWscQHaNsg0MfxL_5Q-pZR1OPVsFppHRTzrVK8458d05yEhDmun345oI9ScBrtXFRdHXPy0dQaayfjxM9H0grPrIogMw_zz4jAcFqWxE_C7GPMnNIJ_uEAhkPOetpNb-izd-iY4pGYKs8pmCB5czrAlKC1MXTnowrlWcwf5_kuD5SzWlzlWOoKWCeBDOZuKTDVJKXh_QCtQfftomQazDFCiCSgaQMuP7GaPcDuS1jdQoMQBcFfKuWoq-3eQBOCiEOAERH81zR4hz1x02T_910jGreSpfgxSqt4Td0pDDSmlEV6CwaUDQvrPc67d8_Wtx8YKv4eBH544_p1k9T8tHo3Q7xvgE37ZCdd_AVhC2ed1b5oUI95tM570HAVugFilcHJICa1RbFzIlRkNgI4k2JvsVWtD5_h3x6ZaEFTomwIXlochYgsegh8RJIRRCNKO9ebsvTrkdl8n1mb3hLrz7puwCkRFyUkxYBGT9zUjuKrjp_IjTvvov29v6pwYHg2Xd0nAfLP4WWWPBLNx3oV1-yOfXStRGHMZTB6iN9d0Bxi2QS7dk-rPPXml5HxrSo1TG06EdBXQ1VgrkWIxG1TF97-gK9oWWT9S5aaYKZAOdaqDvi7qO8I-4VwExtIq4Do3BHnWrgKNHfyuAobQK4H_CFMElYibJHwA9t-UGujMic07AxS-2XjXaCtjf7LnW_aXE2rQDqzHiTiLmTqT6jYHP0WHGSqFTOFkNmzqy6uVfU-TbdT91zDBeesc8XpzCXWBVKqxEzuQGdJrYk6ieZaxL76Kjs4jyo838LMJCXzhcF8enukz_llnoxAV59hTDAn0MUQvstGlDX0ToI7C8Oc0NZfZU5Pi4gs8u0He_Nw5UsoV7sA-jk4M45sFt6g3u00kJFP3gIcdvOzHcRK5z3Sfb9JF0bnvIYSbUFUidEJxSOAcRlxofOJPnkPtWCYiiv3zSVxZXX77-wtc8yrOYFzH1k_8P6CDpcfzOW7Yl1Tajgcm20nygmPlFtXF3RNFPztW1V5GwQHc99FvT4ZAex3fQ_UBDKyXnyGoySgpZbHQIvhzUhDEGm77EiYw5FoF6JgnHGGUCbfXr2EudtpbGW8MRHop2ytonb8Hq7w10yQSginBbH_w3bwtd7cwgDKcp6wIPotjpEC-N1YDsRqhPuqxVA==',
                     provider_name='openai',
@@ -5329,10 +5325,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             PartEndEvent(
                 index=4,
                 part=TextPart(
-                    content="""\
-Here's the chart of y = x^2 for x from -5 to 5.  \n\
-Download the image: [Download the chart](sandbox:/mnt/data/y_eq_x_squared_plot.png)\
-""",
+                    content=IsStr(),
                     id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4',
                 ),
             ),

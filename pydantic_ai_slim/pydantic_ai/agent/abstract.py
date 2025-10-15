@@ -642,6 +642,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 PartStartEvent(index=0, part=TextPart(content='The capital of ')),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='France is Paris. ')),
+                PartEndEvent(
+                    index=0, part=TextPart(content='The capital of France is Paris. ')
+                ),
                 AgentRunResultEvent(
                     result=AgentRunResult(output='The capital of France is Paris. ')
                 ),
