@@ -473,7 +473,7 @@ agent = Agent(model)
 
 Create an API key in the [Moonshot Console](https://platform.moonshot.ai/console).
 
-You can set the `MOONSHOT_API_KEY` environment variable and use [`MoonshotAIProvider`][pydantic_ai.providers.moonshotai.MoonshotAIProvider] by name:
+You can set the `MOONSHOTAI_API_KEY` environment variable and use [`MoonshotAIProvider`][pydantic_ai.providers.moonshotai.MoonshotAIProvider] by name:
 
 ```python
 from pydantic_ai import Agent
