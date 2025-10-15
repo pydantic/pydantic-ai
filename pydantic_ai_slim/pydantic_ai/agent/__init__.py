@@ -1029,6 +1029,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         name: str | None = None,
+        description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
@@ -1046,6 +1047,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         name: str | None = None,
+        description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
@@ -1088,6 +1090,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             func: The tool function to register.
             name: The name of the tool, defaults to the function name.
+            description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
@@ -1113,6 +1116,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 func_,
                 takes_ctx=True,
                 name=name,
+                description=description,
                 retries=retries,
                 prepare=prepare,
                 docstring_format=docstring_format,
@@ -1136,6 +1140,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         name: str | None = None,
+        description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
@@ -1153,6 +1158,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         name: str | None = None,
+        description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
@@ -1195,6 +1201,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             func: The tool function to register.
             name: The name of the tool, defaults to the function name.
+            description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
@@ -1218,6 +1225,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 func_,
                 takes_ctx=False,
                 name=name,
+                description=description,
                 retries=retries,
                 prepare=prepare,
                 docstring_format=docstring_format,
