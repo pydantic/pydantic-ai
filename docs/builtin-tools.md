@@ -445,8 +445,6 @@ but can result in optimized context use and caching, and faster performance due 
 ### Usage
 
 ```py {title="mcp_server_anthropic.py"}
-import os
-
 from pydantic_ai import Agent, MCPServerTool
 
 agent = Agent(
@@ -469,8 +467,6 @@ _(This example is complete, it can be run "as is")_
 With OpenAI, you must use their responses API to access the MCP server tool.
 
 ```py {title="mcp_server_openai.py"}
-import os
-
 from pydantic_ai import Agent, MCPServerTool
 
 agent = Agent(
@@ -495,8 +491,6 @@ _(This example is complete, it can be run "as is")_
 The `MCPServerTool` supports several configuration parameters for custom MCP servers:
 
 ```py {title="mcp_server_configured_url.py"}
-import os
-
 from pydantic_ai import Agent, MCPServerTool
 
 agent = Agent(
