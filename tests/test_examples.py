@@ -178,7 +178,7 @@ def test_docs_examples(  # noqa: C901
     env.set('OLLAMA_BASE_URL', 'http://localhost:11434/v1')
     env.set('AZURE_OPENAI_API_KEY', 'testing')
     env.set('AZURE_OPENAI_ENDPOINT', 'https://your-azure-endpoint.openai.azure.com')
-    env.set('AZURE_OPENAI_API_VERSION', '2024-05-01')
+    env.set('OPENAI_API_VERSION', '2024-05-01')
     env.set('OPENROUTER_API_KEY', 'testing')
     env.set('GITHUB_API_KEY', 'testing')
     env.set('GROK_API_KEY', 'testing')
