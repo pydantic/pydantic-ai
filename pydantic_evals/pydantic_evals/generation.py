@@ -9,7 +9,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
-from re import sub
 
 from pydantic import ValidationError
 from typing_extensions import TypeVar
