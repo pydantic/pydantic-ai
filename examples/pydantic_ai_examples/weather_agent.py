@@ -13,7 +13,6 @@ from __future__ import annotations as _annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
 
 import logfire
 from httpx import AsyncClient
@@ -46,6 +45,11 @@ class LatLng(BaseModel):
     lng: float
 
 
+class WeatherResponse(BaseModel):
+    temperature: str
+    description: str
+
+
 @weather_agent.tool
 async def get_lat_lng(ctx: RunContext[Deps], location_description: str) -> LatLng:
     """Get the latitude and longitude of a location.
@@ -64,7 +68,7 @@ async def get_lat_lng(ctx: RunContext[Deps], location_description: str) -> LatLn
 
 
 @weather_agent.tool
-async def get_weather(ctx: RunContext[Deps], lat: float, lng: float) -> dict[str, Any]:
+async def get_weather(ctx: RunContext[Deps], lat: float, lng: float) -> WeatherResponse:
     """Get the weather at a location.
 
     Args:
@@ -85,10 +89,10 @@ async def get_weather(ctx: RunContext[Deps], lat: float, lng: float) -> dict[str
     )
     temp_response.raise_for_status()
     descr_response.raise_for_status()
-    return {
-        'temperature': f'{temp_response.text} °C',
-        'description': descr_response.text,
-    }
+    return WeatherResponse(
+        temperature=f'{temp_response.text} °C',
+        description=descr_response.text,
+    )
 
 
 async def main():
