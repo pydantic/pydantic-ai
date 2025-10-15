@@ -122,7 +122,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
     agent: AbstractAgent[AgentDepsT]
     """The Pydantic AI agent to run."""
 
-    request: RunRequestT  # TODO (DouweM): rename
+    request: RunRequestT
     """The protocol-specific request object."""
 
     @classmethod

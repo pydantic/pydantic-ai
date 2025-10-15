@@ -203,4 +203,4 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
         else:
             yield ToolOutputAvailableChunk(tool_call_id=result.tool_call_id, output=result.content)
 
-        # TODO (DouweM): Stream ToolCallResultEvent.content as user parts?
+        # ToolCallResultEvent.content may hold user parts (e.g. text, images) that Vercel AI does not currently have events for

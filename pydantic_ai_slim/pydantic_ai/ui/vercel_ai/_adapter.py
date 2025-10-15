@@ -202,7 +202,6 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT]
                                 )
 
                             if result_part:
-                                # TODO (DouweM): Combine consecutive tool calls and results
                                 request_parts = [result_part]
                                 result.append(ModelRequest(parts=request_parts))
                                 response_parts = None

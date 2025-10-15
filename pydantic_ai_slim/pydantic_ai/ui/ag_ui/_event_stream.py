@@ -231,6 +231,8 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
             content=output,
         )
 
+        # ToolCallResultEvent.content may hold user parts (e.g. text, images) that AG-UI does not currently have events for
+
         if isinstance(result, ToolReturnPart):
             # Check for AG-UI events returned by tool calls.
             possible_event = result.metadata or result.content
@@ -243,5 +245,3 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
                 for item in possible_event:  # type: ignore[reportUnknownMemberType]
                     if isinstance(item, BaseEvent):  # pragma: no branch
                         yield item
-
-        # TODO (DouweM): Stream ToolCallResultEvent.content as user parts?

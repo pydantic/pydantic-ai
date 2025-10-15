@@ -1440,20 +1440,7 @@ async def test_messages() -> None:
         ),
     ]
 
-    adapter = AGUIAdapter(
-        Agent(TestModel()),
-        # TODO (DouweM): Have a convenience method so the useless args aren't necessary
-        request=RunAgentInput(
-            messages=messages,
-            thread_id='test_thread',
-            run_id='test_run',
-            state={},
-            tools=[],
-            context=[],
-            forwarded_props={},
-        ),
-    )
-    assert adapter.messages == snapshot(
+    assert AGUIAdapter.load_messages(messages) == snapshot(
         [
             ModelRequest(
                 parts=[
