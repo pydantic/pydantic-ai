@@ -2,12 +2,11 @@ from __future__ import annotations as _annotations
 
 from abc import ABC
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import Annotated, Any, Literal, Union
 
+import pydantic
+from pydantic_core import core_schema
 from typing_extensions import TypedDict
-
-if TYPE_CHECKING:
-    from .builtin_tools import AbstractBuiltinTool
 
 __all__ = (
     'AbstractBuiltinTool',
@@ -18,6 +17,8 @@ __all__ = (
     'ImageGenerationTool',
     'MemoryTool',
 )
+
+_BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
 
 
 @dataclass(kw_only=True)
@@ -31,6 +32,33 @@ class AbstractBuiltinTool(ABC):
 
     kind: str = 'unknown_builtin_tool'
     """Built-in tool identifier, this should be available on all built-in tools as a discriminator."""
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        _BUILTIN_TOOL_TYPES[cls.kind] = cls
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, _source_type: Any, handler: pydantic.GetCoreSchemaHandler
+    ) -> core_schema.CoreSchema:
+        if cls is not AbstractBuiltinTool:
+            return handler(cls)
+
+        tools = _BUILTIN_TOOL_TYPES.values()
+        if len(tools) == 1:
+            tools_type = next(iter(tools))
+        else:
+            tools_annotated = [Annotated[tool, pydantic.Tag(tool.kind)] for tool in tools]
+            tools_type = Annotated[Union[tuple(tools_annotated)], pydantic.Discriminator(cls._tool_discriminator)]  # noqa: UP007
+
+        return handler(tools_type)
+
+    @staticmethod
+    def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
+        if isinstance(tool_data, dict):
+            return tool_data.get('kind', AbstractBuiltinTool.kind)
+        else:
+            return tool_data.kind
 
 
 @dataclass(kw_only=True)
