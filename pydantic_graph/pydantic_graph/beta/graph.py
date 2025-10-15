@@ -11,7 +11,7 @@ import inspect
 import types
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Iterable, Sequence
-from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
+from contextlib import AbstractContextManager, ExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast, get_args, get_origin, overload
 
@@ -518,7 +518,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
     async def iter_graph(  # noqa C901
         self, first_task: GraphTask
     ) -> AsyncGenerator[EndMarker[OutputT] | Sequence[GraphTask], EndMarker[OutputT] | Sequence[GraphTask]]:
-        try:
+        with _unwrap_exception_groups():
             async with self.iter_stream_sender, create_task_group() as self._task_group:
                 try:
                     # Fire off the first task
@@ -649,14 +649,9 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 except GeneratorExit:
                     return
 
-        except ExceptionGroup as e:  # pyright: ignore[reportUnknownVariableType]
-            # TODO: Handle this better in some way?
-            raise e.exceptions[0]  # pyright: ignore[reportUnknownMemberType]
-
-        if not self.task_group.cancel_scope.cancel_called:
-            raise RuntimeError(  # pragma: no cover
-                'Graph run completed, but no result was produced. This is either a bug in the graph or a bug in the graph runner.'
-            )
+        raise RuntimeError(  # pragma: no cover
+            'Graph run completed, but no result was produced. This is either a bug in the graph or a bug in the graph runner.'
+        )
 
     async def _finish_task(self, task_id: TaskID, keep_cancel_scope: bool = False) -> None:
         if not keep_cancel_scope:
@@ -889,3 +884,17 @@ def _is_any_iterable(x: Any) -> TypeGuard[Iterable[Any]]:
 
 def _is_any_async_iterable(x: Any) -> TypeGuard[AsyncIterable[Any]]:
     return isinstance(x, AsyncIterable)
+
+
+@contextmanager
+def _unwrap_exception_groups():
+    # I need to use a helper function for this because I can't figure out a way to get pyright
+    # to type-check the ExceptionGroup catching in both 3.13 and 3.10 without emitting type errors in one;
+    # if I try to ignore them in one, I get unnecessary-type-ignore errors in the other
+    if TYPE_CHECKING:
+        yield
+    else:
+        try:
+            yield
+        except ExceptionGroup as e:
+            raise e.exceptions[0]
