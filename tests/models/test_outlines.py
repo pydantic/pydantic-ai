@@ -523,6 +523,22 @@ def test_output_type(llamacpp_model: OutlinesModel) -> None:
     agent = Agent(llamacpp_model, output_type=Box)
     result = agent.run_sync('Give me the dimensions of a box', model_settings=ModelSettings(max_tokens=100))
     assert isinstance(result.output, Box)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Give me the dimensions of a box',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
 
 
 @skip_if_transformers_imports_unsuccessful

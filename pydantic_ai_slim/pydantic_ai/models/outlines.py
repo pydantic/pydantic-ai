@@ -248,12 +248,12 @@ class OutlinesModel(Model):
             or model_request_parameters.output_tools
         ):
             raise UserError('Outlines does not support function tools and builtin tools yet.')
-        prompt = await self._format_prompt(messages)
         output_type = (
             JsonSchema(model_request_parameters.output_object.json_schema)
             if model_request_parameters.output_object
             else None
         )
+        prompt = await self._format_prompt(messages, output_type)
         inference_kwargs = self.format_inference_kwargs(model_settings)
         # Async is available for SgLang
         response: str
@@ -271,14 +271,18 @@ class OutlinesModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
-        if model_request_parameters.function_tools or model_request_parameters.builtin_tools:
+        if (
+            model_request_parameters.function_tools
+            or model_request_parameters.builtin_tools
+            or model_request_parameters.output_tools
+        ):
             raise UserError('Outlines does not support function tools and builtin tools yet.')
-        prompt = await self._format_prompt(messages)
         output_type = (
             JsonSchema(model_request_parameters.output_object.json_schema)
             if model_request_parameters.output_object
             else None
         )
+        prompt = await self._format_prompt(messages, output_type)
         inference_kwargs = dict(model_settings) if model_settings else {}
         # Async is available for SgLang
         if isinstance(self.model, OutlinesAsyncBaseModel):
@@ -397,9 +401,14 @@ class OutlinesModel(Model):
 
         return filtered_settings
 
-    async def _format_prompt(self, messages: list[ModelMessage]) -> Chat:  # noqa: C901
+    async def _format_prompt(self, messages: list[ModelMessage], output_type: JsonSchema | None) -> Chat:  # noqa: C901
         """Turn the model messages into an Outlines Chat instance."""
         chat = Chat()
+
+        if output_type:
+            template = self.profile.prompted_output_template
+            chat.add_system_message(template.format(schema=output_type.schema))
+
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
