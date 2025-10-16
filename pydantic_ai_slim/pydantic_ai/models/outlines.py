@@ -13,11 +13,12 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils
+from .._output import PromptedOutputSchema
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from ..exceptions import UserError
 from ..messages import (
-    BinaryImage,
+    BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FilePart,
@@ -107,7 +108,8 @@ class OutlinesModel(Model):
     def from_transformers(
         cls,
         hf_model: transformers.modeling_utils.PreTrainedModel,
-        hf_tokenizer: transformers.tokenization_utils.PreTrainedTokenizer,
+        hf_tokenizer_or_processor: transformers.tokenization_utils.PreTrainedTokenizer
+        | transformers.processing_utils.ProcessorMixin,
         *,
         provider: Literal['outlines'] | Provider[OutlinesBaseModel] = 'outlines',
         profile: ModelProfileSpec | None = None,
@@ -118,14 +120,16 @@ class OutlinesModel(Model):
         Args:
             hf_model: The Hugging Face PreTrainedModel or any model that is compatible with the
                 `transformers` API.
-            hf_tokenizer: The Hugging Face PreTrainedTokenizer or any tokenizer that is compatible with
-                the `transformers` API.
+            hf_tokenizer_or_processor: Either a HuggingFace `PreTrainedTokenizer` or any tokenizer that is compatible
+                with the `transformers` API, or a HuggingFace processor inheriting from `ProcessorMixin`. If a
+                tokenizer is provided, a regular model will be used, while if you provide a processor, it will be a
+                multimodal model.
             provider: The provider to use for OutlinesModel. Can be either the string 'outlines' or an
                 instance of `Provider[OutlinesBaseModel]`. If not provided, the other parameters will be used.
             profile: The model profile to use. Defaults to a profile picked by the provider.
             settings: Default model settings for this model instance.
         """
-        outlines_model: OutlinesBaseModel = from_transformers(hf_model, hf_tokenizer)
+        outlines_model: OutlinesBaseModel = from_transformers(hf_model, hf_tokenizer_or_processor)
         return cls(outlines_model, provider=provider, profile=profile, settings=settings)
 
     @classmethod
@@ -248,12 +252,15 @@ class OutlinesModel(Model):
             or model_request_parameters.output_tools
         ):
             raise UserError('Outlines does not support function tools and builtin tools yet.')
-        output_type = (
-            JsonSchema(model_request_parameters.output_object.json_schema)
-            if model_request_parameters.output_object
-            else None
-        )
-        prompt = await self._format_prompt(messages, output_type)
+        if model_request_parameters.output_object:
+            instructions = PromptedOutputSchema.create_instructions(
+                self.profile.prompted_output_template, model_request_parameters.output_object
+            )
+            output_type = JsonSchema(model_request_parameters.output_object.json_schema)
+        else:
+            instructions = None
+            output_type = None
+        prompt = await self._format_prompt(messages, instructions)
         inference_kwargs = self.format_inference_kwargs(model_settings)
         # Async is available for SgLang
         response: str
@@ -277,12 +284,15 @@ class OutlinesModel(Model):
             or model_request_parameters.output_tools
         ):
             raise UserError('Outlines does not support function tools and builtin tools yet.')
-        output_type = (
-            JsonSchema(model_request_parameters.output_object.json_schema)
-            if model_request_parameters.output_object
-            else None
-        )
-        prompt = await self._format_prompt(messages, output_type)
+        if model_request_parameters.output_object:
+            instructions = PromptedOutputSchema.create_instructions(
+                self.profile.prompted_output_template, model_request_parameters.output_object
+            )
+            output_type = JsonSchema(model_request_parameters.output_object.json_schema)
+        else:
+            instructions = None
+            output_type = None
+        prompt = await self._format_prompt(messages, instructions)
         inference_kwargs = dict(model_settings) if model_settings else {}
         # Async is available for SgLang
         if isinstance(self.model, OutlinesAsyncBaseModel):
@@ -401,13 +411,12 @@ class OutlinesModel(Model):
 
         return filtered_settings
 
-    async def _format_prompt(self, messages: list[ModelMessage], output_type: JsonSchema | None) -> Chat:  # noqa: C901
+    async def _format_prompt(self, messages: list[ModelMessage], instructions: str | None) -> Chat:  # noqa: C901
         """Turn the model messages into an Outlines Chat instance."""
         chat = Chat()
 
-        if output_type:
-            template = self.profile.prompted_output_template
-            chat.add_system_message(template.format(schema=output_type.schema))
+        if instructions:
+            chat.add_system_message(instructions)
 
         for message in messages:
             if isinstance(message, ModelRequest):
@@ -433,7 +442,7 @@ class OutlinesModel(Model):
                                             image_content['data'], image_content['data_type']
                                         )
                                         outlines_input.append(Image(image))
-                                    elif isinstance(item, BinaryImage):
+                                    elif isinstance(item, BinaryContent) and item.is_image:
                                         image = self._create_PIL_image(item.data, item.media_type)
                                         outlines_input.append(Image(image))
                                     else:
@@ -464,7 +473,7 @@ class OutlinesModel(Model):
                     elif isinstance(part, ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart):
                         raise UserError('Tool calls are not supported for Outlines models yet.')
                     elif isinstance(part, FilePart):
-                        if isinstance(part.content, BinaryImage):
+                        if isinstance(part.content, BinaryContent) and part.content.is_image:
                             image = self._create_PIL_image(part.content.data, part.content.media_type)
                             image_parts.append(Image(image))
                         else:
@@ -473,7 +482,7 @@ class OutlinesModel(Model):
                             )
                     else:
                         assert_never(part)
-                if len(text_parts) == 1 or len(image_parts) == 0:
+                if len(text_parts) == 1 and len(image_parts) == 0:
                     chat.add_assistant_message(text_parts[0])
                 else:
                     chat.add_assistant_message([*text_parts, *image_parts])

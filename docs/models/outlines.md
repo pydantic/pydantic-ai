@@ -99,7 +99,7 @@ model = OutlinesModel.from_mlxlm(
 
 #### SGLang
 
-```
+```python {test="skip"}
 from pydantic_ai.models.outlines import OutlinesModel
 
 model = OutlinesModel.from_sglang(
@@ -125,7 +125,7 @@ model = OutlinesModel.from_vllm_offline(
 
 Once you have initialized an `OutlinesModel`, you can use it with an Agent as with all other Pydantic AI models.
 
-As Outlines is focused on structured output, this provider supports the `output_type` component through the `NativeOutput` format.
+As Outlines is focused on structured output, this provider supports the `output_type` component through the [`NativeOutput`][pydantic_ai.outputs.NativeOutput] format. There is not need to include information on the required output format in your prompt, instructions based on the `output_type` will be included automatically.
 
 ```python {test="skip"}
 from pydantic import BaseModel
@@ -157,3 +157,86 @@ print(result.output) # width=20 height=30 depth=40 units='cm'
 ```
 
 Outlines does not support tools yet, but support for that feature will be added in the near future.
+
+## Multimodal models
+
+If the model you are running through Outlines and the provider selected supports it, you can include images in your prompts using [`ImageUrl`][pydantic_ai.messages.ImageUrl] or [`BinaryImage`][pydantic_ai.messages.BinaryImage]. In that case, the prompt you provide when running the agent should be a list containing a string and one or several images.
+
+This feature is supported in Outlines for the `SGLang` and `Transformers` models. If you want to run a multimodal model through `transformers`, you must provide a processor instead of a tokenizer as the second argument when initializing the model with the `OutlinesModel.from_transformers` method.
+
+```python {test="skip"}
+from typing import Literal
+
+import torch
+from pydantic import BaseModel, Field
+from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
+
+from pydantic_ai import Agent, ModelSettings
+from pydantic_ai.messages import ImageUrl
+from pydantic_ai.models.outlines import OutlinesModel
+
+MODEL_NAME = 'Qwen/Qwen2-VL-7B-Instruct'
+IMAGE_PATH = 'https://raw.githubusercontent.com/dottxt-ai/outlines/refs/heads/main/docs/examples/images/trader-joes-receipt.jpg'
+PROMPT = """
+You are an expert at extracting information from receipts.
+Please extract the information from the receipt. Be as detailed as possible, do not miss any information.
+"""
+
+class Item(BaseModel):
+    name: str
+    quantity: int | None
+    price_per_unit: float | None
+    total_price: float | None
+
+class ReceiptSummary(BaseModel):
+    store_name: str
+    store_address: str
+    store_number: int | None
+    items: list[Item]
+    tax: float | None
+    total: float | None
+    date: str | None = Field(pattern=r'\d{4}-\d{2}-\d{2}', description='Date in the format YYYY-MM-DD')
+    payment_method: Literal['cash', 'credit', 'debit', 'check', 'other']
+
+tf_model = Qwen2VLForConditionalGeneration.from_pretrained(
+    MODEL_NAME,
+    device_map='auto',
+    dtype=torch.bfloat16
+)
+tf_processor = AutoProcessor.from_pretrained(
+    MODEL_NAME,
+    device_map='auto'
+)
+model = OutlinesModel.from_transformers(tf_model, tf_processor)
+
+agent = Agent(model, output_type=ReceiptSummary)
+
+result = agent.run_sync(
+    [PROMPT, ImageUrl(IMAGE_PATH)],
+    model_settings=ModelSettings(extra_body={'max_new_tokens': 1000})
+)
+print(result.output)
+# store_name="Trader Joe's"
+# store_address='401 Bay Street, San Francisco, CA 94133'
+# store_number=0
+# items=[
+#   Item(name='BANANA EACH', quantity=7, price_per_unit=0.23, total_price=1.61),
+#   Item(name='BAREBELLS CHOCOLATE DOUG',quantity=1, price_per_unit=2.29, total_price=2.29),
+#   Item(name='BAREBELLS CREAMY CRISP', quantity=1, price_per_unit=2.29, total_price=2.29),
+#   Item(name='BAREBELLS CHOCOLATE DOUG', quantity=1, price_per_unit=2.29, total_price=2.29),
+#   Item(name='BAREBELLS CARAMEL CASHEW', quantity=2, price_per_unit=2.29, total_price=4.58),
+#   Item(name='BAREBELLS CREAMY CRISP', quantity=1, price_per_unit=2.29, total_price=2.29),
+#   Item(name='T SPINDRIFT ORANGE MANGO 8', quantity=1, price_per_unit=7.49, total_price=7.49),
+#   Item(name='T Bottle Deposit', quantity=8, price_per_unit=0.05, total_price=0.4),
+#   Item(name='MILK ORGANIC GALLON WHOL', quantity=1, price_per_unit=6.79, total_price=6.79),
+#   Item(name='CLASSIC GREEK SALAD', quantity=1, price_per_unit=3.49, total_price=3.49),
+#   Item(name='COBB SALAD', quantity=1, price_per_unit=5.99, total_price=5.99),
+#   Item(name='PEPPER BELL RED XL EACH', quantity=1, price_per_unit=1.29, total_price=1.29),
+#   Item(name='BAG FEE.', quantity=1, price_per_unit=0.25, total_price=0.25),
+#   Item(name='BAG FEE.', quantity=1, price_per_unit=0.25, total_price=0.25)]
+# tax=7.89
+# total=41.98
+# date='2023-04-01'
+# payment_method='credit'
+
+```

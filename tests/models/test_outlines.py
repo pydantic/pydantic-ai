@@ -127,7 +127,7 @@ def transformers_model() -> OutlinesModel:
     chat_template = '{% for message in messages %}{{ message.role }}: {{ message.content }}{% endfor %}'
     hf_tokenizer.chat_template = chat_template
     outlines_model = outlines.models.transformers.from_transformers(
-        hf_model,
+        hf_model,  # type: ignore[reportUnknownArgumentType]
         hf_tokenizer,  # type: ignore
     )
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
