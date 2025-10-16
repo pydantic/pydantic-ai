@@ -20,7 +20,7 @@ interactions:
         - text: Generate two separate images of axolotls.
         role: user
       generationConfig: {}
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent
   response:
     headers:
       alt-svc:
@@ -50,7 +50,7 @@ interactions:
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: gemini-2.5-flash-image-preview
+      modelVersion: gemini-2.5-flash-image
       responseId: R4DdaO-WON7Qz7IPhNrg0QU
       usageMetadata:
         candidatesTokenCount: 1303
