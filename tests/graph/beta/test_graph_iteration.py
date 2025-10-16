@@ -450,12 +450,13 @@ async def test_iter_turn_tasks_into_end_marker():
         while True:
             try:
                 event = await run.next()
-                if isinstance(event, list) and not early_exit_done:
-                    # Check if we're about to execute step2
-                    if any(task.node_id == NodeID('step2') for task in event):
-                        # Override with an EndMarker to terminate early
-                        early_exit_done = True
-                        await run.next(EndMarker('early_exit'))
+                assert isinstance(event, list)
+                assert not early_exit_done
+                # Check if we're about to execute step2
+                assert any(task.node_id == NodeID('step2') for task in event)
+                # Override with an EndMarker to terminate early
+                early_exit_done = True
+                await run.next(EndMarker('early_exit'))
             except StopAsyncIteration:
                 break
 
