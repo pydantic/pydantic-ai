@@ -3343,7 +3343,7 @@ I'll use the search_repositories function with a query for "pydantic-ai". To be 
                     ),
                     BuiltinToolCallPart(
                         tool_name='mcp_server:mcp_call_tool',
-                        args='{"input":{},"name":"search_repositories","server_name":"test-server"}{"query": "pydantic-ai in:name", "minimal_output": false}',
+                        args='{"input":{},"name":"search_repositories","server_name":"test-server","query": "pydantic-ai in:name", "minimal_output": false}',
                         tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM',
                         provider_name='anthropic',
                     ),
@@ -3625,7 +3625,7 @@ It's actively\
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='mcp_server:mcp_call_tool',
-                    args='{"input":{},"name":"search_repositories","server_name":"test-server"}{"query": "pydantic-ai in:name", "minimal_output": false}',
+                    args='{"input":{},"name":"search_repositories","server_name":"test-server","query": "pydantic-ai in:name", "minimal_output": false}',
                     tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM',
                     provider_name='anthropic',
                 )
