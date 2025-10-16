@@ -29,6 +29,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [Cerebras](openai.md#cerebras)
 - [LiteLLM](openai.md#litellm)
 - [Nebius AI Studio](openai.md#nebius-ai-studio)
+- [OVHcloud AI Endpoints](openai.md#ovhcloud-ai-endpoints)
 
 Pydantic AI also comes with [`TestModel`](../api/models/test.md) and [`FunctionModel`](../api/models/function.md)
 for testing and development.
