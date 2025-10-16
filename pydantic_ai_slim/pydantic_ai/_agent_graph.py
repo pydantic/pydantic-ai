@@ -710,6 +710,18 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     __repr__ = dataclasses_no_defaults_repr
 
 
+@dataclasses.dataclass
+class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
+    """A node that immediately ends the graph run after a streaming response produced a final result."""
+
+    final_result: result.FinalResult[NodeRunEndT]
+
+    async def run(
+        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
+    ) -> End[result.FinalResult[NodeRunEndT]]:
+        return End(self.final_result)
+
+
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:
     """Build a `RunContext` object from the current agent graph run context."""
     return RunContext[DepsT](
@@ -795,16 +807,14 @@ async def process_tool_calls(  # noqa: C901
     # Then, we handle function tool calls
     calls_to_run: list[_messages.ToolCallPart] = []
     if final_result and ctx.deps.end_strategy == 'early':
-        output_parts.extend(
-            [
+        for call in tool_calls_by_kind['function']:
+            output_parts.append(
                 _messages.ToolReturnPart(
                     tool_name=call.tool_name,
                     content='Tool not executed - a final result was already processed.',
                     tool_call_id=call.tool_call_id,
                 )
-                for call in tool_calls_by_kind['function']
-            ]
-        )
+            )
     else:
         calls_to_run.extend(tool_calls_by_kind['function'])
 
@@ -850,14 +860,17 @@ async def process_tool_calls(  # noqa: C901
     if tool_call_results is None:
         calls = [*tool_calls_by_kind['external'], *tool_calls_by_kind['unapproved']]
         if final_result:
-            for call in calls:
-                output_parts.append(
-                    _messages.ToolReturnPart(
-                        tool_name=call.tool_name,
-                        content='Tool not executed - a final result was already processed.',
-                        tool_call_id=call.tool_call_id,
+            # If the run was already determined to end on deferred tool calls,
+            # we shouldn't insert return parts as the deferred tools will still get a real result.
+            if not isinstance(final_result.output, _output.DeferredToolRequests):
+                for call in calls:
+                    output_parts.append(
+                        _messages.ToolReturnPart(
+                            tool_name=call.tool_name,
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=call.tool_call_id,
+                        )
                     )
-                )
         elif calls:
             deferred_calls['external'].extend(tool_calls_by_kind['external'])
             deferred_calls['unapproved'].extend(tool_calls_by_kind['unapproved'])
@@ -1122,6 +1135,7 @@ def build_agent_graph(
         UserPromptNode[DepsT],
         ModelRequestNode[DepsT],
         CallToolsNode[DepsT],
+        SetFinalResult[DepsT],
     )
     graph = Graph[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[OutputT]](
         nodes=nodes,

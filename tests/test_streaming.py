@@ -18,6 +18,7 @@ from pydantic_ai import (
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
+    ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -812,6 +813,182 @@ async def test_early_strategy_with_final_result_in_middle():
                         timestamp=IsNow(tz=datetime.timezone.utc),
                         part_kind='retry-prompt',
                     ),
+                ],
+                kind='request',
+            ),
+        ]
+    )
+
+
+async def test_early_strategy_with_external_tool_call():
+    tool_called: list[str] = []
+
+    async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        assert info.output_tools is not None
+        yield {1: DeltaToolCall('external_tool')}
+        yield {2: DeltaToolCall('final_result', '{"value": "final"}')}
+        yield {3: DeltaToolCall('regular_tool', '{"x": 1}')}
+
+    agent = Agent(
+        FunctionModel(stream_function=sf),
+        output_type=[OutputType, DeferredToolRequests],
+        toolsets=[
+            ExternalToolset(
+                tool_defs=[
+                    ToolDefinition(
+                        name='external_tool',
+                        kind='external',
+                    )
+                ]
+            )
+        ],
+        end_strategy='early',
+    )
+
+    @agent.tool_plain
+    def regular_tool(x: int) -> int:  # pragma: no cover
+        """A regular tool that should not be called."""
+        tool_called.append('regular_tool')
+        return x
+
+    async with agent.run_stream('test early strategy with external tool call') as result:
+        response = await result.get_output()
+        assert response == snapshot(
+            DeferredToolRequests(
+                calls=[
+                    ToolCallPart(
+                        tool_name='external_tool',
+                        tool_call_id=IsStr(),
+                    )
+                ]
+            )
+        )
+        messages = result.all_messages()
+
+    # Verify no tools were called
+    assert tool_called == []
+
+    # Verify we got appropriate tool returns
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='test early strategy with external tool call',
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        part_kind='user-prompt',
+                    )
+                ],
+                kind='request',
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='external_tool', tool_call_id=IsStr()),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"value": "final"}',
+                        tool_call_id=IsStr(),
+                    ),
+                    ToolCallPart(
+                        tool_name='regular_tool',
+                        args='{"x": 1}',
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=50, output_tokens=7),
+                model_name='function::sf',
+                timestamp=IsNow(tz=datetime.timezone.utc),
+                kind='response',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Output tool not used - a final result was already processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                    ),
+                    ToolReturnPart(
+                        tool_name='regular_tool',
+                        content='Tool not executed - a final result was already processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                    ),
+                ],
+                kind='request',
+            ),
+        ]
+    )
+
+
+async def test_early_strategy_with_deferred_tool_call():
+    tool_called: list[str] = []
+
+    async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        assert info.output_tools is not None
+        yield {1: DeltaToolCall('deferred_tool')}
+        yield {2: DeltaToolCall('regular_tool', '{"x": 1}')}
+
+    agent = Agent(
+        FunctionModel(stream_function=sf),
+        output_type=[str, DeferredToolRequests],
+        end_strategy='early',
+    )
+
+    @agent.tool_plain
+    def deferred_tool() -> int:
+        raise CallDeferred
+
+    @agent.tool_plain
+    def regular_tool(x: int) -> int:
+        tool_called.append('regular_tool')
+        return x
+
+    async with agent.run_stream('test early strategy with external tool call') as result:
+        response = await result.get_output()
+        assert response == snapshot(
+            DeferredToolRequests(calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())])
+        )
+        messages = result.all_messages()
+
+    # Verify no tools were called
+    assert tool_called == ['regular_tool']
+
+    # Verify we got appropriate tool returns
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='test early strategy with external tool call',
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                        part_kind='user-prompt',
+                    )
+                ],
+                kind='request',
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr()),
+                    ToolCallPart(
+                        tool_name='regular_tool',
+                        args='{"x": 1}',
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=50, output_tokens=3),
+                model_name='function::sf',
+                timestamp=IsNow(tz=datetime.timezone.utc),
+                kind='response',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='regular_tool',
+                        content=1,
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=datetime.timezone.utc),
+                    )
                 ],
                 kind='request',
             ),
