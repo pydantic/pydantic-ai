@@ -543,7 +543,7 @@ class AnthropicModel(Model):
                                     input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
-                            elif response_part.tool_name == CodeExecutionTool.kind:  # pragma: no branch
+                            elif response_part.tool_name == CodeExecutionTool.kind:
                                 server_tool_use_block_param = BetaServerToolUseBlockParam(
                                     id=tool_use_id,
                                     type='server_tool_use',
@@ -551,9 +551,8 @@ class AnthropicModel(Model):
                                     input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
-                            elif response_part.tool_name == MCPServerTool.CALL_TOOL_KIND and isinstance(
-                                response_part, BuiltinMCPToolCallPart
-                            ):  # pragma: no branch
+                            elif response_part.tool_name == MCPServerTool.CALL_TOOL_KIND:  # pragma: no branch
+                                response_part = cast(BuiltinMCPToolCallPart, response_part)
                                 mcp_tool_use_block_param = BetaMCPToolUseBlockParam(
                                     id=tool_use_id,
                                     type='mcp_tool_use',

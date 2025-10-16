@@ -1446,7 +1446,7 @@ class OpenAIResponsesModel(Model):
                                     type='web_search_call',
                                 )
                                 openai_messages.append(web_search_item)
-                            elif item.tool_name == ImageGenerationTool.kind and item.tool_call_id:  # pragma: no branch
+                            elif item.tool_name == ImageGenerationTool.kind and item.tool_call_id:
                                 # The cast is necessary because of https://github.com/openai/openai-python/issues/2648
                                 image_generation_item = cast(
                                     responses.response_input_item_param.ImageGenerationCall,
@@ -1509,7 +1509,7 @@ class OpenAIResponsesModel(Model):
                             elif item.tool_name == MCPServerTool.LIST_TOOLS_KIND:
                                 # MCP list result does not need to be sent back, just the fields off of `BuiltinToolCallPart`.
                                 pass
-                            elif item.tool_name == MCPServerTool.CALL_TOOL_KIND:
+                            elif item.tool_name == MCPServerTool.CALL_TOOL_KIND:  # pragma: no branch
                                 # MCP call result does not need to be sent back, just the fields off of `BuiltinToolCallPart`.
                                 pass
                     elif isinstance(item, FilePart):
