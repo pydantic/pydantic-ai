@@ -278,3 +278,196 @@ async def test_iter_state_inspection():
 
     # State should have evolved during execution
     assert state_snapshots[-1] == 2  # (0 + 1) * 2
+
+
+async def test_iter_with_async_iterable_map():
+    """Test iteration with map using an async iterable."""
+    from collections.abc import AsyncIterator
+
+    g = GraphBuilder(state_type=IterState, output_type=list[int])
+
+    @g.step_async_iterable
+    async def generate_async(ctx: StepContext[IterState, None, None]) -> AsyncIterator[int]:
+        for i in [1, 2, 3, 4]:
+            yield i
+
+    @g.step
+    async def process(ctx: StepContext[IterState, None, int]) -> int:
+        ctx.state.counter += 1
+        return ctx.inputs * 10
+
+    collect = g.join(reduce_list_append, initial_factory=list[int])
+
+    g.add(
+        g.edge_from(g.start_node).to(generate_async),
+        g.edge_from(generate_async).map().to(process),
+        g.edge_from(process).to(collect),
+        g.edge_from(collect).to(g.end_node),
+    )
+
+    graph = g.build()
+    state = IterState()
+
+    events: list[Any] = []
+    async with graph.iter(state=state) as run:
+        async for event in run:
+            events.append(event)
+
+    assert isinstance(events[-1], EndMarker)
+    result = events[-1].value  # type: ignore
+    assert sorted(result) == [10, 20, 30, 40]  # type: ignore
+    assert state.counter == 4
+
+
+async def test_iter_filter_tasks_during_iteration():
+    """Test removing tasks from the list during iteration (e.g., filter items > 3)."""
+    g = GraphBuilder(state_type=IterState, output_type=list[int])
+
+    @g.step
+    async def generate(ctx: StepContext[IterState, None, None]) -> list[int]:
+        return [1, 2, 3, 4, 5]
+
+    @g.step
+    async def process(ctx: StepContext[IterState, None, int]) -> int:
+        ctx.state.counter += 1
+        return ctx.inputs * 10
+
+    collect = g.join(reduce_list_append, initial_factory=list[int])
+
+    g.add(
+        g.edge_from(g.start_node).to(generate),
+        g.edge_from(generate).map().to(process),
+        g.edge_from(process).to(collect),
+        g.edge_from(collect).to(g.end_node),
+    )
+
+    graph = g.build()
+    state = IterState()
+
+    async with graph.iter(state=state) as run:
+        while True:
+            try:
+                event = await run.next()
+                if isinstance(event, list):
+                    # Filter out tasks where the node is 'process' and input is > 3
+                    filtered_tasks = [
+                        task
+                        for task in event
+                        if not (task.node_id == NodeID('process') and isinstance(task.inputs, int) and task.inputs > 3)
+                    ]
+                    if filtered_tasks != event:
+                        # Override with filtered tasks
+                        event = await run.next(filtered_tasks)
+                if isinstance(event, EndMarker):
+                    break
+            except StopAsyncIteration:
+                break
+
+    # Only items <= 3 should have been processed
+    result = run.output
+    assert result is not None
+    assert sorted(result) == [10, 20, 30]
+    assert state.counter == 3
+
+
+async def test_iter_turn_end_marker_into_tasks():
+    """Test overriding an EndMarker to continue with more tasks."""
+    g = GraphBuilder(state_type=IterState, output_type=int)
+
+    @g.step
+    async def first_step(ctx: StepContext[IterState, None, None]) -> int:
+        ctx.state.counter += 1
+        return 10
+
+    @g.step
+    async def second_step(ctx: StepContext[IterState, None, int]) -> int:
+        ctx.state.counter += 1
+        return ctx.inputs * 2
+
+    g.add(
+        g.edge_from(g.start_node).to(first_step),
+        g.edge_from(first_step).to(g.end_node),
+        # We add second_step to the graph with a transition to the end; we'll manually create tasks for it below
+        g.edge_from(second_step).to(g.end_node),
+    )
+
+    graph = g.build()
+    state = IterState()
+
+    override_done = False
+    async with graph.iter(state=state) as run:
+        while True:
+            try:
+                event = await run.next()
+                if isinstance(event, EndMarker) and not override_done:
+                    # Instead of ending, create a new task
+                    # Get the fork_stack from the EndMarker's source
+                    fork_stack = run.next_task[0].fork_stack if isinstance(run.next_task, list) else ()
+
+                    new_task = GraphTask(
+                        node_id=NodeID('second_step'),
+                        inputs=event.value,
+                        fork_stack=fork_stack,
+                    )
+
+                    override_done = True
+                    event = await run.next([new_task])
+                if isinstance(event, EndMarker) and override_done:
+                    break
+            except StopAsyncIteration:
+                break
+
+    result = run.output
+    assert result == 20  # 10 * 2
+    assert state.counter == 2
+
+
+async def test_iter_turn_tasks_into_end_marker():
+    """Test overriding a sequence of tasks with an EndMarker to terminate early."""
+    g = GraphBuilder(state_type=IterState, output_type=str)
+
+    @g.step
+    async def step1(ctx: StepContext[IterState, None, None]) -> int:
+        ctx.state.counter += 1
+        return 10
+
+    @g.step
+    async def step2(ctx: StepContext[IterState, None, int]) -> int:  # pragma: no cover
+        ctx.state.counter += 1
+        return ctx.inputs * 2
+
+    @g.step
+    async def step3(ctx: StepContext[IterState, None, int]) -> str:  # pragma: no cover
+        ctx.state.counter += 1
+        return f'result: {ctx.inputs}'
+
+    g.add(
+        g.edge_from(g.start_node).to(step1),
+        g.edge_from(step1).to(step2),
+        g.edge_from(step2).to(step3),
+        g.edge_from(step3).to(g.end_node),
+    )
+
+    graph = g.build()
+    state = IterState()
+
+    early_exit_done = False
+    async with graph.iter(state=state) as run:
+        while True:
+            try:
+                event = await run.next()
+                if isinstance(event, list) and not early_exit_done:
+                    # Check if we're about to execute step2
+                    if any(task.node_id == NodeID('step2') for task in event):
+                        # Override with an EndMarker to terminate early
+                        early_exit_done = True
+                        event = await run.next(EndMarker('early_exit'))
+                if isinstance(event, EndMarker):
+                    break
+            except StopAsyncIteration:
+                break
+
+    result = run.output
+    assert result == 'early_exit'
+    # Only step1 should have run
+    assert state.counter == 1

@@ -205,12 +205,11 @@ async def test_reducer_stop_iteration():
 
         def reduce(ctx: ReducerContext[EarlyStopState, object], current: int, inputs: int) -> int:
             nonlocal count
-            if not ctx.cancelled_sibling_tasks:
-                count += 1
-                current += inputs
-                if count >= 2:
-                    ctx.state.stopped = True  # update the state so we can assert on it later
-                    ctx.cancel_sibling_tasks()
+            count += 1
+            current += inputs
+            if count >= 2:
+                ctx.state.stopped = True  # update the state so we can assert on it later
+                ctx.cancel_sibling_tasks()
             return current
 
         return reduce

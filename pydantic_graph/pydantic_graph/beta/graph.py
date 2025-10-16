@@ -512,7 +512,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
     @property
     def task_group(self) -> TaskGroup:
         if self._task_group is None:
-            raise RuntimeError("This graph iterator hasn't been started")
+            raise RuntimeError("This graph iterator hasn't been started")  # pragma: no cover
         return self._task_group
 
     async def iter_graph(  # noqa C901
@@ -528,7 +528,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                     # Handle task results
                     async with self.iter_stream_receiver:
                         while self.active_tasks or self.active_reducers:
-                            async for task_result in self.iter_stream_receiver:
+                            async for task_result in self.iter_stream_receiver:  # pragma: no branch
                                 # If we encounter a mock task, add it to the active tasks to ensure we don't proceed until everything downstream is handled
                                 if (
                                     not task_result.source_is_finished
@@ -653,11 +653,10 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
             'Graph run completed, but no result was produced. This is either a bug in the graph or a bug in the graph runner.'
         )
 
-    async def _finish_task(self, task_id: TaskID, keep_cancel_scope: bool = False) -> None:
-        if not keep_cancel_scope:
-            scope = self.cancel_scopes.pop(task_id, None)
-            if scope is not None:
-                scope.cancel()
+    async def _finish_task(self, task_id: TaskID) -> None:
+        scope = self.cancel_scopes.pop(task_id, None)
+        if scope is not None:
+            scope.cancel()
         self.active_tasks.pop(task_id, None)
 
     def _handle_execution_request(self, request: Sequence[GraphTask]) -> None:

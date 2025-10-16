@@ -7,7 +7,7 @@ the v1 and v2 graph execution systems.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable
+from collections.abc import AsyncIterator, Awaitable
 from dataclasses import dataclass
 from typing import Any, Generic, Protocol, cast, get_origin, overload
 
@@ -88,6 +88,33 @@ class StepFunction(Protocol[StateT, DepsT, InputT, OutputT]):
             An awaitable that resolves to the step's output
         """
         raise NotImplementedError
+
+
+class StepAsyncIteratorFunction(Protocol[StateT, DepsT, InputT, OutputT]):
+    """Protocol for step functions that can be executed in the graph.
+
+    Step functions are async callables that receive a step context and return
+    a result. This protocol enables serialization and deserialization of step
+    calls similar to how evaluators work.
+
+    Type Parameters:
+        StateT: The type of the graph state
+        DepsT: The type of the dependencies
+        InputT: The type of the input data
+        OutputT: The type of the output data
+    """
+
+    def __call__(self, ctx: StepContext[StateT, DepsT, InputT]) -> AsyncIterator[OutputT]:
+        """Execute the step function with the given context.
+
+        Args:
+            ctx: The step context containing state, dependencies, and inputs
+
+        Returns:
+            An awaitable that resolves to the step's output
+        """
+        raise NotImplementedError
+        yield
 
 
 AnyStepFunction = StepFunction[Any, Any, Any, Any]

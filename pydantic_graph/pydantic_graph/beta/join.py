@@ -143,8 +143,6 @@ class ReduceFirstValue(Generic[T]):
 
     def __call__(self, ctx: ReducerContext[object, object], current: T, inputs: T) -> T:
         """The reducer function."""
-        if ctx.cancelled_sibling_tasks:
-            return current
         ctx.cancel_sibling_tasks()
         return inputs
 

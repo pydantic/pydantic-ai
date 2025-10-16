@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import inspect
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import AsyncIterable, Callable, Iterable
 from dataclasses import dataclass, replace
 from types import NoneType
 from typing import Any, Generic, Literal, cast, get_origin, get_type_hints, overload
@@ -44,7 +44,7 @@ from pydantic_graph.beta.paths import (
     Path,
     PathBuilder,
 )
-from pydantic_graph.beta.step import NodeStep, Step, StepFunction, StepNode
+from pydantic_graph.beta.step import NodeStep, Step, StepAsyncIteratorFunction, StepContext, StepFunction, StepNode
 from pydantic_graph.beta.util import TypeOrTypeExpression, get_callable_name, unpack_type_expression
 from pydantic_graph.exceptions import GraphBuildingError
 from pydantic_graph.nodes import BaseNode, End
@@ -162,59 +162,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         return self._end_node
 
     @overload
-    def _step(
-        self,
-        *,
-        node_id: str | None = None,
-        label: str | None = None,
-    ) -> Callable[[StepFunction[StateT, DepsT, InputT, OutputT]], Step[StateT, DepsT, InputT, OutputT]]: ...
-    @overload
-    def _step(
-        self,
-        call: StepFunction[StateT, DepsT, InputT, OutputT],
-        *,
-        node_id: str | None = None,
-        label: str | None = None,
-    ) -> Step[StateT, DepsT, InputT, OutputT]: ...
-    def _step(
-        self,
-        call: StepFunction[StateT, DepsT, InputT, OutputT] | None = None,
-        *,
-        node_id: str | None = None,
-        label: str | None = None,
-    ) -> (
-        Step[StateT, DepsT, InputT, OutputT]
-        | Callable[[StepFunction[StateT, DepsT, InputT, OutputT]], Step[StateT, DepsT, InputT, OutputT]]
-    ):
-        """Create a step from a step function (internal implementation).
-
-        This internal method handles the actual step creation logic and
-        automatic edge inference from type hints.
-
-        Args:
-            call: The step function to wrap
-            node_id: Optional ID for the node
-            label: Optional human-readable label
-
-        Returns:
-            Either a Step instance or a decorator function
-        """
-        if call is None:
-
-            def decorator(
-                func: StepFunction[StateT, DepsT, InputT, OutputT],
-            ) -> Step[StateT, DepsT, InputT, OutputT]:
-                return self._step(call=func, node_id=node_id, label=label)
-
-            return decorator
-
-        node_id = node_id or get_callable_name(call)
-
-        step = Step[StateT, DepsT, InputT, OutputT](id=NodeID(node_id), call=call, label=label)
-
-        return step
-
-    @overload
     def step(
         self,
         *,
@@ -253,9 +200,91 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             Either a Step instance or a decorator function
         """
         if call is None:
-            return self._step(node_id=node_id, label=label)
-        else:
-            return self._step(call=call, node_id=node_id, label=label)
+
+            def decorator(
+                func: StepFunction[StateT, DepsT, InputT, OutputT],
+            ) -> Step[StateT, DepsT, InputT, OutputT]:
+                return self.step(call=func, node_id=node_id, label=label)
+
+            return decorator
+
+        node_id = node_id or get_callable_name(call)
+
+        step = Step[StateT, DepsT, InputT, OutputT](id=NodeID(node_id), call=call, label=label)
+
+        return step
+
+    @overload
+    def step_async_iterable(
+        self,
+        *,
+        node_id: str | None = None,
+        label: str | None = None,
+    ) -> Callable[
+        [StepAsyncIteratorFunction[StateT, DepsT, InputT, OutputT]], Step[StateT, DepsT, InputT, AsyncIterable[OutputT]]
+    ]: ...
+    @overload
+    def step_async_iterable(
+        self,
+        call: StepAsyncIteratorFunction[StateT, DepsT, InputT, OutputT],
+        *,
+        node_id: str | None = None,
+        label: str | None = None,
+    ) -> Step[StateT, DepsT, InputT, AsyncIterable[OutputT]]: ...
+    @overload
+    def step_async_iterable(
+        self,
+        call: StepAsyncIteratorFunction[StateT, DepsT, InputT, OutputT] | None = None,
+        *,
+        node_id: str | None = None,
+        label: str | None = None,
+    ) -> (
+        Step[StateT, DepsT, InputT, AsyncIterable[OutputT]]
+        | Callable[
+            [StepAsyncIteratorFunction[StateT, DepsT, InputT, OutputT]],
+            Step[StateT, DepsT, InputT, AsyncIterable[OutputT]],
+        ]
+    ): ...
+    def step_async_iterable(
+        self,
+        call: StepAsyncIteratorFunction[StateT, DepsT, InputT, OutputT] | None = None,
+        *,
+        node_id: str | None = None,
+        label: str | None = None,
+    ) -> (
+        Step[StateT, DepsT, InputT, AsyncIterable[OutputT]]
+        | Callable[
+            [StepAsyncIteratorFunction[StateT, DepsT, InputT, OutputT]],
+            Step[StateT, DepsT, InputT, AsyncIterable[OutputT]],
+        ]
+    ):
+        """Create a step from a step function.
+
+        This method can be used as a decorator or called directly to create
+        a step node from an async function.
+
+        Args:
+            call: The step function to wrap
+            node_id: Optional ID for the node
+            label: Optional human-readable label
+
+        Returns:
+            Either a Step instance or a decorator function
+        """
+        if call is None:
+
+            def decorator(
+                func: StepAsyncIteratorFunction[StateT, DepsT, InputT, OutputT],
+            ) -> Step[StateT, DepsT, InputT, AsyncIterable[OutputT]]:
+                return self.step_async_iterable(call=func, node_id=node_id, label=label)
+
+            return decorator
+
+        # We need to wrap the call so that we can call `await` even though the result is an async iterator
+        async def wrapper(ctx: StepContext[StateT, DepsT, InputT]):
+            return call(ctx)
+
+        return self.step(call=wrapper, node_id=node_id, label=label)
 
     @overload
     def join(
