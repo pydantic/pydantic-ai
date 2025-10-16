@@ -1578,7 +1578,7 @@ class ToolCallPartDelta:
             if isinstance(part.args, dict):
                 raise UnexpectedModelBehavior(f'Cannot apply JSON deltas to non-JSON tool arguments ({part=}, {self=})')
             # MCP args and deltas are a bit different from other types, so initial args are a JSON,
-            # and the deltas are partial JSON, so we need to merge those to JSONs here
+            # and the deltas are partial JSON, so we need to merge those two separate JSONs here
             if part.args is not None and part.args.endswith('}') and self.args_delta.startswith('{'):
                 updated_json = part.args[:-1] + ',' + self.args_delta[1:]
             else:
