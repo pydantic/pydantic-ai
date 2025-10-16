@@ -966,7 +966,7 @@ async def test_a2a_multiple_send_task_messages():
                 if 'result' in task and task['result']['status']['state'] == 'completed':
                     result = task['result']
                     break
-                await anyio.sleep(0.1)
+                await anyio.sleep(0.1)  # pragma: lax no cover
 
             assert result == snapshot(
                 {
