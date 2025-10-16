@@ -24,6 +24,8 @@ from ..messages import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
+    BuiltinMCPToolCallPart,
+    BuiltinMCPToolReturnPart,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
@@ -1457,6 +1459,7 @@ class OpenAIResponsesModel(Model):
                             elif (
                                 item.tool_name == MCPServerTool.LIST_TOOLS_KIND
                                 and item.tool_call_id
+                                and isinstance(item, BuiltinMCPToolCallPart)
                                 and (args := item.args_as_dict())
                             ):
                                 mcp_list_tools_item = cast(
@@ -1465,12 +1468,14 @@ class OpenAIResponsesModel(Model):
                                         **args,
                                         'id': item.tool_call_id,
                                         'type': 'mcp_list_tools',
+                                        'server_label': item.mcp_server_id,
                                     },
                                 )
                                 openai_messages.append(mcp_list_tools_item)
                             elif (  # pragma: no branch
                                 item.tool_name == MCPServerTool.CALL_TOOL_KIND
                                 and item.tool_call_id
+                                and isinstance(item, BuiltinMCPToolCallPart)
                                 and (args := item.args_as_dict())
                             ):
                                 error = args.pop('error', None)
@@ -1480,6 +1485,8 @@ class OpenAIResponsesModel(Model):
                                         **args,
                                         'id': item.tool_call_id,
                                         'type': 'mcp_call',
+                                        'server_label': item.mcp_server_id,
+                                        'name': item.mcp_tool_name,
                                     },
                                 )
                                 mcp_call_item['error'] = error
@@ -2231,57 +2238,56 @@ def _map_image_generation_tool_call(
 
 def _map_mcp_list_tools(
     item: responses.response_output_item.McpListTools, provider_name: str
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
-    # OpenAI specifies the return type of `error` as `Optional[str]`; however, tests have shown that it might be a dict
-    error = item.error
-    tools = item.tools
-    call_serialized = item.model_dump(mode='json', exclude={'error', 'tools', 'id', 'type'})
+) -> tuple[BuiltinMCPToolCallPart, BuiltinMCPToolReturnPart]:
     result_serialized = {
-        **call_serialized,
-        'error': error,
-        'tools': tools,
+        'error': item.error,
+        'tools': item.tools,
     }
 
     return (
-        BuiltinToolCallPart(
+        BuiltinMCPToolCallPart(
             tool_name=MCPServerTool.LIST_TOOLS_KIND,
             tool_call_id=item.id,
-            args=call_serialized,
             provider_name=provider_name,
+            mcp_server_id=item.server_label,
         ),
-        BuiltinToolReturnPart(
+        BuiltinMCPToolReturnPart(
             tool_name=MCPServerTool.LIST_TOOLS_KIND,
             tool_call_id=item.id,
             content=result_serialized,
             provider_name=provider_name,
+            mcp_server_id=item.server_label,
         ),
     )
 
 
 def _map_mcp_call(
     item: responses.response_output_item.McpCall, provider_name: str
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
-    # OpenAI specifies the return type of `error` as `Optional[str]`; however, tests have shown that it might be a dict
-    error = item.error
-    output = item.output
-    call_serialized = item.model_dump(mode='json', exclude={'error', 'output', 'id', 'type'})
+) -> tuple[BuiltinMCPToolCallPart, BuiltinMCPToolReturnPart]:
+    call_serialized = {
+        'arguments': item.arguments,
+    }
     result_serialized = {
         **call_serialized,
-        'error': error,
-        'output': output,
+        'error': item.error,
+        'output': item.output,
     }
 
     return (
-        BuiltinToolCallPart(
+        BuiltinMCPToolCallPart(
             tool_name=MCPServerTool.CALL_TOOL_KIND,
             tool_call_id=item.id,
             args=call_serialized,
             provider_name=provider_name,
+            mcp_server_id=item.server_label,
+            mcp_tool_name=item.name,
         ),
-        BuiltinToolReturnPart(
+        BuiltinMCPToolReturnPart(
             tool_name=MCPServerTool.CALL_TOOL_KIND,
             tool_call_id=item.id,
             content=result_serialized,
             provider_name=provider_name,
+            mcp_server_id=item.server_label,
+            mcp_tool_name=item.name,
         ),
     )

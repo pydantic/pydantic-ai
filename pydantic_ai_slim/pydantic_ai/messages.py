@@ -830,6 +830,16 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
     """Part type identifier, this is available on all parts as a discriminator."""
 
 
+@dataclass(repr=False)
+class BuiltinMCPToolReturnPart(BuiltinToolReturnPart):
+    """A tool return message from an MCP built-in tool."""
+
+    mcp_server_id: str | None = None
+    """The ID of the MCP server that generated the response."""
+    mcp_tool_name: str | None = None
+    """The name of the MCP tool that generated the response."""
+
+
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
@@ -1119,6 +1129,16 @@ class BuiltinToolCallPart(BaseToolCallPart):
 
     part_kind: Literal['builtin-tool-call'] = 'builtin-tool-call'
     """Part type identifier, this is available on all parts as a discriminator."""
+
+
+@dataclass(repr=False)
+class BuiltinMCPToolCallPart(BuiltinToolCallPart):
+    """A tool call to an MCP built-in tool."""
+
+    mcp_server_id: str | None = None
+    """The ID of the MCP server that generated the response."""
+    mcp_tool_name: str | None = None
+    """The name of the MCP tool that generated the response."""
 
 
 ModelResponsePart = Annotated[
@@ -1577,12 +1597,7 @@ class ToolCallPartDelta:
         if isinstance(self.args_delta, str):
             if isinstance(part.args, dict):
                 raise UnexpectedModelBehavior(f'Cannot apply JSON deltas to non-JSON tool arguments ({part=}, {self=})')
-            # MCP args and deltas are a bit different from other types, so initial args are a JSON,
-            # and the deltas are partial JSON, so we need to merge those two separate JSONs here
-            if part.args is not None and part.args.endswith('}') and self.args_delta.startswith('{'):
-                updated_json = part.args[:-1] + ',' + self.args_delta[1:]
-            else:
-                updated_json = (part.args or '') + self.args_delta
+            updated_json = (part.args or '') + self.args_delta
             part = replace(part, args=updated_json)
         elif isinstance(self.args_delta, dict):
             if isinstance(part.args, str):
