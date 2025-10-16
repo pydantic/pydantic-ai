@@ -710,6 +710,18 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     __repr__ = dataclasses_no_defaults_repr
 
 
+@dataclasses.dataclass
+class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
+    """A node that immediately ends the graph run after a streaming response produced a final result."""
+
+    final_result: result.FinalResult[NodeRunEndT]
+
+    async def run(
+        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
+    ) -> End[result.FinalResult[NodeRunEndT]]:
+        return End(self.final_result)
+
+
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:
     """Build a `RunContext` object from the current agent graph run context."""
     return RunContext[DepsT](
@@ -1123,6 +1135,7 @@ def build_agent_graph(
         UserPromptNode[DepsT],
         ModelRequestNode[DepsT],
         CallToolsNode[DepsT],
+        SetFinalResult[DepsT],
     )
     graph = Graph[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[OutputT]](
         nodes=nodes,
