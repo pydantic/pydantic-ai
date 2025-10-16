@@ -451,13 +451,12 @@ async def streaming_handler(ctx,
 ```
 
 ```py {title="workflow.py" test="skip"}
-
 import asyncio
 from collections import deque
 from datetime import timedelta
 from typing import Any
 
-from pydanticai import UsageLimits
+from pydantic_ai import UsageLimits
 from temporalio import activity, workflow
 
 from .agents import build_agent, streaming_handler
