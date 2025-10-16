@@ -898,5 +898,7 @@ def _unwrap_exception_groups():
             yield
         except ExceptionGroup as e:
             exception = e.exceptions[0]
-            exception.__cause__ = None  # prevent recursion errors when formatting the exception for logfire
+            if exception.__cause__ is None:
+                # bizarrely, this prevents recursion errors when formatting the exception for logfire
+                exception.__cause__ = None
             raise exception
