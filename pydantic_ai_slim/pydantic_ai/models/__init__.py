@@ -38,6 +38,7 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     TextPart,
@@ -517,7 +518,7 @@ class StreamedResponse(ABC):
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
 
-    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
 
         This proxies the `_event_iterator()` and emits all events, while also checking for matches
@@ -573,6 +574,12 @@ class StreamedResponse(ABC):
 
                             event.previous_part_kind = last_start_event.part.part_kind
                         last_start_event = event
+
+                    if isinstance(event, PartDeltaEvent) and last_start_event and last_start_event.index != event.index:
+                        warnings.warn(
+                            f'Part index mismatch. Delta: {event!r}. Last start event: {last_start_event!r}',
+                            UserWarning,
+                        )
 
                     yield event
 
