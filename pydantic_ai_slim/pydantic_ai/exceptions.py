@@ -23,7 +23,7 @@ __all__ = (
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'ModelHTTPError',
-    'ToolExceedsTokenLimitError',
+    'IncompleteToolCall',
     'FallbackExceptionGroup',
 )
 
@@ -171,5 +171,5 @@ class ToolRetryError(Exception):
         super().__init__()
 
 
-class ToolExceedsTokenLimitError(AgentRunError):
+class IncompleteToolCall(UnexpectedModelBehavior):
     """Error raised when a model stops due to token limit while emitting a tool call."""

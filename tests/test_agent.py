@@ -27,6 +27,7 @@ from pydantic_ai import (
     DocumentUrl,
     FunctionToolset,
     ImageUrl,
+    IncompleteToolCall,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelProfile,
@@ -40,7 +41,6 @@ from pydantic_ai import (
     SystemPromptPart,
     TextPart,
     ToolCallPart,
-    ToolExceedsTokenLimitError,
     ToolReturn,
     ToolReturnPart,
     UnexpectedModelBehavior,
@@ -2459,13 +2459,13 @@ def test_tool_exceeds_token_limit_error():
     agent = Agent(FunctionModel(return_incomplete_tool), output_type=str)
 
     with pytest.raises(
-        ToolExceedsTokenLimitError,
+        IncompleteToolCall,
         match=r'Model token limit \(10\) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
 
     with pytest.raises(
-        ToolExceedsTokenLimitError,
+        IncompleteToolCall,
         match=r'Model token limit \(provider default\) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.',
     ):
         agent.run_sync('Hello')
