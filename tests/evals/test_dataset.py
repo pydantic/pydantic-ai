@@ -1470,6 +1470,15 @@ def test_import_generate_dataset():
     assert generate_dataset
 
 
+def test_import_generate_dataset_from_agent():
+    # this function is tough to test in an interesting way outside an example...
+    # this at least ensures importing it doesn't fail.
+    # TODO: Add an "example" that actually makes use of this functionality
+    from pydantic_evals.generation import generate_dataset_for_agent
+
+    assert generate_dataset_for_agent
+
+
 def test_evaluate_non_serializable_inputs():
     @dataclass
     class MyInputs:
