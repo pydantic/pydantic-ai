@@ -70,7 +70,7 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT,
     @classmethod
     async def validate_request(cls, request: Request) -> RequestData:
         """Validate a Vercel AI request."""
-        return request_data_ta.validate_json(await request.body())  # TODO (DouweM): coverage
+        return request_data_ta.validate_json(await request.body())
 
     @property
     def event_stream(self) -> BaseEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
@@ -79,7 +79,7 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT,
     @property
     def response_headers(self) -> Mapping[str, str] | None:
         """Get the response headers for the adapter."""
-        return VERCEL_AI_DSP_HEADERS  # TODO (DouweM): coverage
+        return VERCEL_AI_DSP_HEADERS
 
     @cached_property
     def messages(self) -> list[ModelMessage]:

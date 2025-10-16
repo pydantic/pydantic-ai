@@ -91,7 +91,7 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT, Ou
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
         """Handle errors during streaming."""
-        yield ErrorChunk(error_text=str(error))  # TODO (DouweM): coverage
+        yield ErrorChunk(error_text=str(error))
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseChunk]:
         """Handle a TextPart at start."""
@@ -136,7 +136,7 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT, Ou
 
     def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
         """Handle a ToolCallPart or BuiltinToolCallPart at start."""
-        return self._handle_tool_call_start(part)  # TODO (DouweM): coverage
+        return self._handle_tool_call_start(part)
 
     def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
         """Handle a BuiltinToolCallEvent, emitting tool input events."""
