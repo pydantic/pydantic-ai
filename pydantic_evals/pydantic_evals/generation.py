@@ -13,8 +13,8 @@ from typing import Any
 from pydantic import ValidationError
 from typing_extensions import TypeVar
 
-from pydantic_ai._utils import strip_markdown_fences
 from pydantic_ai import Agent, models
+from pydantic_ai._utils import strip_markdown_fences
 from pydantic_evals import Dataset
 from pydantic_evals.evaluators.evaluator import Evaluator
 
