@@ -204,8 +204,8 @@ Assuming your project has the following structure:
   └── pyproject.toml
 
 ```
-`utils.py`
-```python
+
+```py {title="utils.py" test="skip" noqa="F841"}
 import yaml
 from copy import copy
 
@@ -262,9 +262,7 @@ def read_config_yml(path):
     return configs
 ```
 
-`datamodels.py`
-
-```python
+```py {title="datamodels.py" test="skip" noqa="F841"}
 from enum import Enum
 from typing import Any, Dict, Deque, AsyncIterable, Optional
 from pydantic import BaseModel
@@ -283,8 +281,8 @@ class EventStream(BaseModel):
     kind: EventKind
     content: str
 ```
-`agents.py`
-```python
+
+```py {title="agents.py" test="skip" noqa="F841"}
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
@@ -366,8 +364,7 @@ async def build_agent(stream_handler=None, **env_vars):
     return temporal_agent
 ```
 
-`streaming_handler.py`
-```python
+```py {title="streaming_handler.py" test="skip" noqa="F841"}
 from temporalio import activity
 from typing import Any, Dict, Deque, AsyncIterable, Optional
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent, \
@@ -437,9 +434,8 @@ async def streaming_handler(ctx,
             await workflow_handle.signal('append_event', arg=event)
 ```
 
-`workflow.py`
 
-```python
+```py {title="workflow.py" test="skip" noqa="F841"}
 
 import asyncio
 from collections import deque
