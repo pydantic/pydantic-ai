@@ -10,9 +10,10 @@ import json
 import re
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, cast
 
 from pydantic import BaseModel, ValidationError
+from typing_extensions import TypeVar
 
 from pydantic_ai import Agent, models
 from pydantic_ai._utils import strip_markdown_fences
@@ -39,6 +40,7 @@ async def generate_dataset(
     extra_instructions: str | None = None,
 ) -> Dataset[InputsT, OutputT, MetadataT]:
     """Use an LLM to generate a dataset of test cases, each consisting of input, expected output, and metadata.
+
     This function creates a properly structured dataset with the specified input, output, and metadata types.
     It uses an LLM to attempt to generate realistic test cases that conform to the types' schemas.
 
@@ -85,7 +87,7 @@ async def generate_dataset(
 async def generate_dataset_for_agent(
     agent: Agent[Any, OutputT],
     *,
-    inputs_type: type[InputsT] = str,  # type: ignore
+    inputs_type: type[InputsT] = str,  # type: ignore[assignment]
     metadata_type: type[MetadataT] | None = None,
     path: Path | str | None = None,
     model: models.Model | models.KnownModelName = 'openai:gpt-4o',
@@ -123,7 +125,7 @@ async def generate_dataset_for_agent(
 
     # Get inputs schema with proper type handling
     inputs_schema: str
-    if issubclass(inputs_type, BaseModel):
+    if isinstance(inputs_type, type) and issubclass(inputs_type, BaseModel):
         inputs_schema = str(inputs_type.model_json_schema())
     else:
         inputs_schema = str(inputs_type)
@@ -158,21 +160,21 @@ async def generate_dataset_for_agent(
         output = re.sub(r'\n?```\s*$', '', output)
         output = output.strip()
 
-        inputs_metadata = json.loads(output)
-        cases = []
+        inputs_metadata: list[dict[str, Any]] = json.loads(output)
+        cases: list[Case[InputsT, OutputT, MetadataT]] = []
 
         for i, item in enumerate(inputs_metadata):
             agent_result = await agent.run(item['inputs'])
             cases.append(
                 Case(
                     name=item.get('name', f'case-{i}'),
-                    inputs=item['inputs'],
-                    expected_output=agent_result.output,
-                    metadata=item.get('metadata'),
+                    inputs=cast(InputsT, item['inputs']),
+                    expected_output=cast(OutputT, agent_result.output),
+                    metadata=cast(MetadataT, item.get('metadata')),
                 )
             )
 
-        result_dataset = Dataset(cases=cases, evaluators=[])
+        result_dataset: Dataset[InputsT, OutputT, MetadataT] = Dataset(cases=cases, evaluators=[])
 
     except (json.JSONDecodeError, KeyError, ValidationError) as e:  # pragma: no cover
         print(f'Raw response from model:\n{result.output}\n')

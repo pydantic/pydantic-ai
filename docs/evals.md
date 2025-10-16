@@ -768,13 +768,13 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ### Generating from an Existing Agent
 
-If you already have an agent, you can use [`generate_evals_from_agent`][pydantic_evals.generation.generate_evals_from_agent] to automatically extract types from the agent and generate test cases. This is simpler than `generate_dataset` because you don't need to manually specify the dataset type or generic parameters.
+If you already have an agent, you can use [`generate_dataset_for_agent`][pydantic_evals.generation.generate_dataset_for_agent] to automatically extract types from the agent and generate test cases. This is simpler than `generate_dataset` because you don't need to manually specify the dataset type or generic parameters.
 
 ```python {title="generate_from_agent_example.py"}
 from pydantic import BaseModel
 from pydantic_ai import Agent
 
-from pydantic_evals.generation import generate_evals_from_agent
+from pydantic_evals.generation import generate_dataset_for_agent
 
 
 class AnswerOutput(BaseModel):
@@ -792,7 +792,7 @@ agent = Agent(  # (1)!
 
 
 async def main():
-    dataset = await generate_evals_from_agent(  # (2)!
+    dataset = await generate_dataset_for_agent(  # (2)!
         agent=agent,
         n_examples=3,
         model='openai:gpt-4o',
