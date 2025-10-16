@@ -1004,102 +1004,6 @@ To find the current weather in San Francisco, I will use the search tool to look
 
 <tool>
 search(What is the weather in San Francisco today?)
-</tool>
-<output>Title: Weather in San Francisco
-URL: https://www.weatherapi.com/
-Content: {'location': {'name': 'San Francisco', 'region': 'California', 'country': 'United States of America', 'lat': 37.775, 'lon': -122.4183, 'tz_id': 'America/Los_Angeles', 'localtime_epoch': 1758144075, 'localtime': '2025-09-17 14:21'}, 'current': {'last_updated_epoch': 1758143700, 'last_updated': '2025-09-17 14:15', 'temp_c': 17.4, 'temp_f': 63.3, 'is_day': 1, 'condition': {'text': 'Partly cloudy', 'icon': '//cdn.weatherapi.com/weather/64x64/day/116.png', 'code': 1003}, 'wind_mph': 7.8, 'wind_kph': 12.6, 'wind_degree': 264, 'wind_dir': 'W', 'pressure_mb': 1014.0, 'pressure_in': 29.95, 'precip_mm': 0.0, 'precip_in': 0.0, 'humidity': 94, 'cloud': 75, 'feelslike_c': 17.4, 'feelslike_f': 63.3, 'windchill_c': 17.7, 'windchill_f': 63.9, 'heatindex_c': 17.7, 'heatindex_f': 63.9, 'dewpoint_c': 15.3, 'dewpoint_f': 59.6, 'vis_km': 13.0, 'vis_miles': 8.0, 'uv': 6.8, 'gust_mph': 14.4, 'gust_kph': 23.1}}
-Score: 0.9655
-
-Title: San Francisco, CA | Weather Forecasts Now, Live Radar Maps ...
-URL: https://www.weatherbug.com/weather-forecast/now/san-francisco-ca-94103
-Content: Today's Weather - San Francisco, CA. September 17, 2025 10:00 AM. Exploratorium. 61°. Feels Like 61°. Hi 69°F Lo 56°F. Mostly Sunny.
-Score: 0.9512
-
-Title: San Francisco, CA Weather Conditions | Weather Underground
-URL: https://www.wunderground.com/weather/us/ca/san-francisco
-Content: access_time 10:56 AM PDT on September 17, 2025 (GMT -7) | Updated 10 seconds ago. 76° | 59°. 74 °F. like 75°. icon. Sunny. N. 0. Today's temperature is forecast
-Score: 0.9272
-
-Title: Weather for San Francisco, California, USA - Time and Date
-URL: https://www.timeanddate.com/weather/usa/san-francisco
-Content: Weather in San Francisco, California, USA ; Sep 17, 2025 at 8:56 am · 10 mi · 29.98 "Hg · 87% · 57 °F
-Score: 0.9224
-
-Title: San Francisco - 14-Day Forecast: Temperature, Wind & Radar
-URL: https://www.ventusky.com/san-francisco
-Content: ... Current time: 01:50 2025/09/17. Current Weather; Forecast; Sun and Moon. partly cloudy, 16 °C. Wind speed 22 km/h. Humidity, 90 %. Air pressure, 1014 hPa.
-Score: 0.9118
-
-Title: Bay Area forecast discussion - National Weather Service
-URL: https://forecast.weather.gov/product.php?format=ci&glossary=1&issuedby=mtr&product=afd&site=mtr&version=1
-Content: 723 FXUS66 KMTR 171146 AFDMTR Area Forecast Discussion National Weather Service San Francisco ... Issued at 406 AM PDT Wed Sep 17 2025 (Today and tonight)
-Score: 0.8015
-
-Title: Weather in San Francisco in September 2025
-URL: https://world-weather.info/forecast/usa/san_francisco/september-2025/
-Content: Detailed ⚡ San Francisco Weather Forecast for September 2025 – day/night 🌡️ temperatures, precipitations – World-Weather.info.
-Score: 0.7647
-
-Title: San Francisco weather in September 2025 | Weather25.com
-URL: https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September
-Content: Full weather forecast for San Francisco in September 2025. Check the temperatures, chance of rain and more in San Francisco during September.
-Score: 0.7192
-
-Title: San Francisco, CA Weather Forecast - AccuWeather
-URL: https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629
-Content: 10-Day Weather Forecast ; Today. 9/17. 76° · Partly sunny ; Thu. 9/18. 68° · Rather cloudy ; Fri. 9/19. 73° · Partly sunny and pleasant ; Sat. 9/20. 71° · Mostly sunny
-Score: 0.6832
-
-Title: AccuWeather Forecast: 1 more day of hot temperatures away from ...
-URL: https://abc7news.com/post/weather-bay-area-forecast-temperatures/39468/
-Content: We have one more day of hot weather away from the coast today. A dense fog ... 2025 ABC, Inc., KGO-TV San Francisco. All Rights Reserved.
-Score: 0.6164
-
-Title: San Francisco Bay Area weather and First Alert Weather forecasts
-URL: https://www.cbsnews.com/sanfrancisco/weather/
-Content: Wednesday morning First Alert weather forecast with Jessica Burch - 9/17/25 ... National - Current Temperatures · National - First Alert Doppler. Latest
-Score: 0.6011
-
-Title: 10-Day Weather Forecast for San Francisco, CA
-URL: https://weather.com/weather/tenday/l/USCA0987:1:US
-Content: 10 Day Weather-San Francisco, CA. As of 2:31 pm PDT. Today. 67°/58°. 2%. Day. 67°. 2%. W 17 mph. Plentiful sunshine. High 67F. Winds W at 10 to 20 mph.
-Score: 0.5229
-
-Title: 10-Day Weather Forecast for San Francisco, CA
-URL: https://weather.com/weather/tenday/l/94112:4:US
-Content: 10 Day Weather-San Francisco, CA. As of 5:34 pm PDT. Tonight. --/58°. 18%. Night. 58°. 18%. W 15 mph. Partly cloudy early with increasing clouds overnight.
-Score: 0.4822
-
-Title: Past Weather in San Francisco, California, USA - Time and Date
-URL: https://www.timeanddate.com/weather/usa/san-francisco/historic
-Content: Night Sky · TodayHourly14 DaysPastClimate. Currently: 61 °F. Passing clouds. (Weather station: San Francisco International Airport, USA). See more current
-Score: 0.4242
-
-Title: Monthly Weather Forecast for San Francisco, CA
-URL: https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87
-Content: Considerable cloudiness. Low 56F. Winds WSW at 10 to 15 mph. Record Low52°.
-Score: 0.3279
-
-Title: San Francisco, CA Hourly Weather Forecast - Weather Underground
-URL: https://www.wunderground.com/hourly/us/ca/san-francisco
-Content: San Francisco Weather Forecasts. Weather Underground provides local & long-range weather ... Hourly Forecast for Today, Wednesday 09/17Hourly for Today, Wed 09/17.
-Score: 0.2700
-
-</output>
-</think>
-
-Based on the search results, I can see that the current weather in San Francisco is as follows:
-
-- The temperature is around 61°F to 63°F (17°C).
-- It is partly cloudy to mostly sunny.
-- The humidity is around 90-94%.
-- The wind speed is around 7-22 km/h.
-
-So, the current weather in San Francisco is partly cloudy with a temperature of 61°F (17°C) and high humidity. \n\
-
-Now, I will provide the final answer to the user. \n\
-
-The weather in San Francisco today is partly cloudy with a temperature of 61°F (17°C) and high humidity.\
 """
                     ),
                     BuiltinToolCallPart(
@@ -1215,6 +1119,7 @@ The weather in San Francisco today is partly cloudy with a temperature of 61°F 
                         timestamp=IsDatetime(),
                         provider_name='groq',
                     ),
+                    ThinkingPart(content=IsStr()),
                     TextPart(
                         content='The weather in San Francisco today is partly cloudy with a temperature of 61°F (17°C) and high humidity. The current conditions include a wind speed of around 7-22 km/h and a humidity level of 90-94%.'
                     ),
@@ -1422,10 +1327,10 @@ search(What is the weather in San Francisco today?)
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
+            PartStartEvent(
+                index=3,
+                part=ThinkingPart(
+                    content="""\
 </tool>
 <output>Title: Weather in San Francisco
 URL: https://www.weatherapi.com/
@@ -1510,11 +1415,12 @@ Score: 0.2700
 </output>
 """
                 ),
+                previous_part_kind='builtin-tool-return',
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='</')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='think')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='</')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='think')),
             PartDeltaEvent(
-                index=0,
+                index=3,
                 delta=ThinkingPartDelta(
                     content_delta="""\
 >
@@ -1522,27 +1428,27 @@ Score: 0.2700
 """
                 ),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Based')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' on')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' search')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' results')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=',')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' I')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' can')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' see')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' current')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' weather')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' in')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' San')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Francisco')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' as')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' follows')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='Based')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' on')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' search')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' results')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=',')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' I')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' can')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' see')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' that')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' current')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' weather')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' in')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' San')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' Francisco')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' as')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' follows')),
             PartDeltaEvent(
-                index=0,
+                index=3,
                 delta=ThinkingPartDelta(
                     content_delta="""\
 :
@@ -1550,55 +1456,55 @@ Score: 0.2700
 """
                 ),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='-')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' The')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' temperature')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' around')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='61')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='°F')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='63')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='°F')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' (')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='17')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='°C')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=').\n')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='-')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' It')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' partly')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' cloudy')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' mostly')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' sunny')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='.\n')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='-')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' The')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' humidity')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' around')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='90')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='-')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='94')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='%.\n')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='-')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' The')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' wind')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' speed')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' around')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='7')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='-')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='22')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' km')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='/h')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='-')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' The')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' temperature')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' around')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='61')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='°F')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' to')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='63')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='°F')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' (')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='17')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=').\n')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='-')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' It')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' partly')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' cloudy')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' to')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' mostly')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' sunny')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='.\n')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='-')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' The')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' humidity')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' around')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='90')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='-')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='94')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='%.\n')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='-')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' The')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' wind')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' speed')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' around')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='7')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='-')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='22')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' km')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='/h')),
             PartDeltaEvent(
-                index=0,
+                index=3,
                 delta=ThinkingPartDelta(
                     content_delta="""\
 .
@@ -1606,34 +1512,34 @@ Score: 0.2700
 """
                 ),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='So')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=',')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' current')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' weather')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' in')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' San')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Francisco')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' partly')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' cloudy')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' with')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' temperature')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' of')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='61')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='°F')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' (')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='17')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='°C')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=')')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' high')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' humidity')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='.')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='So')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=',')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' current')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' weather')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' in')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' San')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' Francisco')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' partly')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' cloudy')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' with')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' temperature')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='61')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='°F')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' (')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='17')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=')')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' high')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' humidity')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='.')),
             PartDeltaEvent(
-                index=0,
+                index=3,
                 delta=ThinkingPartDelta(
                     content_delta="""\
  \n\
@@ -1641,20 +1547,20 @@ Score: 0.2700
 """
                 ),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Now')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=',')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' I')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' will')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' provide')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' final')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' answer')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' user')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='.')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='Now')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=',')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' I')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' will')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' provide')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' final')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' answer')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' to')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' user')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='.')),
             PartDeltaEvent(
-                index=0,
+                index=3,
                 delta=ThinkingPartDelta(
                     content_delta="""\
  \n\
@@ -1662,82 +1568,186 @@ Score: 0.2700
 """
                 ),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='The')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' weather')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' in')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' San')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Francisco')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' today')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' partly')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' cloudy')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' with')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' temperature')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' of')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='61')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='°F')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' (')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='17')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='°C')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=')')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' high')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' humidity')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='.')),
-            PartStartEvent(index=3, part=TextPart(content='The'), previous_part_kind='builtin-tool-return'),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' weather')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' in')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' San')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Francisco')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' today')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' partly')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' cloudy')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' with')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' temperature')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' of')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='61')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='°F')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' (')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='17')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='°C')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=')')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' high')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' humidity')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' The')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' current')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' conditions')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' include')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' wind')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' speed')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' of')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' around')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='7')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='-')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='22')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' km')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='/h')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' humidity')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' level')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' of')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='90')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='-')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='94')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='%.')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='The')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' weather')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' in')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' San')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' Francisco')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' today')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' partly')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' cloudy')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' with')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' temperature')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='61')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='°F')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' (')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='17')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=')')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' high')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta=' humidity')),
+            PartDeltaEvent(index=3, delta=ThinkingPartDelta(content_delta='.')),
             PartEndEvent(
                 index=3,
+                part=ThinkingPart(
+                    content="""\
+</tool>
+<output>Title: Weather in San Francisco
+URL: https://www.weatherapi.com/
+Content: {'location': {'name': 'San Francisco', 'region': 'California', 'country': 'United States of America', 'lat': 37.775, 'lon': -122.4183, 'tz_id': 'America/Los_Angeles', 'localtime_epoch': 1758144075, 'localtime': '2025-09-17 14:21'}, 'current': {'last_updated_epoch': 1758143700, 'last_updated': '2025-09-17 14:15', 'temp_c': 17.4, 'temp_f': 63.3, 'is_day': 1, 'condition': {'text': 'Partly cloudy', 'icon': '//cdn.weatherapi.com/weather/64x64/day/116.png', 'code': 1003}, 'wind_mph': 7.8, 'wind_kph': 12.6, 'wind_degree': 264, 'wind_dir': 'W', 'pressure_mb': 1014.0, 'pressure_in': 29.95, 'precip_mm': 0.0, 'precip_in': 0.0, 'humidity': 94, 'cloud': 75, 'feelslike_c': 17.4, 'feelslike_f': 63.3, 'windchill_c': 17.7, 'windchill_f': 63.9, 'heatindex_c': 17.7, 'heatindex_f': 63.9, 'dewpoint_c': 15.3, 'dewpoint_f': 59.6, 'vis_km': 13.0, 'vis_miles': 8.0, 'uv': 6.8, 'gust_mph': 14.4, 'gust_kph': 23.1}}
+Score: 0.9655
+
+Title: San Francisco, CA | Weather Forecasts Now, Live Radar Maps ...
+URL: https://www.weatherbug.com/weather-forecast/now/san-francisco-ca-94103
+Content: Today's Weather - San Francisco, CA. September 17, 2025 10:00 AM. Exploratorium. 61°. Feels Like 61°. Hi 69°F Lo 56°F. Mostly Sunny.
+Score: 0.9512
+
+Title: San Francisco, CA Weather Conditions | Weather Underground
+URL: https://www.wunderground.com/weather/us/ca/san-francisco
+Content: access_time 10:56 AM PDT on September 17, 2025 (GMT -7) | Updated 10 seconds ago. 76° | 59°. 74 °F. like 75°. icon. Sunny. N. 0. Today's temperature is forecast
+Score: 0.9272
+
+Title: Weather for San Francisco, California, USA - Time and Date
+URL: https://www.timeanddate.com/weather/usa/san-francisco
+Content: Weather in San Francisco, California, USA ; Sep 17, 2025 at 8:56 am · 10 mi · 29.98 "Hg · 87% · 57 °F
+Score: 0.9224
+
+Title: San Francisco - 14-Day Forecast: Temperature, Wind & Radar
+URL: https://www.ventusky.com/san-francisco
+Content: ... Current time: 01:50 2025/09/17. Current Weather; Forecast; Sun and Moon. partly cloudy, 16 °C. Wind speed 22 km/h. Humidity, 90 %. Air pressure, 1014 hPa.
+Score: 0.9118
+
+Title: Bay Area forecast discussion - National Weather Service
+URL: https://forecast.weather.gov/product.php?format=ci&glossary=1&issuedby=mtr&product=afd&site=mtr&version=1
+Content: 723 FXUS66 KMTR 171146 AFDMTR Area Forecast Discussion National Weather Service San Francisco ... Issued at 406 AM PDT Wed Sep 17 2025 (Today and tonight)
+Score: 0.8015
+
+Title: Weather in San Francisco in September 2025
+URL: https://world-weather.info/forecast/usa/san_francisco/september-2025/
+Content: Detailed ⚡ San Francisco Weather Forecast for September 2025 – day/night 🌡️ temperatures, precipitations – World-Weather.info.
+Score: 0.7647
+
+Title: San Francisco weather in September 2025 | Weather25.com
+URL: https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September
+Content: Full weather forecast for San Francisco in September 2025. Check the temperatures, chance of rain and more in San Francisco during September.
+Score: 0.7192
+
+Title: San Francisco, CA Weather Forecast - AccuWeather
+URL: https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629
+Content: 10-Day Weather Forecast ; Today. 9/17. 76° · Partly sunny ; Thu. 9/18. 68° · Rather cloudy ; Fri. 9/19. 73° · Partly sunny and pleasant ; Sat. 9/20. 71° · Mostly sunny
+Score: 0.6832
+
+Title: AccuWeather Forecast: 1 more day of hot temperatures away from ...
+URL: https://abc7news.com/post/weather-bay-area-forecast-temperatures/39468/
+Content: We have one more day of hot weather away from the coast today. A dense fog ... 2025 ABC, Inc., KGO-TV San Francisco. All Rights Reserved.
+Score: 0.6164
+
+Title: San Francisco Bay Area weather and First Alert Weather forecasts
+URL: https://www.cbsnews.com/sanfrancisco/weather/
+Content: Wednesday morning First Alert weather forecast with Jessica Burch - 9/17/25 ... National - Current Temperatures · National - First Alert Doppler. Latest
+Score: 0.6011
+
+Title: 10-Day Weather Forecast for San Francisco, CA
+URL: https://weather.com/weather/tenday/l/USCA0987:1:US
+Content: 10 Day Weather-San Francisco, CA. As of 2:31 pm PDT. Today. 67°/58°. 2%. Day. 67°. 2%. W 17 mph. Plentiful sunshine. High 67F. Winds W at 10 to 20 mph.
+Score: 0.5229
+
+Title: 10-Day Weather Forecast for San Francisco, CA
+URL: https://weather.com/weather/tenday/l/94112:4:US
+Content: 10 Day Weather-San Francisco, CA. As of 5:34 pm PDT. Tonight. --/58°. 18%. Night. 58°. 18%. W 15 mph. Partly cloudy early with increasing clouds overnight.
+Score: 0.4822
+
+Title: Past Weather in San Francisco, California, USA - Time and Date
+URL: https://www.timeanddate.com/weather/usa/san-francisco/historic
+Content: Night Sky · TodayHourly14 DaysPastClimate. Currently: 61 °F. Passing clouds. (Weather station: San Francisco International Airport, USA). See more current
+Score: 0.4242
+
+Title: Monthly Weather Forecast for San Francisco, CA
+URL: https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87
+Content: Considerable cloudiness. Low 56F. Winds WSW at 10 to 15 mph. Record Low52°.
+Score: 0.3279
+
+Title: San Francisco, CA Hourly Weather Forecast - Weather Underground
+URL: https://www.wunderground.com/hourly/us/ca/san-francisco
+Content: San Francisco Weather Forecasts. Weather Underground provides local & long-range weather ... Hourly Forecast for Today, Wednesday 09/17Hourly for Today, Wed 09/17.
+Score: 0.2700
+
+</output>
+</think>
+
+Based on the search results, I can see that the current weather in San Francisco is as follows:
+
+- The temperature is around 61°F to 63°F (17°C).
+- It is partly cloudy to mostly sunny.
+- The humidity is around 90-94%.
+- The wind speed is around 7-22 km/h.
+
+So, the current weather in San Francisco is partly cloudy with a temperature of 61°F (17°C) and high humidity. \n\
+
+Now, I will provide the final answer to the user. \n\
+
+The weather in San Francisco today is partly cloudy with a temperature of 61°F (17°C) and high humidity.\
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=4, part=TextPart(content='The'), previous_part_kind='thinking'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' weather')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' in')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' San')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Francisco')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' today')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' partly')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' cloudy')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' with')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' temperature')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='61')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='°F')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' (')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='17')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=')')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' high')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' humidity')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' The')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' current')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' conditions')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' include')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' wind')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' speed')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' around')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='7')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='22')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' km')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='/h')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' humidity')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' level')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='90')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='94')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='%.')),
+            PartEndEvent(
+                index=4,
                 part=TextPart(
                     content='The weather in San Francisco today is partly cloudy with a temperature of 61°F (17°C) and high humidity. The current conditions include a wind speed of around 7-22 km/h and a humidity level of 90-94%.'
                 ),
