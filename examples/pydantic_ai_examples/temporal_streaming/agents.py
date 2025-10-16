@@ -6,16 +6,15 @@ and custom tools for data analysis.
 
 from datetime import timedelta
 
-from mcp_run_python import code_sandbox
-from pydantic_ai import Agent, FilteredToolset, ModelSettings, RunContext
-from pydantic_ai.durable_exec.temporal import TemporalAgent
-from pydantic_ai.mcp import MCPServerStdio
-from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.providers.anthropic import AnthropicProvider
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 
 from datamodels import AgentDependencies
+from pydantic_ai import Agent, FilteredToolset, ModelSettings
+from pydantic_ai.durable_exec.temporal import TemporalAgent
+from pydantic_ai.mcp import MCPServerStdio
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
 
 
 async def get_mcp_toolsets() -> dict[str, FilteredToolset]:
@@ -78,7 +77,6 @@ async def build_agent(stream_handler=None, **env_vars):
     """
     system_prompt = """
     You are an expert financial analyst that knows how to search for financial data on the web.
-    You also have a Data Analyst background, mastering well how to use pandas for tabular operations.
     """
     agent_name = 'YahooFinanceSearchAgent'
 
@@ -91,13 +89,6 @@ async def build_agent(stream_handler=None, **env_vars):
         event_stream_handler=stream_handler,
         deps_type=AgentDependencies,
     )
-
-    @agent.tool(name='run_python_code')
-    async def run_python_code(ctx: RunContext[None], code: str) -> str:
-        """Execute Python code in a sandboxed environment with pandas and numpy available."""
-        async with code_sandbox(dependencies=['pandas', 'numpy']) as sandbox:
-            result = await sandbox.eval(code)
-            return result
 
     temporal_agent = TemporalAgent(
         wrapped=agent,
