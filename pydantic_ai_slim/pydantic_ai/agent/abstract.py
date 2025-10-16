@@ -654,6 +654,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 PartStartEvent(index=0, part=TextPart(content='The capital of ')),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='France is Paris. ')),
+                PartEndEvent(
+                    index=0, part=TextPart(content='The capital of France is Paris. ')
+                ),
                 AgentRunResultEvent(
                     result=AgentRunResult(output='The capital of France is Paris. ')
                 ),
@@ -752,6 +755,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 yield message
 
         result = await task
+        # TODO (DouweM): Consider adding this to every event stream, if we're adding new events anyway
         yield AgentRunResultEvent(result)
 
     @overload

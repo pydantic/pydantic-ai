@@ -172,6 +172,12 @@ def model_request_stream(
                     index=0, delta=TextPartDelta(content_delta='a German-born theoretical ')
                 ),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='physicist.')),
+                PartEndEvent(
+                    index=0,
+                    part=TextPart(
+                        content='Albert Einstein was a German-born theoretical physicist.'
+                    ),
+                ),
             ]
             '''
     ```
@@ -229,6 +235,12 @@ def model_request_stream_sync(
                 index=0, delta=TextPartDelta(content_delta='a German-born theoretical ')
             ),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='physicist.')),
+            PartEndEvent(
+                index=0,
+                part=TextPart(
+                    content='Albert Einstein was a German-born theoretical physicist.'
+                ),
+            ),
         ]
         '''
     ```
