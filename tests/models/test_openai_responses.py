@@ -6336,8 +6336,10 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
             MCPServerTool(
                 id='test_server',
                 url='https://api.githubcopilot.com/mcp/',
+                description='GitHub MCP server',
                 authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),
                 allowed_tools=['search_repositories'],
+                headers={'custom-header-key': 'custom-header-value'},
             ),
         ],
     )
@@ -6421,7 +6423,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         args={
                             'arguments': '{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:pydantic"}',
                             'name': 'search_repositories',
@@ -6433,7 +6435,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         content={
                             'arguments': '{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:pydantic"}',
                             'name': 'search_repositories',
@@ -6454,7 +6456,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         args={
                             'arguments': '{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:Pydantic"}',
                             'name': 'search_repositories',
@@ -6466,7 +6468,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         content={
                             'arguments': '{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:Pydantic"}',
                             'name': 'search_repositories',
@@ -6583,7 +6585,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         args={
                             'arguments': '{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:pydantic"}',
                             'name': 'search_repositories',
@@ -6595,7 +6597,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         content={
                             'arguments': '{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:pydantic"}',
                             'name': 'search_repositories',
@@ -6616,7 +6618,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         args={
                             'arguments': '{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:Pydantic"}',
                             'name': 'search_repositories',
@@ -6628,7 +6630,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         content={
                             'arguments': '{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:Pydantic"}',
                             'name': 'search_repositories',
@@ -6679,7 +6681,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         args={
                             'arguments': '{"minimal_output":false,"order":"desc","page":1,"perPage":100,"query":"user:pydantic pydantic-ai"}',
                             'name': 'search_repositories',
@@ -6691,7 +6693,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         content={
                             'arguments': '{"minimal_output":false,"order":"desc","page":1,"perPage":100,"query":"user:pydantic pydantic-ai"}',
                             'name': 'search_repositories',
@@ -6867,25 +6869,13 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:mcp_call',
-                        args={
-                            'arguments': '',
-                            'name': 'search_repositories',
-                            'server_label': 'test_server',
-                            'status': 'in_progress',
-                            'approval_request_id': None,
-                            'query': 'pydantic-ai',
-                            'sort': 'best match',
-                            'order': 'desc',
-                            'page': 1,
-                            'perPage': 10,
-                            'minimal_output': True,
-                        },
+                        tool_name='mcp_server:mcp_call_tool',
+                        args='{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         content={
                             'arguments': '{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                             'name': 'search_repositories',
@@ -6906,25 +6896,13 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:mcp_call',
-                        args={
-                            'arguments': '',
-                            'name': 'search_repositories',
-                            'server_label': 'test_server',
-                            'status': 'in_progress',
-                            'approval_request_id': None,
-                            'query': 'pydantic-ai',
-                            'sort': 'stars',
-                            'order': 'desc',
-                            'page': 1,
-                            'perPage': 10,
-                            'minimal_output': True,
-                        },
+                        tool_name='mcp_server:mcp_call_tool',
+                        args='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         content={
                             'arguments': '{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                             'name': 'search_repositories',
@@ -7071,14 +7049,7 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
             PartStartEvent(
                 index=3,
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:mcp_call',
-                    args={
-                        'arguments': '',
-                        'name': 'search_repositories',
-                        'server_label': 'test_server',
-                        'status': 'in_progress',
-                        'approval_request_id': None,
-                    },
+                    tool_name='mcp_server:mcp_call_tool',
                     tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
                     provider_name='openai',
                 ),
@@ -7086,21 +7057,14 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
             PartDeltaEvent(
                 index=3,
                 delta=ToolCallPartDelta(
-                    args_delta={
-                        'query': 'pydantic-ai',
-                        'sort': 'best match',
-                        'order': 'desc',
-                        'page': 1,
-                        'perPage': 10,
-                        'minimal_output': True,
-                    },
+                    args_delta='{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                     tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
                 ),
             ),
             PartStartEvent(
                 index=4,
                 part=BuiltinToolReturnPart(
-                    tool_name='mcp_server:mcp_call',
+                    tool_name='mcp_server:mcp_call_tool',
                     content={
                         'arguments': '{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         'name': 'search_repositories',
@@ -7127,14 +7091,7 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
             PartStartEvent(
                 index=6,
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:mcp_call',
-                    args={
-                        'arguments': '',
-                        'name': 'search_repositories',
-                        'server_label': 'test_server',
-                        'status': 'in_progress',
-                        'approval_request_id': None,
-                    },
+                    tool_name='mcp_server:mcp_call_tool',
                     tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
                     provider_name='openai',
                 ),
@@ -7142,21 +7099,14 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
             PartDeltaEvent(
                 index=6,
                 delta=ToolCallPartDelta(
-                    args_delta={
-                        'query': 'pydantic-ai',
-                        'sort': 'stars',
-                        'order': 'desc',
-                        'page': 1,
-                        'perPage': 10,
-                        'minimal_output': True,
-                    },
+                    args_delta='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                     tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
                 ),
             ),
             PartStartEvent(
                 index=7,
                 part=BuiltinToolReturnPart(
-                    tool_name='mcp_server:mcp_call',
+                    tool_name='mcp_server:mcp_call_tool',
                     content={
                         'arguments': '{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         'name': 'search_repositories',
@@ -7364,27 +7314,15 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:mcp_call',
-                    args={
-                        'arguments': '',
-                        'name': 'search_repositories',
-                        'server_label': 'test_server',
-                        'status': 'in_progress',
-                        'approval_request_id': None,
-                        'query': 'pydantic-ai',
-                        'sort': 'best match',
-                        'order': 'desc',
-                        'page': 1,
-                        'perPage': 10,
-                        'minimal_output': True,
-                    },
+                    tool_name='mcp_server:mcp_call_tool',
+                    args='{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                     tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
                     provider_name='openai',
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
-                    tool_name='mcp_server:mcp_call',
+                    tool_name='mcp_server:mcp_call_tool',
                     content={
                         'arguments': '{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         'name': 'search_repositories',
@@ -7401,27 +7339,15 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:mcp_call',
-                    args={
-                        'arguments': '',
-                        'name': 'search_repositories',
-                        'server_label': 'test_server',
-                        'status': 'in_progress',
-                        'approval_request_id': None,
-                        'query': 'pydantic-ai',
-                        'sort': 'stars',
-                        'order': 'desc',
-                        'page': 1,
-                        'perPage': 10,
-                        'minimal_output': True,
-                    },
+                    tool_name='mcp_server:mcp_call_tool',
+                    args='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                     tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
                     provider_name='openai',
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
-                    tool_name='mcp_server:mcp_call',
+                    tool_name='mcp_server:mcp_call_tool',
                     content={
                         'arguments': '{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         'name': 'search_repositories',
@@ -7563,25 +7489,13 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:mcp_call',
-                        args={
-                            'arguments': '',
-                            'name': 'search_repositories',
-                            'server_label': 'test_server',
-                            'status': 'in_progress',
-                            'approval_request_id': None,
-                            'query': 'pydantic-ai',
-                            'sort': 'best match',
-                            'order': 'desc',
-                            'page': 1,
-                            'perPage': 10,
-                            'minimal_output': True,
-                        },
+                        tool_name='mcp_server:mcp_call_tool',
+                        args='{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         content={
                             'arguments': '{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                             'name': 'search_repositories',
@@ -7602,25 +7516,13 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:mcp_call',
-                        args={
-                            'arguments': '',
-                            'name': 'search_repositories',
-                            'server_label': 'test_server',
-                            'status': 'in_progress',
-                            'approval_request_id': None,
-                            'query': 'pydantic-ai',
-                            'sort': 'stars',
-                            'order': 'desc',
-                            'page': 1,
-                            'perPage': 10,
-                            'minimal_output': True,
-                        },
+                        tool_name='mcp_server:mcp_call_tool',
+                        args='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         content={
                             'arguments': '{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                             'name': 'search_repositories',
@@ -7671,25 +7573,13 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:mcp_call',
-                        args={
-                            'arguments': '',
-                            'name': 'list_commits',
-                            'server_label': 'test_server',
-                            'status': 'in_progress',
-                            'approval_request_id': None,
-                            'owner': 'birbland',
-                            'repo': 'pydantic-ai',
-                            'author': '',
-                            'page': 1,
-                            'perPage': 1,
-                            'sha': '',
-                        },
+                        tool_name='mcp_server:mcp_call_tool',
+                        args='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":""}',
                         tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         content={
                             'arguments': '{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":""}',
                             'name': 'list_commits',
@@ -7720,25 +7610,13 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:mcp_call',
-                        args={
-                            'arguments': '',
-                            'name': 'search_repositories',
-                            'server_label': 'test_server',
-                            'status': 'in_progress',
-                            'approval_request_id': None,
-                            'query': 'birbland/pydantic-ai',
-                            'sort': 'stars',
-                            'order': 'desc',
-                            'page': 1,
-                            'perPage': 10,
-                            'minimal_output': True,
-                        },
+                        tool_name='mcp_server:mcp_call_tool',
+                        args='{"query":"birbland/pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         content={
                             'arguments': '{"query":"birbland/pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                             'name': 'search_repositories',
@@ -7759,25 +7637,13 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:mcp_call',
-                        args={
-                            'arguments': '',
-                            'name': 'search_repositories',
-                            'server_label': 'test_server',
-                            'status': 'in_progress',
-                            'approval_request_id': None,
-                            'query': 'pydantic-ai',
-                            'sort': 'stars',
-                            'order': 'desc',
-                            'page': 1,
-                            'perPage': 10,
-                            'minimal_output': False,
-                        },
+                        tool_name='mcp_server:mcp_call_tool',
+                        args='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":false}',
                         tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         content={
                             'arguments': '{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":false}',
                             'name': 'search_repositories',
@@ -7798,25 +7664,13 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:mcp_call',
-                        args={
-                            'arguments': '',
-                            'name': 'list_commits',
-                            'server_label': 'test_server',
-                            'status': 'in_progress',
-                            'approval_request_id': None,
-                            'owner': 'birbland',
-                            'repo': 'pydantic-ai',
-                            'author': '',
-                            'page': 1,
-                            'perPage': 1,
-                            'sha': 'main',
-                        },
+                        tool_name='mcp_server:mcp_call_tool',
+                        args='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":"main"}',
                         tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         content={
                             'arguments': '{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":"main"}',
                             'name': 'list_commits',
@@ -7869,14 +7723,7 @@ https://github.com/birbland/pydantic-ai/commits/main\
             PartStartEvent(
                 index=1,
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:mcp_call',
-                    args={
-                        'arguments': '',
-                        'name': 'list_commits',
-                        'server_label': 'test_server',
-                        'status': 'in_progress',
-                        'approval_request_id': None,
-                    },
+                    tool_name='mcp_server:mcp_call_tool',
                     tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
                     provider_name='openai',
                 ),
@@ -7884,21 +7731,14 @@ https://github.com/birbland/pydantic-ai/commits/main\
             PartDeltaEvent(
                 index=1,
                 delta=ToolCallPartDelta(
-                    args_delta={
-                        'owner': 'birbland',
-                        'repo': 'pydantic-ai',
-                        'author': '',
-                        'page': 1,
-                        'perPage': 1,
-                        'sha': '',
-                    },
+                    args_delta='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":""}',
                     tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
                 ),
             ),
             PartStartEvent(
                 index=2,
                 part=BuiltinToolReturnPart(
-                    tool_name='mcp_server:mcp_call',
+                    tool_name='mcp_server:mcp_call_tool',
                     content={
                         'arguments': '{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":""}',
                         'name': 'list_commits',
@@ -7935,14 +7775,7 @@ https://github.com/birbland/pydantic-ai/commits/main\
             PartStartEvent(
                 index=4,
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:mcp_call',
-                    args={
-                        'arguments': '',
-                        'name': 'search_repositories',
-                        'server_label': 'test_server',
-                        'status': 'in_progress',
-                        'approval_request_id': None,
-                    },
+                    tool_name='mcp_server:mcp_call_tool',
                     tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
                     provider_name='openai',
                 ),
@@ -7950,21 +7783,14 @@ https://github.com/birbland/pydantic-ai/commits/main\
             PartDeltaEvent(
                 index=4,
                 delta=ToolCallPartDelta(
-                    args_delta={
-                        'query': 'birbland/pydantic-ai',
-                        'sort': 'stars',
-                        'order': 'desc',
-                        'page': 1,
-                        'perPage': 10,
-                        'minimal_output': True,
-                    },
+                    args_delta='{"query":"birbland/pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                     tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
                 ),
             ),
             PartStartEvent(
                 index=5,
                 part=BuiltinToolReturnPart(
-                    tool_name='mcp_server:mcp_call',
+                    tool_name='mcp_server:mcp_call_tool',
                     content={
                         'arguments': '{"query":"birbland/pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         'name': 'search_repositories',
@@ -7991,14 +7817,7 @@ https://github.com/birbland/pydantic-ai/commits/main\
             PartStartEvent(
                 index=7,
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:mcp_call',
-                    args={
-                        'arguments': '',
-                        'name': 'search_repositories',
-                        'server_label': 'test_server',
-                        'status': 'in_progress',
-                        'approval_request_id': None,
-                    },
+                    tool_name='mcp_server:mcp_call_tool',
                     tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
                     provider_name='openai',
                 ),
@@ -8006,21 +7825,14 @@ https://github.com/birbland/pydantic-ai/commits/main\
             PartDeltaEvent(
                 index=7,
                 delta=ToolCallPartDelta(
-                    args_delta={
-                        'query': 'pydantic-ai',
-                        'sort': 'stars',
-                        'order': 'desc',
-                        'page': 1,
-                        'perPage': 10,
-                        'minimal_output': False,
-                    },
+                    args_delta='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":false}',
                     tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
                 ),
             ),
             PartStartEvent(
                 index=8,
                 part=BuiltinToolReturnPart(
-                    tool_name='mcp_server:mcp_call',
+                    tool_name='mcp_server:mcp_call_tool',
                     content={
                         'arguments': '{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":false}',
                         'name': 'search_repositories',
@@ -8047,14 +7859,7 @@ https://github.com/birbland/pydantic-ai/commits/main\
             PartStartEvent(
                 index=10,
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:mcp_call',
-                    args={
-                        'arguments': '',
-                        'name': 'list_commits',
-                        'server_label': 'test_server',
-                        'status': 'in_progress',
-                        'approval_request_id': None,
-                    },
+                    tool_name='mcp_server:mcp_call_tool',
                     tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
                     provider_name='openai',
                 ),
@@ -8062,21 +7867,14 @@ https://github.com/birbland/pydantic-ai/commits/main\
             PartDeltaEvent(
                 index=10,
                 delta=ToolCallPartDelta(
-                    args_delta={
-                        'owner': 'birbland',
-                        'repo': 'pydantic-ai',
-                        'author': '',
-                        'page': 1,
-                        'perPage': 1,
-                        'sha': 'main',
-                    },
+                    args_delta='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":"main"}',
                     tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
                 ),
             ),
             PartStartEvent(
                 index=11,
                 part=BuiltinToolReturnPart(
-                    tool_name='mcp_server:mcp_call',
+                    tool_name='mcp_server:mcp_call_tool',
                     content={
                         'arguments': '{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":"main"}',
                         'name': 'list_commits',
@@ -8149,27 +7947,15 @@ https://github.com/birbland/pydantic-ai/commits/main\
             PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='/main')),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:mcp_call',
-                    args={
-                        'arguments': '',
-                        'name': 'list_commits',
-                        'server_label': 'test_server',
-                        'status': 'in_progress',
-                        'approval_request_id': None,
-                        'owner': 'birbland',
-                        'repo': 'pydantic-ai',
-                        'author': '',
-                        'page': 1,
-                        'perPage': 1,
-                        'sha': '',
-                    },
+                    tool_name='mcp_server:mcp_call_tool',
+                    args='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":""}',
                     tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
                     provider_name='openai',
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
-                    tool_name='mcp_server:mcp_call',
+                    tool_name='mcp_server:mcp_call_tool',
                     content={
                         'arguments': '{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":""}',
                         'name': 'list_commits',
@@ -8196,27 +7982,15 @@ https://github.com/birbland/pydantic-ai/commits/main\
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:mcp_call',
-                    args={
-                        'arguments': '',
-                        'name': 'search_repositories',
-                        'server_label': 'test_server',
-                        'status': 'in_progress',
-                        'approval_request_id': None,
-                        'query': 'birbland/pydantic-ai',
-                        'sort': 'stars',
-                        'order': 'desc',
-                        'page': 1,
-                        'perPage': 10,
-                        'minimal_output': True,
-                    },
+                    tool_name='mcp_server:mcp_call_tool',
+                    args='{"query":"birbland/pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                     tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
                     provider_name='openai',
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
-                    tool_name='mcp_server:mcp_call',
+                    tool_name='mcp_server:mcp_call_tool',
                     content={
                         'arguments': '{"query":"birbland/pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         'name': 'search_repositories',
@@ -8233,27 +8007,15 @@ https://github.com/birbland/pydantic-ai/commits/main\
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:mcp_call',
-                    args={
-                        'arguments': '',
-                        'name': 'search_repositories',
-                        'server_label': 'test_server',
-                        'status': 'in_progress',
-                        'approval_request_id': None,
-                        'query': 'pydantic-ai',
-                        'sort': 'stars',
-                        'order': 'desc',
-                        'page': 1,
-                        'perPage': 10,
-                        'minimal_output': False,
-                    },
+                    tool_name='mcp_server:mcp_call_tool',
+                    args='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":false}',
                     tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
                     provider_name='openai',
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
-                    tool_name='mcp_server:mcp_call',
+                    tool_name='mcp_server:mcp_call_tool',
                     content={
                         'arguments': '{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":false}',
                         'name': 'search_repositories',
@@ -8270,27 +8032,15 @@ https://github.com/birbland/pydantic-ai/commits/main\
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:mcp_call',
-                    args={
-                        'arguments': '',
-                        'name': 'list_commits',
-                        'server_label': 'test_server',
-                        'status': 'in_progress',
-                        'approval_request_id': None,
-                        'owner': 'birbland',
-                        'repo': 'pydantic-ai',
-                        'author': '',
-                        'page': 1,
-                        'perPage': 1,
-                        'sha': 'main',
-                    },
+                    tool_name='mcp_server:mcp_call_tool',
+                    args='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":"main"}',
                     tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
                     provider_name='openai',
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
-                    tool_name='mcp_server:mcp_call',
+                    tool_name='mcp_server:mcp_call_tool',
                     content={
                         'arguments': '{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":"main"}',
                         'name': 'list_commits',
@@ -8304,6 +8054,156 @@ https://github.com/birbland/pydantic-ai/commits/main\
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 )
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel(
+        'o4-mini',
+        provider=OpenAIProvider(api_key=openai_api_key),
+    )
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        builtin_tools=[
+            MCPServerTool(
+                id='google_calendar',
+                url='x-openai-connector:connector_googlecalendar',
+                description='Google Calendar',
+                authorization_token=os.getenv('GOOGLE_ACCESS_TOKEN', 'mock-access-token'),
+                allowed_tools=['search_events'],
+            ),
+        ],
+    )
+
+    result = await agent.run('What do I have on my Google Calendar for today?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='What do I have on my Google Calendar for today?', timestamp=IsDatetime())
+                ],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:mcp_list_tools',
+                        args={'server_label': 'google_calendar'},
+                        tool_call_id='mcpl_0a104500b823a8250068f0b88f3c4c8197b959bbcac973ab08',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:mcp_list_tools',
+                        content={
+                            'server_label': 'google_calendar',
+                            'error': None,
+                            'tools': [
+                                McpListToolsTool(
+                                    input_schema={
+                                        'properties': {
+                                            'calendar_id': {
+                                                'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                                'default': None,
+                                                'description': "The ID of the calendar to search. Default one is 'primary'",
+                                                'title': 'Calendar Id',
+                                            },
+                                            'max_results': {'default': 50, 'title': 'Max Results', 'type': 'integer'},
+                                            'next_page_token': {
+                                                'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                                'default': None,
+                                                'title': 'Next Page Token',
+                                            },
+                                            'query': {
+                                                'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                                'default': None,
+                                                'title': 'Query',
+                                            },
+                                            'time_max': {
+                                                'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                                'default': None,
+                                                'description': "Time in the ISO-8601 format. You can also use 'now' or leave null.",
+                                                'title': 'Time Max',
+                                            },
+                                            'time_min': {
+                                                'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                                'default': None,
+                                                'description': "Time in the ISO-8601 format. You can also use 'now' or leave null.",
+                                                'title': 'Time Min',
+                                            },
+                                            'timezone_str': {
+                                                'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                                'default': None,
+                                                'description': "Timezone of the event. Default is 'America/Los_Angeles'",
+                                                'title': 'Timezone Str',
+                                            },
+                                        },
+                                        'title': 'search_events_input',
+                                        'type': 'object',
+                                    },
+                                    name='search_events',
+                                    annotations={'read_only': True},
+                                    description='Look up Google Calendar events using various filters.',
+                                )
+                            ],
+                        },
+                        tool_call_id='mcpl_0a104500b823a8250068f0b88f3c4c8197b959bbcac973ab08',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='rs_0a104500b823a8250068f0b89044a881978fb6f106bc4af1db',
+                        signature='gAAAAABo8LiXEDl-avpofFl6NyGQZPMHT6ol5p_rqklDuQ-2E65wpopMUQjL1dkU_DysMx-yn8M99YxlcxqKeED-RCjaETNeiIZmE6YIwbDCOyU31ueSMF9gkWKyB58d6NjjQGWXO7QMYHTj9m2pqG2fUlUTgIm8m6Rhw2mHk-Eg-23Zz90ORXfUCJK484rgLcKSiCt1mgi0op2Ldv7eS6bsDnuGdDwVLrZixZEFosgpPdvr7ZkaGaV5lQizGxBy4dABIpNmavwZBLIEc8aj1ELr8wq6QxLYd5pqnURkxL3qNXo6ZiL0V8E-OR6Jy8X2lPFS83GTib0Il0x5MG57zFONLd8IvLScomF-5IpyMVPvJDFfzyQM9R1H0FFyfUDE15C5aQ2RlBmyCI1Rc2lmCmRVAq9phZApkIUtXgvJvx5AzzfUtpws3PnBDUhYIHBH24lGZ9ip5UhdkeZ1bOdtxEskg8wLZ_yvgSeKadgJBdv42TxKXGKDePzUPaWb_TMSgjmOkbB6cTF5pNABgNVGH_AbAdArv1lo1HWXS5eYhJS54Ntq7LVcLPQG6Jan1Owm5_zGCZuGK1erdwFGp5JCVvGjwu1KYUnp9Xns4XWugjLTnO7C4kDvIeEGTlW5WSkLvXBmQ8E6FvLaijW2KXiTq7kt4ZHMeMYOJurrKV2EbCGmZ8G30QlUUwiyMegaWWKmgsk2JtIV9IerPEMfHhLUaCHhzfCeSDc7lb25o4Jj3nZbL_xaG17aB-VLNK9rglr1xWyb1z8xCFvm-mzmPITiuuL5QYR0E4S-RQ52kvWHrYku-h-k9mEM0bmdCypG3RiQNInRE8x6aGkhIgrtGSKrReXr7h5XgBe26IGlFXMZxye8ps1yEleMB-Q-ZQ3GdlKI3XeeTnSv_9fLtfOKdzQ60CMgaBP-KHpqY2R6w8mheLKq_R1GxDGHoydBA5MC5VXz4ep-uCyecmXmCphyvpfQ1eys1vSf5Sn5-AhkFSma1-sAFHOJSvut-FNxpbOZZPzbMXbOK7NkQR5ONxPbolj1iGKNDH58RPt7hICX9zGvs0mctrPybyt9VmYspfOEDm8iS59uyb_l9g17crNqedD4wvrtWj5DmXzma7F94n8qp9QHIwWIVeCzPrlkm4NUUEgeUaZrPtAIBoGl6tbGaFHoTpvfpr4PVDsgVJ7dqrllba11tlaiheURacLnYeTgKo5mgnv87xHZPAVEk-GljCJdCE-BqO5eq2cs4JwKha5201dJ_-TbAzY5Ff5YWw3nyWWkVAL4LJDJbtcaQeDrm_rQfWLL0kuwLjtbhZqQbBfveNPeIWGn324nB3wIOYK6hk_XZyhB-v_Ivv9mLs8TQYWoOmuvd08NLeBJuwyJjOmUe8TPBbQUwHyyoustLAtPqY1SothUW9rCTaMcdTE_Cgx8Ma2J7skJXJn63eDRWCIqlJTybzcrYOTYHZSWuuI4ugUH5HheDyLJ1cQQjDDz6-rwEyu9JPSM5gV5IN_nd-RYa9jy1X41c9qKXRfY_dHqtMdH1_SGoVOcCAhQjImsYJeJ6NZwCKztM6YJWw_MsFIjB_dcOk2TnGgGjUy7WqasuPU7DqEQGqyqn_p7-PxK3uBBgIchye2m34M550s7Gb_tUuDgTerfYrNAZ6VSupgAovq0ZQsKhVnDV4C6Hna7FCVx85agb-6ZxvuC66WWAj5BZ68PrySPX1i6jRFkcUSgnreLS3qqnDSLNixN69puKU2JXv7GnA7XROPs3YLjfIX6F9OmdFqfdmO_7PfCPEVnDZb7WUioqUUEzBcfX3G5193t6cxnqScnqv19rCjVj_1RJ1OgkSMQpB19c8G7vK9XsJbpj4aUO69-l4UnQ2L-8cy-jAAU7GpknI52WES8pnrsRcxTAUHalqMMB4mnqzsDp1CHzgDeMGJjg6zaqIew677MBslvMDuoqeD7hcrKPp4cvA4ept4p_4Did3k8pXXqt7srHpfFPzGoEs9gNgYWxys4RMOFebIozbXZfdP4VNgmbDZy-H3pX5KKDtPsven6EKgYdVLfp_j3Og5P1YBfPIrUkq84TRaS9wCpV6A40G1oxHzgIlBTbnXr9qTgU98pAvM-fX6rwr-CewBOsAh83m4BkgG7s92dNS8LbTCvCFdyhyOo_IfbiXZpRZ2LmTB2MtqYSC1ncOWXdX8kD1T2UyfwxDiqJXH5jm8tWAlc8nCp_ohNYVTybU7eXM0_DJzfwfQTAuuYwse36tD-g3DFOqdUAgeHU7iaX5C5pV3DLVjirVmfelz3FBwlC-414AhsFFW28V2xEvANtBv0h2EeZJFDjwkPljSImwSlDtAlxdFXaRCziW5eM5tCkurYATgeW9D9YWuyJQl5utPxWAscUFaQ-FnxsrfX6ue2NhxQ_WTto32seLvGYXK65dPfuGDFLAdepa0osM9igRwghSuiNDBCP5Hk9qOEM7sWMu-R4Ctc1XWBHQ9VBGIn7EM4zjcl0YloAr6Nn6ewATJB4dtyU7Wv_ALEzx59ArH0B9lPSet9RBq-KpAXbISoIjf-p6A58TqbR7zyvmmIXIyx',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:mcp_call_tool',
+                        args={
+                            'arguments': '{"time_min":"2025-10-16T00:00:00","time_max":"2025-10-16T23:59:59","timezone_str":"America/Los_Angeles","max_results":50,"query":null,"calendar_id":"primary","next_page_token":null}',
+                            'name': 'search_events',
+                            'server_label': 'google_calendar',
+                            'approval_request_id': None,
+                            'status': 'completed',
+                        },
+                        tool_call_id='mcp_0a104500b823a8250068f0b893a6c081978dafa14bc9767711',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:mcp_call_tool',
+                        content={
+                            'arguments': '{"time_min":"2025-10-16T00:00:00","time_max":"2025-10-16T23:59:59","timezone_str":"America/Los_Angeles","max_results":50,"query":null,"calendar_id":"primary","next_page_token":null}',
+                            'name': 'search_events',
+                            'server_label': 'google_calendar',
+                            'approval_request_id': None,
+                            'status': 'completed',
+                            'error': None,
+                            'output': '{"events": [], "next_page_token": null}',
+                        },
+                        tool_call_id='mcp_0a104500b823a8250068f0b893a6c081978dafa14bc9767711',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='rs_0a104500b823a8250068f0b894af0c8197806bf2b7f7059bc1',
+                        signature='gAAAAABo8LiXxUYdty7An6iFIGA2GCFwwAjdWTsaRPVi1ec6N4WJQa09Gfg10q1fxIWyXMBLwWub5S3YBc4vmAs4kpcQapd9sgOEgglEhEucIIRdODyDwqKz5oUN5xLVk3fTLcvDhEh0nW3wh46VAoLsFpEhlMuDNooT53w2Z5CZg0FbWzNigWDEURRPzwoQKVBVpp8Ia2jKjkbkD0JHHiBQ17ej4XH_4VNFAu1IIdu0bMyWghFKofvJuCqeEvrJRKBmc8gqlOcqiYHI5PBI_lI7vpQqbK9RVk9k5hLe22ENT4mdeQRSm00P57imbrnDVVN_IeLf3cvl4KX85Bd8WlzUU8ZzcA9C6iOmJkUOi2ZZqDG_l7-yg1jg49SI8TZ4PJ5wiX4ZJ2kbOlH9gd2I2JIlGL3G2fI5uuOARbzOpEo8ZGQAQX1dIVfvxj6aE3xf42tfbmRK8_mjSwngoSGUkLbkkJ3SRJr1SKENHH8Yl2E2yYdNEFPu3JBHki9fW7LOKwpwPoxfFR_XqQrd8dJG8BggJBcdsyR-DIanekgmINkKZyj7YnxEE2J1PEvOOqzCzWRWrBQYKaBRAYKvmvgkjSzuCXcWZyk0yBz7lgtECcTyuKFPiFa0-sw1ke8KxKvtS6Uq4GCwNudcgzYoP4kXyuO_-GbQCWfLOShpoJcBkpe8SFXFPKxeIllOd1c6wnoWFwgVVdbXul1vOhH7nCxyJ7lpYqd8xA0IlKdOBnbyGG7BZJL0q3mjIR2FrpXFcgMq8MUYbn51DlHiYDCRkULOAgNktwKFErgsZckcolHXhiRA5CSCaNHu35AfwCiQQw8AUQgMdIslv01kWE74HcmgPrapM5i38RYq6wowYkGxbpW76z3bhPBWG8P1w9TK6GjqvAgqEGqUN-v8_uKV9vkrGdDq38g6CeLwxTbOERZCyD178LROuDLvYssq3lzJXc4zzYnXEZjk4MegwG_HyUwg7Nbt0QI5aCSKbnaBuB_m1cWvHDWJqvnYLtzo4w1SrKD0MxF-wxQ3XUZytmqmhbsoQ7yf_LO8eJ1l5qW0t1b0--3OFLDlDupYCNMX2ePNHSIakPnr-i24X1BBkYdSdPdtTgT6ubrpPDMGZAIvVq5RE5ExsNVYRBvOEYCgM__z6q9oDDcblkPdNMuLcP_TvYM-zKEGtG6evm46IA==',
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content='You do not have any events scheduled for today. Enjoy your free time!',
+                        id='msg_0a104500b823a8250068f0b89576648197ba0a5fd08070a1a7',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=655, output_tokens=420, details={'reasoning_tokens': 320}),
+                model_name='o4-mini-2025-04-16',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0a104500b823a8250068f0b88f03848197990038841e1bebdf',
+                finish_reason='stop',
             ),
         ]
     )

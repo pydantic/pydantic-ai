@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import io
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 
@@ -549,13 +549,14 @@ class AnthropicModel(Model):
                                     input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
-                            elif response_part.tool_name == MCPServerTool.CALL_KIND:  # pragma: no branch
-                                mcp_tool_use_block_param = BetaMCPToolUseBlockParam(
-                                    id=tool_use_id,
-                                    type='mcp_tool_use',
-                                    name='mcp_server',
-                                    server_name=response_part.tool_name,
-                                    input=response_part.args_as_dict(),
+                            elif response_part.tool_name == MCPServerTool.CALL_TOOL_KIND:  # pragma: no branch
+                                mcp_tool_use_block_param = cast(
+                                    BetaMCPToolUseBlockParam,
+                                    {
+                                        **response_part.args_as_dict(),
+                                        'id': tool_use_id,
+                                        'type': 'mcp_tool_use',
+                                    },
                                 )
                                 assistant_content_params.append(mcp_tool_use_block_param)
                     elif isinstance(response_part, BuiltinToolReturnPart):
@@ -589,7 +590,7 @@ class AnthropicModel(Model):
                                         ),
                                     )
                                 )
-                            elif response_part.tool_name == MCPServerTool.CALL_KIND:  # pragma: no branch
+                            elif response_part.tool_name == MCPServerTool.CALL_TOOL_KIND:  # pragma: no branch
                                 mcp_tool_result_block = cast(
                                     BetaMCPToolResultBlock,
                                     {
@@ -765,9 +766,10 @@ class AnthropicStreamedResponse(StreamedResponse):
                         part=_map_code_execution_tool_result_block(current_block, self.provider_name),
                     )
                 elif isinstance(current_block, BetaMCPToolUseBlock):
+                    call_part = _map_mcp_server_use_block(current_block, self.provider_name)
                     yield self._parts_manager.handle_part(
                         vendor_part_id=event.index,
-                        part=_map_mcp_server_use_block(current_block, self.provider_name),
+                        part=replace(call_part, args=None),
                     )
                 elif isinstance(current_block, BetaMCPToolResultBlock):
                     yield self._parts_manager.handle_part(
@@ -884,8 +886,8 @@ def _map_code_execution_tool_result_block(
 def _map_mcp_server_use_block(item: BetaMCPToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
     return BuiltinToolCallPart(
         provider_name=provider_name,
-        tool_name=MCPServerTool.CALL_KIND,
-        args=cast(dict[str, Any], item.input) or None,
+        tool_name=MCPServerTool.CALL_TOOL_KIND,
+        args=item.model_dump(mode='json', exclude={'id', 'type'}),
         tool_call_id=item.id,
     )
 
@@ -893,7 +895,7 @@ def _map_mcp_server_use_block(item: BetaMCPToolUseBlock, provider_name: str) -> 
 def _map_mcp_server_result_block(item: BetaMCPToolResultBlock, provider_name: str) -> BuiltinToolReturnPart:
     return BuiltinToolReturnPart(
         provider_name=provider_name,
-        tool_name=MCPServerTool.CALL_KIND,
+        tool_name=MCPServerTool.CALL_TOOL_KIND,
         content=item.model_dump(mode='json', exclude={'tool_use_id', 'type'}),
         tool_call_id=item.tool_use_id,
     )

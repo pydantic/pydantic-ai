@@ -251,7 +251,7 @@ class MCPServerTool(AbstractBuiltinTool):
     """
 
     id: str
-    """The id of the MCP server to use."""
+    """The ID of the MCP server."""
 
     url: str
     """The URL of the MCP server to use.
@@ -260,10 +260,21 @@ class MCPServerTool(AbstractBuiltinTool):
     """
 
     authorization_token: str | None = None
-    """Authorization header to use when making requests to the MCP server."""
+    """Authorization header to use when making requests to the MCP server.
+
+    Supported by:
+
+    * OpenAI Responses
+    * Anthropic
+    """
 
     description: str | None = None
-    """A description of the MCP server."""
+    """A description of the MCP server.
+
+    Supported by:
+
+    * OpenAI Responses
+    """
 
     allowed_tools: list[str] | None = None
     """A list of tools that the MCP server can use.
@@ -287,4 +298,4 @@ class MCPServerTool(AbstractBuiltinTool):
     kind: str = 'mcp_server'
 
     LIST_TOOLS_KIND: Literal['mcp_server:mcp_list_tools'] = 'mcp_server:mcp_list_tools'
-    CALL_KIND: Literal['mcp_server:mcp_call'] = 'mcp_server:mcp_call'
+    CALL_TOOL_KIND: Literal['mcp_server:mcp_call_tool'] = 'mcp_server:mcp_call_tool'

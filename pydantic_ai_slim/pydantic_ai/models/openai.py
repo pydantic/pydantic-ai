@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import base64
-import json
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -1260,12 +1259,12 @@ class OpenAIResponsesModel(Model):
                     mcp_tool['allowed_tools'] = tool.allowed_tools
 
                 if tool.description:  # pragma: no branch
-                    mcp_tool['server_description'] = tool.description  # pragma: no cover
+                    mcp_tool['server_description'] = tool.description
 
                 if tool.headers:  # pragma: no branch
-                    mcp_tool['headers'] = tool.headers  # pragma: no cover
+                    mcp_tool['headers'] = tool.headers
 
-                if tool.url.startswith(MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME + ':'):  # pragma: no cover
+                if tool.url.startswith(MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME + ':'):
                     _, connector_id = tool.url.split(':', maxsplit=1)
                     mcp_tool['connector_id'] = connector_id  # pyright: ignore[reportGeneralTypeIssues]
                 else:
@@ -1469,7 +1468,7 @@ class OpenAIResponsesModel(Model):
                                 )
                                 openai_messages.append(mcp_list_tools_item)
                             elif (  # pragma: no branch
-                                item.tool_name == MCPServerTool.CALL_KIND
+                                item.tool_name == MCPServerTool.CALL_TOOL_KIND
                                 and item.tool_call_id
                                 and (args := item.args_as_dict())
                             ):
@@ -1509,7 +1508,7 @@ class OpenAIResponsesModel(Model):
                             elif item.tool_name == MCPServerTool.LIST_TOOLS_KIND:
                                 # MCP list result does not need to be sent back, just the fields off of `BuiltinToolCallPart`.
                                 pass
-                            elif item.tool_name == MCPServerTool.CALL_KIND:
+                            elif item.tool_name == MCPServerTool.CALL_TOOL_KIND:
                                 # MCP call result does not need to be sent back, just the fields off of `BuiltinToolCallPart`.
                                 pass
                     elif isinstance(item, FilePart):
@@ -1839,7 +1838,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
                 elif isinstance(chunk.item, responses.response_output_item.McpCall):
                     call_part, _ = _map_mcp_call(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
+                    yield self._parts_manager.handle_part(
+                        vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
+                    )
                 elif isinstance(chunk.item, responses.response_output_item.McpListTools):
                     call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
@@ -1988,13 +1989,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseMcpCallArgumentsDeltaEvent):
-                try:
-                    json_args_delta = json.loads(chunk.delta)
-                except json.JSONDecodeError:  # pragma: no cover
-                    json_args_delta = {}
                 maybe_event = self._parts_manager.handle_tool_call_delta(
-                    vendor_part_id=f'{chunk.item_id}-call',
-                    args=json_args_delta,  # pyright: ignore[reportUnknownArgumentType]
+                    vendor_part_id=f'{chunk.item_id}-call', args=chunk.delta
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -2270,13 +2266,13 @@ def _map_mcp_call(
 
     return (
         BuiltinToolCallPart(
-            tool_name=MCPServerTool.CALL_KIND,
+            tool_name=MCPServerTool.CALL_TOOL_KIND,
             tool_call_id=item.id,
             args=call_serialized,
             provider_name=provider_name,
         ),
         BuiltinToolReturnPart(
-            tool_name=MCPServerTool.CALL_KIND,
+            tool_name=MCPServerTool.CALL_TOOL_KIND,
             tool_call_id=item.id,
             content=result_serialized,
             provider_name=provider_name,

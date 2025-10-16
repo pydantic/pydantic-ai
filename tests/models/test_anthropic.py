@@ -3100,13 +3100,17 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:mcp_call',
-                        args={'query': 'pydantic-ai in:name'},
+                        tool_name='mcp_server:mcp_call_tool',
+                        args={
+                            'input': {'query': 'pydantic-ai in:name'},
+                            'name': 'search_repositories',
+                            'server_name': 'test-server',
+                        },
                         tool_call_id='mcptoolu_01AmgVfcYg7HkjXerTSn1F93',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         content={
                             'content': [
                                 {
@@ -3176,13 +3180,17 @@ The framework emphasizes the "Pydantic way" of building AI agents with structure
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:mcp_call',
-                        args={'query': 'pydantic-ai in:name'},
+                        tool_name='mcp_server:mcp_call_tool',
+                        args={
+                            'input': {'query': 'pydantic-ai in:name'},
+                            'name': 'search_repositories',
+                            'server_name': 'test-server',
+                        },
                         tool_call_id='mcptoolu_01AmgVfcYg7HkjXerTSn1F93',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         content={
                             'content': [
                                 {
@@ -3328,19 +3336,19 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                         content="""\
 The user is asking about a specific repository called "pydantic-ai". I should search for this repository on GitHub to get information about it.
 
-I'll use the search_repositories function with a query for "pydantic-ai".\
+I'll use the search_repositories function with a query for "pydantic-ai". To be more specific, I might want to search for it in the name or as part of a specific organization if I know it. Let me search for "pydantic-ai in:name" to find repositories with that name.\
 """,
-                        signature='EoQDCkYICBgCKkAa1HZBxfN4hqIR94yoZlS09+0kk0TsutyXDMRMObEKxeSjyY5HhPaoJQsxuziCvgVXJ+YPFQBwKOqfQQiZX5gLEgzuF20rT7aRsXVM/8saDI446YS1piEKrnCDCiIwAD53dXCrcvkkuuvRwMZn2wnbimse3tO143Rb6xB5yqKPonJB6fb3Euh9De8YUkH/KusBSS1+1b/iGqHYSdJ4Du/2YLVY+E2R7lLjRU5DPYO2TS8w+QLH2LarOFFPwpfrUvvKuliyM/GDdRDh4O1bpPO65oK68RLnxStlVq5EJdS+sMbP5m4ianUZPptYCAU0hKc64V4i39a+TDbzhZoRnW2ZV+F2EEDtmmLibICbibKw6ZtxzMvYn3nZzhp8PGTCDwIAYm5RUju57b8JcNmtmH9bwvi7Py3Ong27tg6YyekkEOOWbbld5kt22i9roIvpXIETz5Acu/v3UNFaVx8jRtiO2dmHeaJlkAvHN0W1JRsxldoh9cUrNtGzTXfREBgB',
+                        signature='EsQECkYICBgCKkCK82+nlmjnKiZfbu6NGJSGOAp0cYf+o9ZYGIW237IaltgDWXzKJTQASoCF5Gdpp1zZ921+7qagpulTQkpoLj00EgxX4F5oVf4Jb4cSY/oaDH/eOhAD4Kj6edkFvSIwnWMSL4Mr9hpnmil8nPoxCJUqIpDJjR/NIU9Ox+gpfOv2aF9XecnhPl3sXt2RCGeAKqsDX7H4MVRaGDev9+ulOst6v9etRmvAKsJhFwksbqsmbffvfo4tkcV8cyJ2InKyiFQlEfDpUxCNosHlI2I0UBmKCv1u5i144TufwKblygIYS6q2GRu5EpasdjI+mJGnJ9DzLR2MrD3Q/6BtM/78Jg9HggEThiHRL9+95OnwoXXNQIEf/V4We2SyZmcht6EoPMBEluvLqTdq4Y1aaDYoI7XRQOcHnbYA39Scxk5X5gLBbtMaNBWkzyLHnkB5zeYqA2L357oIgdS47nxR8xexkp7yCE0sNDlu6803UYLL9I4qTcs1iX3v4JPALooB+xrnX0BSleTz45/02T540M92ysmK+chrWbjoa0dCZGbDdA6vtezxlI5yebvBJtz3ptTfxdVXj+gp/hlaZmQtbUCN/FKt1WAXwpw9gAZENC5qcF3P03OMyVBmYmXKW4vRqlHMHOcp+eYEmX4pLwAj1bNMhbnfZN0Nlv12rYIlmyrlW6y1XyycSmrlBGDW9ubtsWv0kA4v4vhLuslKVnPdlORou6/LlCUc480kz6n2dSZeKcUyIrRebOaIIVtBm8/vUhgB',
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         args='{"query": "pydantic-ai in:name", "minimal_output": false}',
-                        tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq',
+                        tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:mcp_call',
+                        tool_name='mcp_server:mcp_call_tool',
                         content={
                             'content': [
                                 {
@@ -3351,29 +3359,43 @@ I'll use the search_repositories function with a query for "pydantic-ai".\
                             ],
                             'is_error': False,
                         },
-                        tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq',
+                        tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
                     TextPart(
-                        content='**Pydantic AI** (pydantic/pydantic-ai) is a GenAI agent framework from the Pydantic team. It\'s written in Python, has **12.9K stars**, and emphasizes type safety and structured outputs using Pydantic models. The framework supports multiple LLM providers, provides tools for building agents, and follows "the Pydantic way" of ensuring data validation. More info: https://ai.pydantic.dev'
+                        content="""\
+**Pydantic AI** is a GenAI agent framework from Pydantic. Here's the quick overview:
+
+- **Repository**: `pydantic/pydantic-ai`
+- **Stars**: 12,928 ⭐
+- **License**: MIT
+- **Language**: Python
+- **Website**: https://ai.pydantic.dev
+
+**What it does**: It's an agent framework that leverages Pydantic's data validation capabilities to build LLM-powered agents with structured outputs. Think of it as building AI agents "the Pydantic way" - with type safety and validation built in.
+
+**Key topics**: GenAI, LLM, agent framework, Python, Pydantic
+
+It's actively maintained with recent pushes and has a growing community with 1,300+ forks and 331 open issues.\
+"""
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=64100,
-                    output_tokens=249,
+                    input_tokens=64084,
+                    output_tokens=384,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 64100,
-                        'output_tokens': 249,
+                        'input_tokens': 64084,
+                        'output_tokens': 384,
                     },
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01NUfcEVy5CBbtHMvec1p7qN',
+                provider_response_id='msg_013pK5B4RBV3QPRTSENdtiLV',
                 finish_reason='stop',
             ),
         ]
@@ -3404,7 +3426,7 @@ I'll use the search_repositories function with a query for "pydantic-ai".\
                     content_delta="""\
  about it.
 
-I'll use the search_\
+I'll use the search_repositories\
 """,
                     provider_name='anthropic',
                 ),
@@ -3412,58 +3434,82 @@ I'll use the search_\
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    content_delta='repositories function with a query for "pydantic-ai".', provider_name='anthropic'
+                    content_delta=' function with a query for "pydantic-ai". To', provider_name='anthropic'
                 ),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    signature_delta='EoQDCkYICBgCKkAa1HZBxfN4hqIR94yoZlS09+0kk0TsutyXDMRMObEKxeSjyY5HhPaoJQsxuziCvgVXJ+YPFQBwKOqfQQiZX5gLEgzuF20rT7aRsXVM/8saDI446YS1piEKrnCDCiIwAD53dXCrcvkkuuvRwMZn2wnbimse3tO143Rb6xB5yqKPonJB6fb3Euh9De8YUkH/KusBSS1+1b/iGqHYSdJ4Du/2YLVY+E2R7lLjRU5DPYO2TS8w+QLH2LarOFFPwpfrUvvKuliyM/GDdRDh4O1bpPO65oK68RLnxStlVq5EJdS+sMbP5m4ianUZPptYCAU0hKc64V4i39a+TDbzhZoRnW2ZV+F2EEDtmmLibICbibKw6ZtxzMvYn3nZzhp8PGTCDwIAYm5RUju57b8JcNmtmH9bwvi7Py3Ong27tg6YyekkEOOWbbld5kt22i9roIvpXIETz5Acu/v3UNFaVx8jRtiO2dmHeaJlkAvHN0W1JRsxldoh9cUrNtGzTXfREBgB',
+                    content_delta=' be more specific, I might want to search for it', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta=' in the name or as part of a specific', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta=' organization if I know it. Let me search for "pydantic-ai in',
+                    provider_name='anthropic',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta=':name" to find repositories with that name.', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    signature_delta='EsQECkYICBgCKkCK82+nlmjnKiZfbu6NGJSGOAp0cYf+o9ZYGIW237IaltgDWXzKJTQASoCF5Gdpp1zZ921+7qagpulTQkpoLj00EgxX4F5oVf4Jb4cSY/oaDH/eOhAD4Kj6edkFvSIwnWMSL4Mr9hpnmil8nPoxCJUqIpDJjR/NIU9Ox+gpfOv2aF9XecnhPl3sXt2RCGeAKqsDX7H4MVRaGDev9+ulOst6v9etRmvAKsJhFwksbqsmbffvfo4tkcV8cyJ2InKyiFQlEfDpUxCNosHlI2I0UBmKCv1u5i144TufwKblygIYS6q2GRu5EpasdjI+mJGnJ9DzLR2MrD3Q/6BtM/78Jg9HggEThiHRL9+95OnwoXXNQIEf/V4We2SyZmcht6EoPMBEluvLqTdq4Y1aaDYoI7XRQOcHnbYA39Scxk5X5gLBbtMaNBWkzyLHnkB5zeYqA2L357oIgdS47nxR8xexkp7yCE0sNDlu6803UYLL9I4qTcs1iX3v4JPALooB+xrnX0BSleTz45/02T540M92ysmK+chrWbjoa0dCZGbDdA6vtezxlI5yebvBJtz3ptTfxdVXj+gp/hlaZmQtbUCN/FKt1WAXwpw9gAZENC5qcF3P03OMyVBmYmXKW4vRqlHMHOcp+eYEmX4pLwAj1bNMhbnfZN0Nlv12rYIlmyrlW6y1XyycSmrlBGDW9ubtsWv0kA4v4vhLuslKVnPdlORou6/LlCUc480kz6n2dSZeKcUyIrRebOaIIVtBm8/vUhgB',
                     provider_name='anthropic',
                 ),
             ),
             PartStartEvent(
                 index=1,
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:mcp_call',
-                    tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq',
+                    tool_name='mcp_server:mcp_call_tool',
+                    tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM',
                     provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq')
+                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM')
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='{"query": "p', tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq'),
+                delta=ToolCallPartDelta(args_delta='{"query":', tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM'),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='ydantic-', tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq'),
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='ai i', tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq')
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='n:name"', tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq')
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta=', "min', tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq')
+                delta=ToolCallPartDelta(args_delta=' "pydantic-', tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM'),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='imal_outpu', tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq'),
+                delta=ToolCallPartDelta(args_delta='ai in:na', tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM'),
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='t": ', tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq')
+                index=1, delta=ToolCallPartDelta(args_delta='me"', tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM')
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='false}', tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq')
+                index=1,
+                delta=ToolCallPartDelta(args_delta=', "minimal', tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='_output": f', tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='alse}', tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM')
             ),
             PartStartEvent(
                 index=2,
                 part=BuiltinToolReturnPart(
-                    tool_name='mcp_server:mcp_call',
+                    tool_name='mcp_server:mcp_call_tool',
                     content={
                         'content': [
                             {
@@ -3474,49 +3520,129 @@ I'll use the search_\
                         ],
                         'is_error': False,
                     },
-                    tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq',
+                    tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
             ),
             PartStartEvent(index=3, part=TextPart(content='**')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='Pydantic AI** (pydantic/')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='pydantic-ai) is a GenAI agent')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' framework from the Pydantic team. It')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta="'s written in Python, has")),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' **12.9K stars**,')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' and emphasizes type safety and structure')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d outputs using Pydantic models. The')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' framework supports multiple LLM providers,')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='Pydantic AI**')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' is a')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' GenAI agent')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' framework from Pydantic. Here')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta="'s the quick")),
             PartDeltaEvent(
-                index=3, delta=TextPartDelta(content_delta=' provides tools for building agents, and follows')
+                index=3,
+                delta=TextPartDelta(
+                    content_delta="""\
+ overview:
+
+-\
+"""
+                ),
             ),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' "the Pydantic way" of ensuring')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' data validation. More info: https://ai')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='.pydantic.dev')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' **Repository**: `')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='pydantic/')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='pydantic-ai`')),
+            PartDeltaEvent(
+                index=3,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+- **Stars\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='**: 12')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',928')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='⭐')),
+            PartDeltaEvent(
+                index=3,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+- **License**: MIT
+- **\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=3,
+                delta=TextPartDelta(
+                    content_delta="""\
+Language**: Python
+- **Website\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='**: https://ai.pydantic.dev')),
+            PartDeltaEvent(
+                index=3,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+
+**What it does**:\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=" It's an agent")),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=" framework that leverages Pydantic's data")),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' validation capabilities to build L')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='LM-powered agents with structure')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d outputs. Think of it as building AI')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' agents "the Pydantic way"')),
+            PartDeltaEvent(
+                index=3,
+                delta=TextPartDelta(
+                    content_delta="""\
+ - with type safety and validation built in.
+
+**Key topics\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='**: GenAI, LLM')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=', agent framework, Python')),
+            PartDeltaEvent(
+                index=3,
+                delta=TextPartDelta(
+                    content_delta="""\
+, Pydantic
+
+It's actively\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' maintained with recent push')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='es and has')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' a growing community with 1')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',300+ forks and 331')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' open issues.')),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:mcp_call',
+                    tool_name='mcp_server:mcp_call_tool',
                     args='{"query": "pydantic-ai in:name", "minimal_output": false}',
-                    tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq',
+                    tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM',
                     provider_name='anthropic',
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
-                    tool_name='mcp_server:mcp_call',
+                    tool_name='mcp_server:mcp_call_tool',
                     content={
                         'content': [
                             {
-                                'text': IsStr(),
                                 'citations': None,
+                                'text': IsStr(),
                                 'type': 'text',
                             }
                         ],
                         'is_error': False,
                     },
-                    tool_call_id='mcptoolu_013Hh7q7CMe5JVpMig9cp8Pq',
+                    tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )

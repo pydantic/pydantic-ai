@@ -448,7 +448,7 @@ but can result in optimized context use and caching, and faster performance due 
 from pydantic_ai import Agent, MCPServerTool
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-0',
+    'anthropic:claude-sonnet-4-5',
     builtin_tools=[
         MCPServerTool(
             id='your-mcp-server',
@@ -470,7 +470,7 @@ With OpenAI, you must use their responses API to access the MCP server tool.
 from pydantic_ai import Agent, MCPServerTool
 
 agent = Agent(
-    'openai-responses:gpt-4o',
+    'openai-responses:gpt-5',
     builtin_tools=[
         MCPServerTool(
             id='your-mcp-server',
@@ -494,11 +494,14 @@ The `MCPServerTool` supports several configuration parameters for custom MCP ser
 from pydantic_ai import Agent, MCPServerTool
 
 agent = Agent(
-    'openai-responses:gpt-4o',
+    'openai-responses:gpt-5',
     builtin_tools=[
         MCPServerTool(
             id='your-mcp-server',  # required field
             url='https://api.githubcopilot.com/mcp/',  # required field
+            allowed_tools=['search_repositories', 'list_commits'],
+            description='Your MCP Server',
+            headers={'X-CUSTOM-HEADER': 'custom-value'},
         )
     ]
 )
@@ -518,7 +521,7 @@ import os
 from pydantic_ai import Agent, MCPServerTool
 
 agent = Agent(
-    'openai-responses:gpt-4o',
+    'openai-responses:gpt-5',
     builtin_tools=[
         MCPServerTool(
             id='your-mcp-server',
@@ -543,8 +546,8 @@ _(This example is complete, it can be run "as is")_
 | Parameter             | OpenAI | Anthropic |
 |-----------------------|--------|-----------|
 | `url`                 | ✅ | ✅ |
-| `allowed_tools`       | ✅ | ✅ |
 | `authorization_token` | ✅ | ✅ |
+| `allowed_tools`       | ✅ | ✅ |
 | `description`         | ✅ | ❌ |
 | `headers`             | ✅ | ❌ |
 
