@@ -766,6 +766,52 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main(answer))` to run `main`)_
 
+### Generating from an Existing Agent
+
+If you already have an agent, you can use [`generate_evals_from_agent`][pydantic_evals.generation.generate_evals_from_agent] to automatically extract types from the agent and generate test cases. This is simpler than `generate_dataset` because you don't need to manually specify the dataset type or generic parameters.
+
+```python {title="generate_from_agent_example.py"}
+from pydantic import BaseModel
+from pydantic_ai import Agent
+
+from pydantic_evals.generation import generate_evals_from_agent
+
+
+class AnswerOutput(BaseModel):
+    """Model for expected answer outputs."""
+
+    answer: str
+    confidence: float
+
+
+agent = Agent(  # (1)!
+    'openai:gpt-4o',
+    output_type=AnswerOutput,
+    system_prompt='You are a helpful assistant that answers questions about world geography.',
+)
+
+
+async def main():
+    dataset = await generate_evals_from_agent(  # (2)!
+        agent=agent,
+        n_examples=3,
+        model='openai:gpt-4o',
+        path='agent_test_cases.json',
+        extra_instructions='Generate questions about world capitals and landmarks.',
+    )
+    print(f'Generated {len(dataset.cases)} test cases')
+```
+
+1. Create an agent with a defined output type and system prompt.
+2. Generate test cases by extracting types from the agent. The function will:
+    - Use an LLM to generate diverse input prompts based on the agent's configuration
+    - Run each input through the actual agent to get real outputs
+    - Save the inputs and outputs as test cases
+
+This approach ensures your test cases use realistic outputs from your actual agent, rather than having an LLM imagine what the outputs should be.
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
 ## Integration with Logfire
 
 Pydantic Evals is implemented using OpenTelemetry to record traces of the evaluation process. These traces contain all
