@@ -382,7 +382,6 @@ async def streaming_handler(ctx,
     Feel free to change it as you like or need - skipping events or enriching the content
     """
     
-    output_delta = ""
     output = ""
     output_tool_delta = dict(
         tool_call_id='',
@@ -393,7 +392,7 @@ async def streaming_handler(ctx,
     async for event in event_stream_events:
         if isinstance(event, PartStartEvent):
             if isinstance(event.part, TextPart):
-                output_delta += f"{event.part.content}"
+                output += f"{event.part.content}"
             elif isinstance(event.part, ToolCallPart):
                 output += f"\nTool Call Id: {event.part.tool_call_id}"
                 output += f"\nTool Name: {event.part.tool_name}"
@@ -410,7 +409,7 @@ async def streaming_handler(ctx,
             output += f"\nContent: {event.result.content}"
         elif isinstance(event, PartDeltaEvent):
             if isinstance(event.delta, TextPartDelta) or isinstance(event.delta, ThinkingPartDelta):
-                output_delta += f"{event.delta.content_delta}"
+                output += f"{event.delta.content_delta}"
             else:
                 if len(output_tool_delta['tool_call_id']) == 0:
                     output_tool_delta['tool_call_id'] += event.delta.tool_call_id or ''
@@ -426,9 +425,6 @@ async def streaming_handler(ctx,
 
     if output:
         event = EventStream(kind=EventKind.EVENT, content=output)
-        events.append(event)
-    if output_delta:
-        event = EventStream(kind=EventKind.RESULT, content=output_delta)
         events.append(event)
 
     if activity.in_activity():
@@ -453,7 +449,7 @@ from typing import Any, Dict, Deque, Optional
 from temporalio import workflow, activity
 
 with workflow.unsafe.imports_passed_through():
-    from datamodels import EventStream, AgentDependencies
+    from datamodels import EventStream, EventKind, AgentDependencies
     from agents import YahooFinanceSearchAgent
     from pydanticai import UsageLimits
     from agents import streaming_handler, build_agent
@@ -480,6 +476,12 @@ class YahooFinanceSearchWorkflow:
                                  usage_limits=UsageLimits(request_limit=50),
                                  deps=deps
                                  )
+        
+        await self.append_event(event_stream=EventStream(kind=EventKind.RESULT,
+                                                             content=result.output))
+
+        await self.append_event(event_stream=EventStream(kind=EventKind.CONTINUE_CHAT,
+                                                         content=""))
 
         try:
             await workflow.wait_condition(
