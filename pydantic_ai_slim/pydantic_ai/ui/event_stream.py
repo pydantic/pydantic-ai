@@ -117,7 +117,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
                 if turn != next_turn:
                     if turn == 'request':
                         async for e in self.after_request():
-                            yield e  # TODO (DouweM): coverage
+                            yield e
                     elif turn == 'response':
                         async for e in self.after_response():
                             yield e  # TODO (DouweM): coverage
@@ -178,7 +178,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
             case FinalResultEvent():
                 self._final_result_event = event
                 async for e in self.handle_final_result(event):
-                    yield e  # TODO (DouweM): coverage
+                    yield e
             case FunctionToolCallEvent():
                 async for e in self.handle_function_tool_call(event):
                     yield e  # TODO (DouweM): coverage
@@ -204,7 +204,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
 
                 self.result = event.result
                 async for e in self.handle_run_result(event):
-                    yield e  # TODO (DouweM): coverage
+                    yield e
             case _:
                 pass
 
@@ -250,7 +250,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
             case ThinkingPartDelta():
                 async for e in self.handle_thinking_delta(delta):
                     yield e
-            case ToolCallPartDelta():  # TODO (DouweM): coverage branch
+            case ToolCallPartDelta():  # pragma: no branch
                 async for e in self.handle_tool_call_delta(delta):
                     yield e
 
@@ -331,7 +331,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Yields:
             Protocol-specific events.
         """
-        return
+        return  # TODO (DouweM): coverage
         yield  # Make this an async generator
 
     async def handle_thinking_end(

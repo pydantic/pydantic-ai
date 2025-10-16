@@ -190,16 +190,11 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
         async for event in event_stream.handle_stream(stream):
             yield event
 
-        try:
-            result = event_stream.result
-            if on_complete is not None and result is not None:
+            if (result := event_stream.result) and on_complete is not None:
                 if _utils.is_async_callable(on_complete):
                     await on_complete(result)
                 else:
                     await _utils.run_in_executor(on_complete, result)
-        except Exception as e:  # TODO (DouweM): coverage
-            async for event in event_stream.on_error(e):
-                yield event
 
     async def run_stream(
         self,
