@@ -621,12 +621,12 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                     for new_task in maybe_overridden_result:
                                         self.active_tasks[new_task.task_id] = new_task
                                     new_task_ids = {t.task_id for t in maybe_overridden_result}
-                                    for t in new_tasks:  # pragma: no cover
+                                    for t in new_tasks:
                                         # Same note as above about how this is theoretically reachable but we should
                                         # just get coverage by unifying the code paths
-                                        if t.task_id not in new_task_ids:
+                                        if t.task_id not in new_task_ids:  # pragma: no cover
                                             await self._finish_task(t.task_id)
-                                    self._handle_execution_request(maybe_overridden_result)
+                                    self._handle_execution_request(maybe_overridden_result)  # pragma: no cover
                 except GeneratorExit:
                     return
 
