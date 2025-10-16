@@ -73,6 +73,7 @@ try:
         GroundingMetadata,
         HttpOptionsDict,
         MediaResolution,
+        Modality,
         Part,
         PartDict,
         SafetySettingDict,
@@ -415,6 +416,10 @@ class GoogleModel(Model):
         tool_config = self._get_tool_config(model_request_parameters, tools)
         system_instruction, contents = await self._map_messages(messages)
 
+        modalities = [Modality.TEXT.value]
+        if self.profile.supports_image_output:
+            modalities.append(Modality.IMAGE.value)
+
         http_options: HttpOptionsDict = {
             'headers': {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         }
@@ -443,6 +448,7 @@ class GoogleModel(Model):
             tool_config=tool_config,
             response_mime_type=response_mime_type,
             response_schema=response_schema,
+            response_modalities=modalities,
         )
         return contents, config
 
