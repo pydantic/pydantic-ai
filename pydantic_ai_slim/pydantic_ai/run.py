@@ -237,7 +237,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         # Note: It might be nice to expose a synchronous interface for iteration, but we shouldn't do it
         # on this class, or else IDEs won't warn you if you accidentally use `for` instead of `async for` to iterate.
-        task = await self._graph_run.next([self._node_to_task(node)])
+        task = [self._node_to_task(node)]
+        try:
+            task = await self._graph_run.next(task)
+        except StopAsyncIteration:
+            pass
         return self._task_to_node(task)
 
     # TODO (v2): Make this a property

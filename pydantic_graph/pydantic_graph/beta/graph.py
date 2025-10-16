@@ -628,6 +628,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                             await self._finish_task(t.task_id)
                                     self._handle_execution_request(maybe_overridden_result)  # pragma: no cover
                 except GeneratorExit:
+                    self._task_group.cancel_scope.cancel()
                     return
 
         raise RuntimeError(  # pragma: no cover
