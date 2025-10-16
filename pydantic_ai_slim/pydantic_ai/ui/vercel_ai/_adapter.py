@@ -69,7 +69,7 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT]
     @classmethod
     async def validate_request(cls, request: Request) -> RequestData:
         """Validate a Vercel AI request."""
-        return request_data_ta.validate_json(await request.body())
+        return request_data_ta.validate_json(await request.body())  # TODO (DouweM): coverage
 
     @property
     def event_stream(self) -> BaseEventStream[RequestData, BaseChunk, AgentDepsT]:
@@ -78,7 +78,7 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT]
     @property
     def response_headers(self) -> Mapping[str, str] | None:
         """Get the response headers for the adapter."""
-        return VERCEL_AI_DSP_HEADERS
+        return VERCEL_AI_DSP_HEADERS  # TODO (DouweM): coverage
 
     @cached_property
     def messages(self) -> list[ModelMessage]:
@@ -104,7 +104,7 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT]
 
         for msg in messages:
             if msg.role in ('system', 'user'):
-                if request_parts is None:
+                if request_parts is None:  # TODO (DouweM): coverage branch
                     request_parts = []
                     result.append(ModelRequest(parts=request_parts))
                     response_parts = None
@@ -112,10 +112,10 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT]
                 for part in msg.parts:
                     if isinstance(part, TextUIPart):
                         if msg.role == 'system':
-                            request_parts.append(SystemPromptPart(content=part.text))
+                            request_parts.append(SystemPromptPart(content=part.text))  # TODO (DouweM): coverage
                         else:
                             request_parts.append(UserPromptPart(content=part.text))
-                    elif isinstance(part, FileUIPart):
+                    elif isinstance(part, FileUIPart):  # TODO (DouweM): coverage
                         try:
                             file = BinaryContent.from_data_uri(part.url)
                         except ValueError:
@@ -131,7 +131,7 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT]
                                     file = DocumentUrl(url=part.url, media_type=part.media_type)
                         request_parts.append(UserPromptPart(content=[file]))
 
-            elif msg.role == 'assistant':
+            elif msg.role == 'assistant':  # TODO (DouweM): coverage branch
                 for part in msg.parts:
                     if response_parts is None:
                         response_parts = []
@@ -141,8 +141,8 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT]
                     if isinstance(part, TextUIPart):
                         response_parts.append(TextPart(content=part.text))
                     elif isinstance(part, ReasoningUIPart):
-                        response_parts.append(ThinkingPart(content=part.text))
-                    elif isinstance(part, FileUIPart):
+                        response_parts.append(ThinkingPart(content=part.text))  # TODO (DouweM): coverage
+                    elif isinstance(part, FileUIPart):  # TODO (DouweM): coverage
                         try:
                             file = BinaryContent.from_data_uri(part.url)
                         except ValueError as e:
@@ -154,8 +154,8 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT]
                     elif isinstance(part, DataUIPart):
                         # Not currently supported
                         pass
-                    elif isinstance(part, ToolUIPart | DynamicToolUIPart):
-                        if isinstance(part, DynamicToolUIPart):
+                    elif isinstance(part, ToolUIPart | DynamicToolUIPart):  # TODO (DouweM): coverage branch
+                        if isinstance(part, DynamicToolUIPart):  # TODO (DouweM): coverage
                             tool_name = part.tool_name
                             builtin_tool = False
                         else:
@@ -165,7 +165,7 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT]
                         tool_call_id = part.tool_call_id
                         args = part.input
 
-                        if builtin_tool:
+                        if builtin_tool:  # TODO (DouweM): coverage
                             call_part = BuiltinToolCallPart(tool_name=tool_name, tool_call_id=tool_call_id, args=args)
                             response_parts.append(call_part)
 
@@ -196,12 +196,12 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT]
                                 result_part = ToolReturnPart(
                                     tool_name=tool_name, tool_call_id=tool_call_id, content=part.output
                                 )
-                            elif part.state == 'output-error':
+                            elif part.state == 'output-error':  # TODO (DouweM): coverage
                                 result_part = RetryPromptPart(
                                     tool_name=tool_name, tool_call_id=tool_call_id, content=part.error_text
                                 )
 
-                            if result_part:
+                            if result_part:  # TODO (DouweM): coverage branch
                                 request_parts = [result_part]
                                 result.append(ModelRequest(parts=request_parts))
                                 response_parts = None

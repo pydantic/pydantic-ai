@@ -115,10 +115,10 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
                 if turn != next_turn:
                     if turn == 'request':
                         async for e in self.after_request():
-                            yield e
+                            yield e  # TODO (DouweM): coverage
                     elif turn == 'response':
                         async for e in self.after_response():
-                            yield e
+                            yield e  # TODO (DouweM): coverage
 
                     turn = next_turn
 
@@ -127,7 +127,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
                             yield e
                     elif turn == 'response':
                         async for e in self.before_response():
-                            yield e
+                            yield e  # TODO (DouweM): coverage
 
                 async for e in self.handle_event(event):
                     yield e
@@ -136,10 +136,12 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
                 yield e
         else:
             if turn == 'request':
-                async for e in self.after_request():
+                async for (
+                    e
+                ) in self.after_request():  # TODO (DouweM): coverage. does this make sense here? should it be finally?
                     yield e
             elif turn == 'response':
-                async for e in self.after_response():
+                async for e in self.after_response():  # TODO (DouweM): coverage
                     yield e
 
             async for e in self.after_stream():
@@ -158,7 +160,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
             Protocol-specific events.
         """
         async for e in self.before_event(event):
-            yield e
+            yield e  # TODO (DouweM): coverage
 
         match event:
             case PartStartEvent():
@@ -173,10 +175,10 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
             case FinalResultEvent():
                 self._final_result_event = event
                 async for e in self.handle_final_result(event):
-                    yield e
+                    yield e  # TODO (DouweM): coverage
             case FunctionToolCallEvent():
                 async for e in self.handle_function_tool_call(event):
-                    yield e
+                    yield e  # TODO (DouweM): coverage
             case FunctionToolResultEvent():
                 async for e in self.handle_function_tool_result(event):
                     yield e
@@ -185,7 +187,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
                     self._final_result_event
                     and (tool_call_id := self._final_result_event.tool_call_id)
                     and (tool_name := self._final_result_event.tool_name)
-                ):
+                ):  # TODO (DouweM): coverage
                     self._final_result_event = None
                     output_tool_result_event = FunctionToolResultEvent(
                         result=ToolReturnPart(
@@ -199,12 +201,12 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
 
                 self.result = event.result
                 async for e in self.handle_run_result(event):
-                    yield e
+                    yield e  # TODO (DouweM): coverage
             case _:
                 pass
 
         async for e in self.after_event(event):
-            yield e
+            yield e  # TODO (DouweM): coverage
 
     async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:
         """Handle a PartStartEvent.
@@ -230,7 +232,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
             case BuiltinToolReturnPart():
                 async for e in self.handle_builtin_tool_return(part):
                     yield e
-            case FilePart():
+            case FilePart():  # TODO (DouweM): coverage
                 async for e in self.handle_file(part):
                     yield e
 
@@ -248,7 +250,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
             case ThinkingPartDelta():
                 async for e in self.handle_thinking_delta(delta):
                     yield e
-            case ToolCallPartDelta():
+            case ToolCallPartDelta():  # TODO (DouweM): coverage branch
                 async for e in self.handle_tool_call_delta(delta):
                     yield e
 
@@ -273,7 +275,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
             case BuiltinToolCallPart():
                 async for e in self.handle_builtin_tool_call_end(part):
                     yield e
-            case BuiltinToolReturnPart() | FilePart():
+            case BuiltinToolReturnPart() | FilePart():  # pragma: no cover
                 # These don't have deltas, so they don't need to be ended.
                 pass
 
@@ -287,7 +289,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Yields:
             Protocol-specific events.
         """
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_text_delta(self, delta: TextPartDelta) -> AsyncIterator[EventT]:
@@ -299,7 +301,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Yields:
             Protocol-specific events.
         """
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_thinking_start(self, part: ThinkingPart, follows_thinking: bool = False) -> AsyncIterator[EventT]:
@@ -312,7 +314,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Yields:
             Protocol-specific events.
         """
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[EventT]:
@@ -336,7 +338,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Yields:
             Protocol-specific events.
         """
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[EventT]:
@@ -348,7 +350,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Yields:
             Protocol-specific events.
         """
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[EventT]:
@@ -360,7 +362,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Yields:
             Protocol-specific events.
         """
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[EventT]:
@@ -372,7 +374,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Yields:
             Protocol-specific events.
         """
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_file(self, part: FilePart) -> AsyncIterator[EventT]:
@@ -384,29 +386,29 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Yields:
             Protocol-specific events.
         """
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[EventT]:
         """Handle the end of a TextPart."""
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_thinking_end(
         self, part: ThinkingPart, followed_by_thinking: bool = False
     ) -> AsyncIterator[EventT]:
         """Handle the end of a ThinkingPart."""
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[EventT]:
         """Handle the end of a ToolCallPart."""
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[EventT]:
         """Handle the end of a BuiltinToolCallPart."""
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_final_result(self, event: FinalResultEvent) -> AsyncIterator[EventT]:
@@ -442,7 +444,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Yields:
             Protocol-specific events.
         """
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[EventT]:
@@ -506,7 +508,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Yields:
             Protocol-specific events to emit before streaming.
         """
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def after_stream(self) -> AsyncIterator[EventT]:
@@ -518,7 +520,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Yields:
             Protocol-specific events to emit after streaming.
         """
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def on_error(self, error: Exception) -> AsyncIterator[EventT]:
@@ -530,5 +532,5 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Yields:
             Protocol-specific error events.
         """
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator

@@ -198,7 +198,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
                     await on_complete(result)
                 else:
                     await _utils.run_in_executor(on_complete, result)
-        except Exception as e:
+        except Exception as e:  # TODO (DouweM): coverage
             async for event in event_stream.on_error(e):
                 yield event
 

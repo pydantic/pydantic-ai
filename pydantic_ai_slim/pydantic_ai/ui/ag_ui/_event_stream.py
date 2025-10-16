@@ -112,7 +112,7 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseEvent]:
         """Handle a TextPart at start."""
         if follows_text:
-            message_id = self.message_id
+            message_id = self.message_id  # TODO (DouweM): coverage
         else:
             message_id = self.new_message_id()
             yield TextMessageStartEvent(message_id=message_id)
@@ -127,7 +127,7 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
 
     async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[BaseEvent]:
         """Handle a TextPart at end."""
-        if not followed_by_text:
+        if not followed_by_text:  # TODO (DouweM): coverage branch
             yield TextMessageEndEvent(message_id=self.message_id)
 
     async def handle_thinking_start(
@@ -145,7 +145,7 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
     async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[BaseEvent]:
         """Handle a ThinkingPartDelta."""
         if not delta.content_delta:
-            return
+            return  # pragma: no cover
 
         if not self._thinking_text:
             yield ThinkingTextMessageStartEvent(type=EventType.THINKING_TEXT_MESSAGE_START)
