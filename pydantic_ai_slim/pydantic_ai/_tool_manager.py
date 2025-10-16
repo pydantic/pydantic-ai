@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from functools import cached_property
 from typing import Any, Generic
 
 from opentelemetry.trace import Tracer
@@ -73,11 +71,6 @@ class ToolManager(Generic[AgentDepsT]):
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         return [tool.tool_def for tool in self.tools.values()]
-
-    @cached_property
-    def _usage_lock(self) -> asyncio.Lock:
-        """Lock to prevent race conditions when incrementing usage.tool_calls from concurrent tool executions."""
-        return asyncio.Lock()
 
     def should_call_sequentially(self, calls: list[ToolCallPart]) -> bool:
         """Whether to require sequential tool calls for a list of tool calls."""
@@ -241,8 +234,7 @@ class ToolManager(Generic[AgentDepsT]):
         ) as span:
             try:
                 tool_result = await self._call_tool(call, allow_partial, wrap_validation_errors)
-                async with self._usage_lock:
-                    usage.tool_calls += 1
+                usage.tool_calls += 1
 
             except ToolRetryError as e:
                 part = e.tool_retry
