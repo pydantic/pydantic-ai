@@ -251,11 +251,13 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         tool_name='get_location',
                         args='{"loc_name":"Londos"}',
                         tool_call_id=IsStr(),
+                        id='fc_67e547c540648191bc7505ac667e023f0ae6111e84dd5c08',
                     ),
                     ToolCallPart(
                         tool_name='get_location',
                         args='{"loc_name":"London"}',
                         tool_call_id=IsStr(),
+                        id='fc_67e547c55c3081919da7a3f7fe81a1030ae6111e84dd5c08',
                     ),
                 ],
                 usage=RequestUsage(details={'reasoning_tokens': 0}),
@@ -328,7 +330,14 @@ async def test_image_as_binary_content_tool_response(
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_image',
+                        args='{}',
+                        tool_call_id=IsStr(),
+                        id='fc_681134d47cf48191b3f62e4d28b6c3820fe7a5a4e2123dc3',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=40, output_tokens=11, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -342,7 +351,7 @@ async def test_image_as_binary_content_tool_response(
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file 1c8566',
-                        tool_call_id='call_FLm3B1f8QAan0KpbUXhNY8bA|fc_681134d47cf48191b3f62e4d28b6c3820fe7a5a4e2123dc3',
+                        tool_call_id='call_FLm3B1f8QAan0KpbUXhNY8bA',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -1275,7 +1284,14 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args='{}',
+                        tool_call_id=IsStr(),
+                        id='fc_68477f0bb8e4819cba6d781e174d77f8001fd29e2d5573f7',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=62, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1289,7 +1305,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_ZWkVhdUjupo528U9dqgFeRkH|fc_68477f0bb8e4819cba6d781e174d77f8001fd29e2d5573f7',
+                        tool_call_id='call_ZWkVhdUjupo528U9dqgFeRkH',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -1299,7 +1315,8 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                     ToolCallPart(
                         tool_name='final_result',
                         args='{"city":"Mexico City","country":"Mexico"}',
-                        tool_call_id='call_iFBd0zULhSZRR908DfH73VwN|fc_68477f0c91cc819e8024e7e633f0f09401dc81d4bc91f560',
+                        tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
+                        id='fc_68477f0c91cc819e8024e7e633f0f09401dc81d4bc91f560',
                     )
                 ],
                 usage=RequestUsage(input_tokens=85, output_tokens=20, details={'reasoning_tokens': 0}),
@@ -1315,7 +1332,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='call_iFBd0zULhSZRR908DfH73VwN|fc_68477f0c91cc819e8024e7e633f0f09401dc81d4bc91f560',
+                        tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -1355,7 +1372,8 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                     ToolCallPart(
                         tool_name='get_user_country',
                         args='{}',
-                        tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr|fc_68477f0dff5c819ea17a1ffbaea621e00356a60c98816d6a',
+                        tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr',
+                        id='fc_68477f0dff5c819ea17a1ffbaea621e00356a60c98816d6a',
                     )
                 ],
                 usage=RequestUsage(input_tokens=36, output_tokens=12, details={'reasoning_tokens': 0}),
@@ -1371,7 +1389,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr|fc_68477f0dff5c819ea17a1ffbaea621e00356a60c98816d6a',
+                        tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -1425,7 +1443,14 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args='{}',
+                        tool_call_id=IsStr(),
+                        id='fc_68477f0fa7c081a19a525f7c6f180f310b8591d9001d2329',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=66, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1439,7 +1464,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_tTAThu8l2S9hNky2krdwijGP|fc_68477f0fa7c081a19a525f7c6f180f310b8591d9001d2329',
+                        tool_call_id='call_tTAThu8l2S9hNky2krdwijGP',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -1495,7 +1520,14 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args='{}',
+                        tool_call_id=IsStr(),
+                        id='fc_68477f1168a081a3981e847cd94275080dd57d732903c563',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=153, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1509,7 +1541,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_UaLahjOtaM2tTyYZLxTCbOaP|fc_68477f1168a081a3981e847cd94275080dd57d732903c563',
+                        tool_call_id='call_UaLahjOtaM2tTyYZLxTCbOaP',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -1568,7 +1600,14 @@ Don't include any text or Markdown fencing before or after.\
 """,
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args='{}',
+                        tool_call_id=IsStr(),
+                        id='fc_68482f1b0ff081a1b37b9170ee740d1e02f8ef7f2fb42b50',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=107, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1582,7 +1621,7 @@ Don't include any text or Markdown fencing before or after.\
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_FrlL4M0CbAy8Dhv4VqF1Shom|fc_68482f1b0ff081a1b37b9170ee740d1e02f8ef7f2fb42b50',
+                        tool_call_id='call_FrlL4M0CbAy8Dhv4VqF1Shom',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1652,7 +1691,14 @@ Don't include any text or Markdown fencing before or after.\
 """,
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args='{}',
+                        tool_call_id=IsStr(),
+                        id='fc_68482f2889d481a199caa61de7ccb62c08e79646fe74d5ee',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=283, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1666,7 +1712,7 @@ Don't include any text or Markdown fencing before or after.\
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_my4OyoVXRT0m7bLWmsxcaCQI|fc_68482f2889d481a199caa61de7ccb62c08e79646fe74d5ee',
+                        tool_call_id='call_my4OyoVXRT0m7bLWmsxcaCQI',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2200,7 +2246,8 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                     ToolCallPart(
                         tool_name='update_plan',
                         args=IsStr(),
-                        tool_call_id='call_gL7JE6GDeGGsFubqO2XGytyO|fc_68c42d3e9e4881968b15fbb8253f58540e8bc41441c948f6',
+                        tool_call_id='call_gL7JE6GDeGGsFubqO2XGytyO',
+                        id='fc_68c42d3e9e4881968b15fbb8253f58540e8bc41441c948f6',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=124, output_tokens=1926, details={'reasoning_tokens': 1792}),
@@ -2216,7 +2263,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                     ToolReturnPart(
                         tool_name='update_plan',
                         content='plan updated',
-                        tool_call_id='call_gL7JE6GDeGGsFubqO2XGytyO|fc_68c42d3e9e4881968b15fbb8253f58540e8bc41441c948f6',
+                        tool_call_id='call_gL7JE6GDeGGsFubqO2XGytyO',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -3380,7 +3427,8 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                     ToolCallPart(
                         tool_name='get_meaning_of_life',
                         args='{}',
-                        tool_call_id='call_3WCunBU7lCG1HHaLmnnRJn8I|fc_68cc4fa649ac8195b0c6c239cd2c14470548824120ffcf74',
+                        tool_call_id='call_3WCunBU7lCG1HHaLmnnRJn8I',
+                        id='fc_68cc4fa649ac8195b0c6c239cd2c14470548824120ffcf74',
                     )
                 ],
                 usage=RequestUsage(input_tokens=36, output_tokens=15, details={'reasoning_tokens': 0}),
@@ -3396,7 +3444,7 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                     ToolReturnPart(
                         tool_name='get_meaning_of_life',
                         content=42,
-                        tool_call_id='call_3WCunBU7lCG1HHaLmnnRJn8I|fc_68cc4fa649ac8195b0c6c239cd2c14470548824120ffcf74',
+                        tool_call_id='call_3WCunBU7lCG1HHaLmnnRJn8I',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -5736,7 +5784,8 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                     ToolCallPart(
                         tool_name='final_result',
                         args='{"species":"Axolotl","name":"Axie"}',
-                        tool_call_id='call_eE7MHM5WMJnMt5srV69NmBJk|fc_0360827931d9421b0068dd83918a8c81a08a765e558fd5e071',
+                        tool_call_id='call_eE7MHM5WMJnMt5srV69NmBJk',
+                        id='fc_0360827931d9421b0068dd83918a8c81a08a765e558fd5e071',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=587, output_tokens=2587, details={'reasoning_tokens': 2560}),
@@ -5752,7 +5801,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='call_eE7MHM5WMJnMt5srV69NmBJk|fc_0360827931d9421b0068dd83918a8c81a08a765e558fd5e071',
+                        tool_call_id='call_eE7MHM5WMJnMt5srV69NmBJk',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -5947,7 +5996,8 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                     ToolCallPart(
                         tool_name='get_animal',
                         args='{}',
-                        tool_call_id='call_t76xO1K2zqrJkawkU3tur8vj|fc_0481074da98340df0068dd88f000688191afaf54f799b1dfaf',
+                        tool_call_id='call_t76xO1K2zqrJkawkU3tur8vj',
+                        id='fc_0481074da98340df0068dd88f000688191afaf54f799b1dfaf',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=389, output_tokens=721, details={'reasoning_tokens': 704}),
@@ -5963,7 +6013,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                     ToolReturnPart(
                         tool_name='get_animal',
                         content='axolotl',
-                        tool_call_id='call_t76xO1K2zqrJkawkU3tur8vj|fc_0481074da98340df0068dd88f000688191afaf54f799b1dfaf',
+                        tool_call_id='call_t76xO1K2zqrJkawkU3tur8vj',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -6177,6 +6227,96 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_08acbdf1ae54befc0068dd9ced226c8197a2e974b29c565407',
                 finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_history_with_combined_tool_call_id(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=ToolOutput(CityLocation))
+
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content='What is the largest city in the user country?',
+                )
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='get_user_country',
+                    args='{}',
+                    tool_call_id='call_ZWkVhdUjupo528U9dqgFeRkH|fc_68477f0bb8e4819cba6d781e174d77f8001fd29e2d5573f7',
+                )
+            ],
+            model_name='gpt-4o-2024-08-06',
+            provider_name='openai',
+            provider_response_id='resp_68477f0b40a8819cb8d55594bc2c232a001fd29e2d5573f7',
+            finish_reason='stop',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_user_country',
+                    content='Mexico',
+                    tool_call_id='call_ZWkVhdUjupo528U9dqgFeRkH|fc_68477f0bb8e4819cba6d781e174d77f8001fd29e2d5573f7',
+                )
+            ]
+        ),
+    ]
+
+    result = await agent.run('What is the largest city in the user country?', message_history=messages)
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in the user country?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_001fd29e2d5573f70068ece2e816fc819c82755f049c987ea4',
+                        signature='gAAAAABo7OLt_-yMcMz15n_JkwU0selGH2vqiwJDNU86YIjY_jQLXid4usIFjjCppiyOnJjtU_C6e7jUIKnfZRBt1DHVFMGpAVvTBZBVdJhXl0ypGjkAj3Wv_3ecAG9oU3DoUMKrbwEMqL0LaSfNSN1qgCTt-RL2sgeEDgFeiOpX40BWgS8tVMfR4_qBxJcp8KeYvw5niPgwcMF3UPIEjHlaVpglJH2SzZtTOdxeFDfYbnvdWTMvwYFIc0jKOREG_-hZE4AznhHdSLV2-I5nGlxuxqaI4GQCk-Fp8Cvcy15_NYYP62ii50VlR6HPp_gQZEetwgC5pThsiuuG7-n1hGOnsj8gZyjSKsMe2KpzlYzhT7ighmArDVEx8Utvp1FXikqGkEzt4RTqqPInp9kuvqQTSyd8JZ6BEetRl1EuZXT7zXrzLwFN7Vm_gqixmf6mLXZUw6vg6LqGkhSh5fo6C7akPTwwJXjVJ37Dzfejo6RiVKOT-_9sdYCHW2kZ9XfQAmRQfB97UpSZ8QrVfaKy_uRIHLexs8QrQvKuw-uHDQBAL3OEmSTzHzCQ-q7b0FHr514Z29l9etavHNVdpeleWGo6VEtLWGQyblIdIBtf946YnQvr6NYIR8uATn9Z91rr8FsFJTpJh_v5iGA2f8rfPRu27nmw-q8XnPVc_FYCZDk08r_YhdEJZn1INBi8wYSWmpib8VxNpkFO7FFRuK-F8rh3MTpYgIOqPQYbf3LCRvKukTwv1b3mjSKVpHQSm_s6s7djdD-rLuc22-3_MLd0ii4_oOT8w51TQIM61LtonGvxUqf4oKHSUFCVnrWWiT-0ttdpwpJ_iB5frnEeY2mWyU1u7sd38BI3dOzoM82IFaIm98g9fa99bmoA7Z7gI60tzyF8YbJmWF-PCwyKHJ7B1MbCBonO36NmeEM-SplrR54fGykxTmwvtbYGhd5f0cdYzD0zulRDj-AhOd96rrUB_fIgoQGTXey8L_w0whcnVTWdG6is-rx8373Sz8ZRoE5RiLWW1mfHzVXxwslphx4BedRVF0tL-1YO7sg5MXhHCf6hpw8dOht-21NMrb1F1DQadFE_fhySFl-TgOD5BlhAuupLMsqcCIa4lcXP_loyA4ERP6WSdz2Bybz7_1eOiflfVodRrNqvr_DnL0NEXD_JkYTeIn84ziarFV7U7ZnkMvRiA_p1fWdbHTsE_8lu1rsf8fcJ1e76_6ycPkOc4TrOZw8gVRb7gIbMMVrv72BT_sFhW7GkXrzCQpQaeybmRw-bjFhkMMjMDYGXkA_H0q2Zfyh3zCOoa40hl2cqRWp7n1XuafmtKG_F8e9hyWox0q7AhZr5HOOaHz8r3O3-dmNl1KP52bqA8S72rLDslAOQlDupmAQgAmkm5ApYeYcEBredN78jHQ1pviUEI2-3qr4ClXZFHPa54AJ_q4HQ-EcKXEcYQglG21mSUy_tFQF-m4X46Qu8yYWcBVW4E0CG3wbvYx0BCdbc5RhIDkJo1elxLK8XS64lpFkCWy62xLVeMuVuCj8q84-Kk7tZ7gtMtLV9PHQCdbl3s2pAzMfuNIBJog6-HPmwha2n9T0Md5qF7OqCtnYWOWUfIMmQVcdW-ECGsQy9uIUmpsOjdtH31hrX3MUEhIOUB5xErLwfp-_s22ciAY_ap3JlYAiTKGlMCxKxTzK7wWEG_nYhDXC1Afj2z-tgvYhtn9MyDf2v0aIpDM9BoTOLEO-ButzylJ06pJlrJhpdvklvwJxUiuhlwy0bHNilb4Zv4QwnUv3DCrIeKe1ne90vEXe6YlDwSMeWJcz1DZIQBvVcNlN8q2y8Rae3lMWzsvD0YXrcXp02ckYoLSOQZgNYviGYLsgRgPGiIkncjSDt7WWV6td3l-zTrP6MT_hKigmg5F5_F6tS1bKb0jlQBZd0NP-_L_TPqMGRjCYG8johd6VyMiagslDjxG39Dh2wyTI19ZW7h_AOuOpnfkt2armqiq6iGfevA3malqkNakb6mFAS04J9O0butWVAw4yiPCEcLuDNAzzi_qrqLee4gkjh0NplvfGCaE6qqYms61GJbJC4wge6vjyTakurbqWEV3YoR3y_dn-0pjQ7TOx9kkruDwg0nZIV5O6yYxaulmbuvo3fs5CZb9ptZPD0MzGZj7CZU2MDCa4a4gr0McOx2MricxSzIu6emuRUzZuC6C1JxPRC00M0TrZNMIe_WVa9fXDLV1ULEAIMwMXzNT9zV6yiYQCwhkp30Wqde3W0LlIRpSbDuJXcvT8OCbXkdPNIScccdT9LvUQQ--hU2P45kisOev3TYn7yv-pdxM3u1KFNwuFxedSArMBPg7GDz1BOxDQRzv0mfwbf_CcoFbuyj7Tf4zWO46HVdHeRNbvIE--bnaSYD-UFaKknp8ZsBQQhBU_2TEca3fKwmg81-g7Vdb28QUZEuPzgE4ekxZejkKpiKqlLC5nJYgvXrqk2H35D51mYdzPs0ST05Mc41x9MFm_YOLxSFyA0yGAKVINmD5wT6kvRflPkgoksd2ryIvo4KMw3oZQKodv5By0mSJ8iX2vhTGylxiM8wj-ICyNuOsaRFrcMSpX7tZbXcDyysApdmx217BSADoQiNZBLngF7ptxc2QGyo3CwuDjaljwmSgL9KeGthd1RJFd826M287IPpCjLM4WRquCL_E0pQryNqOMn-ZEOCAlBjE37290EhkjKbhiGBEnHUvSbhoH4nL47AmunP_Q5aqh5173VfyoyaybuS3fXjQ5WO0kyFjMdD-a7C6PVdwToCTP-TljoF2YnQKCiqUGs9gNHS9mYhQSXzY4uuGlTHLfKB4JKS5_MQHvwI9zCbTvVG854fPuo_2mzSh-y8TSzBWPokhYWI_q095Sh6tOqDIJNMGyjI2GDFRSyKpKhIFCLyU2JEo9B6l91jPlir0XI8ZOQfBd9J0I4JIqnyoj40_1bF1zUDGc014bdGfxazxwlGph_ysKAP39wV7X9DBFS3ZmeSIn-r3s-sci0HmwnJUb2r03m40rFuNTV1cJMAFP7ZY7PQQQ0TtlO_al0uedaOWylLauap_eoRqc6xGJ2rSz1e7cOevksUlAqzK5xknYKHlsW970xuDGHKOZnKPg8O9nb2PKrcjwEQF5RFPc3l8TtOUXPhhvTERZFGoEuGuSuSp1cJhzba06yPnL-wE3CstYUm3jvkaUme6kKqM4tWBCQDg-_2PYf24xXYlmkIklylskqId826Y3pVVUd7e0vQO0POPeVYU1qwtTp7Ln-MhYEWexxptdNkVQ-kWx63w6HXF6_kefSxaf0UcvL8tOV73u7w_udle9MC_TXgwJZpoW2tSi5HETjQ_i28FAP2iJmclWOm3gP08cMiXvgpTpjzh6meBdvKepnifl_ivPzRnyjz3mYCZH-UJ4LmOHIonv-8arnckhCwHoFIpaIX7eSZyY0JcbBETKImtUwrlTSlbD8l02KDtqw2FJURtEWI5dC1sTS8c2HcyjXyQDA9A25a0M1yIgZyaadODGQ1zoa9xXB',
+                        provider_name='openai',
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"city":"Mexico City","country":"Mexico"}',
+                        tool_call_id='call_LIXPi261Xx3dGYzlDsOoyHGk',
+                        id='fc_001fd29e2d5573f70068ece2ecc140819c97ca83bd4647a717',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=103, output_tokens=409, details={'reasoning_tokens': 384}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_001fd29e2d5573f70068ece2e6dfbc819c96557f0de72802be',
+                finish_reason='stop',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='call_LIXPi261Xx3dGYzlDsOoyHGk',
+                        timestamp=IsDatetime(),
+                    )
+                ]
             ),
         ]
     )
