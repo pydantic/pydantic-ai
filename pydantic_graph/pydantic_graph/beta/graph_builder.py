@@ -44,7 +44,7 @@ from pydantic_graph.beta.paths import (
     Path,
     PathBuilder,
 )
-from pydantic_graph.beta.step import NodeStep, Step, StepAsyncIteratorFunction, StepContext, StepFunction, StepNode
+from pydantic_graph.beta.step import NodeStep, Step, StepContext, StepFunction, StepNode, StreamFunction
 from pydantic_graph.beta.util import TypeOrTypeExpression, get_callable_name, unpack_type_expression
 from pydantic_graph.exceptions import GraphBuildingError
 from pydantic_graph.nodes import BaseNode, End
@@ -215,50 +215,50 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         return step
 
     @overload
-    def step_async_iterable(
+    def stream(
         self,
         *,
         node_id: str | None = None,
         label: str | None = None,
     ) -> Callable[
-        [StepAsyncIteratorFunction[StateT, DepsT, InputT, OutputT]], Step[StateT, DepsT, InputT, AsyncIterable[OutputT]]
+        [StreamFunction[StateT, DepsT, InputT, OutputT]], Step[StateT, DepsT, InputT, AsyncIterable[OutputT]]
     ]: ...
     @overload
-    def step_async_iterable(
+    def stream(
         self,
-        call: StepAsyncIteratorFunction[StateT, DepsT, InputT, OutputT],
+        call: StreamFunction[StateT, DepsT, InputT, OutputT],
         *,
         node_id: str | None = None,
         label: str | None = None,
     ) -> Step[StateT, DepsT, InputT, AsyncIterable[OutputT]]: ...
     @overload
-    def step_async_iterable(
+    def stream(
         self,
-        call: StepAsyncIteratorFunction[StateT, DepsT, InputT, OutputT] | None = None,
+        call: StreamFunction[StateT, DepsT, InputT, OutputT] | None = None,
         *,
         node_id: str | None = None,
         label: str | None = None,
     ) -> (
         Step[StateT, DepsT, InputT, AsyncIterable[OutputT]]
         | Callable[
-            [StepAsyncIteratorFunction[StateT, DepsT, InputT, OutputT]],
+            [StreamFunction[StateT, DepsT, InputT, OutputT]],
             Step[StateT, DepsT, InputT, AsyncIterable[OutputT]],
         ]
     ): ...
-    def step_async_iterable(
+    def stream(
         self,
-        call: StepAsyncIteratorFunction[StateT, DepsT, InputT, OutputT] | None = None,
+        call: StreamFunction[StateT, DepsT, InputT, OutputT] | None = None,
         *,
         node_id: str | None = None,
         label: str | None = None,
     ) -> (
         Step[StateT, DepsT, InputT, AsyncIterable[OutputT]]
         | Callable[
-            [StepAsyncIteratorFunction[StateT, DepsT, InputT, OutputT]],
+            [StreamFunction[StateT, DepsT, InputT, OutputT]],
             Step[StateT, DepsT, InputT, AsyncIterable[OutputT]],
         ]
     ):
-        """Create a step from a step function.
+        """Create a step from an async iterator (which functions like a "stream").
 
         This method can be used as a decorator or called directly to create
         a step node from an async function.
@@ -274,9 +274,9 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         if call is None:
 
             def decorator(
-                func: StepAsyncIteratorFunction[StateT, DepsT, InputT, OutputT],
+                func: StreamFunction[StateT, DepsT, InputT, OutputT],
             ) -> Step[StateT, DepsT, InputT, AsyncIterable[OutputT]]:
-                return self.step_async_iterable(call=func, node_id=node_id, label=label)
+                return self.stream(call=func, node_id=node_id, label=label)
 
             return decorator
 

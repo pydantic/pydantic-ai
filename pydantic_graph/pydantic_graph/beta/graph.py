@@ -84,10 +84,6 @@ class EndMarker(Generic[OutputT]):
     def value(self) -> OutputT:
         return self._value
 
-    @property
-    def end_marker_id(self) -> str:
-        return f'EndMarker:{id(self)}'
-
 
 @dataclass
 class JoinItem:
@@ -493,8 +489,6 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
 
     cancel_scopes: dict[TaskID, CancelScope] = field(init=False)
     active_tasks: dict[TaskID, GraphTask] = field(init=False)
-    pending_task_results: set[TaskID] = field(init=False)
-    cancelled_tasks: set[TaskID] = field(init=False)
     active_reducers: dict[tuple[JoinID, NodeRunID], JoinState] = field(init=False)
     iter_stream_sender: MemoryObjectSendStream[_GraphTaskResult] = field(init=False)
     iter_stream_receiver: MemoryObjectReceiveStream[_GraphTaskResult] = field(init=False)
@@ -505,9 +499,6 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         self.active_tasks = {}
         self.active_reducers = {}
         self.iter_stream_sender, self.iter_stream_receiver = create_memory_object_stream[_GraphTaskResult]()
-
-        self.pending_task_results = set()
-        self.cancelled_tasks = set()
 
     @property
     def task_group(self) -> TaskGroup:
@@ -529,21 +520,6 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                     async with self.iter_stream_receiver:
                         while self.active_tasks or self.active_reducers:
                             async for task_result in self.iter_stream_receiver:  # pragma: no branch
-                                # If we encounter a mock task, add it to the active tasks to ensure we don't proceed until everything downstream is handled
-                                if (
-                                    not task_result.source_is_finished
-                                    and task_result.source.task_id not in self.active_tasks
-                                ):
-                                    self.active_tasks[task_result.source.task_id] = task_result.source
-
-                                if task_result.source.task_id in self.cancelled_tasks:
-                                    if task_result.source_is_finished:
-                                        self.cancelled_tasks.remove(task_result.source.task_id)
-                                    continue
-
-                                if task_result.source_is_finished:
-                                    self.pending_task_results.discard(task_result.source.task_id)
-
                                 if isinstance(task_result.result, JoinItem):
                                     maybe_overridden_result = task_result.result
                                 else:
@@ -574,7 +550,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                     join_state.current = join_node.reduce(context, join_state.current, result.inputs)
                                     if join_state.cancelled_sibling_tasks:
                                         await self._cancel_sibling_tasks(parent_fork_id, fork_run_id)
-                                    if task_result.source_is_finished:
+                                    if task_result.source_is_finished:  # pragma: no branch
                                         await self._finish_task(task_result.source.task_id)
                                 else:
                                     for new_task in maybe_overridden_result:
@@ -636,13 +612,18 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                         join_node, join_state.current, join_state.downstream_fork_stack
                                     )
                                     maybe_overridden_result = yield new_tasks
-                                    if isinstance(maybe_overridden_result, EndMarker):
+                                    if isinstance(maybe_overridden_result, EndMarker):  # pragma: no cover
+                                        # This is theoretically reachable but it would be awkward.
+                                        # Probably a better way to get coverage here would be to unify the code pat
+                                        # with the other `if isinstance(maybe_overridden_result, EndMarker):`
                                         self.task_group.cancel_scope.cancel()
                                         return
                                     for new_task in maybe_overridden_result:
                                         self.active_tasks[new_task.task_id] = new_task
                                     new_task_ids = {t.task_id for t in maybe_overridden_result}
-                                    for t in new_tasks:
+                                    for t in new_tasks:  # pragma: no cover
+                                        # Same note as above about how this is theoretically reachable but we should
+                                        # just get coverage by unifying the code paths
                                         if t.task_id not in new_task_ids:
                                             await self._finish_task(t.task_id)
                                     self._handle_execution_request(maybe_overridden_result)
@@ -674,7 +655,6 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, new_tasks, False))
                 await self.iter_stream_sender.send(_GraphTaskResult(t_, []))
             else:
-                self.pending_task_results.add(t_.task_id)
                 await self.iter_stream_sender.send(_GraphTaskResult(t_, result))
 
     async def _run_task(
@@ -872,8 +852,6 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 else:
                     pass
         for task_id in task_ids_to_cancel:
-            if task_id in self.pending_task_results:
-                self.cancelled_tasks.add(task_id)
             await self._finish_task(task_id)
 
 

@@ -70,10 +70,6 @@ class ReducerContext(Generic[StateT, DepsT]):
     def deps(self) -> DepsT:
         return self._deps
 
-    @property
-    def cancelled_sibling_tasks(self):
-        return self._join_state.cancelled_sibling_tasks
-
     def cancel_sibling_tasks(self):
         self._join_state.cancelled_sibling_tasks = True
 

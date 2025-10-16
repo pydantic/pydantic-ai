@@ -286,7 +286,7 @@ async def test_iter_with_async_iterable_map():
 
     g = GraphBuilder(state_type=IterState, output_type=list[int])
 
-    @g.step_async_iterable
+    @g.stream()
     async def generate_async(ctx: StepContext[IterState, None, None]) -> AsyncIterator[int]:
         for i in [1, 2, 3, 4]:
             yield i
@@ -346,21 +346,18 @@ async def test_iter_filter_tasks_during_iteration():
 
     async with graph.iter(state=state) as run:
         while True:
-            try:
-                event = await run.next()
-                if isinstance(event, list):
-                    # Filter out tasks where the node is 'process' and input is > 3
-                    filtered_tasks = [
-                        task
-                        for task in event
-                        if not (task.node_id == NodeID('process') and isinstance(task.inputs, int) and task.inputs > 3)
-                    ]
-                    if filtered_tasks != event:
-                        # Override with filtered tasks
-                        event = await run.next(filtered_tasks)
-                if isinstance(event, EndMarker):
-                    break
-            except StopAsyncIteration:
+            event = await run.next()
+            if isinstance(event, list):
+                # Filter out tasks where the node is 'process' and input is > 3
+                filtered_tasks = [
+                    task
+                    for task in event
+                    if not (task.node_id == NodeID('process') and isinstance(task.inputs, int) and task.inputs > 3)
+                ]
+                if filtered_tasks != event:
+                    # Override with filtered tasks
+                    event = await run.next(filtered_tasks)
+            if isinstance(event, EndMarker):
                 break
 
     # Only items <= 3 should have been processed
@@ -397,24 +394,21 @@ async def test_iter_turn_end_marker_into_tasks():
     override_done = False
     async with graph.iter(state=state) as run:
         while True:
-            try:
-                event = await run.next()
-                if isinstance(event, EndMarker) and not override_done:
-                    # Instead of ending, create a new task
-                    # Get the fork_stack from the EndMarker's source
-                    fork_stack = run.next_task[0].fork_stack if isinstance(run.next_task, list) else ()
+            event = await run.next()
+            if isinstance(event, EndMarker) and not override_done:
+                # Instead of ending, create a new task
+                # Get the fork_stack from the EndMarker's source
+                fork_stack = run.next_task[0].fork_stack if isinstance(run.next_task, list) else ()
 
-                    new_task = GraphTask(
-                        node_id=NodeID('second_step'),
-                        inputs=event.value,
-                        fork_stack=fork_stack,
-                    )
+                new_task = GraphTask(
+                    node_id=NodeID('second_step'),
+                    inputs=event.value,
+                    fork_stack=fork_stack,
+                )
 
-                    override_done = True
-                    event = await run.next([new_task])
-                if isinstance(event, EndMarker) and override_done:
-                    break
-            except StopAsyncIteration:
+                override_done = True
+                event = await run.next([new_task])
+            if isinstance(event, EndMarker) and override_done:
                 break
 
     result = run.output
@@ -461,9 +455,7 @@ async def test_iter_turn_tasks_into_end_marker():
                     if any(task.node_id == NodeID('step2') for task in event):
                         # Override with an EndMarker to terminate early
                         early_exit_done = True
-                        event = await run.next(EndMarker('early_exit'))
-                if isinstance(event, EndMarker):
-                    break
+                        await run.next(EndMarker('early_exit'))
             except StopAsyncIteration:
                 break
 

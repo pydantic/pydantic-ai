@@ -67,9 +67,7 @@ class StepContext(Generic[StateT, DepsT, InputT]):
 class StepFunction(Protocol[StateT, DepsT, InputT, OutputT]):
     """Protocol for step functions that can be executed in the graph.
 
-    Step functions are async callables that receive a step context and return
-    a result. This protocol enables serialization and deserialization of step
-    calls similar to how evaluators work.
+    Step functions are async callables that receive a step context and return a result.
 
     Type Parameters:
         StateT: The type of the graph state
@@ -90,12 +88,10 @@ class StepFunction(Protocol[StateT, DepsT, InputT, OutputT]):
         raise NotImplementedError
 
 
-class StepAsyncIteratorFunction(Protocol[StateT, DepsT, InputT, OutputT]):
-    """Protocol for step functions that can be executed in the graph.
+class StreamFunction(Protocol[StateT, DepsT, InputT, OutputT]):
+    """Protocol for stream functions that can be executed in the graph.
 
-    Step functions are async callables that receive a step context and return
-    a result. This protocol enables serialization and deserialization of step
-    calls similar to how evaluators work.
+    Stream functions are async callables that receive a step context and return an async iterator.
 
     Type Parameters:
         StateT: The type of the graph state
@@ -105,13 +101,13 @@ class StepAsyncIteratorFunction(Protocol[StateT, DepsT, InputT, OutputT]):
     """
 
     def __call__(self, ctx: StepContext[StateT, DepsT, InputT]) -> AsyncIterator[OutputT]:
-        """Execute the step function with the given context.
+        """Execute the stream function with the given context.
 
         Args:
             ctx: The step context containing state, dependencies, and inputs
 
         Returns:
-            An awaitable that resolves to the step's output
+            An async iterator yielding the streamed output
         """
         raise NotImplementedError
         yield
