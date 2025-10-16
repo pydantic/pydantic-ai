@@ -174,7 +174,7 @@ def test_streamed_text_sync_response():
                 tool_calls=1,
             )
         )
-        response = result.get_output()
+        response = result.get_output_sync()
         assert response == snapshot('{"ret_a":"a-apple"}')
         assert result.is_complete
         assert result.timestamp() == IsNow(tz=timezone.utc)
@@ -389,20 +389,20 @@ def test_streamed_text_stream_sync():
 
     with agent.run_stream_sync('Hello') as result:
         # typehint to test (via static typing) that the stream type is correctly inferred
-        chunks: list[str] = [c for c in result.stream_text()]
+        chunks: list[str] = [c for c in result.stream_text_sync()]
         # one chunk with `stream_text()` due to group_by_temporal
         assert chunks == snapshot(['The cat sat on the mat.'])
         assert result.is_complete
 
     with agent.run_stream_sync('Hello') as result:
         # typehint to test (via static typing) that the stream type is correctly inferred
-        chunks: list[str] = [c for c in result.stream_output()]
+        chunks: list[str] = [c for c in result.stream_output_sync()]
         # two chunks with `stream()` due to not-final vs. final
         assert chunks == snapshot(['The cat sat on the mat.', 'The cat sat on the mat.'])
         assert result.is_complete
 
     with agent.run_stream_sync('Hello') as result:
-        assert [c for c in result.stream_text(debounce_by=None)] == snapshot(
+        assert [c for c in result.stream_text_sync(debounce_by=None)] == snapshot(
             [
                 'The ',
                 'The cat ',
@@ -415,12 +415,12 @@ def test_streamed_text_stream_sync():
 
     with agent.run_stream_sync('Hello') as result:
         # with stream_text, there is no need to do partial validation, so we only get the final message once:
-        assert [c for c in result.stream_text(delta=False, debounce_by=None)] == snapshot(
+        assert [c for c in result.stream_text_sync(delta=False, debounce_by=None)] == snapshot(
             ['The ', 'The cat ', 'The cat sat ', 'The cat sat on ', 'The cat sat on the ', 'The cat sat on the mat.']
         )
 
     with agent.run_stream_sync('Hello') as result:
-        assert [c for c in result.stream_text(delta=True, debounce_by=None)] == snapshot(
+        assert [c for c in result.stream_text_sync(delta=True, debounce_by=None)] == snapshot(
             ['The ', 'cat ', 'sat ', 'on ', 'the ', 'mat.']
         )
 
@@ -428,7 +428,7 @@ def test_streamed_text_stream_sync():
         return text.upper()
 
     with agent.run_stream_sync('Hello', output_type=TextOutput(upcase)) as result:
-        assert [c for c in result.stream_output(debounce_by=None)] == snapshot(
+        assert [c for c in result.stream_output_sync(debounce_by=None)] == snapshot(
             [
                 'THE ',
                 'THE CAT ',
@@ -441,7 +441,7 @@ def test_streamed_text_stream_sync():
         )
 
     with agent.run_stream_sync('Hello') as result:
-        assert [c for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        assert [c for c, _is_last in result.stream_responses_sync(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='The ')],

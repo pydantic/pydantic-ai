@@ -410,6 +410,24 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
+    def stream_output_sync(self, *, debounce_by: float | None = 0.1) -> Iterator[OutputDataT]:
+        """Stream the output as an iterable.
+
+        The pydantic validator for structured data will be called in
+        [partial mode](https://docs.pydantic.dev/dev/concepts/experimental/#partial-validation)
+        on each iteration.
+
+        Args:
+            debounce_by: by how much (if at all) to debounce/group the output chunks by. `None` means no debouncing.
+                Debouncing is particularly important for long structured outputs to reduce the overhead of
+                performing validation as each token is received.
+
+        Returns:
+            An iterable of the response data.
+        """
+        async_stream = self.stream_output(debounce_by=debounce_by)
+        yield from _lazy_async_iterator(async_stream)
+
     async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
 
@@ -437,6 +455,22 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             await self._marked_completed(self.response)
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
+
+    def stream_text_sync(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> Iterator[str]:
+        """Stream the text result as an async iterable.
+
+        !!! note
+            Result validators will NOT be called on the text result if `delta=True`.
+
+        Args:
+            delta: if `True`, yield each chunk of text as it is received, if `False` (default), yield the full text
+                up to the current point.
+            debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
+                Debouncing is particularly important for long structured responses to reduce the overhead of
+                performing validation as each token is received.
+        """
+        async_stream = self.stream_text(delta=delta, debounce_by=debounce_by)
+        yield from _lazy_async_iterator(async_stream)
 
     @deprecated('`StreamedRunResult.stream_structured` is deprecated, use `stream_responses` instead.')
     async def stream_structured(
@@ -473,6 +507,22 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
+    def stream_responses_sync(
+        self, *, debounce_by: float | None = 0.1
+    ) -> Iterator[tuple[_messages.ModelResponse, bool]]:
+        """Stream the response as an iterable of Structured LLM Messages.
+
+        Args:
+            debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
+                Debouncing is particularly important for long structured responses to reduce the overhead of
+                performing validation as each token is received.
+
+        Returns:
+            An iterable of the structured response message and whether that is the last message.
+        """
+        async_stream = self.stream_responses(debounce_by=debounce_by)
+        yield from _lazy_async_iterator(async_stream)
+
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
         if self._run_result is not None:
@@ -485,6 +535,10 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             return output
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
+
+    def get_output_sync(self) -> OutputDataT:
+        """Stream the whole response, validate and return it."""
+        return get_event_loop().run_until_complete(self.get_output())
 
     @property
     def response(self) -> _messages.ModelResponse:
@@ -545,90 +599,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             await self._on_complete()
 
 
-@dataclass(init=False)
-class SyncStreamedRunResult(StreamedRunResult[AgentDepsT, OutputDataT]):
-    """Provides a synchronous API over 'StreamedRunResult'."""
-
-    @classmethod
-    def from_streamed_result(
-        cls, streamed_run_result: StreamedRunResult[AgentDepsT, OutputDataT]
-    ) -> SyncStreamedRunResult[AgentDepsT, OutputDataT]:
-        """Create a 'SyncStreamedRunResult' from an existing 'StreamedRunResult'."""
-        instance = cls.__new__(cls)
-
-        instance._all_messages = streamed_run_result._all_messages
-        instance._new_message_index = streamed_run_result._new_message_index
-        instance._stream_response = streamed_run_result._stream_response
-        instance._on_complete = streamed_run_result._on_complete
-        instance._run_result = streamed_run_result._run_result
-        instance.is_complete = streamed_run_result.is_complete
-
-        return instance
-
-    def _lazy_async_iterator(self, async_iter: AsyncIterator[T]) -> Iterator[T]:
-        """Lazily yield items from async iterator as they're requested."""
-        loop = get_event_loop()
-
-        while True:
-            try:
-                item = loop.run_until_complete(async_iter.__anext__())
-                yield item
-            except StopAsyncIteration:
-                break
-
-    def stream_output(self, *, debounce_by: float | None = 0.1) -> Iterator[OutputDataT]:  # type: ignore[reportIncompatibleMethodOverride]
-        """Stream the output as an iterable.
-
-        The pydantic validator for structured data will be called in
-        [partial mode](https://docs.pydantic.dev/dev/concepts/experimental/#partial-validation)
-        on each iteration.
-
-        Args:
-            debounce_by: by how much (if at all) to debounce/group the output chunks by. `None` means no debouncing.
-                Debouncing is particularly important for long structured outputs to reduce the overhead of
-                performing validation as each token is received.
-
-        Returns:
-            An iterable of the response data.
-        """
-        async_stream = super().stream_output(debounce_by=debounce_by)
-        yield from self._lazy_async_iterator(async_stream)
-
-    def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> Iterator[str]:  # type: ignore[reportIncompatibleMethodOverride]
-        """Stream the text result as an iterable.
-
-        !!! note
-            Result validators will NOT be called on the text result if `delta=True`.
-
-        Args:
-            delta: if `True`, yield each chunk of text as it is received, if `False` (default), yield the full text
-                up to the current point.
-            debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
-                Debouncing is particularly important for long structured responses to reduce the overhead of
-                performing validation as each token is received.
-        """
-        async_stream = super().stream_text(delta=delta, debounce_by=debounce_by)
-        yield from self._lazy_async_iterator(async_stream)
-
-    def stream_responses(self, *, debounce_by: float | None = 0.1) -> Iterator[tuple[_messages.ModelResponse, bool]]:  # type: ignore[reportIncompatibleMethodOverride]
-        """Stream the response as an iterable of Structured LLM Messages.
-
-        Args:
-            debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
-                Debouncing is particularly important for long structured responses to reduce the overhead of
-                performing validation as each token is received.
-
-        Returns:
-            An iterable of the structured response message and whether that is the last message.
-        """
-        async_stream = super().stream_responses(debounce_by=debounce_by)
-        yield from self._lazy_async_iterator(async_stream)
-
-    def get_output(self) -> OutputDataT:  # type: ignore[reportIncompatibleMethodOverride]
-        """Stream the whole response, validate and return it."""
-        return get_event_loop().run_until_complete(super().get_output())
-
-
 @dataclass(repr=False)
 class FinalResult(Generic[OutputDataT]):
     """Marker class storing the final output of an agent run and associated metadata."""
@@ -643,6 +613,17 @@ class FinalResult(Generic[OutputDataT]):
     """ID of the tool call that produced the final output; `None` if the output came from unstructured text content."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _lazy_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
+    loop = get_event_loop()
+
+    while True:
+        try:
+            item = loop.run_until_complete(async_iter.__anext__())
+            yield item
+        except StopAsyncIteration:
+            break
 
 
 def _get_usage_checking_stream_response(

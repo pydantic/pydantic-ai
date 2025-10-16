@@ -598,7 +598,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> Iterator[result.SyncStreamedRunResult[AgentDepsT, Any]]:
+    ) -> Iterator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in sync streaming mode.
 
         This method builds an internal agent graph (using system prompts, tools and output schemas) and then
@@ -659,8 +659,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             builtin_tools=builtin_tools,
             event_stream_handler=event_stream_handler,
         )
-        async_result = get_event_loop().run_until_complete(async_cm.__aenter__())
-        yield result.SyncStreamedRunResult.from_streamed_result(async_result)  # type: ignore[reportReturnType]
+        yield get_event_loop().run_until_complete(async_cm.__aenter__())
 
     @overload
     def run_stream_events(
