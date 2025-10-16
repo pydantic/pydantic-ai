@@ -9,6 +9,7 @@ import httpx
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, cached_async_http_client, get_user_agent
+from . import Provider
 
 if TYPE_CHECKING:
     from google.genai import Client as GoogleClient
@@ -135,14 +136,14 @@ def gateway_provider(
         raise UserError(f'Unknown provider: {upstream_provider}')
 
 
-def infer_model(model_name: str) -> Model:
-    """Infer the model class that will be used to make requests to the gateway.
+def infer_provider_model_class(model_name: str) -> tuple[type[Model], type[Provider[Any]]]:  
+    """Infer the model class and provider that will be used to make requests to the gateway.
 
     Args:
         model_name: The name of the model to infer. Must be in the format "provider/model_name".
 
     Returns:
-        The model class that will be used to make requests to the gateway.
+        A tuple of the model class and provider that will be used to make requests to the gateway.
     """
     try:
         upstream_provider, model_name = model_name.split('/', 1)
@@ -152,24 +153,45 @@ def infer_model(model_name: str) -> Model:
     if upstream_provider in ('openai', 'openai-chat'):
         from pydantic_ai.models.openai import OpenAIChatModel
 
-        return OpenAIChatModel(model_name, provider=gateway_provider('openai'))
+        return OpenAIChatModel, type(gateway_provider('openai'))
     elif upstream_provider == 'openai-responses':
         from pydantic_ai.models.openai import OpenAIResponsesModel
 
-        return OpenAIResponsesModel(model_name, provider=gateway_provider('openai'))
+        return OpenAIResponsesModel, type(gateway_provider('openai'))
     elif upstream_provider == 'groq':
         from pydantic_ai.models.groq import GroqModel
 
-        return GroqModel(model_name, provider=gateway_provider('groq'))
+        return GroqModel, type(gateway_provider('groq'))
     elif upstream_provider == 'anthropic':
         from pydantic_ai.models.anthropic import AnthropicModel
 
-        return AnthropicModel(model_name, provider=gateway_provider('anthropic'))
+        return AnthropicModel, type(gateway_provider('anthropic'))
     elif upstream_provider == 'google-vertex':
         from pydantic_ai.models.google import GoogleModel
 
-        return GoogleModel(model_name, provider=gateway_provider('google-vertex'))
+        return GoogleModel, type(gateway_provider('google-vertex'))
     raise UserError(f'Unknown upstream provider: {upstream_provider}')
+
+
+def infer_model(model_name: str) -> Model:
+    """Infer the model class that will be used to make requests to the gateway.
+
+    Args:
+        model_name: The name of the model to infer. Must be in the format "provider/model_name".
+
+    Returns:
+        The model class object that will be used to make requests to the gateway.
+    """
+    try:
+        upstream_provider, model_name = model_name.split('/', 1)
+    except ValueError:
+        raise UserError(f'The model name "{model_name}" is not in the format "provider/model_name".')
+    
+    if upstream_provider in ('openai', 'openai-chat', 'openai-responses'):
+        upstream_provider = 'openai'
+    
+    modal_class, _ = infer_provider_model_class(model_name)
+    return modal_class(model_name, provider=gateway_provider(upstream_provider))
 
 
 async def _request_hook(request: httpx.Request) -> httpx.Request:

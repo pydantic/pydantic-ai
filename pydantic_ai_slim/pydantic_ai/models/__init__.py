@@ -41,6 +41,7 @@ from ..messages import (
     ToolCallPart,
     VideoUrl,
 )
+from ..providers import Provider, infer_provider_class
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings, merge_model_settings
@@ -633,15 +634,13 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
     finally:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
-
-def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
-    """Infer the model from the name."""
-    if isinstance(model, Model):
-        return model
-    elif model == 'test':
+def infer_provider_model_class(model: KnownModelName | str) -> tuple[type[Model], type[Provider]]:  # noqa: C901
+    """Infer the model and provider from the name."""
+    
+    if model == 'test':
         from .test import TestModel
 
-        return TestModel()
+        return TestModel, None
 
     try:
         provider, model_name = model.split(':', maxsplit=1)
@@ -671,13 +670,13 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         provider = 'google-vertex'
 
     if provider == 'gateway':
-        from ..providers.gateway import infer_model as infer_model_from_gateway
+        from ..providers.gateway import infer_provider_model_class as infer_provider_model_class_from_gateway
 
-        return infer_model_from_gateway(model_name)
+        return infer_provider_model_class_from_gateway(model_name)
     elif provider == 'cohere':
         from .cohere import CohereModel
 
-        return CohereModel(model_name, provider=provider)
+        return CohereModel, infer_provider_class(provider)
     elif provider in (
         'azure',
         'deepseek',
@@ -698,37 +697,57 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
     ):
         from .openai import OpenAIChatModel
 
-        return OpenAIChatModel(model_name, provider=provider)
+        return OpenAIChatModel, infer_provider_class(provider)
     elif provider == 'openai-responses':
         from .openai import OpenAIResponsesModel
 
-        return OpenAIResponsesModel(model_name, provider='openai')
+        return OpenAIResponsesModel, infer_provider_class('openai')
     elif provider in ('google-gla', 'google-vertex'):
         from .google import GoogleModel
 
-        return GoogleModel(model_name, provider=provider)
+        return GoogleModel, infer_provider_class(provider)
     elif provider == 'groq':
         from .groq import GroqModel
 
-        return GroqModel(model_name, provider=provider)
+        return GroqModel, infer_provider_class(provider)
     elif provider == 'mistral':
         from .mistral import MistralModel
 
-        return MistralModel(model_name, provider=provider)
+        return MistralModel, infer_provider_class(provider)
     elif provider == 'anthropic':
         from .anthropic import AnthropicModel
 
-        return AnthropicModel(model_name, provider=provider)
+        return AnthropicModel, infer_provider_class(provider)
     elif provider == 'bedrock':
         from .bedrock import BedrockConverseModel
 
-        return BedrockConverseModel(model_name, provider=provider)
+        return BedrockConverseModel, infer_provider_class(provider)
     elif provider == 'huggingface':
         from .huggingface import HuggingFaceModel
 
-        return HuggingFaceModel(model_name, provider=provider)
+        return HuggingFaceModel, infer_provider_class(provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
+
+
+def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
+    """Infer the model from the name."""
+    
+    if isinstance(model, Model):
+        return model
+    
+    try:
+        provider, _ = model.split(':', maxsplit=1)
+    except ValueError:
+        provider = None
+
+    if provider == 'gateway':
+        from ..providers.gateway import infer_model as infer_model_from_gateway
+
+        return infer_model_from_gateway(model)
+    
+    model_class, provider_class = infer_provider_model_class(model)
+    return model_class(provider=provider_class)
 
 
 def cached_async_http_client(*, provider: str | None = None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
