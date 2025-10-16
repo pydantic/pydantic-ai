@@ -71,6 +71,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
 
         async def call_tool_activity(params: _CallToolParams, deps: AgentDepsT) -> _CallToolResult:
             name = params.name
+            # TODO (DouweM): RunContext.event_stream -> call event_stream_handler directly?
             ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
             try:
                 tool = (await toolset.get_tools(ctx))[name]
