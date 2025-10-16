@@ -711,7 +711,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
 
 @dataclasses.dataclass
-class SetRunResult(AgentNode[DepsT, NodeRunEndT]):
+class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
     """A node that immediately ends the graph run after a streaming response produced a final result."""
 
     final_result: result.FinalResult[NodeRunEndT]
@@ -1135,7 +1135,7 @@ def build_agent_graph(
         UserPromptNode[DepsT],
         ModelRequestNode[DepsT],
         CallToolsNode[DepsT],
-        SetRunResult[DepsT],
+        SetFinalResult[DepsT],
     )
     graph = Graph[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[OutputT]](
         nodes=nodes,
