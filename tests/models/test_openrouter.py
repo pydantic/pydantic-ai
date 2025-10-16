@@ -96,6 +96,7 @@ Let me structure this information in a clear, friendly manner that addresses the
     assert response.provider_details['reasoning_details'] == snapshot(
         [
             {
+                'id': None,
                 'format': 'unknown',
                 'index': 0,
                 'text': """\
@@ -114,6 +115,7 @@ The response should be welcoming and encourage further questions about specific 
 Let me structure this information in a clear, friendly manner that addresses the user's question while inviting further interaction.\
 """,
                 'type': 'reasoning.text',
+                'signature': None,
             }
         ]
     )
@@ -146,7 +148,12 @@ async def test_openrouter_validate_error_response(openrouter_api_key: str) -> No
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
 
-    response = ChatCompletion.model_construct(model='test')
+    choice = Choice.model_construct(
+        index=0, message={'role': 'assistant'}, finish_reason='error', native_finish_reason='stop'
+    )
+    response = ChatCompletion.model_construct(
+        id='', choices=[choice], created=0, object='chat.completion', model='test', provider='test'
+    )
     response.error = {'message': 'This response has an error attribute', 'code': 200}  # type: ignore[reportAttributeAccessIssue]
 
     with pytest.raises(ModelHTTPError) as exc_info:
@@ -161,8 +168,12 @@ async def test_openrouter_validate_error_finish_reason(openrouter_api_key: str) 
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
 
-    choice = Choice.model_construct(finish_reason='error')
-    response = ChatCompletion.model_construct(choices=[choice])
+    choice = Choice.model_construct(
+        index=0, message={'role': 'assistant'}, finish_reason='error', native_finish_reason='stop'
+    )
+    response = ChatCompletion.model_construct(
+        id='', choices=[choice], created=0, object='chat.completion', model='test', provider='test'
+    )
 
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
         model._process_response(response)  # type: ignore[reportPrivateUsage]
@@ -185,6 +196,7 @@ async def test_openrouter_map_messages_reasoning(allow_model_requests: None, ope
     assert mapped_messages[1]['reasoning_details'] == snapshot(  # type: ignore[reportGeneralTypeIssues]
         [
             {
+                'id': None,
                 'type': 'reasoning.text',
                 'text': """\
 This question is asking me about my identity. Let me think about how to respond clearly and accurately.

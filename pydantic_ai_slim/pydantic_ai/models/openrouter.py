@@ -1,7 +1,8 @@
 from typing import Any, Literal, cast
 
 from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
+from openai.types.chat import ChatCompletion, ChatCompletionMessage, ChatCompletionMessageParam
+from openai.types.chat.chat_completion import Choice
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
@@ -110,7 +111,7 @@ Currently only supports 'middle-out', but is expected to grow in the future.
 """
 
 
-class OpenRouterProvider(TypedDict, total=False):
+class OpenRouterProviderConfig(TypedDict, total=False):
     """Represents the 'Provider' object from the OpenRouter API."""
 
     order: list[OpenRouterSlug]
@@ -176,7 +177,7 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     These models will be tried, in order, if the main model returns an error. [See details](https://openrouter.ai/docs/features/model-routing#the-models-parameter)
     """
 
-    openrouter_provider: OpenRouterProvider
+    openrouter_provider: OpenRouterProviderConfig
     """OpenRouter routes requests to the best available providers for your model. By default, requests are load balanced across the top providers to maximize uptime.
 
     You can customize how your requests are routed using the provider object. [See more](https://openrouter.ai/docs/features/provider-routing)"""
@@ -206,6 +207,78 @@ class OpenRouterError(BaseModel):
     message: str
 
 
+class BaseReasoningDetail(BaseModel):
+    """Common fields shared across all reasoning detail types."""
+
+    id: str | None = None
+    format: Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1']
+    index: int | None
+
+
+class ReasoningSummary(BaseReasoningDetail):
+    """Represents a high-level summary of the reasoning process."""
+
+    type: Literal['reasoning.summary']
+    summary: str
+
+
+class ReasoningEncrypted(BaseReasoningDetail):
+    """Represents encrypted reasoning data."""
+
+    type: Literal['reasoning.encrypted']
+    data: str
+
+
+class ReasoningText(BaseReasoningDetail):
+    """Represents raw text reasoning."""
+
+    type: Literal['reasoning.text']
+    text: str
+    signature: str | None = None
+
+
+OpenRouterReasoningDetail = ReasoningSummary | ReasoningEncrypted | ReasoningText
+
+
+class OpenRouterCompletionMessage(ChatCompletionMessage):
+    """Wrapped chat completion message with OpenRouter specific attributes."""
+
+    reasoning: str | None = None
+    """The reasoning text associated with the message, if any."""
+
+    reasoning_details: list[OpenRouterReasoningDetail] | None = None
+    """The reasoning details associated with the message, if any."""
+
+
+class OpenRouterChoice(Choice):
+    """Wraps OpenAI chat completion choice with OpenRouter specific attribures."""
+
+    native_finish_reason: str
+    """The provided finish reason by the downstream provider from OpenRouter."""
+
+    finish_reason: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error']  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenRouter specific finish reasons.
+
+    Notably, removes 'function_call' and adds 'error'  finish reasons.
+    """
+
+    message: OpenRouterCompletionMessage  # type: ignore[reportIncompatibleVariableOverride]
+    """A wrapped chat completion message with OpenRouter specific attributes."""
+
+
+class OpenRouterChatCompletion(ChatCompletion):
+    """Wraps OpenAI chat completion with OpenRouter specific attribures."""
+
+    provider: str
+    """The downstream provider that was used by OpenRouter."""
+
+    choices: list[OpenRouterChoice]  # type: ignore[reportIncompatibleVariableOverride]
+    """A list of chat completion choices modified with OpenRouter specific attributes."""
+
+    error: OpenRouterError | None = None
+    """OpenRouter specific error attribute."""
+
+
 def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSettings) -> OpenAIChatModelSettings:
     """Transforms a 'OpenRouterModelSettings' object into an 'OpenAIChatModelSettings' object.
 
@@ -232,33 +305,6 @@ def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSetti
     new_settings = OpenAIChatModelSettings(**base_data, extra_body=extra_body)
 
     return new_settings
-
-
-def _verify_response_is_not_error(response: ChatCompletion) -> ChatCompletion:
-    """Checks a pre-validation 'ChatCompletion' object for the error attribute.
-
-    Args:
-        response: The 'ChatCompletion' object to validate.
-
-    Returns:
-        The same 'ChatCompletion' object.
-
-    Raises:
-        ModelHTTPError: If the response contains an error attribute.
-        UnexpectedModelBehavior: If the response does not contain an error attribute but contains an 'error' finish_reason.
-    """
-    if openrouter_error := getattr(response, 'error', None):
-        error = OpenRouterError.model_validate(openrouter_error)
-        raise ModelHTTPError(status_code=error.code, model_name=response.model, body=error.message)
-    else:
-        choice = response.choices[0]
-
-        if choice.finish_reason == 'error':  # type: ignore[reportUnnecessaryComparison]
-            raise UnexpectedModelBehavior(
-                'Invalid response from OpenRouter chat completions endpoint, error finish_reason without error data'
-            )
-
-        return response
 
 
 class OpenRouterModel(OpenAIChatModel):
@@ -299,26 +345,53 @@ class OpenRouterModel(OpenAIChatModel):
                 'Invalid response from OpenRouter chat completions endpoint, expected JSON data'
             )
 
-        response = _verify_response_is_not_error(response)
+        native_response = OpenRouterChatCompletion.model_validate(response.model_dump())
+        choice = native_response.choices[0]
+
+        if error := native_response.error:
+            raise ModelHTTPError(status_code=error.code, model_name=response.model, body=error.message)
+        else:
+            if choice.finish_reason == 'error':
+                raise UnexpectedModelBehavior(
+                    'Invalid response from OpenRouter chat completions endpoint, error finish_reason without error data'
+                )
+
+            # This is done because 'super()._process_response' reads 'reasoning' to create a ThinkingPart.
+            # but this method will also create a ThinkingPart  using 'reasoning_details'; Delete 'reasoning' to avoid duplication
+            if choice.message.reasoning is not None:
+                setattr(response.choices[0].message, 'reasoning', None)
 
         model_response = super()._process_response(response=response)
 
         provider_details: dict[str, Any] = {}
+        provider_details['downstream_provider'] = native_response.provider
+        provider_details['native_finish_reason'] = choice.native_finish_reason
 
-        if openrouter_provider := getattr(response, 'provider', None):  # pragma: lax no cover
-            provider_details['downstream_provider'] = openrouter_provider
+        if reasoning_details := choice.message.reasoning_details:
+            provider_details['reasoning_details'] = [detail.model_dump() for detail in reasoning_details]
 
-        choice = response.choices[0]
+            reasoning = reasoning_details[0]
 
-        if native_finish_reason := getattr(choice, 'native_finish_reason', None):  # pragma: lax no cover
-            provider_details['native_finish_reason'] = native_finish_reason
-
-        if reasoning_details := getattr(choice.message, 'reasoning_details', None):
-            provider_details['reasoning_details'] = reasoning_details
-
-            if signature := reasoning_details[0].get('signature', None):
-                thinking_part = cast(ThinkingPart, model_response.parts[0])
-                thinking_part.signature = signature
+            assert isinstance(model_response.parts, list)
+            if isinstance(reasoning, ReasoningText):
+                model_response.parts.insert(
+                    0,
+                    ThinkingPart(
+                        id=reasoning.id,
+                        content=reasoning.text,
+                        signature=reasoning.signature,
+                        provider_name=native_response.provider,
+                    ),
+                )
+            elif isinstance(reasoning, ReasoningSummary):
+                model_response.parts.insert(
+                    0,
+                    ThinkingPart(
+                        id=reasoning.id,
+                        content=reasoning.summary,
+                        provider_name=native_response.provider,
+                    ),
+                )
 
         model_response.provider_details = provider_details
 
