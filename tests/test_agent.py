@@ -27,6 +27,7 @@ from pydantic_ai import (
     DocumentUrl,
     FunctionToolset,
     ImageUrl,
+    IncompleteToolCall,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelProfile,
@@ -63,6 +64,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import StructuredDict, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResultEvent
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
@@ -2446,6 +2448,45 @@ def test_unknown_tool_fix():
             ),
         ]
     )
+
+
+def test_tool_exceeds_token_limit_error():
+    def return_incomplete_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        resp = ModelResponse(parts=[ToolCallPart('dummy_tool', args='{"foo": "bar",')])
+        resp.finish_reason = 'length'
+        return resp
+
+    agent = Agent(FunctionModel(return_incomplete_tool), output_type=str)
+
+    with pytest.raises(
+        IncompleteToolCall,
+        match=r'Model token limit \(10\) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.',
+    ):
+        agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+
+    with pytest.raises(
+        IncompleteToolCall,
+        match=r'Model token limit \(provider default\) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.',
+    ):
+        agent.run_sync('Hello')
+
+
+def test_tool_exceeds_token_limit_but_complete_args():
+    def return_complete_tool_but_hit_limit(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            resp = ModelResponse(parts=[ToolCallPart('dummy_tool', args='{"foo": "bar"}')])
+            resp.finish_reason = 'length'
+            return resp
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(return_complete_tool_but_hit_limit), output_type=str)
+
+    @agent.tool_plain
+    def dummy_tool(foo: str) -> str:
+        return 'tool-ok'
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'done'
 
 
 def test_model_requests_blocked(env: TestEnv):
