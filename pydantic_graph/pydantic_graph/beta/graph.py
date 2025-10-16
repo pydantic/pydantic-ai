@@ -626,7 +626,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                         # just get coverage by unifying the code paths
                                         if t.task_id not in new_task_ids:  # pragma: no cover
                                             await self._finish_task(t.task_id)
-                                    self._handle_execution_request(maybe_overridden_result)  # pragma: no cover
+                                    self._handle_execution_request(maybe_overridden_result)
                 except GeneratorExit:
                     self._task_group.cancel_scope.cancel()
                     return
