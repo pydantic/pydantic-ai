@@ -20,6 +20,7 @@ from .toolsets import AbstractToolset
 from .usage import RunUsage, UsageLimits
 
 try:
+    from ag_ui.core import BaseEvent
     from ag_ui.core.types import RunAgentInput
 
     from .ui import OnCompleteFunc, StateDeps, StateHandler
@@ -171,7 +172,7 @@ async def handle_ag_ui_request(
     usage: RunUsage | None = None,
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-    on_complete: OnCompleteFunc | None = None,
+    on_complete: OnCompleteFunc[BaseEvent] | None = None,
 ) -> Response:
     """Handle an AG-UI request by running the agent and returning a streaming response.
 
@@ -226,7 +227,7 @@ async def run_ag_ui(
     usage: RunUsage | None = None,
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-    on_complete: OnCompleteFunc | None = None,
+    on_complete: OnCompleteFunc[BaseEvent] | None = None,
 ) -> AsyncIterator[str]:
     """Run the agent with the AG-UI run input and stream AG-UI protocol events.
 

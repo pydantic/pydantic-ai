@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic_core import to_json
@@ -20,6 +21,7 @@ from ...messages import (
     ToolCallPart,
     ToolCallPartDelta,
 )
+from ...output import OutputDataT
 from ...tools import AgentDepsT
 from .. import BaseEventStream
 from ._request_types import RequestData
@@ -53,14 +55,11 @@ def _json_dumps(obj: Any) -> str:
     return to_json(obj).decode('utf-8')
 
 
-class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
+@dataclass
+class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]):
     """TODO (DouwM): Docstring."""
 
-    def __init__(self, request: RequestData) -> None:
-        """Initialize Vercel AI event stream state."""
-        super().__init__(request)
-
-        self._step_started = False
+    _step_started: bool = False
 
     def encode_event(self, event: BaseChunk, accept: str | None = None) -> str:
         if isinstance(event, DoneChunk):
@@ -71,12 +70,12 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT]):
         """Yield events before agent streaming starts."""
         yield StartChunk()
 
-    async def before_request(self) -> AsyncIterator[BaseChunk]:
+    async def before_response(self) -> AsyncIterator[BaseChunk]:
         """Yield events before the request is processed."""
         self._step_started = True
         yield StartStepChunk()
 
-    async def after_response(self) -> AsyncIterator[BaseChunk]:
+    async def after_request(self) -> AsyncIterator[BaseChunk]:
         """Yield events after the response is processed."""
         if self._step_started:  # TODO (DouweM): coverage
             yield FinishStepChunk()

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Iterable
+from dataclasses import dataclass, field
 from typing import Final
 
 from ...messages import (
@@ -23,6 +24,7 @@ from ...messages import (
     ToolCallPartDelta,
     ToolReturnPart,
 )
+from ...output import OutputDataT
 from ...tools import AgentDepsT
 from .. import BaseEventStream
 
@@ -69,14 +71,13 @@ SSE_CONTENT_TYPE: Final[str] = 'text/event-stream'
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
 
-class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
+@dataclass
+class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]):
     """TODO (DouwM): Docstring."""
 
-    def __init__(self, request: RunAgentInput) -> None:
-        """Initialize AG-UI event stream state."""
-        super().__init__(request)
-        self._thinking_text = False
-        self._builtin_tool_call_ids: dict[str, str] = {}
+    _thinking_text: bool = False
+    _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict)
+    _error: bool = False
 
     def encode_event(self, event: BaseEvent, accept: str | None = None) -> str:
         """Encode an AG-UI event as SSE.
@@ -100,13 +101,15 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]):
 
     async def after_stream(self) -> AsyncIterator[BaseEvent]:
         """Handle an AgentRunResultEvent, cleaning up any pending state."""
-        yield RunFinishedEvent(
-            thread_id=self.request.thread_id,
-            run_id=self.request.run_id,
-        )
+        if not self._error:
+            yield RunFinishedEvent(
+                thread_id=self.request.thread_id,
+                run_id=self.request.run_id,
+            )
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseEvent]:
         """Handle errors during streaming."""
+        self._error = True
         yield RunErrorEvent(message=str(error))
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseEvent]:

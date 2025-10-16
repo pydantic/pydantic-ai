@@ -6,11 +6,14 @@ that transform Pydantic AI agent events into protocol-specific events (e.g., AG-
 
 from __future__ import annotations
 
+import inspect
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Generic, Literal, TypeVar
+from typing import Any, Generic, Literal, TypeAlias, TypeVar, cast
 from uuid import uuid4
+
+from pydantic_ai import _utils
 
 from ..messages import (
     AgentStreamEvent,
@@ -33,6 +36,7 @@ from ..messages import (
     ToolCallPartDelta,
     ToolReturnPart,
 )
+from ..output import OutputDataT
 from ..run import AgentRunResult, AgentRunResultEvent
 from ..tools import AgentDepsT
 
@@ -46,17 +50,26 @@ EventT = TypeVar('EventT')
 RunRequestT = TypeVar('RunRequestT')
 """Type variable for request types."""
 
-SourceEvent = AgentStreamEvent | AgentRunResultEvent
+SourceEvent = AgentStreamEvent | AgentRunResultEvent[Any]
+
+OnCompleteFunc: TypeAlias = (
+    Callable[[AgentRunResult[Any]], None]
+    | Callable[[AgentRunResult[Any]], Awaitable[None]]
+    | Callable[[AgentRunResult[Any]], AsyncIterator[EventT]]
+)
+"""Callback function type that receives the `AgentRunResult` of the completed run. Can be sync or async and can yield events."""
 
 
 @dataclass
-class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
+class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT, OutputDataT]):
     """TODO (DouwM): Docstring."""
 
     request: RunRequestT
-    result: AgentRunResult | None = None
+    result: AgentRunResult[OutputDataT] | None = None
 
     message_id: str = field(default_factory=lambda: str(uuid4()))
+
+    _turn: Literal['request', 'response'] | None = None
 
     _final_result_event: FinalResultEvent | None = None
 
@@ -89,11 +102,14 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         async for event in stream:
             yield self.encode_event(event, accept)
 
-    async def handle_stream(self, stream: AsyncIterator[SourceEvent]) -> AsyncIterator[EventT]:  # noqa: C901
+    async def handle_stream(  # noqa: C901
+        self, stream: AsyncIterator[SourceEvent], on_complete: OnCompleteFunc[EventT] | None = None
+    ) -> AsyncIterator[EventT]:
         """Handle a stream of agent events.
 
         Args:
             stream: The stream of agent events to handle.
+            on_complete: Optional callback function called when the agent run completes successfully.
 
         Yields:
             Protocol-specific events.
@@ -101,35 +117,51 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         async for e in self.before_stream():
             yield e
 
-        turn: Literal['request', 'response'] | None = None
         try:
             async for event in stream:
                 # TODO (DouweM): Introduce, possibly, MessageStartEvent, MessageEndEvent with ModelRequest/Response?
                 # People have requested these before. We can store Request and Response
-                next_turn = turn
                 if isinstance(event, PartStartEvent):
-                    next_turn = 'request'
+                    async for e in self._turn_to('response'):
+                        yield e
                 elif isinstance(event, FunctionToolCallEvent):
-                    next_turn = 'response'
+                    async for e in self._turn_to('request'):
+                        yield e
                 elif isinstance(event, AgentRunResultEvent):
-                    next_turn = None
-
-                if turn != next_turn:
-                    if turn == 'request':
-                        async for e in self.after_request():
+                    if (
+                        self._final_result_event
+                        and (tool_call_id := self._final_result_event.tool_call_id)
+                        and (tool_name := self._final_result_event.tool_name)
+                    ):
+                        async for e in self._turn_to('request'):
                             yield e
-                    elif turn == 'response':
-                        async for e in self.after_response():
-                            yield e  # TODO (DouweM): coverage
 
-                    turn = next_turn
-
-                    if turn == 'request':
-                        async for e in self.before_request():
+                        self._final_result_event = None
+                        output_tool_result_event = FunctionToolResultEvent(
+                            result=ToolReturnPart(
+                                tool_call_id=tool_call_id,
+                                tool_name=tool_name,
+                                content='Final result processed.',
+                            )
+                        )
+                        async for e in self.handle_function_tool_result(output_tool_result_event):
                             yield e
-                    elif turn == 'response':
-                        async for e in self.before_response():
-                            yield e  # TODO (DouweM): coverage
+
+                    self.result = cast(AgentRunResult[OutputDataT], event.result)
+
+                    async for e in self._turn_to(None):
+                        yield e
+
+                    if on_complete is not None:
+                        if inspect.isasyncgenfunction(on_complete):
+                            async for e in on_complete(self.result):
+                                yield e
+                        elif _utils.is_async_callable(on_complete):
+                            await on_complete(self.result)
+                        else:
+                            await _utils.run_in_executor(on_complete, self.result)
+                elif isinstance(event, FinalResultEvent):
+                    self._final_result_event = event
 
                 if isinstance(event, BuiltinToolCallEvent | BuiltinToolResultEvent):  # pyright: ignore[reportDeprecated]
                     # The events were deprecated before this feature was introduced
@@ -140,20 +172,40 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         except Exception as e:
             async for e in self.on_error(e):
                 yield e
-        else:
-            if turn == 'request':
-                async for (
-                    e
-                ) in self.after_request():  # TODO (DouweM): coverage. does this make sense here? should it be finally?
-                    yield e
-            elif turn == 'response':
-                async for e in self.after_response():  # TODO (DouweM): coverage
-                    yield e
+        finally:
+            async for e in self._turn_to(None):
+                yield e
 
             async for e in self.after_stream():
                 yield e
 
-    async def handle_event(self, event: SourceEvent) -> AsyncIterator[EventT]:  # noqa: C901
+    async def _turn_to(self, to_turn: Literal['request', 'response'] | None) -> AsyncIterator[EventT]:
+        """Handle a turn.
+
+        Args:
+            from_turn: The turn to start from.
+            to_turn: The turn to end at.
+        """
+        if to_turn == self._turn:
+            return
+
+        if self._turn == 'request':
+            async for e in self.after_request():
+                yield e
+        elif self._turn == 'response':
+            async for e in self.after_response():
+                yield e
+
+        self._turn = to_turn
+
+        if to_turn == 'request':
+            async for e in self.before_request():
+                yield e
+        elif to_turn == 'response':
+            async for e in self.before_response():
+                yield e
+
+    async def handle_event(self, event: SourceEvent) -> AsyncIterator[EventT]:
         """Transform a Pydantic AI agent event into protocol-specific events.
 
         This method dispatches to specific `handle_*` methods based on event and part type.
@@ -176,7 +228,6 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
                 async for e in self.handle_part_end(event):
                     yield e
             case FinalResultEvent():
-                self._final_result_event = event
                 async for e in self.handle_final_result(event):
                     yield e
             case FunctionToolCallEvent():
@@ -186,23 +237,6 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
                 async for e in self.handle_function_tool_result(event):
                     yield e
             case AgentRunResultEvent():
-                if (
-                    self._final_result_event
-                    and (tool_call_id := self._final_result_event.tool_call_id)
-                    and (tool_name := self._final_result_event.tool_name)
-                ):  # TODO (DouweM): coverage
-                    self._final_result_event = None
-                    output_tool_result_event = FunctionToolResultEvent(
-                        result=ToolReturnPart(
-                            tool_call_id=tool_call_id,
-                            tool_name=tool_name,
-                            content='Final result processed.',
-                        )
-                    )
-                    async for e in self.handle_function_tool_result(output_tool_result_event):
-                        yield e
-
-                self.result = event.result
                 async for e in self.handle_run_result(event):
                     yield e
             case _:

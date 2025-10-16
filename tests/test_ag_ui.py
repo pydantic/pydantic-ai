@@ -51,6 +51,7 @@ from .conftest import IsDatetime, IsSameStr, try_import
 with try_import() as imports_successful:
     from ag_ui.core import (
         AssistantMessage,
+        BaseEvent,
         CustomEvent,
         DeveloperMessage,
         EventType,
@@ -116,7 +117,7 @@ async def run_and_collect_events(
     agent: Agent[AgentDepsT, OutputDataT],
     *run_inputs: RunAgentInput,
     deps: AgentDepsT = None,
-    on_complete: OnCompleteFunc | None = None,
+    on_complete: OnCompleteFunc[BaseEvent] | None = None,
 ) -> list[dict[str, Any]]:
     events = list[dict[str, Any]]()
     for run_input in run_inputs:

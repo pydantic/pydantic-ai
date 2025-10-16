@@ -7,7 +7,7 @@ that transform Pydantic AI agent events into protocol-specific events (e.g., AG-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import Field, dataclass, replace
 from functools import cached_property
 from http import HTTPStatus
@@ -17,24 +17,23 @@ from typing import (
     ClassVar,
     Generic,
     Protocol,
-    TypeAlias,
     TypeVar,
     runtime_checkable,
 )
 
 from pydantic import BaseModel, ValidationError
 
-from .. import DeferredToolRequests, DeferredToolResults, _utils
-from ..agent import AbstractAgent, AgentDepsT, AgentRunResult
+from .. import DeferredToolRequests, DeferredToolResults
+from ..agent import AbstractAgent, AgentDepsT
 from ..builtin_tools import AbstractBuiltinTool
 from ..exceptions import UserError
 from ..messages import ModelMessage
 from ..models import KnownModelName, Model
-from ..output import OutputSpec
+from ..output import OutputDataT, OutputSpec
 from ..settings import ModelSettings
 from ..toolsets import AbstractToolset
 from ..usage import RunUsage, UsageLimits
-from .event_stream import BaseEventStream, SourceEvent
+from .event_stream import BaseEventStream, OnCompleteFunc, SourceEvent
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -54,9 +53,6 @@ MessageT = TypeVar('MessageT')
 
 EventT = TypeVar('EventT')
 """Type variable for protocol-specific event types."""
-
-OnCompleteFunc: TypeAlias = Callable[[AgentRunResult[Any]], None] | Callable[[AgentRunResult[Any]], Awaitable[None]]
-"""Callback function type that receives the `AgentRunResult` of the completed run. Can be sync or async."""
 
 
 # State management types
@@ -111,10 +107,10 @@ class StateDeps(Generic[StateT]):
 
 
 @dataclass
-class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
+class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, OutputDataT]):
     """TODO (DouwM): Docstring."""
 
-    agent: AbstractAgent[AgentDepsT]
+    agent: AbstractAgent[AgentDepsT, OutputDataT]
     """The Pydantic AI agent to run."""
 
     request: RunRequestT
@@ -134,7 +130,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
 
     @property
     @abstractmethod
-    def event_stream(self) -> BaseEventStream[RunRequestT, EventT, AgentDepsT]:
+    def event_stream(self) -> BaseEventStream[RunRequestT, EventT, AgentDepsT, OutputDataT]:
         """Create an event stream for the adapter."""
         raise NotImplementedError
 
@@ -178,7 +174,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
     async def process_stream(
         self,
         stream: AsyncIterator[SourceEvent],
-        on_complete: OnCompleteFunc | None = None,
+        on_complete: OnCompleteFunc[EventT] | None = None,
     ) -> AsyncIterator[EventT]:
         """Process a stream of events and return a stream of events.
 
@@ -186,15 +182,8 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
             stream: The stream of events to process.
             on_complete: Optional callback function called when the agent run completes successfully.
         """
-        event_stream = self.event_stream
-        async for event in event_stream.handle_stream(stream):
+        async for event in self.event_stream.handle_stream(stream, on_complete=on_complete):
             yield event
-
-            if (result := event_stream.result) and on_complete is not None:
-                if _utils.is_async_callable(on_complete):
-                    await on_complete(result)
-                else:
-                    await _utils.run_in_executor(on_complete, result)
 
     async def run_stream(
         self,
@@ -210,7 +199,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        on_complete: OnCompleteFunc | None = None,
+        on_complete: OnCompleteFunc[EventT] | None = None,
     ) -> AsyncIterator[EventT]:
         """Run the agent with the AG-UI run input and stream AG-UI protocol events.
 
@@ -298,7 +287,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
     @classmethod
     async def dispatch_request(
         cls,
-        agent: AbstractAgent[AgentDepsT, Any],
+        agent: AbstractAgent[AgentDepsT, OutputDataT],
         request: Request,
         *,
         message_history: Sequence[ModelMessage] | None = None,
@@ -312,7 +301,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        on_complete: OnCompleteFunc | None = None,
+        on_complete: OnCompleteFunc[EventT] | None = None,
     ) -> Response:
         """Handle an AG-UI request and return a streaming response.
 

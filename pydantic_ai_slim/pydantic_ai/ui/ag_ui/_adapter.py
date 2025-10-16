@@ -25,6 +25,7 @@ from ...messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from ...output import OutputDataT
 from ...toolsets import AbstractToolset
 
 try:
@@ -92,7 +93,7 @@ class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
         return 'the AG-UI frontend tools'  # pragma: no cover
 
 
-class AGUIAdapter(BaseAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT]):
+class AGUIAdapter(BaseAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, OutputDataT]):
     """TODO (DouwM): Docstring."""
 
     @classmethod
@@ -101,7 +102,7 @@ class AGUIAdapter(BaseAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT]):
         return RunAgentInput.model_validate(await request.json())
 
     @property
-    def event_stream(self) -> BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT]:
+    def event_stream(self) -> BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]:
         """Create an event stream for the adapter."""
         return AGUIEventStream(self.request)
 
