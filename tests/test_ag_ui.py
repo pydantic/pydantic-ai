@@ -1525,7 +1525,6 @@ async def test_builtin_tool_call() -> None:
         }
         yield {
             0: DeltaToolCall(
-                name=WebSearchTool.kind,
                 json_args='"Hello world"}',
                 tool_call_id='search_1',
             )

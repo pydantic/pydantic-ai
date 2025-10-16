@@ -12,6 +12,7 @@ from dataclasses import Field, dataclass, replace
 from functools import cached_property
 from http import HTTPStatus
 from typing import (
+    TYPE_CHECKING,
     Any,
     ClassVar,
     Generic,
@@ -22,7 +23,6 @@ from typing import (
 )
 
 from pydantic import BaseModel, ValidationError
-from starlette.responses import StreamingResponse
 
 from .. import DeferredToolRequests, DeferredToolResults, _utils
 from ..agent import AbstractAgent, AgentDepsT, AgentRunResult
@@ -36,14 +36,9 @@ from ..toolsets import AbstractToolset
 from ..usage import RunUsage, UsageLimits
 from .event_stream import BaseEventStream, SourceEvent
 
-try:
+if TYPE_CHECKING:
     from starlette.requests import Request
     from starlette.responses import Response
-except ImportError as e:  # pragma: no cover
-    raise ImportError(
-        'Please install the `starlette` package to use `Agent.to_ag_ui()` method, '
-        'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
-    ) from e
 
 
 __all__ = [
@@ -126,19 +121,22 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
     """The protocol-specific request object."""
 
     @classmethod
+    @abstractmethod
     async def validate_request(cls, request: Request) -> RunRequestT:
         """Validate the request and return the validated request."""
-        raise NotImplementedError('validate_request is not implemented')
+        raise NotImplementedError
 
     @classmethod
     @abstractmethod
     def load_messages(cls, messages: Sequence[MessageT]) -> list[ModelMessage]:
         """Load messages from the request and return the loaded messages."""
+        raise NotImplementedError
 
     @property
     @abstractmethod
     def event_stream(self) -> BaseEventStream[RunRequestT, EventT, AgentDepsT]:
         """Create an event stream for the adapter."""
+        raise NotImplementedError
 
     @cached_property
     @abstractmethod
@@ -151,6 +149,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
         Returns:
             List of Pydantic AI ModelMessage objects.
         """
+        raise NotImplementedError
 
     @cached_property
     def toolset(self) -> AbstractToolset[AgentDepsT] | None:
@@ -285,6 +284,14 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
             stream: The stream of events to encode.
             accept: The accept header value for encoding format.
         """
+        try:
+            from starlette.responses import StreamingResponse
+        except ImportError as e:  # pragma: no cover
+            raise ImportError(
+                'Please install the `starlette` package to use `BaseAdapter.stream_response()` method, '
+                'you can use the `ui` optional group — `pip install "pydantic-ai-slim[ui]"`'
+            ) from e
+
         return StreamingResponse(
             self.encode_stream(
                 stream,
@@ -335,6 +342,14 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT]):
         Returns:
             A streaming Starlette response with AG-UI protocol events.
         """
+        try:
+            from starlette.responses import Response
+        except ImportError as e:  # pragma: no cover
+            raise ImportError(
+                'Please install the `starlette` package to use `BaseAdapter.dispatch_request()` method, '
+                'you can use the `ui` optional group — `pip install "pydantic-ai-slim[ui]"`'
+            ) from e
+
         try:
             request_data = await cls.validate_request(request)
         except ValidationError as e:  # pragma: no cover

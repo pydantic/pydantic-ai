@@ -14,7 +14,9 @@ from uuid import uuid4
 
 from ..messages import (
     AgentStreamEvent,
+    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolCallPart,
+    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
     FilePart,
     FinalResultEvent,
@@ -129,6 +131,10 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
                         async for e in self.before_response():
                             yield e  # TODO (DouweM): coverage
 
+                if isinstance(event, BuiltinToolCallEvent | BuiltinToolResultEvent):  # pyright: ignore[reportDeprecated]
+                    # The events were deprecated before this feature was introduced
+                    continue
+
                 async for e in self.handle_event(event):
                     yield e
         except Exception as e:
@@ -159,9 +165,6 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Yields:
             Protocol-specific events.
         """
-        async for e in self.before_event(event):
-            yield e  # TODO (DouweM): coverage
-
         match event:
             case PartStartEvent():
                 async for e in self.handle_part_start(event):
@@ -204,9 +207,6 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
                     yield e  # TODO (DouweM): coverage
             case _:
                 pass
-
-        async for e in self.after_event(event):
-            yield e  # TODO (DouweM): coverage
 
     async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:
         """Handle a PartStartEvent.
@@ -304,6 +304,11 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         return  # pragma: no cover
         yield  # Make this an async generator
 
+    async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[EventT]:
+        """Handle the end of a TextPart."""
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
     async def handle_thinking_start(self, part: ThinkingPart, follows_thinking: bool = False) -> AsyncIterator[EventT]:
         """Handle a ThinkingPart at start.
 
@@ -329,20 +334,15 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         return
         yield  # Make this an async generator
 
-    async def handle_tool_call_start(self, part: ToolCallPart) -> AsyncIterator[EventT]:
-        """Handle a ToolCallPart at start.
-
-        Args:
-            part: The tool call part.
-
-        Yields:
-            Protocol-specific events.
-        """
+    async def handle_thinking_end(
+        self, part: ThinkingPart, followed_by_thinking: bool = False
+    ) -> AsyncIterator[EventT]:
+        """Handle the end of a ThinkingPart."""
         return  # pragma: no cover
         yield  # Make this an async generator
 
-    async def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[EventT]:
-        """Handle a BuiltinToolCallPart at start.
+    async def handle_tool_call_start(self, part: ToolCallPart) -> AsyncIterator[EventT]:
+        """Handle a ToolCallPart at start.
 
         Args:
             part: The tool call part.
@@ -362,6 +362,28 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Yields:
             Protocol-specific events.
         """
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[EventT]:
+        """Handle the end of a ToolCallPart."""
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[EventT]:
+        """Handle a BuiltinToolCallPart at start.
+
+        Args:
+            part: The tool call part.
+
+        Yields:
+            Protocol-specific events.
+        """
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[EventT]:
+        """Handle the end of a BuiltinToolCallPart."""
         return  # pragma: no cover
         yield  # Make this an async generator
 
@@ -386,28 +408,6 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         Yields:
             Protocol-specific events.
         """
-        return  # pragma: no cover
-        yield  # Make this an async generator
-
-    async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[EventT]:
-        """Handle the end of a TextPart."""
-        return  # pragma: no cover
-        yield  # Make this an async generator
-
-    async def handle_thinking_end(
-        self, part: ThinkingPart, followed_by_thinking: bool = False
-    ) -> AsyncIterator[EventT]:
-        """Handle the end of a ThinkingPart."""
-        return  # pragma: no cover
-        yield  # Make this an async generator
-
-    async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[EventT]:
-        """Handle the end of a ToolCallPart."""
-        return  # pragma: no cover
-        yield  # Make this an async generator
-
-    async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[EventT]:
-        """Handle the end of a BuiltinToolCallPart."""
         return  # pragma: no cover
         yield  # Make this an async generator
 
@@ -460,24 +460,6 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT]):
         yield  # Make this an async generator
 
     # Lifecycle hooks (optional overrides)
-
-    async def before_event(self, event: SourceEvent) -> AsyncIterator[EventT]:
-        """Handle an event before it is processed.
-
-        Args:
-            event: The event to handle.
-        """
-        return
-        yield  # Make this an async generator
-
-    async def after_event(self, event: SourceEvent) -> AsyncIterator[EventT]:
-        """Handle an event after it is processed.
-
-        Args:
-            event: The event to handle.
-        """
-        return
-        yield  # Make this an async generator
 
     async def before_request(self) -> AsyncIterator[EventT]:
         """Handle a request before it is processed."""
