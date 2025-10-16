@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import json
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -1839,7 +1840,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk.item, responses.response_output_item.McpCall):
                     call_part, _ = _map_mcp_call(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(
-                        vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
+                        vendor_part_id=f'{chunk.item.id}-call',
+                        part=call_part,
                     )
                 elif isinstance(chunk.item, responses.response_output_item.McpListTools):
                     call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
@@ -1989,8 +1991,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseMcpCallArgumentsDeltaEvent):
+                try:
+                    json_delta = json.loads(chunk.delta)
+                except json.JSONDecodeError:  # pragma: no cover
+                    json_delta = {}
                 maybe_event = self._parts_manager.handle_tool_call_delta(
-                    vendor_part_id=f'{chunk.item_id}-call', args=chunk.delta
+                    vendor_part_id=f'{chunk.item_id}-call',
+                    args=json_delta,  # pyright: ignore[reportUnknownArgumentType]
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event

@@ -769,7 +769,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                     call_part = _map_mcp_server_use_block(current_block, self.provider_name)
                     yield self._parts_manager.handle_part(
                         vendor_part_id=event.index,
-                        part=replace(call_part, args=None),
+                        part=replace(call_part, args=call_part.args_as_json_str()),
                     )
                 elif isinstance(current_block, BetaMCPToolResultBlock):
                     yield self._parts_manager.handle_part(
