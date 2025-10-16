@@ -251,7 +251,7 @@ class OpenRouterCompletionMessage(ChatCompletionMessage):
 
 
 class OpenRouterChoice(Choice):
-    """Wraps OpenAI chat completion choice with OpenRouter specific attribures."""
+    """Wraps OpenAI chat completion choice with OpenRouter specific attributes."""
 
     native_finish_reason: str
     """The provided finish reason by the downstream provider from OpenRouter."""
@@ -267,7 +267,7 @@ class OpenRouterChoice(Choice):
 
 
 class OpenRouterChatCompletion(ChatCompletion):
-    """Wraps OpenAI chat completion with OpenRouter specific attribures."""
+    """Wraps OpenAI chat completion with OpenRouter specific attributes."""
 
     provider: str
     """The downstream provider that was used by OpenRouter."""
