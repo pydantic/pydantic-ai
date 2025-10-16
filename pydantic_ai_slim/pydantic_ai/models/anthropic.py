@@ -593,9 +593,7 @@ class AnthropicModel(Model):
                                         ),
                                     )
                                 )
-                            elif response_part.tool_name == MCPServerTool.CALL_TOOL_KIND and isinstance(
-                                response_part, BuiltinMCPToolCallPart
-                            ):  # pragma: no branch
+                            elif response_part.tool_name == MCPServerTool.CALL_TOOL_KIND:  # pragma: no branch
                                 mcp_tool_result_block = cast(
                                     BetaMCPToolResultBlock,
                                     {

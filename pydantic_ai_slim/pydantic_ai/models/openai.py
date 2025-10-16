@@ -1456,28 +1456,21 @@ class OpenAIResponsesModel(Model):
                                     },
                                 )
                                 openai_messages.append(image_generation_item)
-                            elif (
-                                item.tool_name == MCPServerTool.LIST_TOOLS_KIND
-                                and item.tool_call_id
-                                and isinstance(item, BuiltinMCPToolCallPart)
-                                and (args := item.args_as_dict())
-                            ):
-                                mcp_list_tools_item = cast(
-                                    responses.response_input_item_param.McpListTools,
-                                    {
-                                        **args,
-                                        'id': item.tool_call_id,
-                                        'type': 'mcp_list_tools',
-                                        'server_label': item.mcp_server_id,
-                                    },
+                            elif item.tool_name == MCPServerTool.LIST_TOOLS_KIND and item.tool_call_id:
+                                item = cast(BuiltinMCPToolCallPart, item)
+                                mcp_list_tools_item = responses.response_input_item_param.McpListTools(
+                                    id=item.tool_call_id,
+                                    type='mcp_list_tools',
+                                    server_label=cast(str, item.mcp_server_id),
+                                    tools=[],
                                 )
                                 openai_messages.append(mcp_list_tools_item)
                             elif (  # pragma: no branch
                                 item.tool_name == MCPServerTool.CALL_TOOL_KIND
                                 and item.tool_call_id
-                                and isinstance(item, BuiltinMCPToolCallPart)
                                 and (args := item.args_as_dict())
                             ):
+                                item = cast(BuiltinMCPToolCallPart, item)
                                 error = args.pop('error', None)
                                 mcp_call_item = cast(
                                     responses.response_input_item_param.McpCall,
@@ -1485,8 +1478,8 @@ class OpenAIResponsesModel(Model):
                                         **args,
                                         'id': item.tool_call_id,
                                         'type': 'mcp_call',
-                                        'server_label': item.mcp_server_id,
-                                        'name': item.mcp_tool_name,
+                                        'server_label': cast(str, item.mcp_server_id),
+                                        'name': cast(str, item.mcp_tool_name),
                                     },
                                 )
                                 mcp_call_item['error'] = error
