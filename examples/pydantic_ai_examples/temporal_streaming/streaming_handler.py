@@ -19,7 +19,7 @@ from pydantic_ai import (
 )
 from temporalio import activity
 
-from datamodels import AgentDependencies, EventKind, EventStream
+from .datamodels import AgentDependencies, EventKind, EventStream
 
 
 async def streaming_handler(

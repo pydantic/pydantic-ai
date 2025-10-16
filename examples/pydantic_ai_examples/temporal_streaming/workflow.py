@@ -13,10 +13,10 @@ from typing import Any
 from pydantic_ai import UsageLimits
 from temporalio import activity, workflow
 
-from agents import build_agent
-from streaming_handler import streaming_handler
-from datamodels import AgentDependencies, EventKind, EventStream
-from utils import read_config_yml
+from .agents import build_agent
+from .datamodels import AgentDependencies, EventKind, EventStream
+from .streaming_handler import streaming_handler
+from .utils import read_config_yml
 
 
 @workflow.defn

@@ -9,12 +9,13 @@ from datetime import timedelta
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 
-from datamodels import AgentDependencies
 from pydantic_ai import Agent, FilteredToolset, ModelSettings
 from pydantic_ai.durable_exec.temporal import TemporalAgent
 from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
+
+from .datamodels import AgentDependencies
 
 
 async def get_mcp_toolsets() -> dict[str, FilteredToolset]:
