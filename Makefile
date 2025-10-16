@@ -114,14 +114,31 @@ docs-serve: ## Build and serve the documentation
 
 .PHONY: .docs-insiders-install
 .docs-insiders-install: ## Install insiders packages for docs if necessary
-ifeq ($(PPPR_TOKEN),)
-	@echo Error: PPPR_TOKEN is not set, cannot install insiders packages
-	@exit 1
+ifeq ($(DETECTED_OS),Windows)
+	@powershell -NoProfile -Command " \
+		$$material = uv pip show mkdocs-material 2>$$null; \
+		if ($$material -match 'insiders') { \
+			Write-Host 'insiders packages already installed'; \
+		} elseif ('$(PPPR_TOKEN)' -eq '') { \
+			Write-Host 'Error: PPPR_TOKEN is not set, cannot install insiders packages'; \
+			exit 1; \
+		} else { \
+			Write-Host 'installing insiders packages...'; \
+			uv pip install --reinstall --no-deps --extra-index-url https://pydantic:$(PPPR_TOKEN)@pppr.pydantic.dev/simple/ mkdocs-material mkdocstrings-python; \
+		} \
+	"
 else
-	@echo installing insiders packages...
-	@uv pip install --reinstall --no-deps \
-		--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/ \
-		mkdocs-material mkdocstrings-python
+	ifeq ($(shell uv pip show mkdocs-material | grep -q insiders && echo 'installed'), installed)
+		@echo 'insiders packages already installed'
+	else ifeq ($(PPPR_TOKEN),)
+		@echo "Error: PPPR_TOKEN is not set, can't install insiders packages"
+		@exit 1
+	else
+		@echo 'installing insiders packages...'
+		@uv pip install --reinstall --no-deps \
+			--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/ \
+			mkdocs-material mkdocstrings-python
+	endif
 endif
 
 .PHONY: docs-insiders
@@ -151,7 +168,7 @@ help: ## Show this help (usage: make help)
 ifeq ($(DETECTED_OS),Windows)
 	@echo Usage: make [recipe]
 	@echo Recipes:
-	@uv run python -c "import re; [print(f'  {m[0]:<20} {m[1]}') for m in re.findall(r'^([a-zA-Z0-9_-]+):.*?## (.*)$$', open('$(MAKEFILE_LIST)').read(), re.MULTILINE)]"
+	@uv run python -c "import re; [print(f'  {m[0]:<20} {m[1]}') for m in re.findall(r'^([a-zA-Z0-9_-]+):.*?## (.*)$$', open('$(MAKEFILE_LIST)').read(), re.MULTILINE)]" || powershell -NoProfile -Command "Get-Content '$(MAKEFILE_LIST)' | Select-String -Pattern '^([a-zA-Z0-9_-]+):.*?## (.*)$$' | ForEach-Object { Write-Host ('  {0,-20} {1}' -f $$_.Matches[0].Groups[1].Value, $$_.Matches[0].Groups[2].Value) }"
 else
 	@echo "Usage: make [recipe]"
 	@echo "Recipes:"
