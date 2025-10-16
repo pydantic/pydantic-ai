@@ -205,9 +205,12 @@ Assuming your project has the following structure:
 
 ```
 
-```py {title="utils.py" test="skip" noqa="F841"}
-import yaml
+```py {title="utils.py" test="skip"}
+import os
 from copy import copy
+
+import yaml
+
 
 def recursively_modify_api_key(conf):
     """
@@ -243,6 +246,7 @@ def recursively_modify_api_key(conf):
     inner(copy_conf)
     return copy_conf
 
+
 def read_config_yml(path):
     """
     Read and process a YAML configuration file.
@@ -256,20 +260,22 @@ def read_config_yml(path):
     Returns:
         dict: The parsed and processed YAML content as a Python dictionary.
     """
-    with open(path, "r") as f:
+    with open(path) as f:
         configs = yaml.safe_load(f)
     recursively_modify_api_key(configs)
     return configs
 ```
 
-```py {title="datamodels.py" test="skip" noqa="F841"}
+```py {title="datamodels.py" test="skip"}
 from enum import Enum
-from typing import Any, Dict, Deque, AsyncIterable, Optional
+
 from pydantic import BaseModel
+
 
 class AgentDependencies(BaseModel):
     workflow_id: str
     run_id: str
+
 
 class EventKind(str, Enum):
     CONTINUE_CHAT = 'continue_chat'
@@ -282,26 +288,25 @@ class EventStream(BaseModel):
     content: str
 ```
 
-```py {title="agents.py" test="skip" noqa="F841"}
-from temporalio import workflow
+
+```py {title="agents.py" test="skip"}
+from datetime import timedelta
+
+from mcp_run_python import code_sandbox
+from pydantic_ai import Agent, FilteredToolset, ModelSettings, RunContext
+from pydantic_ai.durable_exec.temporal import TemporalAgent
+from pydantic_ai.mcp import MCPServerStdio
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
-with workflow.unsafe.imports_passed_through():
-    from pydantic_ai import Agent, FilteredToolset, RunContext, ModelSettings
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-    from pydantic_ai.mcp import MCPServerStdio
-    from pydantic_ai.durable_exec.temporal import TemporalAgent
-    from datamodels import AgentDependencies
-    from mcp_run_python import code_sandbox
-    from typing import Dict
-    from datetime import timedelta
-    
 
-async def get_mcp_toolsets() -> Dict[str, FilteredToolset]:
+from .datamodels import AgentDependencies
+
+async def get_mcp_toolsets() -> dict[str, FilteredToolset]:
     yf_server = MCPServerStdio(
-        command="uvx",
-        args=["mcp-yahoo-finance"],
+        command='uvx',
+        args=['mcp-yahoo-finance'],
         timeout=240,
         read_timeout=240,
         id='yahoo'
@@ -310,67 +315,78 @@ async def get_mcp_toolsets() -> Dict[str, FilteredToolset]:
         'yahoo': yf_server.filtered(lambda ctx, tool_def: True)
     }
 
+
 async def get_claude_model(parallel_tool_calls: bool = True, **env_vars):
     model_name = 'claude-sonnet-4-5-20250929'
     api_key = env_vars.get('anthropic_api_key')
     model = AnthropicModel(model_name=model_name,
                            provider=AnthropicProvider(api_key=api_key),
                            settings=ModelSettings(**{
-                               "temperature": 0.5,
-                               "n": 1,
-                               "max_completion_tokens": 64000,
-                               "max_tokens": 64000,
-                               "parallel_tool_calls": parallel_tool_calls,
+                               'temperature': 0.5,
+                               'n': 1,
+                               'max_completion_tokens': 64000,
+                               'max_tokens': 64000,
+                               'parallel_tool_calls': parallel_tool_calls,
                            }))
 
     return model
 
+
 async def build_agent(stream_handler=None, **env_vars):
-    
     system_prompt = """
     You are an expert travel agent that knows perfectly how to search for hotels on the web.
     You also have a Data Analyst background, mastering well how to use pandas for tabular operations. 
     """
-    agent_name = "YahooFinanceSearchAgent"
-    
+    agent_name = 'YahooFinanceSearchAgent'
+
     toolsets = await get_mcp_toolsets()
     agent = Agent(name=agent_name,
-                  model=await get_claude_model(**env_vars), # Here you place your Model instance
+                  model=await get_claude_model(**env_vars),  # Here you place your Model instance
                   toolsets=[*toolsets.values()],
                   system_prompt=system_prompt,
                   event_stream_handler=stream_handler,
                   deps_type=AgentDependencies,
                   )
-    
+
     @agent.tool(name='run_python_code')
     async def run_python_code(ctx: RunContext[None], code: str) -> str:
         async with code_sandbox(dependencies=['pandas', 'numpy']) as sandbox:
             result = await sandbox.eval(code)
             return result
-        
-        
+
     temporal_agent = TemporalAgent(wrapped=agent,
-                                       model_activity_config=ActivityConfig(
-                                           start_to_close_timeout=timedelta(minutes=5),
-                                           retry_policy=RetryPolicy(maximum_attempts=50)
-                                       ),
-                                       toolset_activity_config={
-                                           toolset_id: ActivityConfig(
-                                               start_to_close_timeout=timedelta(minutes=3),
-                                               retry_policy=RetryPolicy(maximum_attempts=3,
-                                                                        non_retryable_error_types=['ToolRetryError']
-                                                                        )
-                                           ) for toolset_id in toolsets.keys()})
+                                   model_activity_config=ActivityConfig(
+                                       start_to_close_timeout=timedelta(minutes=5),
+                                       retry_policy=RetryPolicy(maximum_attempts=50)
+                                   ),
+                                   toolset_activity_config={
+                                       toolset_id: ActivityConfig(
+                                           start_to_close_timeout=timedelta(minutes=3),
+                                           retry_policy=RetryPolicy(maximum_attempts=3,
+                                                                    non_retryable_error_types=['ToolRetryError']
+                                                                    )
+                                       ) for toolset_id in toolsets.keys()})
     return temporal_agent
 ```
 
-```py {title="streaming_handler.py" test="skip" noqa="F841"}
+```py {title="streaming_handler.py" test="skip"}
+from collections.abc import AsyncIterable
+
+from .datamodels import AgentDependencies, EventKind, EventStream
 from temporalio import activity
-from typing import Any, Dict, Deque, AsyncIterable, Optional
-from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent, \
-        PartStartEvent, FunctionToolResultEvent, TextPart, ToolCallPart, PartDeltaEvent, UsageLimits, TextPartDelta, \
-        ThinkingPartDelta
-from datamodels import EventStream, EventKind, AgentDependencies
+
+from pydantic_ai import (
+    AgentStreamEvent,
+    FunctionToolCallEvent,
+    PartStartEvent,
+    FunctionToolResultEvent,
+    TextPart,
+    ToolCallPart,
+    PartDeltaEvent,
+    TextPartDelta,
+    ThinkingPartDelta,
+)
+
 
 async def streaming_handler(ctx,
                             event_stream_events: AsyncIterable[AgentStreamEvent]):
@@ -378,8 +394,8 @@ async def streaming_handler(ctx,
     This function is used by the agent to stream-out the actions that are being performed (tool calls, llm call, streaming results, etc etc.
     Feel free to change it as you like or need - skipping events or enriching the content
     """
-    
-    output = ""
+
+    output = ''
     output_tool_delta = dict(
         tool_call_id='',
         tool_name_delta='',
@@ -389,24 +405,24 @@ async def streaming_handler(ctx,
     async for event in event_stream_events:
         if isinstance(event, PartStartEvent):
             if isinstance(event.part, TextPart):
-                output += f"{event.part.content}"
+                output += f'{event.part.content}'
             elif isinstance(event.part, ToolCallPart):
-                output += f"\nTool Call Id: {event.part.tool_call_id}"
-                output += f"\nTool Name: {event.part.tool_name}"
-                output += f"\nTool Args: {event.part.args}"
+                output += f'\nTool Call Id: {event.part.tool_call_id}'
+                output += f'\nTool Name: {event.part.tool_name}'
+                output += f'\nTool Args: {event.part.args}'
             else:
                 pass
         elif isinstance(event, FunctionToolCallEvent):
-            output += f"\nTool Call Id: {event.part.tool_call_id}"
-            output += f"\nTool Name: {event.part.tool_name}"
-            output += f"\nTool Args: {event.part.args}"
+            output += f'\nTool Call Id: {event.part.tool_call_id}'
+            output += f'\nTool Name: {event.part.tool_name}'
+            output += f'\nTool Args: {event.part.args}'
         elif isinstance(event, FunctionToolResultEvent):
-            output += f"\nTool Call Id: {event.result.tool_call_id}"
-            output += f"\nTool Name: {event.result.tool_name}"
-            output += f"\nContent: {event.result.content}"
+            output += f'\nTool Call Id: {event.result.tool_call_id}'
+            output += f'\nTool Name: {event.result.tool_name}'
+            output += f'\nContent: {event.result.content}'
         elif isinstance(event, PartDeltaEvent):
             if isinstance(event.delta, TextPartDelta) or isinstance(event.delta, ThinkingPartDelta):
-                output += f"{event.delta.content_delta}"
+                output += f'{event.delta.content_delta}'
             else:
                 if len(output_tool_delta['tool_call_id']) == 0:
                     output_tool_delta['tool_call_id'] += event.delta.tool_call_id or ''
@@ -414,9 +430,9 @@ async def streaming_handler(ctx,
                 output_tool_delta['args_delta'] += event.delta.args_delta or ''
 
     if len(output_tool_delta['tool_call_id']):
-        output += f"\nTool Call Id: {output_tool_delta['tool_call_id']}"
-        output += f"\nTool Name: {output_tool_delta['tool_name_delta']}"
-        output += f"\nTool Args: {output_tool_delta['args_delta']}"
+        output += f'\nTool Call Id: {output_tool_delta["tool_call_id"]}'
+        output += f'\nTool Name: {output_tool_delta["tool_name_delta"]}'
+        output += f'\nTool Args: {output_tool_delta["args_delta"]}'
 
     events = []
 
@@ -434,28 +450,23 @@ async def streaming_handler(ctx,
             await workflow_handle.signal('append_event', arg=event)
 ```
 
-
-```py {title="workflow.py" test="skip" noqa="F841"}
+```py {title="workflow.py" test="skip"}
 
 import asyncio
 from collections import deque
 from datetime import timedelta
-from typing import Any, Dict, Deque, Optional
+from typing import Any
 
-from temporalio import workflow, activity
+from pydanticai import UsageLimits
+from temporalio import activity, workflow
 
-with workflow.unsafe.imports_passed_through():
-    from datamodels import EventStream, EventKind, AgentDependencies
-    from agents import YahooFinanceSearchAgent
-    from pydanticai import UsageLimits
-    from agents import streaming_handler, build_agent
-    from utils import read_config_yml
-
+from .agents import build_agent, streaming_handler
+from .datamodels import AgentDependencies, EventKind, EventStream
 
 @workflow.defn
 class YahooFinanceSearchWorkflow:
     def __init__(self):
-        self.events: Deque[EventStream] = deque()
+        self.events: deque[EventStream] = deque()
 
     @workflow.run
     async def run(self, user_prompt: str):
@@ -463,7 +474,7 @@ class YahooFinanceSearchWorkflow:
         wf_vars = await workflow.execute_activity(
             activity='retrieve_env_vars',
             start_to_close_timeout=timedelta(seconds=10),
-            result_type=Dict[str, Any],
+            result_type=dict[str, Any],
         )
         deps = AgentDependencies(workflow_id=workflow.info().workflow_id, run_id=workflow.info().run_id)
 
@@ -472,12 +483,12 @@ class YahooFinanceSearchWorkflow:
                                  usage_limits=UsageLimits(request_limit=50),
                                  deps=deps
                                  )
-        
+
         await self.append_event(event_stream=EventStream(kind=EventKind.RESULT,
-                                                             content=result.output))
+                                                         content=result.output))
 
         await self.append_event(event_stream=EventStream(kind=EventKind.CONTINUE_CHAT,
-                                                         content=""))
+                                                         content=''))
 
         try:
             await workflow.wait_condition(
@@ -492,16 +503,17 @@ class YahooFinanceSearchWorkflow:
     @staticmethod
     @activity.defn(name='retrieve_env_vars')
     async def retrieve_env_vars():
-        with workflow.unsafe.imports_passed_through():
-            import os
-            config_path = os.getenv('APP_CONFIG_PATH', './app_conf.yml')
-            configs = read_config_yml(config_path)
-            return {
-                'anthropic_api_key': configs['llm']['anthropic_api_key']
-            }
+        import os
+        from .utils import read_config_yml
+
+        config_path = os.getenv('APP_CONFIG_PATH', './app_conf.yml')
+        configs = read_config_yml(config_path)
+        return {
+            'anthropic_api_key': configs['llm']['anthropic_api_key']
+        }
 
     @workflow.query
-    def event_stream(self) -> Optional[EventStream]:
+    def event_stream(self) -> EventStream | None:
         if self.events:
             return self.events.popleft()
         return None
