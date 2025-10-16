@@ -1,22 +1,53 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator, MutableMapping
+from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import WebSearchTool
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
-from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+from pydantic_ai.messages import (
+    BinaryImage,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
+    FilePart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    PartStartEvent,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import (
+    AgentInfo,
+    BuiltinToolCallsReturns,
+    DeltaThinkingCalls,
+    DeltaThinkingPart,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+)
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai._request_types import (
     SubmitMessage,
     TextUIPart,
     ToolOutputAvailablePart,
     UIMessage,
 )
+from pydantic_ai.ui.vercel_ai._response_types import BaseChunk, DataChunk
 
 from .conftest import IsDatetime, IsStr, try_import
+
+with try_import() as starlette_import_successful:
+    from starlette.requests import Request
+    from starlette.responses import StreamingResponse
 
 with try_import() as openai_import_successful:
     from pydantic_ai.models.openai import OpenAIResponsesModel
@@ -1013,6 +1044,611 @@ Want me to tailor\
             {'type': 'text-delta', 'delta': ' skip binary content,', 'id': IsStr()},
             {'type': 'text-delta', 'delta': ' or accumulate chunked', 'id': IsStr()},
             {'type': 'text-delta', 'delta': ' bodies safely?', 'id': IsStr()},
+            {'type': 'text-end', 'id': IsStr()},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_text_and_thinking():
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaThinkingCalls | str]:
+        yield {0: DeltaThinkingPart(content='Half of ')}
+        yield {0: DeltaThinkingPart(content='a thought')}
+        yield {1: DeltaThinkingPart(content='Another thought')}
+        yield {2: DeltaThinkingPart(content='And one more')}
+        yield 'Half of '
+        yield 'some text'
+        yield {5: DeltaThinkingPart(content='More thinking')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Tell me about Hello World')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'reasoning-start', 'id': IsStr()},
+            {'type': 'reasoning-delta', 'id': IsStr(), 'delta': 'Half of '},
+            {'type': 'reasoning-delta', 'id': IsStr(), 'delta': 'a thought'},
+            {'type': 'reasoning-end', 'id': IsStr()},
+            {'type': 'reasoning-start', 'id': IsStr()},
+            {'type': 'reasoning-delta', 'id': IsStr(), 'delta': 'Another thought'},
+            {'type': 'reasoning-end', 'id': IsStr()},
+            {'type': 'reasoning-start', 'id': IsStr()},
+            {'type': 'reasoning-delta', 'id': IsStr(), 'delta': 'And one more'},
+            {'type': 'reasoning-end', 'id': IsStr()},
+            {'type': 'text-start', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'Half of ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'some text', 'id': IsStr()},
+            {'type': 'text-end', 'id': IsStr()},
+            {'type': 'reasoning-start', 'id': IsStr()},
+            {'type': 'reasoning-delta', 'id': IsStr(), 'delta': 'More thinking'},
+            {'type': 'reasoning-end', 'id': IsStr()},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_builtin_tool_call():
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[BuiltinToolCallsReturns | DeltaToolCalls | str]:
+        yield {
+            0: BuiltinToolCallPart(
+                tool_name=WebSearchTool.kind,
+                args='{"query":',
+                tool_call_id='search_1',
+                provider_name='function',
+            )
+        }
+        yield {
+            0: DeltaToolCall(
+                json_args='"Hello world"}',
+                tool_call_id='search_1',
+            )
+        }
+        yield {
+            1: BuiltinToolReturnPart(
+                tool_name=WebSearchTool.kind,
+                content={
+                    'results': [
+                        {
+                            'title': '"Hello, World!" program',
+                            'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
+                        }
+                    ]
+                },
+                tool_call_id='search_1',
+                provider_name='function',
+            )
+        }
+        yield 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". '
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Tell me about Hello World')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'search_1', 'toolName': 'web_search', 'providerExecuted': True},
+            {'type': 'tool-input-delta', 'toolCallId': 'search_1', 'inputTextDelta': '{"query":'},
+            {'type': 'tool-input-delta', 'toolCallId': 'search_1', 'inputTextDelta': '"Hello world"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'search_1',
+                'toolName': 'web_search',
+                'input': '{"query":"Hello world"}',
+                'providerExecuted': True,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'function'}},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'search_1',
+                'output': {
+                    'results': [
+                        {
+                            'title': '"Hello, World!" program',
+                            'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
+                        }
+                    ]
+                },
+                'providerExecuted': True,
+            },
+            {'type': 'text-start', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". ',
+                'id': IsStr(),
+            },
+            {'type': 'text-end', 'id': IsStr()},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_tool_call():
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {
+                0: DeltaToolCall(
+                    name='web_search',
+                    json_args='{"query":',
+                    tool_call_id='search_1',
+                )
+            }
+            yield {
+                0: DeltaToolCall(
+                    json_args='"Hello world"}',
+                    tool_call_id='search_1',
+                )
+            }
+        else:
+            yield 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". '
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    async def web_search(query: str) -> dict[str, list[dict[str, str]]]:
+        return {
+            'results': [
+                {
+                    'title': '"Hello, World!" program',
+                    'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
+                }
+            ]
+        }
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Tell me about Hello World')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'search_1', 'toolName': 'web_search'},
+            {'type': 'tool-input-delta', 'toolCallId': 'search_1', 'inputTextDelta': '{"query":'},
+            {'type': 'tool-input-delta', 'toolCallId': 'search_1', 'inputTextDelta': '"Hello world"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'search_1',
+                'toolName': 'web_search',
+                'input': '{"query":"Hello world"}',
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'search_1',
+                'output': {
+                    'results': [
+                        {
+                            'title': '"Hello, World!" program',
+                            'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
+                        }
+                    ]
+                },
+            },
+            {'type': 'finish-step'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': IsStr()},
+            {
+                'type': 'text-delta',
+                'delta': 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". ',
+                'id': IsStr(),
+            },
+            {'type': 'text-end', 'id': IsStr()},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_file():
+    async def event_generator():
+        yield PartStartEvent(index=0, part=FilePart(content=BinaryImage(data=b'fake', media_type='image/png')))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(request=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.handle_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'file', 'url': 'data:image/png;base64,ZmFrZQ==', 'mediaType': 'image/png'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_output_tool():
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {
+                0: DeltaToolCall(
+                    name='final_result',
+                    json_args='{"query":',
+                    tool_call_id='search_1',
+                )
+            }
+            yield {
+                0: DeltaToolCall(
+                    json_args='"Hello world"}',
+                    tool_call_id='search_1',
+                )
+            }
+        else:
+            yield 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". '
+
+    def web_search(query: str) -> dict[str, list[dict[str, str]]]:
+        return {
+            'results': [
+                {
+                    'title': '"Hello, World!" program',
+                    'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
+                }
+            ]
+        }
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=web_search)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Tell me about Hello World')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'search_1', 'toolName': 'final_result'},
+            {'type': 'tool-input-delta', 'toolCallId': 'search_1', 'inputTextDelta': '{"query":'},
+            {'type': 'tool-input-delta', 'toolCallId': 'search_1', 'inputTextDelta': '"Hello world"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'search_1',
+                'toolName': 'final_result',
+                'input': '{"query":"Hello world"}',
+            },
+            {'type': 'tool-output-available', 'toolCallId': 'search_1', 'output': 'Final result processed.'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_response_error():
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(
+                name='unknown_tool',
+            )
+        }
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Tell me about Hello World')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'unknown_tool',
+            },
+            {
+                'type': 'tool-input-available',
+                'toolCallId': IsStr(),
+                'toolName': 'unknown_tool',
+            },
+            {
+                'type': 'tool-output-error',
+                'toolCallId': IsStr(),
+                'errorText': """\
+Unknown tool name: 'unknown_tool'. No tools available.
+
+Fix the errors and try again.\
+""",
+            },
+            {'type': 'finish-step'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': IsStr(),
+                'toolName': 'unknown_tool',
+            },
+            {
+                'type': 'tool-input-available',
+                'toolCallId': IsStr(),
+                'toolName': 'unknown_tool',
+            },
+            {'type': 'error', 'errorText': 'Exceeded maximum retries (1) for output validation'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_request_error():
+    agent = Agent(model=TestModel())
+
+    @agent.tool_plain
+    async def tool(query: str) -> str:
+        raise ValueError('Unknown tool')
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'pyd_ai_tool_call_id__tool', 'toolName': 'tool'},
+            {'type': 'tool-input-delta', 'toolCallId': 'pyd_ai_tool_call_id__tool', 'inputTextDelta': '{"query":"a"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'pyd_ai_tool_call_id__tool',
+                'toolName': 'tool',
+                'input': {'query': 'a'},
+            },
+            {'type': 'error', 'errorText': 'Unknown tool'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_on_complete_error():
+    agent = Agent(model=TestModel())
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    def raise_error(run_result: AgentRunResult[Any]) -> None:
+        raise ValueError('Faulty on_complete')
+
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(on_complete=raise_error))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'success ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '(no ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'tool ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'calls)', 'id': IsStr()},
+            {'type': 'text-end', 'id': IsStr()},
+            {'type': 'error', 'errorText': 'Faulty on_complete'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_on_complete():
+    agent = Agent(model=TestModel())
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    async def on_complete(run_result: AgentRunResult[Any]) -> AsyncIterator[BaseChunk]:
+        yield DataChunk(type='data-custom', data={'foo': 'bar'})
+
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(on_complete=on_complete))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'success ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '(no ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'tool ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'calls)', 'id': IsStr()},
+            {'type': 'text-end', 'id': IsStr()},
+            {'type': 'data-custom', 'data': {'foo': 'bar'}},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+async def test_adapter_dispatch_request():
+    agent = Agent(model=TestModel())
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': request.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [
+                (b'content-type', b'application/json'),
+            ],
+        },
+        receive=receive,
+    )
+
+    response = await VercelAIAdapter.dispatch_request(agent, starlette_request)
+
+    assert isinstance(response, StreamingResponse)
+
+    chunks: list[str | dict[str, Any]] = []
+
+    async def send(data: MutableMapping[str, Any]) -> None:
+        body = cast(bytes, data.get('body', b'')).decode('utf-8').strip().removeprefix('data: ')
+        if not body:
+            return
+        if body == '[DONE]':
+            chunks.append('[DONE]')
+        else:
+            chunks.append(json.loads(body))
+
+    await response.stream_response(send)
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'success ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': '(no ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'tool ', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'calls)', 'id': IsStr()},
             {'type': 'text-end', 'id': IsStr()},
             {'type': 'finish-step'},
             {'type': 'finish'},

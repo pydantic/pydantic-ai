@@ -223,13 +223,11 @@ async def test_run_stream_text_and_thinking():
         yield 'some text'
         yield {5: DeltaThinkingPart(content='More thinking')}
 
-    agent = Agent(model=FunctionModel(stream_function=stream_function), deps_type=UIDeps)
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
 
     request = UIRequest(messages=[ModelRequest.user_text_prompt('Tell me about Hello World')])
-    deps = UIDeps(state=UIState())
-
     adapter = UIAdapter(agent, request)
-    events = [event async for event in adapter.run_stream(deps=deps)]
+    events = [event async for event in adapter.run_stream()]
 
     assert events == snapshot(
         [
@@ -290,13 +288,11 @@ async def test_run_stream_builtin_tool_call():
         }
         yield 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". '
 
-    agent = Agent(model=FunctionModel(stream_function=stream_function), deps_type=UIDeps)
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
 
     request = UIRequest(messages=[ModelRequest.user_text_prompt('Tell me about Hello World')])
-    deps = UIDeps(state=UIState())
-
     adapter = UIAdapter(agent, request)
-    events = [event async for event in adapter.run_stream(deps=deps)]
+    events = [event async for event in adapter.run_stream()]
 
     assert events == snapshot(
         [
@@ -337,7 +333,7 @@ async def test_run_stream_tool_call():
         else:
             yield 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". '
 
-    agent = Agent(model=FunctionModel(stream_function=stream_function), deps_type=UIDeps)
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
 
     @agent.tool_plain
     async def web_search(query: str) -> dict[str, list[dict[str, str]]]:
@@ -351,10 +347,8 @@ async def test_run_stream_tool_call():
         }
 
     request = UIRequest(messages=[ModelRequest.user_text_prompt('Tell me about Hello World')])
-    deps = UIDeps(state=UIState())
-
     adapter = UIAdapter(agent, request)
-    events = [event async for event in adapter.run_stream(deps=deps)]
+    events = [event async for event in adapter.run_stream()]
 
     assert events == snapshot(
         [
@@ -379,15 +373,13 @@ async def test_run_stream_tool_call():
     )
 
 
-async def test_run_stream_file():
-    agent = Agent(model=TestModel(), deps_type=UIDeps)
-
+async def test_event_stream_file():
     async def event_generator():
         yield PartStartEvent(index=0, part=FilePart(content=BinaryImage(data=b'fake', media_type='image/png')))
 
-    request = UIRequest(messages=[ModelRequest.user_text_prompt('Generate an image')])
-    adapter = UIAdapter(agent, request)
-    events = [event async for event in adapter.process_stream(event_generator())]
+    request = UIRequest(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = UIEventStream(request=request)
+    events = [event async for event in event_stream.handle_stream(event_generator())]
 
     assert events == snapshot(
         [
@@ -458,13 +450,11 @@ async def test_run_stream_output_tool():
             ]
         }
 
-    agent = Agent(model=FunctionModel(stream_function=stream_function), deps_type=UIDeps, output_type=web_search)
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=web_search)
 
     request = UIRequest(messages=[ModelRequest.user_text_prompt('Tell me about Hello World')])
-    deps = UIDeps(state=UIState())
-
     adapter = UIAdapter(agent, request)
-    events = [event async for event in adapter.run_stream(deps=deps)]
+    events = [event async for event in adapter.run_stream()]
 
     assert events == snapshot(
         [
@@ -494,13 +484,11 @@ async def test_run_stream_response_error():
             )
         }
 
-    agent = Agent(model=FunctionModel(stream_function=stream_function), deps_type=UIDeps)
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
 
     request = UIRequest(messages=[ModelRequest.user_text_prompt('Tell me about Hello World')])
-    deps = UIDeps(state=UIState())
-
     adapter = UIAdapter(agent, request)
-    events = [event async for event in adapter.run_stream(deps=deps)]
+    events = [event async for event in adapter.run_stream()]
 
     assert events == snapshot(
         [
@@ -524,17 +512,15 @@ async def test_run_stream_response_error():
 
 
 async def test_run_stream_request_error():
-    agent = Agent(model=TestModel(), deps_type=UIDeps)
+    agent = Agent(model=TestModel())
 
     @agent.tool_plain
     async def tool(query: str) -> str:
         raise ValueError('Unknown tool')
 
     request = UIRequest(messages=[ModelRequest.user_text_prompt('Hello')])
-    deps = UIDeps(state=UIState())
-
     adapter = UIAdapter(agent, request)
-    events = [event async for event in adapter.run_stream(deps=deps)]
+    events = [event async for event in adapter.run_stream()]
 
     assert events == snapshot(
         [
@@ -553,16 +539,15 @@ async def test_run_stream_request_error():
 
 
 async def test_run_stream_on_complete_error():
-    agent = Agent(model=TestModel(), deps_type=UIDeps)
+    agent = Agent(model=TestModel())
 
     request = UIRequest(messages=[ModelRequest.user_text_prompt('Hello')])
-    deps = UIDeps(state=UIState())
 
     def raise_error(run_result: AgentRunResult[Any]) -> None:
         raise ValueError('Faulty on_complete')
 
     adapter = UIAdapter(agent, request)
-    events = [event async for event in adapter.run_stream(deps=deps, on_complete=raise_error)]
+    events = [event async for event in adapter.run_stream(on_complete=raise_error)]
 
     assert events == snapshot(
         [
@@ -583,16 +568,15 @@ async def test_run_stream_on_complete_error():
 
 
 async def test_run_stream_on_complete():
-    agent = Agent(model=TestModel(), deps_type=UIDeps)
+    agent = Agent(model=TestModel())
 
     request = UIRequest(messages=[ModelRequest.user_text_prompt('Hello')])
-    deps = UIDeps(state=UIState())
 
     async def on_complete(run_result: AgentRunResult[Any]) -> AsyncIterator[str]:
         yield '<custom>'
 
     adapter = UIAdapter(agent, request)
-    events = [event async for event in adapter.run_stream(deps=deps, on_complete=on_complete)]
+    events = [event async for event in adapter.run_stream(on_complete=on_complete)]
 
     assert events == snapshot(
         [
@@ -616,7 +600,6 @@ async def test_run_stream_on_complete():
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
 async def test_adapter_dispatch_request():
     agent = Agent(model=TestModel())
-
     request = UIRequest(messages=[ModelRequest.user_text_prompt('Hello')])
 
     async def receive() -> dict[str, Any]:

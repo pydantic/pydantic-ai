@@ -232,7 +232,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT, OutputDataT]
                     yield e
             case FunctionToolCallEvent():
                 async for e in self.handle_function_tool_call(event):
-                    yield e  # TODO (DouweM): coverage
+                    yield e
             case FunctionToolResultEvent():
                 async for e in self.handle_function_tool_result(event):
                     yield e
@@ -266,7 +266,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT, OutputDataT]
             case BuiltinToolReturnPart():
                 async for e in self.handle_builtin_tool_return(part):
                     yield e
-            case FilePart():  # TODO (DouweM): coverage
+            case FilePart():  # pragma: no branch
                 async for e in self.handle_file(part):
                     yield e
 
@@ -365,7 +365,7 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT, OutputDataT]
         Yields:
             Protocol-specific events.
         """
-        return  # TODO (DouweM): coverage
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_thinking_end(
