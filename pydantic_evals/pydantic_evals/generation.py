@@ -87,7 +87,7 @@ async def generate_dataset(
 async def generate_dataset_for_agent(
     agent: Agent[Any, OutputT],
     *,
-    inputs_type: type[InputsT] = str,  # type: ignore[assignment]
+    inputs_type: type[InputsT] = str,
     metadata_type: type[MetadataT] | None = None,
     path: Path | str | None = None,
     model: models.Model | models.KnownModelName = 'openai:gpt-4o',
@@ -121,7 +121,7 @@ async def generate_dataset_for_agent(
         output_schema = str(agent.output_type.model_json_schema())
     else:
         # For other types (str, custom output specs, etc.), just use string representation
-        output_schema = str(agent.output_type)
+        output_schema = str(agent.output_type)  # type: ignore[arg-type]
 
     # Get inputs schema with proper type handling
     inputs_schema: str
@@ -169,7 +169,7 @@ async def generate_dataset_for_agent(
                 Case(
                     name=item.get('name', f'case-{i}'),
                     inputs=cast(InputsT, item['inputs']),
-                    expected_output=cast(OutputT, agent_result.output),
+                    expected_output=agent_result.output,
                     metadata=cast(MetadataT, item.get('metadata')),
                 )
             )

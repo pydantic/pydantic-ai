@@ -772,8 +772,8 @@ If you already have an agent, you can use [`generate_dataset_for_agent`][pydanti
 
 ```python {title="generate_from_agent_example.py"}
 from pydantic import BaseModel
-from pydantic_ai import Agent
 
+from pydantic_ai import Agent
 from pydantic_evals.generation import generate_dataset_for_agent
 
 
