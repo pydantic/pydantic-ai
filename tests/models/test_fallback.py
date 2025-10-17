@@ -274,6 +274,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'gen_ai.agent.name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
+                    'final_result': 'hello world',
                     'gen_ai.usage.input_tokens': 50,
                     'gen_ai.usage.output_tokens': 2,
                     'pydantic_ai.all_messages': [
