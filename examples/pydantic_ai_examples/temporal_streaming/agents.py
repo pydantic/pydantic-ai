@@ -3,18 +3,17 @@
 This module defines the agent setup with MCP toolsets, model configuration,
 and custom tools for data analysis.
 """
-
 from datetime import timedelta
 
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import Agent, FilteredToolset, ModelSettings
+from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.durable_exec.temporal import TemporalAgent
 from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
-
 from .datamodels import AgentDependencies
 
 
@@ -35,43 +34,40 @@ async def get_mcp_toolsets() -> dict[str, FilteredToolset]:
     return {'yahoo': yf_server.filtered(lambda ctx, tool_def: True)}
 
 
-async def get_claude_model(parallel_tool_calls: bool = True, **env_vars):
+async def get_claude_model(parallel_tool_calls: bool = True, **kwargs):
     """
     Create and configure the Claude model.
 
     Args:
         parallel_tool_calls: Whether to enable parallel tool calls.
-        **env_vars: Environment variables including API keys.
+        **kwargs: Environment variables including API keys.
 
     Returns:
         Configured AnthropicModel instance.
     """
-    model_name = 'claude-sonnet-4-5-20250929'
-    api_key = env_vars.get('anthropic_api_key')
-    model = AnthropicModel(
+    model_name: str = 'claude-sonnet-4-5-20250929'
+    api_key: str | None = kwargs.get('anthropic_api_key', None)
+    model: AnthropicModel = AnthropicModel(
         model_name=model_name,
         provider=AnthropicProvider(api_key=api_key),
         settings=ModelSettings(
-            **{
-                'temperature': 0.5,
-                'n': 1,
-                'max_completion_tokens': 64000,
-                'max_tokens': 64000,
-                'parallel_tool_calls': parallel_tool_calls,
-            }
+            temperature=0.5,
+            max_tokens=64000,
+            parallel_tool_calls=parallel_tool_calls,
         ),
     )
 
     return model
 
 
-async def build_agent(stream_handler=None, **env_vars):
+async def build_agent(stream_handler: EventStreamHandler,
+                      **kwargs) -> TemporalAgent:
     """
     Build and configure the agent with tools and temporal settings.
 
     Args:
         stream_handler: Optional event stream handler for streaming responses.
-        **env_vars: Environment variables including API keys.
+        **kwargs: Environment variables including API keys.
 
     Returns:
         TemporalAgent instance ready for use in Temporal workflows.
@@ -84,7 +80,7 @@ async def build_agent(stream_handler=None, **env_vars):
     toolsets = await get_mcp_toolsets()
     agent = Agent(
         name=agent_name,
-        model=await get_claude_model(**env_vars),
+        model=await get_claude_model(**kwargs),
         toolsets=[*toolsets.values()],
         system_prompt=system_prompt,
         event_stream_handler=stream_handler,

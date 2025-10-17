@@ -6,6 +6,9 @@ processing various event types and sending them to the workflow via signals.
 
 from collections.abc import AsyncIterable
 
+from temporalio import activity
+from temporalio.client import WorkflowHandle
+
 from pydantic_ai import (
     AgentStreamEvent,
     FunctionToolCallEvent,
@@ -15,17 +18,15 @@ from pydantic_ai import (
     TextPart,
     TextPartDelta,
     ThinkingPartDelta,
-    ToolCallPart,
+    ToolCallPart, RunContext,
 )
-from temporalio import activity
-
 from .datamodels import AgentDependencies, EventKind, EventStream
 
 
 async def streaming_handler(
-    ctx,
-    event_stream_events: AsyncIterable[AgentStreamEvent],
-):
+        ctx: RunContext,
+        event_stream_events: AsyncIterable[AgentStreamEvent],
+) -> None:
     """
     Handle streaming events from the agent.
 
@@ -37,8 +38,11 @@ async def streaming_handler(
         ctx: The run context containing dependencies.
         event_stream_events: Async iterable of agent stream events.
     """
-    output = ''
-    output_tool_delta = dict(
+    if not activity.in_activity():
+        return
+
+    output: str = ''
+    output_tool_delta: dict[str, str] = dict(
         tool_call_id='',
         tool_name_delta='',
         args_delta='',
@@ -78,19 +82,10 @@ async def streaming_handler(
         output += f'\nTool Name: {output_tool_delta["tool_name_delta"]}'
         output += f'\nTool Args: {output_tool_delta["args_delta"]}'
 
-    events = []
-
-    # Create event stream if there's output
-    if output:
-        event = EventStream(kind=EventKind.EVENT, content=output)
-        events.append(event)
-
     # Send events to workflow if running in an activity
-    if activity.in_activity():
-        deps: AgentDependencies = ctx.deps
+    deps: AgentDependencies = ctx.deps
 
-        workflow_id = deps.workflow_id
-        run_id = deps.run_id
-        workflow_handle = activity.client().get_workflow_handle(workflow_id=workflow_id, run_id=run_id)
-        for event in events:
-            await workflow_handle.signal('append_event', arg=event)
+    workflow_id: str = deps.workflow_id
+    run_id: str = deps.run_id
+    workflow_handle: WorkflowHandle = activity.client().get_workflow_handle(workflow_id=workflow_id, run_id=run_id)
+    await workflow_handle.signal('append_event', arg=EventStream(kind=EventKind.EVENT, content=output))

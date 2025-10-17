@@ -2,11 +2,12 @@
 
 import os
 from copy import copy
+from typing import Any
 
 import yaml
 
 
-def recursively_modify_api_key(conf):
+def recursively_modify_api_key(conf) -> dict[str, Any]:
     """
     Recursively replace API key placeholders with environment variable values.
 
@@ -41,7 +42,7 @@ def recursively_modify_api_key(conf):
     return copy_conf
 
 
-def read_config_yml(path):
+def read_config_yml(path) -> dict[str, Any]:
     """
     Read and process a YAML configuration file.
 

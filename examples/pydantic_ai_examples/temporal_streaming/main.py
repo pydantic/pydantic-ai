@@ -7,11 +7,12 @@ and polls for streaming events to display to the user.
 import asyncio
 import os
 import uuid
+from typing import Any, Union
 
-from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin
-from temporalio.client import Client
+from temporalio.client import Client, WorkflowHandle
 from temporalio.worker import Worker
 
+from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin
 from .agents import build_agent
 from .datamodels import EventKind, EventStream
 from .streaming_handler import streaming_handler
@@ -19,7 +20,7 @@ from .utils import read_config_yml
 from .workflow import YahooFinanceSearchWorkflow
 
 
-async def poll_events(workflow_handle):
+async def poll_events(workflow_handle: WorkflowHandle[Any, str]) -> None:
     """
     Poll for events from the workflow and print them.
 
@@ -27,7 +28,7 @@ async def poll_events(workflow_handle):
         workflow_handle: Handle to the running workflow.
     """
     while True:
-        event = await workflow_handle.query('event_stream', result_type=EventStream | None)
+        event = await workflow_handle.query('event_stream', result_type=Union[EventStream | None])
         if event is None:
             await asyncio.sleep(0.1)
             continue
@@ -41,7 +42,7 @@ async def poll_events(workflow_handle):
             print(f'\n--- Event ---\n{event.content}\n')
 
 
-async def main():
+async def main() -> None:
     """
     Main function to set up and run the Temporal workflow.
 
@@ -76,11 +77,12 @@ async def main():
     ):
         # Execute the workflow
         workflow_id = f'yahoo-finance-search-{uuid.uuid4()}'
-        workflow_handle = await client.start_workflow(
-            YahooFinanceSearchWorkflow.run,
-            args=['What are the latest financial metrics for Apple (AAPL)?'],
+        workflow_handle: WorkflowHandle[Any, str] = await client.start_workflow(
+            'YahooFinanceSearchWorkflow',
+            arg='What are the latest financial metrics for Apple (AAPL)?',
             id=workflow_id,
             task_queue=task_queue,
+            result_type=str
         )
 
         print(f'Started workflow with ID: {workflow_id}')

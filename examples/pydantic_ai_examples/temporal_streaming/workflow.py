@@ -10,9 +10,9 @@ from collections import deque
 from datetime import timedelta
 from typing import Any
 
-from pydantic_ai import UsageLimits
 from temporalio import activity, workflow
 
+from pydantic_ai import UsageLimits
 from .agents import build_agent
 from .datamodels import AgentDependencies, EventKind, EventStream
 from .streaming_handler import streaming_handler
@@ -33,7 +33,7 @@ class YahooFinanceSearchWorkflow:
         self.events: deque[EventStream] = deque()
 
     @workflow.run
-    async def run(self, user_prompt: str):
+    async def run(self, user_prompt: str) -> str:
         """
         Execute the agent with the given user prompt.
 
@@ -78,7 +78,7 @@ class YahooFinanceSearchWorkflow:
 
     @staticmethod
     @activity.defn(name='retrieve_env_vars')
-    async def retrieve_env_vars():
+    async def retrieve_env_vars() -> dict[str, Any]:
         """
         Retrieve environment variables from configuration file.
 
