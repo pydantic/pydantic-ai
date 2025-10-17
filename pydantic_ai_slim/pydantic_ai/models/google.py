@@ -396,7 +396,7 @@ class GoogleModel(Model):
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
         try:
             return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
-        except errors.APIError as e:  # pragma: no cover
+        except errors.APIError as e:
             if (status_code := e.code) >= 400:        
                 raise ModelHTTPError(status_code=status_code, model_name=self._model_name, body=e.details) from e
             raise # pragma: lax no cover
