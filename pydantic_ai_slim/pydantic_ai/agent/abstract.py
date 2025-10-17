@@ -619,7 +619,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         def main():
             with agent.run_stream_sync('What is the capital of the UK?') as response:
-                print(response.get_output())
+                print(response.get_output_sync())
                 #> The capital of the UK is London.
         ```
 
