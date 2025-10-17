@@ -259,7 +259,7 @@ interactions:
             name: get_chinese_zodiac
             response:
               call_error: |-
-                1 validation errors: [
+                1 validation error: [
                   {
                     "type": "greater_than",
                     "loc": [
