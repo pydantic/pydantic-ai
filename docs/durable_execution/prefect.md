@@ -276,7 +276,7 @@ if __name__ == '__main__':
     daily_report_flow.serve(
         name='daily-report-deployment',
         cron='0 9 * * *',  # Run daily at 9am
-        parameters={'user_prompt': 'Generate today's report'},
+        parameters={'user_prompt': "Generate today's report"},
         tags=['production', 'reports'],
     )
 ```
