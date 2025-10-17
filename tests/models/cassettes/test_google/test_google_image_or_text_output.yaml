@@ -20,7 +20,7 @@ interactions:
         - text: Tell me a two-sentence story about an axolotl, no image please.
         role: user
       generationConfig: {}
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent
   response:
     headers:
       alt-svc:
@@ -46,7 +46,7 @@ interactions:
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: gemini-2.5-flash-image-preview
+      modelVersion: gemini-2.5-flash-image
       responseId: tofdaKSRBMSgz7IPx5eRyAU
       usageMetadata:
         candidatesTokenCount: 48
@@ -79,7 +79,7 @@ interactions:
         - text: Generate an image of an axolotl.
         role: user
       generationConfig: {}
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent
   response:
     headers:
       alt-svc:
@@ -107,7 +107,7 @@ interactions:
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: gemini-2.5-flash-image-preview
+      modelVersion: gemini-2.5-flash-image
       responseId: vIfdaKSMD96ez7IPpr73qAM
       usageMetadata:
         candidatesTokenCount: 1304

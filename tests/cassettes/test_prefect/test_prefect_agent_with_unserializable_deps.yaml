@@ -1,0 +1,196 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '254'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Test
+        role: user
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_data
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1058'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-xgcwoiiqpw3hpu7oxktn2g9g
+      openai-processing-ms:
+      - '367'
+      openai-project:
+      - proj_nKlzMl1B51a3SCL1Rndf7JTx
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_data
+            id: call_ZpchjjJF0zZucsrt9uox8LbI
+            type: function
+      created: 1759437409
+      id: chatcmpl-CMKKf6b3ucz04gFT16x9CL2MB9Lov
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_cbf1785567
+      usage:
+        completion_tokens: 10
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 32
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 42
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '488'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=YoWGgMpBznbHYqCUwd_rdLL8YagVIEsOUunxx0kyYyc-1759437409-1.0.1.1-c3raKeyK1YqEy51kky7GwJOuK2HL7a0ISNAOSPDyb0EDCXpB8LRSuar6BbKbpPHecFESctRJRsOEi4pzWx2RIYauvQ9_T8LGtqI1IzML36A;
+        _cfuvid=UwNu7qoZSij0N1FVup_eixICt2m.tKCCLD4XnSuIGF4-1759437409991-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Test
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: get_data
+          id: call_ZpchjjJF0zZucsrt9uox8LbI
+          type: function
+      - content: '42'
+        role: tool
+        tool_call_id: call_ZpchjjJF0zZucsrt9uox8LbI
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_data
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '833'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-xgcwoiiqpw3hpu7oxktn2g9g
+      openai-processing-ms:
+      - '718'
+      openai-project:
+      - proj_nKlzMl1B51a3SCL1Rndf7JTx
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The result from the test is 42.
+          refusal: null
+          role: assistant
+      created: 1759437410
+      id: chatcmpl-CMKKgYzDnjpWxgGyFiRbBhPZGwSAA
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_cbf1785567
+      usage:
+        completion_tokens: 10
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 51
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 61
+    status:
+      code: 200
+      message: OK
+version: 1

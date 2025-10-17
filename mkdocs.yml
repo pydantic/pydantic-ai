@@ -65,6 +65,7 @@ nav:
         - Overview: durable_execution/overview.md
         - Temporal: durable_execution/temporal.md
         - DBOS: durable_execution/dbos.md
+        - Prefect: durable_execution/prefect.md
       - Agent-User Interaction (AG-UI): ag-ui.md
       - Agent2Agent (A2A): a2a.md
 
@@ -316,7 +317,7 @@ plugins:
         Graphs:
           - graph.md
         API Reference:
-          - api/*/*.md
+          - api/*.md
         Evals:
           - evals.md
         Durable Execution:
@@ -328,6 +329,7 @@ plugins:
           - cli.md
           - logfire.md
           - contributing.md
+        Examples:
           - examples/*.md
 
 # DON'T PUT REDIRECTS IN THIS FILE! Instead add them to docs-site/src/index.ts

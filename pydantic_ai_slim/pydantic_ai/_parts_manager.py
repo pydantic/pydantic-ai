@@ -312,6 +312,7 @@ class ModelResponsePartsManager:
         tool_name: str,
         args: str | dict[str, Any] | None,
         tool_call_id: str | None = None,
+        id: str | None = None,
     ) -> ModelResponseStreamEvent:
         """Immediately create or fully-overwrite a ToolCallPart with the given information.
 
@@ -323,6 +324,7 @@ class ModelResponsePartsManager:
             tool_name: The name of the tool being invoked.
             args: The arguments for the tool call, either as a string, a dictionary, or None.
             tool_call_id: An optional string identifier for this tool call.
+            id: An optional identifier for this tool call part.
 
         Returns:
             ModelResponseStreamEvent: A `PartStartEvent` indicating that a new tool call part
@@ -332,6 +334,7 @@ class ModelResponsePartsManager:
             tool_name=tool_name,
             args=args,
             tool_call_id=tool_call_id or _generate_tool_call_id(),
+            id=id,
         )
         if vendor_part_id is None:
             # vendor_part_id is None, so we unconditionally append a new ToolCallPart to the end of the list

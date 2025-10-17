@@ -20,7 +20,7 @@ interactions:
         - text: Generate an illustrated two-sentence story about an axolotl.
         role: user
       generationConfig: {}
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent
   response:
     headers:
       alt-svc:
@@ -49,7 +49,7 @@ interactions:
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: gemini-2.5-flash-image-preview
+      modelVersion: gemini-2.5-flash-image
       responseId: haHNaLDWN5n3qtsPzZTmkAc
       usageMetadata:
         candidatesTokenCount: 1335

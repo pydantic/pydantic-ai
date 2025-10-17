@@ -71,7 +71,7 @@ openai = ["openai>=1.107.2"]
 cohere = ["cohere>=5.18.0; platform_system != 'Emscripten'"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
 google = ["google-genai>=1.31.0"]
-anthropic = ["anthropic>=0.69.0"]
+anthropic = ["anthropic>=0.70.0"]
 groq = ["groq>=0.25.0"]
 mistral = ["mistralai>=1.9.10"]
 bedrock = ["boto3>=1.39.0"]
@@ -100,6 +100,8 @@ retries = ["tenacity>=8.2.3"]
 temporal = ["temporalio==1.18.0"]
 # DBOS
 dbos = ["dbos>=1.14.0"]
+# Prefect
+prefect = ["prefect>=3.4.21"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
