@@ -44,7 +44,7 @@ class YahooFinanceSearchWorkflow:
             The agent's final output.
         """
         # Retrieve environment variables from configuration
-        wf_vars = await workflow.execute_activity(
+        wf_vars = await workflow.execute_activity(  # type: ignore[misc]
             activity='retrieve_env_vars',
             start_to_close_timeout=timedelta(seconds=10),
             result_type=dict[str, Any],

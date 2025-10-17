@@ -24,7 +24,7 @@ from .datamodels import AgentDependencies, EventKind, EventStream
 
 
 async def streaming_handler(
-        ctx: RunContext,
+        ctx: RunContext[AgentDependencies],
         event_stream_events: AsyncIterable[AgentStreamEvent],
 ) -> None:
     """
@@ -74,18 +74,25 @@ async def streaming_handler(
                 if len(output_tool_delta['tool_call_id']) == 0:
                     output_tool_delta['tool_call_id'] += event.delta.tool_call_id or ''
                 output_tool_delta['tool_name_delta'] += event.delta.tool_name_delta or ''
-                output_tool_delta['args_delta'] += event.delta.args_delta or ''
+                # Handle args_delta which can be str or dict
+                args_delta = event.delta.args_delta
+                if isinstance(args_delta, str):
+                    output_tool_delta['args_delta'] += args_delta
+                elif isinstance(args_delta, dict):
+                    output_tool_delta['args_delta'] += str(args_delta)
 
     # Add accumulated tool delta output if present
     if len(output_tool_delta['tool_call_id']):
         output += f'\nTool Call Id: {output_tool_delta["tool_call_id"]}'
         output += f'\nTool Name: {output_tool_delta["tool_name_delta"]}'
-        output += f'\nTool Args: {output_tool_delta["args_delta"]}'
+        args_delta_str = str(output_tool_delta["args_delta"])
+        output += f'\nTool Args: {args_delta_str}'
 
     # Send events to workflow if running in an activity
     deps: AgentDependencies = ctx.deps
 
     workflow_id: str = deps.workflow_id
     run_id: str = deps.run_id
-    workflow_handle: WorkflowHandle = activity.client().get_workflow_handle(workflow_id=workflow_id, run_id=run_id)
+    from typing import Any
+    workflow_handle: WorkflowHandle[Any, Any] = activity.client().get_workflow_handle(workflow_id=workflow_id, run_id=run_id)  # type: ignore[misc]
     await workflow_handle.signal('append_event', arg=EventStream(kind=EventKind.EVENT, content=output))

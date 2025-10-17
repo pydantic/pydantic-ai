@@ -7,7 +7,7 @@ from typing import Any
 import yaml
 
 
-def recursively_modify_api_key(conf) -> dict[str, Any]:
+def recursively_modify_api_key(conf: dict[str, Any]) -> dict[str, Any]:
     """
     Recursively replace API key placeholders with environment variable values.
 
@@ -22,16 +22,17 @@ def recursively_modify_api_key(conf) -> dict[str, Any]:
         A copy of the configuration with API keys replaced by environment variable values.
     """
 
-    def inner(_conf):
+    def inner(_conf: dict[str, Any]) -> None:
         for key, value in _conf.items():
             if isinstance(value, dict):
-                inner(value)
+                inner(value)  # type: ignore[arg-type]
             elif isinstance(value, list):
-                if len(value) > 0 and isinstance(value[0], dict):
-                    for item in value:
-                        inner(item)
+                if len(value) > 0 and isinstance(value[0], dict):  # type: ignore[misc]
+                    item: dict[str, Any]
+                    for item in value:  # type: ignore[assignment,misc]
+                        inner(item)  # type: ignore[arg-type]
                 else:
-                    _conf[key] = [os.environ.get(str(v), v) for v in value]
+                    _conf[key] = [str(os.environ.get(str(v), v)) for v in value]  # type: ignore[misc]
             elif isinstance(value, str):
                 _conf[key] = os.environ.get(value, value)
             else:
@@ -42,7 +43,7 @@ def recursively_modify_api_key(conf) -> dict[str, Any]:
     return copy_conf
 
 
-def read_config_yml(path) -> dict[str, Any]:
+def read_config_yml(path: str) -> dict[str, Any]:
     """
     Read and process a YAML configuration file.
 

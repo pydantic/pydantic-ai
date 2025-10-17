@@ -28,7 +28,9 @@ async def poll_events(workflow_handle: WorkflowHandle[Any, str]) -> None:
         workflow_handle: Handle to the running workflow.
     """
     while True:
-        event = await workflow_handle.query('event_stream', result_type=Union[EventStream | None])
+        event: Union[EventStream, None] = await workflow_handle.query('event_stream',
+                                                                      result_type=Union[
+                                                                          EventStream, None])  # type: ignore[misc]
         if event is None:
             await asyncio.sleep(0.1)
             continue
@@ -55,6 +57,7 @@ async def main() -> None:
     """
     # Connect to Temporal server
     client = await Client.connect(
+        # target_host='localhost:7233',
         target_host='localhost:7233',
         plugins=[PydanticAIPlugin()],
     )
@@ -77,7 +80,7 @@ async def main() -> None:
     ):
         # Execute the workflow
         workflow_id = f'yahoo-finance-search-{uuid.uuid4()}'
-        workflow_handle: WorkflowHandle[Any, str] = await client.start_workflow(
+        workflow_handle: WorkflowHandle[Any, str] = await client.start_workflow(  # type: ignore[misc]
             'YahooFinanceSearchWorkflow',
             arg='What are the latest financial metrics for Apple (AAPL)?',
             id=workflow_id,

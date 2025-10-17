@@ -4,6 +4,7 @@ This module defines the agent setup with MCP toolsets, model configuration,
 and custom tools for data analysis.
 """
 from datetime import timedelta
+from typing import Any
 
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
@@ -17,7 +18,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from .datamodels import AgentDependencies
 
 
-async def get_mcp_toolsets() -> dict[str, FilteredToolset]:
+async def get_mcp_toolsets() -> dict[str, FilteredToolset[AgentDependencies]]:
     """
     Initialize MCP toolsets for the agent.
 
@@ -34,7 +35,7 @@ async def get_mcp_toolsets() -> dict[str, FilteredToolset]:
     return {'yahoo': yf_server.filtered(lambda ctx, tool_def: True)}
 
 
-async def get_claude_model(parallel_tool_calls: bool = True, **kwargs):
+async def get_claude_model(parallel_tool_calls: bool = True, **kwargs: Any) -> AnthropicModel:
     """
     Create and configure the Claude model.
 
@@ -60,8 +61,8 @@ async def get_claude_model(parallel_tool_calls: bool = True, **kwargs):
     return model
 
 
-async def build_agent(stream_handler: EventStreamHandler,
-                      **kwargs) -> TemporalAgent:
+async def build_agent(stream_handler: EventStreamHandler[AgentDependencies],
+                      **kwargs: Any) -> TemporalAgent[AgentDependencies, str]:
     """
     Build and configure the agent with tools and temporal settings.
 
@@ -78,7 +79,7 @@ async def build_agent(stream_handler: EventStreamHandler,
     agent_name = 'YahooFinanceSearchAgent'
 
     toolsets = await get_mcp_toolsets()
-    agent = Agent(
+    agent: Agent[AgentDependencies, str] = Agent[AgentDependencies, str](
         name=agent_name,
         model=await get_claude_model(**kwargs),
         toolsets=[*toolsets.values()],
