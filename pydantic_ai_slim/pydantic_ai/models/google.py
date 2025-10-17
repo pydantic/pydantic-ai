@@ -357,49 +357,6 @@ class GoogleModel(Model):
         else:
             return None
 
-    def _handle_google_error(self, error: Exception) -> ModelHTTPError:
-        """Helper method to convert Google API errors to ModelHTTPError."""
-        if isinstance(error, errors.APIError):
-            return ModelHTTPError(
-                status_code=getattr(error, 'code', 500),
-                model_name=self._model_name,
-                body=error.details,
-            )
-
-        error_mappings = {
-            errors.UnknownFunctionCallArgumentError: (
-                400,
-                'the function call argument cannot be converted to the parameter annotation.',
-                'BAD_REQUEST',
-            ),
-            errors.UnsupportedFunctionError: (404, 'the function is not supported.', 'NOT_FOUND'),
-            errors.FunctionInvocationError: (
-                400,
-                'the function cannot be invoked with the given arguments.',
-                'BAD_REQUEST',
-            ),
-            errors.UnknownApiResponseError: (
-                422,
-                'the response from the API cannot be parsed as JSON.',
-                'UNPROCESSABLE_CONTENT',
-            ),
-        }
-
-        if error.__class__ in error_mappings:
-            code, message, status = error_mappings[error.__class__]
-            return ModelHTTPError(
-                status_code=code,
-                model_name=self._model_name,
-                body={'error': {'code': code, 'message': message, 'status': status}},
-            )
-
-        # Handle unknown errors as 500 Internal Server Error
-        return ModelHTTPError(
-            status_code=500,
-            model_name=self._model_name,
-            body={'error': {'code': 500, 'message': str(error), 'status': 'INTERNAL_ERROR'}},
-        )
-
     @overload
     async def _generate_content(
         self,
@@ -429,14 +386,10 @@ class GoogleModel(Model):
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
         try:
             return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
-        except (
-            errors.APIError,
-            errors.UnknownFunctionCallArgumentError,
-            errors.UnsupportedFunctionError,
-            errors.FunctionInvocationError,
-            errors.UnknownApiResponseError,
-        ) as e:
-            raise self._handle_google_error(e) from e
+        except errors.APIError as e:
+            if (status_code := e.code) >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self._model_name, body=e.details) from e
+            raise  # pragma: lax no cover
 
     async def _build_content_and_config(
         self,
