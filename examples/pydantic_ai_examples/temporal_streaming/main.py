@@ -7,7 +7,7 @@ and polls for streaming events to display to the user.
 import asyncio
 import os
 import uuid
-from typing import Any, Union
+from typing import Any
 
 from temporalio.client import Client, WorkflowHandle
 from temporalio.worker import Worker
@@ -28,9 +28,8 @@ async def poll_events(workflow_handle: WorkflowHandle[Any, str]) -> None:
         workflow_handle: Handle to the running workflow.
     """
     while True:
-        event: Union[EventStream, None] = await workflow_handle.query('event_stream',
-                                                                      result_type=Union[
-                                                                          EventStream, None])  # type: ignore[misc]
+        event: EventStream | None = await workflow_handle.query('event_stream',
+                                                                result_type=EventStream | None)  # type: ignore[misc]
         if event is None:
             await asyncio.sleep(0.1)
             continue
