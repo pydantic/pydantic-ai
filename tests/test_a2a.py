@@ -623,9 +623,11 @@ async def test_a2a_multiple_tasks_same_context():
                                 content='Final result processed.',
                                 tool_call_id=IsStr(),
                                 timestamp=IsDatetime(),
-                            ),
-                            UserPromptPart(content='Second message', timestamp=IsDatetime()),
+                            )
                         ],
+                    ),
+                    ModelRequest(
+                        parts=[UserPromptPart(content='Second message', timestamp=IsDatetime())],
                     ),
                 ]
             )
