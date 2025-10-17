@@ -260,9 +260,9 @@ from pydantic_ai.durable_exec.prefect import PrefectAgent
 async def daily_report_flow(user_prompt: str):
     """Generate a daily report using the agent."""
     agent = Agent(
-        "openai:gpt-4o",
-        name="daily_report_agent",
-        instructions="Generate a daily summary report.",
+        'openai:gpt-4o',
+        name='daily_report_agent',
+        instructions='Generate a daily summary report.',
     )
 
     prefect_agent = PrefectAgent(agent)
@@ -272,12 +272,12 @@ async def daily_report_flow(user_prompt: str):
 
 
 # Serve the flow with a daily schedule
-if __name__ == "__main__":
+if __name__ == '__main__':
     daily_report_flow.serve(
-        name="daily-report-deployment",
-        cron="0 9 * * *",  # Run daily at 9am
-        parameters={"user_prompt": "Generate today's report"},
-        tags=["production", "reports"],
+        name='daily-report-deployment',
+        cron='0 9 * * *',  # Run daily at 9am
+        parameters={'user_prompt': 'Generate today's report'},
+        tags=['production', 'reports'],
     )
 ```
 
