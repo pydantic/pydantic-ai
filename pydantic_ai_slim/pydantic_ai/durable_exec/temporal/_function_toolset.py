@@ -16,6 +16,16 @@ from pydantic_ai.toolsets.function import FunctionToolsetTool
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
 
+# Export these for use by other temporal toolset implementations
+__all__ = [
+    'TemporalFunctionToolset',
+    '_ApprovalRequired',
+    '_CallDeferred',
+    '_ModelRetry',
+    '_ToolReturn',
+    '_CallToolResult',
+]
+
 
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
