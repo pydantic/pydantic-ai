@@ -255,19 +255,21 @@ from prefect import flow
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectAgent
 
-agent = Agent(
-    'openai:gpt-4o',
-    name='daily_report_agent',
-    instructions='Generate a daily summary report.',
-)
 
-prefect_agent = PrefectAgent(agent)
-
-@flow
+@flow(log_prints=True)
 async def daily_report_flow(user_prompt: str):
     """Generate a daily report using the agent."""
+    agent = Agent(
+        'openai:gpt-4o',
+        name='daily_report_agent',
+        instructions='Generate a daily summary report.',
+    )
+
+    prefect_agent = PrefectAgent(agent)
+
     result = await prefect_agent.run(user_prompt)
-    return result.output
+    print(result.output)
+
 
 # Serve the flow with a daily schedule
 if __name__ == '__main__':
