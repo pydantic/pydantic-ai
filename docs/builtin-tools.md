@@ -11,6 +11,7 @@ Pydantic AI supports the following built-in tools:
 - **[`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool]**: Enables agents to generate images
 - **[`UrlContextTool`][pydantic_ai.builtin_tools.UrlContextTool]**: Enables agents to pull URL contents into their context
 - **[`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool]**: Enables agents to use memory
+- **[`MCPServerTool`][pydantic_ai.builtin_tools.MCPServerTool]**: Enables agents to pass MCP server configuration in context
 
 These tools are passed to the agent via the `builtin_tools` parameter and are executed by the model provider's infrastructure.
 
@@ -418,6 +419,137 @@ print(result.output)
 ```
 
 _(This example is complete, it can be run "as is")_
+
+## MCP Server Tool
+
+The [`MCPServerTool`][pydantic_ai.builtin_tools.MCPServerTool] allows your agent to pass MCP configurations in context,
+so that the agent can offload MCP calls and parsing to the provider.
+
+This requires the MCP server to live at a public URL the provider can reach and does not support many of the advanced features of Pydantic AI's agent-side [MCP support](mcp/client.md),
+but can result in optimized context use and caching, and faster performance due to the lack of a round-trip back to Pydantic AI.
+
+### Provider Support
+
+| Provider | Supported | Notes                 |
+|----------|-----------|-----------------------|
+| OpenAI Responses | ✅ | Full feature support  |
+| Anthropic | ✅ | Full feature support  |
+| Google  | ❌ | Not supported         |
+| Groq  | ❌ | Not supported         |
+| OpenAI Chat Completions | ❌ | Not supported         |
+| Bedrock | ❌ | Not supported         |
+| Mistral | ❌ | Not supported         |
+| Cohere | ❌ | Not supported         |
+| HuggingFace | ❌ | Not supported         |
+
+### Usage
+
+```py {title="mcp_server_anthropic.py"}
+from pydantic_ai import Agent, MCPServerTool
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-5',
+    builtin_tools=[
+        MCPServerTool(
+            id='your-mcp-server',
+            url='https://api.githubcopilot.com/mcp/',
+        )
+    ]
+)
+
+result = agent.run_sync('Give me some examples of my products.')
+print(result.output)
+#> Here are some examples of my data: Pen, Paper, Pencil.
+```
+
+_(This example is complete, it can be run "as is")_
+
+With OpenAI, you must use their responses API to access the MCP server tool.
+
+```py {title="mcp_server_openai.py"}
+from pydantic_ai import Agent, MCPServerTool
+
+agent = Agent(
+    'openai-responses:gpt-5',
+    builtin_tools=[
+        MCPServerTool(
+            id='your-mcp-server',
+            url='https://api.githubcopilot.com/mcp/',
+        )
+    ]
+)
+
+result = agent.run_sync('Give me some examples of my products.')
+print(result.output)
+#> Here are some examples of my data: Pen, Paper, Pencil.
+```
+
+_(This example is complete, it can be run "as is")_
+
+### Configuration Options
+
+The `MCPServerTool` supports several configuration parameters for custom MCP servers:
+
+```py {title="mcp_server_configured_url.py"}
+from pydantic_ai import Agent, MCPServerTool
+
+agent = Agent(
+    'openai-responses:gpt-5',
+    builtin_tools=[
+        MCPServerTool(
+            id='your-mcp-server',  # required field
+            url='https://api.githubcopilot.com/mcp/',  # required field
+            allowed_tools=['search_repositories', 'list_commits'],
+            description='Your MCP Server',
+            headers={'X-CUSTOM-HEADER': 'custom-value'},
+        )
+    ]
+)
+
+result = agent.run_sync('Give me some examples of my products.')
+print(result.output)
+#> Here are some examples of my data: Pen, Paper, Pencil.
+```
+
+For OpenAI Responses, you can use a connector by specifying a special `x-openai-connector:` URL:
+
+_(This example is complete, it can be run "as is")_
+
+```py {title="mcp_server_configured_connector_id.py"}
+import os
+
+from pydantic_ai import Agent, MCPServerTool
+
+agent = Agent(
+    'openai-responses:gpt-5',
+    builtin_tools=[
+        MCPServerTool(
+            id='your-mcp-server',
+            url='x-openai-connector:connector_googlecalendar',
+            authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),
+            allowed_tools=['search_repositories', 'list_commits'],
+            description='Your MCP Server',
+            headers={'X-CUSTOM-HEADER': 'custom-value'},
+        )
+    ]
+)
+
+result = agent.run_sync('Give me some examples of my products.')
+print(result.output)
+#> Here are some examples of my data: Pen, Paper, Pencil.
+```
+
+_(This example is complete, it can be run "as is")_
+
+#### Provider Support
+
+| Parameter             | OpenAI | Anthropic |
+|-----------------------|--------|-----------|
+| `url`                 | ✅ | ✅ |
+| `authorization_token` | ✅ | ✅ |
+| `allowed_tools`       | ✅ | ✅ |
+| `description`         | ✅ | ❌ |
+| `headers`             | ✅ | ❌ |
 
 ## API Reference
 

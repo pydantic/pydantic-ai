@@ -1,0 +1,198 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '701'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What do I have on my Google Calendar for today?
+        role: user
+      instructions: You are a helpful assistant.
+      model: o4-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - allowed_tools:
+        - search_events
+        authorization: <redacted>
+        connector_id: connector_googlecalendar
+        require_approval: never
+        server_description: Google Calendar
+        server_label: google_calendar
+        type: mcp
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '9482'
+      content-type:
+      - application/json
+      openai-organization:
+      - trustpoint-1
+      openai-processing-ms:
+      - '8386'
+      openai-project:
+      - proj_oRFiT7uLfyIUMKV93PEQNGvQ
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1760606351
+      error: null
+      id: resp_0a104500b823a8250068f0b88f03848197990038841e1bebdf
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: o4-mini-2025-04-16
+      object: response
+      output:
+      - id: mcpl_0a104500b823a8250068f0b88f3c4c8197b959bbcac973ab08
+        server_label: google_calendar
+        tools:
+        - annotations:
+            read_only: true
+          description: Look up Google Calendar events using various filters.
+          input_schema:
+            properties:
+              calendar_id:
+                anyOf:
+                - type: string
+                - type: 'null'
+                default: null
+                description: The ID of the calendar to search. Default one is 'primary'
+                title: Calendar Id
+              max_results:
+                default: 50
+                title: Max Results
+                type: integer
+              next_page_token:
+                anyOf:
+                - type: string
+                - type: 'null'
+                default: null
+                title: Next Page Token
+              query:
+                anyOf:
+                - type: string
+                - type: 'null'
+                default: null
+                title: Query
+              time_max:
+                anyOf:
+                - type: string
+                - type: 'null'
+                default: null
+                description: Time in the ISO-8601 format. You can also use 'now' or leave null.
+                title: Time Max
+              time_min:
+                anyOf:
+                - type: string
+                - type: 'null'
+                default: null
+                description: Time in the ISO-8601 format. You can also use 'now' or leave null.
+                title: Time Min
+              timezone_str:
+                anyOf:
+                - type: string
+                - type: 'null'
+                default: null
+                description: Timezone of the event. Default is 'America/Los_Angeles'
+                title: Timezone Str
+            title: search_events_input
+            type: object
+          name: search_events
+        type: mcp_list_tools
+      - encrypted_content: gAAAAABo8LiXEDl-avpofFl6NyGQZPMHT6ol5p_rqklDuQ-2E65wpopMUQjL1dkU_DysMx-yn8M99YxlcxqKeED-RCjaETNeiIZmE6YIwbDCOyU31ueSMF9gkWKyB58d6NjjQGWXO7QMYHTj9m2pqG2fUlUTgIm8m6Rhw2mHk-Eg-23Zz90ORXfUCJK484rgLcKSiCt1mgi0op2Ldv7eS6bsDnuGdDwVLrZixZEFosgpPdvr7ZkaGaV5lQizGxBy4dABIpNmavwZBLIEc8aj1ELr8wq6QxLYd5pqnURkxL3qNXo6ZiL0V8E-OR6Jy8X2lPFS83GTib0Il0x5MG57zFONLd8IvLScomF-5IpyMVPvJDFfzyQM9R1H0FFyfUDE15C5aQ2RlBmyCI1Rc2lmCmRVAq9phZApkIUtXgvJvx5AzzfUtpws3PnBDUhYIHBH24lGZ9ip5UhdkeZ1bOdtxEskg8wLZ_yvgSeKadgJBdv42TxKXGKDePzUPaWb_TMSgjmOkbB6cTF5pNABgNVGH_AbAdArv1lo1HWXS5eYhJS54Ntq7LVcLPQG6Jan1Owm5_zGCZuGK1erdwFGp5JCVvGjwu1KYUnp9Xns4XWugjLTnO7C4kDvIeEGTlW5WSkLvXBmQ8E6FvLaijW2KXiTq7kt4ZHMeMYOJurrKV2EbCGmZ8G30QlUUwiyMegaWWKmgsk2JtIV9IerPEMfHhLUaCHhzfCeSDc7lb25o4Jj3nZbL_xaG17aB-VLNK9rglr1xWyb1z8xCFvm-mzmPITiuuL5QYR0E4S-RQ52kvWHrYku-h-k9mEM0bmdCypG3RiQNInRE8x6aGkhIgrtGSKrReXr7h5XgBe26IGlFXMZxye8ps1yEleMB-Q-ZQ3GdlKI3XeeTnSv_9fLtfOKdzQ60CMgaBP-KHpqY2R6w8mheLKq_R1GxDGHoydBA5MC5VXz4ep-uCyecmXmCphyvpfQ1eys1vSf5Sn5-AhkFSma1-sAFHOJSvut-FNxpbOZZPzbMXbOK7NkQR5ONxPbolj1iGKNDH58RPt7hICX9zGvs0mctrPybyt9VmYspfOEDm8iS59uyb_l9g17crNqedD4wvrtWj5DmXzma7F94n8qp9QHIwWIVeCzPrlkm4NUUEgeUaZrPtAIBoGl6tbGaFHoTpvfpr4PVDsgVJ7dqrllba11tlaiheURacLnYeTgKo5mgnv87xHZPAVEk-GljCJdCE-BqO5eq2cs4JwKha5201dJ_-TbAzY5Ff5YWw3nyWWkVAL4LJDJbtcaQeDrm_rQfWLL0kuwLjtbhZqQbBfveNPeIWGn324nB3wIOYK6hk_XZyhB-v_Ivv9mLs8TQYWoOmuvd08NLeBJuwyJjOmUe8TPBbQUwHyyoustLAtPqY1SothUW9rCTaMcdTE_Cgx8Ma2J7skJXJn63eDRWCIqlJTybzcrYOTYHZSWuuI4ugUH5HheDyLJ1cQQjDDz6-rwEyu9JPSM5gV5IN_nd-RYa9jy1X41c9qKXRfY_dHqtMdH1_SGoVOcCAhQjImsYJeJ6NZwCKztM6YJWw_MsFIjB_dcOk2TnGgGjUy7WqasuPU7DqEQGqyqn_p7-PxK3uBBgIchye2m34M550s7Gb_tUuDgTerfYrNAZ6VSupgAovq0ZQsKhVnDV4C6Hna7FCVx85agb-6ZxvuC66WWAj5BZ68PrySPX1i6jRFkcUSgnreLS3qqnDSLNixN69puKU2JXv7GnA7XROPs3YLjfIX6F9OmdFqfdmO_7PfCPEVnDZb7WUioqUUEzBcfX3G5193t6cxnqScnqv19rCjVj_1RJ1OgkSMQpB19c8G7vK9XsJbpj4aUO69-l4UnQ2L-8cy-jAAU7GpknI52WES8pnrsRcxTAUHalqMMB4mnqzsDp1CHzgDeMGJjg6zaqIew677MBslvMDuoqeD7hcrKPp4cvA4ept4p_4Did3k8pXXqt7srHpfFPzGoEs9gNgYWxys4RMOFebIozbXZfdP4VNgmbDZy-H3pX5KKDtPsven6EKgYdVLfp_j3Og5P1YBfPIrUkq84TRaS9wCpV6A40G1oxHzgIlBTbnXr9qTgU98pAvM-fX6rwr-CewBOsAh83m4BkgG7s92dNS8LbTCvCFdyhyOo_IfbiXZpRZ2LmTB2MtqYSC1ncOWXdX8kD1T2UyfwxDiqJXH5jm8tWAlc8nCp_ohNYVTybU7eXM0_DJzfwfQTAuuYwse36tD-g3DFOqdUAgeHU7iaX5C5pV3DLVjirVmfelz3FBwlC-414AhsFFW28V2xEvANtBv0h2EeZJFDjwkPljSImwSlDtAlxdFXaRCziW5eM5tCkurYATgeW9D9YWuyJQl5utPxWAscUFaQ-FnxsrfX6ue2NhxQ_WTto32seLvGYXK65dPfuGDFLAdepa0osM9igRwghSuiNDBCP5Hk9qOEM7sWMu-R4Ctc1XWBHQ9VBGIn7EM4zjcl0YloAr6Nn6ewATJB4dtyU7Wv_ALEzx59ArH0B9lPSet9RBq-KpAXbISoIjf-p6A58TqbR7zyvmmIXIyx
+        id: rs_0a104500b823a8250068f0b89044a881978fb6f106bc4af1db
+        summary: []
+        type: reasoning
+      - approval_request_id: null
+        arguments: '{"time_min":"2025-10-16T00:00:00","time_max":"2025-10-16T23:59:59","timezone_str":"America/Los_Angeles","max_results":50,"query":null,"calendar_id":"primary","next_page_token":null}'
+        error: null
+        id: mcp_0a104500b823a8250068f0b893a6c081978dafa14bc9767711
+        name: search_events
+        output: '{"events": [], "next_page_token": null}'
+        server_label: google_calendar
+        status: completed
+        type: mcp_call
+      - encrypted_content: gAAAAABo8LiXxUYdty7An6iFIGA2GCFwwAjdWTsaRPVi1ec6N4WJQa09Gfg10q1fxIWyXMBLwWub5S3YBc4vmAs4kpcQapd9sgOEgglEhEucIIRdODyDwqKz5oUN5xLVk3fTLcvDhEh0nW3wh46VAoLsFpEhlMuDNooT53w2Z5CZg0FbWzNigWDEURRPzwoQKVBVpp8Ia2jKjkbkD0JHHiBQ17ej4XH_4VNFAu1IIdu0bMyWghFKofvJuCqeEvrJRKBmc8gqlOcqiYHI5PBI_lI7vpQqbK9RVk9k5hLe22ENT4mdeQRSm00P57imbrnDVVN_IeLf3cvl4KX85Bd8WlzUU8ZzcA9C6iOmJkUOi2ZZqDG_l7-yg1jg49SI8TZ4PJ5wiX4ZJ2kbOlH9gd2I2JIlGL3G2fI5uuOARbzOpEo8ZGQAQX1dIVfvxj6aE3xf42tfbmRK8_mjSwngoSGUkLbkkJ3SRJr1SKENHH8Yl2E2yYdNEFPu3JBHki9fW7LOKwpwPoxfFR_XqQrd8dJG8BggJBcdsyR-DIanekgmINkKZyj7YnxEE2J1PEvOOqzCzWRWrBQYKaBRAYKvmvgkjSzuCXcWZyk0yBz7lgtECcTyuKFPiFa0-sw1ke8KxKvtS6Uq4GCwNudcgzYoP4kXyuO_-GbQCWfLOShpoJcBkpe8SFXFPKxeIllOd1c6wnoWFwgVVdbXul1vOhH7nCxyJ7lpYqd8xA0IlKdOBnbyGG7BZJL0q3mjIR2FrpXFcgMq8MUYbn51DlHiYDCRkULOAgNktwKFErgsZckcolHXhiRA5CSCaNHu35AfwCiQQw8AUQgMdIslv01kWE74HcmgPrapM5i38RYq6wowYkGxbpW76z3bhPBWG8P1w9TK6GjqvAgqEGqUN-v8_uKV9vkrGdDq38g6CeLwxTbOERZCyD178LROuDLvYssq3lzJXc4zzYnXEZjk4MegwG_HyUwg7Nbt0QI5aCSKbnaBuB_m1cWvHDWJqvnYLtzo4w1SrKD0MxF-wxQ3XUZytmqmhbsoQ7yf_LO8eJ1l5qW0t1b0--3OFLDlDupYCNMX2ePNHSIakPnr-i24X1BBkYdSdPdtTgT6ubrpPDMGZAIvVq5RE5ExsNVYRBvOEYCgM__z6q9oDDcblkPdNMuLcP_TvYM-zKEGtG6evm46IA==
+        id: rs_0a104500b823a8250068f0b894af0c8197806bf2b7f7059bc1
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: You do not have any events scheduled for today. Enjoy your free time!
+          type: output_text
+        id: msg_0a104500b823a8250068f0b89576648197ba0a5fd08070a1a7
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - allowed_tools:
+        - search_events
+        authorization: <redacted>
+        connector_id: connector_googlecalendar
+        headers: null
+        require_approval: never
+        server_description: Google Calendar
+        server_label: google_calendar
+        server_url: null
+        type: mcp
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 655
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 420
+        output_tokens_details:
+          reasoning_tokens: 320
+        total_tokens: 1075
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
