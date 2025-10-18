@@ -330,14 +330,20 @@ async def test_stdio_server_list_resources(run_context: RunContext[int]):
         assert resources[0].uri == snapshot('resource://kiwi.png')
         assert resources[0].mime_type == snapshot('image/png')
         assert resources[0].name == snapshot('kiwi_resource')
+        assert resources[0].annotations is None
 
         assert resources[1].uri == snapshot('resource://marcelo.mp3')
         assert resources[1].mime_type == snapshot('audio/mpeg')
         assert resources[1].name == snapshot('marcelo_resource')
+        assert resources[1].annotations is None
 
         assert resources[2].uri == snapshot('resource://product_name.txt')
         assert resources[2].mime_type == snapshot('text/plain')
         assert resources[2].name == snapshot('product_name_resource')
+        # Test ResourceAnnotations
+        assert resources[2].annotations is not None
+        assert resources[2].annotations.audience == snapshot(['user', 'assistant'])
+        assert resources[2].annotations.priority == snapshot(0.5)
 
 
 async def test_stdio_server_list_resource_templates(run_context: RunContext[int]):
