@@ -137,9 +137,6 @@ async def run_as_cli(answer: str | None):
                 print('history:', '\n'.join(str(e.node) for e in history), sep='\n')
                 print('Finished!')
                 break
-            elif isinstance(node, Answer):
-                print(node.question)
-                break
             # otherwise just continue
 
 

@@ -781,10 +781,6 @@ async def main():
                 history = await persistence.load_all()  # (8)!
                 print([e.node for e in history])
                 break
-            elif isinstance(node, Answer):  # (9)!
-                print(node.question)
-                #> What is the capital of France?
-                break
             # otherwise just continue
 ```
 
@@ -796,7 +792,6 @@ async def main():
 6. Call [`GraphRun.next()`][pydantic_graph.graph.GraphRun.next] to run the node. This will return either a node or an `End` object.
 7. If the node is an `End` object, the graph run is complete. The `data` field of the `End` object contains the comment returned by the `evaluate_agent` about the correct answer.
 8. To demonstrate the state persistence, we call [`load_all`][pydantic_graph.persistence.BaseStatePersistence.load_all] to get all the snapshots from the persistence instance. This will return a list of [`Snapshot`][pydantic_graph.persistence.Snapshot] objects.
-9. If the node is an `Answer` object, we print the question and break out of the loop to end the process and wait for user input.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
