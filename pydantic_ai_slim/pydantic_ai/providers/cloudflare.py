@@ -68,44 +68,54 @@ class CloudflareProvider(Provider[AsyncOpenAI]):
     1. BYOK with unauthenticated gateway (bring your own API key):
         ```python
         from pydantic_ai import Agent
+        from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.cloudflare import CloudflareProvider
 
-        provider = CloudflareProvider(
-            account_id='your-account-id',
-            gateway_id='your-gateway-id',
-            api_key='your-openai-api-key'  # Your own provider API key
+        model = OpenAIChatModel(
+            'openai/gpt-4o',
+            provider=CloudflareProvider(
+                account_id='your-account-id',
+                gateway_id='your-gateway-id',
+                api_key='your-openai-api-key',
+            ),
         )
-        agent = Agent('openai/gpt-4o', provider=provider)
+        agent = Agent(model)
         ```
 
     2. BYOK with authenticated gateway (API key + gateway authentication):
         ```python
         from pydantic_ai import Agent
+        from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.cloudflare import CloudflareProvider
 
-        provider = CloudflareProvider(
-            account_id='your-account-id',
-            gateway_id='your-gateway-id',
-            api_key='your-openai-api-key',
-            cf_aig_authorization='your-gateway-token'
+        model = OpenAIChatModel(
+            'anthropic/claude-3-5-sonnet',
+            provider=CloudflareProvider(
+                account_id='your-account-id',
+                gateway_id='your-gateway-id',
+                api_key='your-openai-api-key',
+                cf_aig_authorization='your-gateway-token',
+            ),
         )
-        agent = Agent('anthropic/claude-3-5-sonnet', provider=provider)
+        agent = Agent(model)
         ```
 
     3. Stored keys mode (use API keys stored in Cloudflare dashboard):
         ```python
         from pydantic_ai import Agent
+        from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.cloudflare import CloudflareProvider
 
-        # Requires authenticated gateway - API keys are stored in your Cloudflare dashboard
-        # Set use_gateway_keys=True and provide cf_aig_authorization
-        provider = CloudflareProvider(
-            account_id='your-account-id',
-            gateway_id='your-gateway-id',
-            cf_aig_authorization='your-gateway-token',
-            use_gateway_keys=True
+        model = OpenAIChatModel(
+            'openai/gpt-4o',
+            provider=CloudflareProvider(
+                account_id='your-account-id',
+                gateway_id='your-gateway-id',
+                cf_aig_authorization='your-gateway-token',
+                use_gateway_keys=True,
+            ),
         )
-        agent = Agent('openai/gpt-4o', provider=provider)
+        agent = Agent(model)
         ```
     """
 
