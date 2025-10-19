@@ -113,6 +113,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
     _server_info: mcp_types.Implementation
+    _server_capabilities: _mcp.ServerCapabilities
 
     def __init__(
         self,
@@ -190,6 +191,15 @@ class MCPServer(AbstractToolset[Any], ABC):
                 f'The `{self.__class__.__name__}.server_info` is only instantiated after initialization.'
             )
         return self._server_info
+
+    @property
+    def capabilities(self) -> _mcp.ServerCapabilities:
+        """Access the capabilities advertised by the MCP server during initialization."""
+        if getattr(self, '_server_capabilities', None) is None:
+            raise AttributeError(
+                f'The `{self.__class__.__name__}.capabilities` is only instantiated after initialization.'
+            )
+        return self._server_capabilities
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.
@@ -374,6 +384,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     with anyio.fail_after(self.timeout):
                         result = await self._client.initialize()
                         self._server_info = result.serverInfo
+                        self._server_capabilities = _mcp.map_from_mcp_server_capabilities(result.capabilities)
                         if log_level := self.log_level:
                             await self._client.set_logging_level(log_level)
 

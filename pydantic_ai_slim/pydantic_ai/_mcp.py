@@ -74,6 +74,31 @@ class ResourceTemplate(BaseResource):
     """URI template (RFC 6570) for constructing resource URIs."""
 
 
+@dataclass(repr=False, kw_only=True)
+class ServerCapabilities:
+    """Capabilities that an MCP server supports."""
+
+    experimental: list[str] | None = None
+    """Experimental, non-standard capabilities that the server supports."""
+
+    logging: bool = False
+    """Whether the server supports sending log messages to the client."""
+
+    prompts: bool = False
+    """Whether the server offers any prompt templates."""
+
+    resources: bool = False
+    """Whether the server offers any resources to read."""
+
+    tools: bool = False
+    """Whether the server offers any tools to call."""
+
+    completions: bool = False
+    """Whether the server offers autocompletion suggestions for prompts and resources."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[messages.ModelMessage]:
     """Convert from MCP create message request parameters to pydantic-ai messages."""
     pai_messages: list[messages.ModelMessage] = []
@@ -216,4 +241,16 @@ def map_from_mcp_resource_template(mcp_template: mcp_types.ResourceTemplate) -> 
             else None
         ),
         meta=mcp_template.meta,
+    )
+
+
+def map_from_mcp_server_capabilities(mcp_capabilities: mcp_types.ServerCapabilities) -> ServerCapabilities:
+    """Convert from MCP ServerCapabilities to native Pydantic AI ServerCapabilities."""
+    return ServerCapabilities(
+        experimental=list(mcp_capabilities.experimental.keys()) if mcp_capabilities.experimental else None,
+        logging=mcp_capabilities.logging is not None,
+        prompts=mcp_capabilities.prompts is not None,
+        resources=mcp_capabilities.resources is not None,
+        tools=mcp_capabilities.tools is not None,
+        completions=mcp_capabilities.completions is not None,
     )

@@ -1568,3 +1568,18 @@ async def test_server_info(mcp_server: MCPServerStdio) -> None:
     async with mcp_server:
         assert mcp_server.server_info is not None
         assert mcp_server.server_info.name == 'Pydantic AI MCP Server'
+
+
+async def test_capabilities(mcp_server: MCPServerStdio) -> None:
+    with pytest.raises(
+        AttributeError, match='The `MCPServerStdio.capabilities` is only instantiated after initialization.'
+    ):
+        mcp_server.capabilities
+    async with mcp_server:
+        assert mcp_server.capabilities is not None
+        assert mcp_server.capabilities.resources is True
+        assert mcp_server.capabilities.tools is True
+        assert mcp_server.capabilities.prompts is True
+        assert mcp_server.capabilities.logging is True
+        assert mcp_server.capabilities.completions is False
+        assert mcp_server.capabilities.experimental is None
