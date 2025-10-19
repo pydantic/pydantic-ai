@@ -1558,7 +1558,9 @@ async def test_read_resource_not_found(mcp_server: MCPServerStdio) -> None:
 
 async def test_list_resources_error(mcp_server: MCPServerStdio) -> None:
     """Test that list_resources converts McpError to MCPServerError."""
-    mcp_error = McpError(error=ErrorData(code=-32603, message='Failed to list resources'))
+    mcp_error = McpError(
+        error=ErrorData(code=-32603, message='Failed to list resources', data={'details': 'server overloaded'})
+    )
 
     async with mcp_server:
         with patch.object(
@@ -1572,6 +1574,10 @@ async def test_list_resources_error(mcp_server: MCPServerStdio) -> None:
             # Verify the exception has the expected attributes
             assert exc_info.value.code == -32603
             assert exc_info.value.message == 'Failed to list resources'
+            assert exc_info.value.data == {'details': 'server overloaded'}
+            assert (
+                str(exc_info.value) == "Failed to list resources (code: -32603, data: {'details': 'server overloaded'})"
+            )
 
 
 async def test_list_resource_templates_error(mcp_server: MCPServerStdio) -> None:
