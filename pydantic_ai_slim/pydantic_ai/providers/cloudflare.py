@@ -80,6 +80,9 @@ class CloudflareProvider(Provider[AsyncOpenAI]):
 
     2. BYOK with authenticated gateway (API key + gateway authentication):
         ```python
+        from pydantic_ai import Agent
+        from pydantic_ai.providers.cloudflare import CloudflareProvider
+
         provider = CloudflareProvider(
             account_id='your-account-id',
             gateway_id='your-gateway-id',
@@ -91,6 +94,9 @@ class CloudflareProvider(Provider[AsyncOpenAI]):
 
     3. Stored keys mode (use API keys stored in Cloudflare dashboard):
         ```python
+        from pydantic_ai import Agent
+        from pydantic_ai.providers.cloudflare import CloudflareProvider
+
         # Requires authenticated gateway - API keys are stored in your Cloudflare dashboard
         # Set use_gateway_keys=True and provide cf_aig_authorization
         provider = CloudflareProvider(
