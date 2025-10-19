@@ -441,6 +441,54 @@ agent = Agent(model)
 ...
 ```
 
+### Cloudflare AI Gateway
+
+To use [Cloudflare AI Gateway](https://developers.cloudflare.com/ai-gateway/), first set up a gateway in your [Cloudflare dashboard](https://dash.cloudflare.com/?to=/:account/ai/ai-gateway) and obtain your account ID and gateway ID.
+
+!!! note
+    This provider uses Cloudflare's [unified API endpoint](https://developers.cloudflare.com/ai-gateway/usage/chat-completion/) for routing requests to multiple AI providers. For the full list of supported providers, see [Cloudflare's documentation](https://developers.cloudflare.com/ai-gateway/usage/chat-completion/#supported-providers).
+
+You can set the `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_GATEWAY_ID`, and optionally `CLOUDFLARE_AI_GATEWAY_AUTH` environment variables and use [`CloudflareProvider`][pydantic_ai.providers.cloudflare.CloudflareProvider]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.cloudflare import CloudflareProvider
+
+model = OpenAIChatModel(
+    'openai/gpt-4o',
+    provider=CloudflareProvider(
+        account_id='your-account-id',
+        gateway_id='your-gateway-id',
+        api_key='your-openai-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
+For authenticated gateways with stored API keys in Cloudflare's dashboard:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.cloudflare import CloudflareProvider
+
+model = OpenAIChatModel(
+    'anthropic/claude-3-5-sonnet',
+    provider=CloudflareProvider(
+        account_id='your-account-id',
+        gateway_id='your-gateway-id',
+        cf_aig_authorization='your-gateway-token',
+        use_gateway_keys=True,
+    ),
+)
+agent = Agent(model)
+...
+```
+
+See [`CloudflareProvider`][pydantic_ai.providers.cloudflare.CloudflareProvider] for additional configuration options including BYOK modes and authenticated gateways.
+
 ### Grok (xAI)
 
 Go to [xAI API Console](https://console.x.ai/) and create an API key.
