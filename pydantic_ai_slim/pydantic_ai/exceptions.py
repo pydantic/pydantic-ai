@@ -23,6 +23,8 @@ __all__ = (
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'ModelHTTPError',
+    'MCPError',
+    'ServerCapabilitiesError',
     'FallbackExceptionGroup',
 )
 
@@ -156,6 +158,24 @@ class ModelHTTPError(AgentRunError):
         self.body = body
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
         super().__init__(message)
+
+
+class MCPError(RuntimeError):
+    """Base class for errors occurring during interaction with an MCP server."""
+
+    message: str
+    """The error message."""
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)
+
+    def __str__(self) -> str:
+        return self.message
+
+
+class ServerCapabilitiesError(MCPError):
+    """Raised when attempting to access server capabilities that aren't present."""
 
 
 class FallbackExceptionGroup(ExceptionGroup):
