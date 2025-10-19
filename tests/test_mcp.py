@@ -1556,6 +1556,42 @@ async def test_read_resource_not_found(mcp_server: MCPServerStdio) -> None:
         assert exc_info.value.message == 'Unknown resource: resource://does_not_exist'
 
 
+async def test_list_resources_error(mcp_server: MCPServerStdio) -> None:
+    """Test that list_resources converts McpError to MCPServerError."""
+    mcp_error = McpError(error=ErrorData(code=-32603, message='Failed to list resources'))
+
+    async with mcp_server:
+        with patch.object(
+            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            'list_resources',
+            new=AsyncMock(side_effect=mcp_error),
+        ):
+            with pytest.raises(MCPServerError, match='Failed to list resources') as exc_info:
+                await mcp_server.list_resources()
+
+            # Verify the exception has the expected attributes
+            assert exc_info.value.code == -32603
+            assert exc_info.value.message == 'Failed to list resources'
+
+
+async def test_list_resource_templates_error(mcp_server: MCPServerStdio) -> None:
+    """Test that list_resource_templates converts McpError to MCPServerError."""
+    mcp_error = McpError(error=ErrorData(code=-32001, message='Service unavailable'))
+
+    async with mcp_server:
+        with patch.object(
+            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            'list_resource_templates',
+            new=AsyncMock(side_effect=mcp_error),
+        ):
+            with pytest.raises(MCPServerError, match='Service unavailable') as exc_info:
+                await mcp_server.list_resource_templates()
+
+            # Verify the exception has the expected attributes
+            assert exc_info.value.code == -32001
+            assert exc_info.value.message == 'Service unavailable'
+
+
 def test_load_mcp_servers(tmp_path: Path):
     config = tmp_path / 'mcp.json'
 
