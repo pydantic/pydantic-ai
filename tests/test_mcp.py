@@ -25,7 +25,13 @@ from pydantic_ai import (
 )
 from pydantic_ai._mcp import Resource, ServerCapabilities
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry, ServerCapabilitiesError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import (
+    MCPServerError,
+    ModelRetry,
+    ServerCapabilitiesError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.mcp import MCPServerStreamableHTTP, load_mcp_servers
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
@@ -1537,6 +1543,17 @@ async def test_read_resource_template(run_context: RunContext[int]):
         content = await server.read_resource('resource://greeting/Alice')
         assert isinstance(content, str)
         assert content == snapshot('Hello, Alice!')
+
+
+async def test_read_resource_not_found(mcp_server: MCPServerStdio) -> None:
+    """Test that read_resource raises MCPServerError for non-existent resources."""
+    async with mcp_server:
+        with pytest.raises(MCPServerError, match='Unknown resource: resource://does_not_exist') as exc_info:
+            await mcp_server.read_resource('resource://does_not_exist')
+
+        # Verify the exception has the expected attributes
+        assert exc_info.value.code == 0
+        assert exc_info.value.message == 'Unknown resource: resource://does_not_exist'
 
 
 def test_load_mcp_servers(tmp_path: Path):

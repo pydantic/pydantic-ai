@@ -25,6 +25,7 @@ __all__ = (
     'ModelHTTPError',
     'MCPError',
     'ServerCapabilitiesError',
+    'MCPServerError',
     'FallbackExceptionGroup',
 )
 
@@ -176,6 +177,44 @@ class MCPError(RuntimeError):
 
 class ServerCapabilitiesError(MCPError):
     """Raised when attempting to access server capabilities that aren't present."""
+
+
+class MCPServerError(MCPError):
+    """Raised when an MCP server returns an error response.
+
+    This exception wraps error responses from MCP servers, following the ErrorData schema
+    from the MCP specification.
+    """
+
+    code: int
+    """The error code returned by the server."""
+
+    data: Any | None
+    """Additional information about the error, if provided by the server."""
+
+    def __init__(self, message: str, code: int, data: Any | None = None):
+        super().__init__(message)
+        self.code = code
+        self.data = data
+
+    @classmethod
+    def from_mcp_sdk_error(cls, error: Any) -> MCPServerError:
+        """Create an MCPServerError from an MCP SDK McpError.
+
+        Args:
+            error: An McpError from the MCP SDK.
+
+        Returns:
+            A new MCPServerError instance with the error data.
+        """
+        # Extract error data from the McpError.error attribute
+        error_data = error.error
+        return cls(message=error_data.message, code=error_data.code, data=error_data.data)
+
+    def __str__(self) -> str:
+        if self.data:
+            return f'{self.message} (code: {self.code}, data: {self.data})'
+        return f'{self.message} (code: {self.code})'
 
 
 class FallbackExceptionGroup(ExceptionGroup):

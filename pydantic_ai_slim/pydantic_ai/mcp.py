@@ -322,11 +322,15 @@ class MCPServer(AbstractToolset[Any], ABC):
 
         Raises:
             ServerCapabilitiesError: If the server does not support resources.
+            MCPServerError: If the server returns an error.
         """
         async with self:  # Ensure server is running
             if not self.capabilities.resources:
                 raise exceptions.ServerCapabilitiesError('Server does not support resources capability')
-            result = await self._client.list_resources()
+            try:
+                result = await self._client.list_resources()
+            except McpError as e:
+                raise exceptions.MCPServerError.from_mcp_sdk_error(e) from e
         return [_mcp.map_from_mcp_resource(r) for r in result.resources]
 
     async def list_resource_templates(self) -> list[_mcp.ResourceTemplate]:
@@ -334,11 +338,15 @@ class MCPServer(AbstractToolset[Any], ABC):
 
         Raises:
             ServerCapabilitiesError: If the server does not support resources.
+            MCPServerError: If the server returns an error.
         """
         async with self:  # Ensure server is running
             if not self.capabilities.resources:
                 raise exceptions.ServerCapabilitiesError('Server does not support resources capability')
-            result = await self._client.list_resource_templates()
+            try:
+                result = await self._client.list_resource_templates()
+            except McpError as e:
+                raise exceptions.MCPServerError.from_mcp_sdk_error(e) from e
         return [_mcp.map_from_mcp_resource_template(t) for t in result.resourceTemplates]
 
     @overload
@@ -363,12 +371,16 @@ class MCPServer(AbstractToolset[Any], ABC):
 
         Raises:
             ServerCapabilitiesError: If the server does not support resources.
+            MCPServerError: If the server returns an error (e.g., resource not found).
         """
         resource_uri = uri if isinstance(uri, str) else uri.uri
         async with self:  # Ensure server is running
             if not self.capabilities.resources:
                 raise exceptions.ServerCapabilitiesError('Server does not support resources capability')
-            result = await self._client.read_resource(AnyUrl(resource_uri))
+            try:
+                result = await self._client.read_resource(AnyUrl(resource_uri))
+            except McpError as e:
+                raise exceptions.MCPServerError.from_mcp_sdk_error(e) from e
         return (
             self._get_content(result.contents[0])
             if len(result.contents) == 1
