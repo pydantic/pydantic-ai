@@ -24,7 +24,7 @@ __all__ = (
     'UsageLimitExceeded',
     'ModelHTTPError',
     'MCPError',
-    'ServerCapabilitiesError',
+    'MCPServerCapabilitiesError',
     'MCPServerError',
     'FallbackExceptionGroup',
 )
@@ -175,7 +175,7 @@ class MCPError(RuntimeError):
         return self.message
 
 
-class ServerCapabilitiesError(MCPError):
+class MCPServerCapabilitiesError(MCPError):
     """Raised when attempting to access server capabilities that aren't present."""
 
 

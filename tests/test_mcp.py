@@ -26,9 +26,9 @@ from pydantic_ai import (
 from pydantic_ai._mcp import Resource, ServerCapabilities
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import (
+    MCPServerCapabilitiesError,
     MCPServerError,
     ModelRetry,
-    ServerCapabilitiesError,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -1603,16 +1603,16 @@ async def test_capabilities(mcp_server: MCPServerStdio) -> None:
 
 
 async def test_resource_methods_without_capability(mcp_server: MCPServerStdio) -> None:
-    """Test that resource methods raise ServerCapabilitiesError when resources capability is not available."""
+    """Test that resource methods raise MCPServerCapabilitiesError when resources capability is not available."""
     async with mcp_server:
         # Mock the capabilities to not support resources
         mock_capabilities = ServerCapabilities(resources=False)
         with patch.object(mcp_server, '_server_capabilities', mock_capabilities):
-            with pytest.raises(ServerCapabilitiesError, match='Server does not support resources capability'):
+            with pytest.raises(MCPServerCapabilitiesError, match='Server does not support resources capability'):
                 await mcp_server.list_resources()
 
-            with pytest.raises(ServerCapabilitiesError, match='Server does not support resources capability'):
+            with pytest.raises(MCPServerCapabilitiesError, match='Server does not support resources capability'):
                 await mcp_server.list_resource_templates()
 
-            with pytest.raises(ServerCapabilitiesError, match='Server does not support resources capability'):
+            with pytest.raises(MCPServerCapabilitiesError, match='Server does not support resources capability'):
                 await mcp_server.read_resource('resource://test')

@@ -31,8 +31,8 @@ try:
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
     from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
+    from mcp.shared import exceptions as mcp_exceptions
     from mcp.shared.context import RequestContext
-    from mcp.shared.exceptions import McpError
     from mcp.shared.message import SessionMessage
 except ImportError as _import_error:
     raise ImportError(
@@ -42,6 +42,7 @@ except ImportError as _import_error:
 
 # after mcp imports so any import error maps to this file, not _mcp.py
 from . import _mcp, _utils, exceptions, messages, models
+from .exceptions import MCPServerCapabilitiesError, MCPServerError
 
 __all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP', 'load_mcp_servers'
 
@@ -246,7 +247,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     ),
                     mcp_types.CallToolResult,
                 )
-            except McpError as e:
+            except mcp_exceptions.McpError as e:
                 raise exceptions.ModelRetry(e.error.message)
 
         if result.isError:
@@ -321,32 +322,32 @@ class MCPServer(AbstractToolset[Any], ABC):
         - We also don't subscribe to resource changes to avoid complexity.
 
         Raises:
-            ServerCapabilitiesError: If the server does not support resources.
+            MCPServerCapabilitiesError: If the server does not support resources.
             MCPServerError: If the server returns an error.
         """
         async with self:  # Ensure server is running
             if not self.capabilities.resources:
-                raise exceptions.ServerCapabilitiesError('Server does not support resources capability')
+                raise MCPServerCapabilitiesError('Server does not support resources capability')
             try:
                 result = await self._client.list_resources()
-            except McpError as e:
-                raise exceptions.MCPServerError.from_mcp_sdk_error(e) from e
+            except mcp_exceptions.McpError as e:
+                raise MCPServerError.from_mcp_sdk_error(e) from e
         return [_mcp.map_from_mcp_resource(r) for r in result.resources]
 
     async def list_resource_templates(self) -> list[_mcp.ResourceTemplate]:
         """Retrieve resource templates that are currently present on the server.
 
         Raises:
-            ServerCapabilitiesError: If the server does not support resources.
+            MCPServerCapabilitiesError: If the server does not support resources.
             MCPServerError: If the server returns an error.
         """
         async with self:  # Ensure server is running
             if not self.capabilities.resources:
-                raise exceptions.ServerCapabilitiesError('Server does not support resources capability')
+                raise MCPServerCapabilitiesError('Server does not support resources capability')
             try:
                 result = await self._client.list_resource_templates()
-            except McpError as e:
-                raise exceptions.MCPServerError.from_mcp_sdk_error(e) from e
+            except mcp_exceptions.McpError as e:
+                raise MCPServerError.from_mcp_sdk_error(e) from e
         return [_mcp.map_from_mcp_resource_template(t) for t in result.resourceTemplates]
 
     @overload
@@ -370,17 +371,17 @@ class MCPServer(AbstractToolset[Any], ABC):
             If the resource has multiple content items, returns a list of items.
 
         Raises:
-            ServerCapabilitiesError: If the server does not support resources.
+            MCPServerCapabilitiesError: If the server does not support resources.
             MCPServerError: If the server returns an error (e.g., resource not found).
         """
         resource_uri = uri if isinstance(uri, str) else uri.uri
         async with self:  # Ensure server is running
             if not self.capabilities.resources:
-                raise exceptions.ServerCapabilitiesError('Server does not support resources capability')
+                raise MCPServerCapabilitiesError('Server does not support resources capability')
             try:
                 result = await self._client.read_resource(AnyUrl(resource_uri))
-            except McpError as e:
-                raise exceptions.MCPServerError.from_mcp_sdk_error(e) from e
+            except mcp_exceptions.McpError as e:
+                raise MCPServerError.from_mcp_sdk_error(e) from e
         return (
             self._get_content(result.contents[0])
             if len(result.contents) == 1
