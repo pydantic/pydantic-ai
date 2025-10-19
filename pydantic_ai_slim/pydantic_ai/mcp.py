@@ -325,9 +325,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         """
         async with self:  # Ensure server is running
             if not self.capabilities.resources:
-                raise exceptions.ServerCapabilitiesError(
-                    f'Server does not support resources capability. Available capabilities: {self.capabilities}'
-                )
+                raise exceptions.ServerCapabilitiesError('Server does not support resources capability')
             result = await self._client.list_resources()
         return [_mcp.map_from_mcp_resource(r) for r in result.resources]
 
@@ -339,9 +337,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         """
         async with self:  # Ensure server is running
             if not self.capabilities.resources:
-                raise exceptions.ServerCapabilitiesError(
-                    f'Server does not support resources capability. Available capabilities: {self.capabilities}'
-                )
+                raise exceptions.ServerCapabilitiesError('Server does not support resources capability')
             result = await self._client.list_resource_templates()
         return [_mcp.map_from_mcp_resource_template(t) for t in result.resourceTemplates]
 
@@ -371,9 +367,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         resource_uri = uri if isinstance(uri, str) else uri.uri
         async with self:  # Ensure server is running
             if not self.capabilities.resources:
-                raise exceptions.ServerCapabilitiesError(
-                    f'Server does not support resources capability. Available capabilities: {self.capabilities}'
-                )
+                raise exceptions.ServerCapabilitiesError('Server does not support resources capability')
             result = await self._client.read_resource(AnyUrl(resource_uri))
         return (
             self._get_content(result.contents[0])
