@@ -8,10 +8,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 import pytest
-from fastmcp.client import PythonStdioTransport, SSETransport
-from fastmcp.exceptions import ToolError
 from inline_snapshot import snapshot
-from mcp.types import AnyUrl, BlobResourceContents, EmbeddedResource, ResourceLink, TextResourceContents
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
@@ -22,7 +19,7 @@ from pydantic_ai.usage import RunUsage
 from .conftest import try_import
 
 with try_import() as imports_successful:
-    from fastmcp.client import Client
+    from fastmcp.client import Client, PythonStdioTransport, SSETransport
     from fastmcp.client.transports import (
         FastMCPTransport,
         MCPConfigTransport,
@@ -30,11 +27,17 @@ with try_import() as imports_successful:
         StdioTransport,
         StreamableHttpTransport,
     )
+    from fastmcp.exceptions import ToolError
     from fastmcp.server.server import FastMCP
     from mcp.types import (
+        AnyUrl,
         AudioContent,
+        BlobResourceContents,
+        EmbeddedResource,
         ImageContent,
+        ResourceLink,
         TextContent,
+        TextResourceContents,
     )
 
     # Import the content mapping functions for testing

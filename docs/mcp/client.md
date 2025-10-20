@@ -6,4 +6,4 @@ The [MCP SDK-based Client](./mcp-client.md) offers more direct control by levera
 
 ## FastMCP-based Client
 
-The [FastMCP-based Client](./fastmcp-client.md) offers a higher-level API with additional capabilities like Tool Transformation, simpler OAuth configuration, and more.
+The [FastMCP-based Client](./fastmcp-client.md) offers a higher-level API with additional capabilities like Tool Transformation, simpler OAuth configuration, and more. The FastMCP Toolkit does not yet support integration with Pydantic AI for elicitation or sampling.
