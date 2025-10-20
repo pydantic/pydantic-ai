@@ -109,6 +109,57 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
 
+### Spreading AsyncIterables
+
+The `.map()` operation also works with `AsyncIterable` values. When mapping over an async iterable, the graph creates parallel tasks dynamically as values are yielded. This is particularly useful for streaming data or processing data that's being generated on-the-fly:
+
+```python {title="async_iterable_map.py"}
+import asyncio
+from dataclasses import dataclass
+
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import reduce_list_append
+
+
+@dataclass
+class SimpleState:
+    pass
+
+
+async def main():
+    g = GraphBuilder(state_type=SimpleState, output_type=list[int])
+
+    @g.stream
+    async def stream_numbers(ctx: StepContext[SimpleState, None, None]):
+        """Stream numbers with delays to simulate real-time data."""
+        for i in range(1, 4):
+            await asyncio.sleep(0.05)  # Simulate delay
+            yield i
+
+    @g.step
+    async def triple(ctx: StepContext[SimpleState, None, int]) -> int:
+        return ctx.inputs * 3
+
+    collect = g.join(reduce_list_append, initial_factory=list[int])
+
+    g.add(
+        g.edge_from(g.start_node).to(stream_numbers),
+        # Map over the async iterable - tasks created as items are yielded
+        g.edge_from(stream_numbers).map().to(triple),
+        g.edge_from(triple).to(collect),
+        g.edge_from(collect).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=SimpleState())
+    print(sorted(result))
+    #> [3, 6, 9]
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+
+This allows for progressive processing where downstream steps can start working on early results while later results are still being generated.
+
 ### Using `add_mapping_edge()`
 
 The convenience method [`add_mapping_edge()`][pydantic_graph.beta.graph_builder.GraphBuilder.add_mapping_edge] provides a simpler syntax:
@@ -396,6 +447,101 @@ async def main():
     #> Squared: [1, 4, 9]
     print(f'Tracked: {sorted(state.values)}')
     #> Tracked: [1, 2, 3]
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+
+## Edge Transformations
+
+You can transform data inline as it flows along edges using the `.transform()` method:
+
+```python {title="edge_transform.py"}
+from dataclasses import dataclass
+
+from pydantic_graph.beta import GraphBuilder, StepContext
+
+
+@dataclass
+class SimpleState:
+    pass
+
+
+async def main():
+    g = GraphBuilder(state_type=SimpleState, output_type=str)
+
+    @g.step
+    async def generate_number(ctx: StepContext[SimpleState, None, None]) -> int:
+        return 42
+
+    @g.step
+    async def format_output(ctx: StepContext[SimpleState, None, str]) -> str:
+        return f'The answer is: {ctx.inputs}'
+
+    # Transform the number to a string inline
+    g.add(
+        g.edge_from(g.start_node).to(generate_number),
+        g.edge_from(generate_number).transform(lambda ctx: str(ctx.inputs * 2)).to(format_output),
+        g.edge_from(format_output).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=SimpleState())
+    print(result)
+    #> The answer is: 84
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+
+The transform function receives a [`StepContext`][pydantic_graph.beta.step.StepContext] with the current inputs and has access to state and dependencies. This is useful for:
+
+- Converting data types between incompatible steps
+- Extracting specific fields from complex objects
+- Applying simple computations without creating a full step
+- Adapting data formats during routing
+
+Transforms can be chained and combined with other edge operations like `.map()` and `.label()`:
+
+```python {title="chained_transforms.py"}
+from dataclasses import dataclass
+
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import reduce_list_append
+
+
+@dataclass
+class SimpleState:
+    pass
+
+
+async def main():
+    g = GraphBuilder(state_type=SimpleState, output_type=list[str])
+
+    @g.step
+    async def generate_data(ctx: StepContext[SimpleState, None, None]) -> list[dict[str, int]]:
+        return [{'value': 10}, {'value': 20}, {'value': 30}]
+
+    @g.step
+    async def process_number(ctx: StepContext[SimpleState, None, int]) -> str:
+        return f'Processed: {ctx.inputs}'
+
+    collect = g.join(reduce_list_append, initial_factory=list[str])
+
+    g.add(
+        g.edge_from(g.start_node).to(generate_data),
+        # Transform to extract values, then map over them
+        g.edge_from(generate_data)
+        .transform(lambda ctx: [item['value'] for item in ctx.inputs])
+        .label('Extract values')
+        .map()
+        .to(process_number),
+        g.edge_from(process_number).to(collect),
+        g.edge_from(collect).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=SimpleState())
+    print(sorted(result))
+    #> ['Processed: 10', 'Processed: 20', 'Processed: 30']
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_

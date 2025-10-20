@@ -286,6 +286,77 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 
 The computation is: `(10 + 5) * 2 - 3 = 27`
 
+## Streaming Steps
+
+In addition to regular steps that return a single value, you can create streaming steps that yield multiple values over time using the [`@g.stream`][pydantic_graph.beta.graph_builder.GraphBuilder.stream] decorator:
+
+```python {title="streaming_step.py"}
+from dataclasses import dataclass
+
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import reduce_list_append
+
+
+@dataclass
+class SimpleState:
+    pass
+
+
+g = GraphBuilder(state_type=SimpleState, output_type=list[int])
+
+@g.stream
+async def generate_stream(ctx: StepContext[SimpleState, None, None]):
+    """Stream numbers from 1 to 5."""
+    for i in range(1, 6):
+        yield i
+
+@g.step
+async def square(ctx: StepContext[SimpleState, None, int]) -> int:
+    return ctx.inputs * ctx.inputs
+
+collect = g.join(reduce_list_append, initial_factory=list[int])
+
+g.add(
+    g.edge_from(g.start_node).to(generate_stream),
+    # The stream output is an AsyncIterable, so we can map over it
+    g.edge_from(generate_stream).map().to(square),
+    g.edge_from(square).to(collect),
+    g.edge_from(collect).to(g.end_node),
+)
+
+graph = g.build()
+
+async def main():
+    result = await graph.run(state=SimpleState())
+    print(sorted(result))
+    #> [1, 4, 9, 16, 25]
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+
+### How Streaming Steps Work
+
+Streaming steps return an `AsyncIterable` that yields values over time. When you use `.map()` on a streaming step's output, the graph processes each yielded value as it becomes available, creating parallel tasks dynamically. This is particularly useful for:
+
+- Processing data from APIs that stream responses
+- Handling real-time data feeds
+- Progressive processing of large datasets
+- Any scenario where you want to start processing results before all data is available
+
+Like regular steps, streaming steps can also have custom node IDs and labels:
+
+```python {title="labeled_stream.py" requires="streaming_step.py"}
+from pydantic_graph.beta import StepContext
+
+from streaming_step import SimpleState, g
+
+
+@g.stream(node_id='my_stream', label='Generate numbers progressively')
+async def labeled_stream(ctx: StepContext[SimpleState, None, None]):
+    for i in range(10):
+        yield i
+```
+
 ## Edge Building Convenience Methods
 
 The builder provides helper methods for common edge patterns:

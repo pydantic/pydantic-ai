@@ -317,7 +317,7 @@ class GraphTask:
     Used by the GraphRun to decide when to proceed through joins.
     """
 
-    task_id: TaskID = field(default_factory=lambda: TaskID(str(uuid.uuid4())))
+    task_id: TaskID = field(default_factory=lambda: TaskID(str(uuid.uuid4())), repr=False)
     """Unique identifier for this task."""
 
 

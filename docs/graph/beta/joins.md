@@ -1,5 +1,3 @@
-from mypyc.primitives.float_ops import int_to_float_op
-
 # Joins and Reducers
 
 Join nodes synchronize and aggregate data from parallel execution paths. They use **Reducers** to combine multiple inputs into a single output.
@@ -106,6 +104,51 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
 
+### `reduce_list_extend`
+
+[`reduce_list_extend`][pydantic_graph.beta.join.reduce_list_extend] extends a list with an iterable of items:
+
+```python {title="list_extend_reducer.py"}
+from dataclasses import dataclass
+
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import reduce_list_extend
+
+
+@dataclass
+class SimpleState:
+    pass
+
+
+async def main():
+    g = GraphBuilder(state_type=SimpleState, output_type=list[int])
+
+    @g.step
+    async def generate(ctx: StepContext[SimpleState, None, None]) -> list[int]:
+        return [1, 2, 3]
+
+    @g.step
+    async def create_range(ctx: StepContext[SimpleState, None, int]) -> list[int]:
+        """Create a range from 0 to the input value."""
+        return list(range(ctx.inputs))
+
+    collect = g.join(reduce_list_extend, initial_factory=list[int])
+
+    g.add(
+        g.edge_from(g.start_node).to(generate),
+        g.edge_from(generate).map().to(create_range),
+        g.edge_from(create_range).to(collect),
+        g.edge_from(collect).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=SimpleState())
+    print(sorted(result))
+    #> [0, 0, 0, 1, 1, 2]
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+
 ### `reduce_dict_update`
 
 [`reduce_dict_update`][pydantic_graph.beta.join.reduce_dict_update] merges dictionaries together:
@@ -199,6 +242,104 @@ async def main():
     result = await graph.run(state=state)
     print(result)
     #> 15
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+
+### `reduce_sum`
+
+[`reduce_sum`][pydantic_graph.beta.join.reduce_sum] sums numeric values:
+
+```python {title="sum_reducer.py"}
+from dataclasses import dataclass
+
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import reduce_sum
+
+
+@dataclass
+class SimpleState:
+    pass
+
+
+async def main():
+    g = GraphBuilder(state_type=SimpleState, output_type=int)
+
+    @g.step
+    async def generate(ctx: StepContext[SimpleState, None, None]) -> list[int]:
+        return [10, 20, 30, 40]
+
+    @g.step
+    async def identity(ctx: StepContext[SimpleState, None, int]) -> int:
+        return ctx.inputs
+
+    sum_join = g.join(reduce_sum, initial=0)
+
+    g.add(
+        g.edge_from(g.start_node).to(generate),
+        g.edge_from(generate).map().to(identity),
+        g.edge_from(identity).to(sum_join),
+        g.edge_from(sum_join).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=SimpleState())
+    print(result)
+    #> 100
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+
+### `ReduceFirstValue`
+
+[`ReduceFirstValue`][pydantic_graph.beta.join.ReduceFirstValue] returns the first value it receives and cancels all other parallel tasks. This is useful for "race" scenarios where you want the first successful result:
+
+```python {title="first_value_reducer.py"}
+import asyncio
+from dataclasses import dataclass
+
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import ReduceFirstValue
+
+
+@dataclass
+class SimpleState:
+    tasks_completed: int = 0
+
+
+async def main():
+    g = GraphBuilder(state_type=SimpleState, output_type=str)
+
+    @g.step
+    async def generate(ctx: StepContext[SimpleState, None, None]) -> list[int]:
+        return [1, 2, 3, 4, 5]
+
+    @g.step
+    async def slow_process(ctx: StepContext[SimpleState, None, int]) -> str:
+        """Simulate variable processing times."""
+        # Simulate different delays
+        await asyncio.sleep(ctx.inputs * 0.1)
+        ctx.state.tasks_completed += 1
+        return f'Result from task {ctx.inputs}'
+
+    # Use ReduceFirstValue to get the first result and cancel the rest
+    first_result = g.join(ReduceFirstValue[str](), initial=None, node_id='first_result')
+
+    g.add(
+        g.edge_from(g.start_node).to(generate),
+        g.edge_from(generate).map().to(slow_process),
+        g.edge_from(slow_process).to(first_result),
+        g.edge_from(first_result).to(g.end_node),
+    )
+
+    graph = g.build()
+    state = SimpleState()
+    result = await graph.run(state=state)
+
+    print(result)
+    #> Result from task 1
+    print(f'Tasks completed: {state.tasks_completed}')
+    #> Tasks completed: 1
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
@@ -330,6 +471,72 @@ async def main():
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+
+### Canceling Sibling Tasks
+
+Reducers with access to [`ReducerContext`][pydantic_graph.beta.join.ReducerContext] can call [`ctx.cancel_sibling_tasks()`][pydantic_graph.beta.join.ReducerContext.cancel_sibling_tasks] to cancel all other parallel tasks in the same fork. This is useful for early termination when you've found what you need:
+
+```python {title="cancel_siblings.py"}
+import asyncio
+from dataclasses import dataclass
+
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import ReducerContext
+
+
+@dataclass
+class SearchState:
+    searches_completed: int = 0
+
+
+def reduce_find_match(ctx: ReducerContext[SearchState, None], current: str | None, inputs: str) -> str | None:
+    """Return the first input that contains 'target' and cancel remaining tasks."""
+    if current is not None:
+        # We already found a match, ignore subsequent inputs
+        return current
+    if 'target' in inputs:
+        # Found a match! Cancel all other parallel tasks
+        ctx.cancel_sibling_tasks()
+        return inputs
+    return None
+
+
+async def main():
+    g = GraphBuilder(state_type=SearchState, output_type=str | None)
+
+    @g.step
+    async def generate_searches(ctx: StepContext[SearchState, None, None]) -> list[str]:
+        return ['item1', 'item2', 'target_item', 'item4', 'item5']
+
+    @g.step
+    async def search(ctx: StepContext[SearchState, None, str]) -> str:
+        """Simulate a slow search operation."""
+        await asyncio.sleep(0.1)
+        ctx.state.searches_completed += 1
+        return ctx.inputs
+
+    find_match = g.join(reduce_find_match, initial=None)
+
+    g.add(
+        g.edge_from(g.start_node).to(generate_searches),
+        g.edge_from(generate_searches).map().to(search),
+        g.edge_from(search).to(find_match),
+        g.edge_from(find_match).to(g.end_node),
+    )
+
+    graph = g.build()
+    state = SearchState()
+    result = await graph.run(state=state)
+
+    print(f'Found: {result}')
+    #> Found: target_item
+    print(f'Searches completed: {state.searches_completed}')
+    #> Searches completed: 3
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+
+Note that only 3 searches completed instead of all 5, because the reducer canceled the remaining tasks after finding a match.
 
 ## Multiple Joins
 

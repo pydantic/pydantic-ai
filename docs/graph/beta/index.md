@@ -185,6 +185,126 @@ Explore the detailed documentation for each feature:
 - [**Decisions**](decisions.md) - Implement conditional branching
 - [**Parallel Execution**](parallel.md) - Master broadcasting and mapping
 
+## Advanced Execution Control
+
+Beyond the basic [`graph.run()`][pydantic_graph.beta.graph.Graph.run] method, the beta API provides fine-grained control over graph execution.
+
+### Step-by-Step Execution
+
+Use [`graph.iter()`][pydantic_graph.beta.graph.Graph.iter] to execute the graph one step at a time:
+
+```python {title="step_by_step.py"}
+from dataclasses import dataclass
+
+from pydantic_graph.beta import GraphBuilder, StepContext
+
+
+@dataclass
+class CounterState:
+    value: int = 0
+
+
+async def main():
+    g = GraphBuilder(state_type=CounterState, output_type=int)
+
+    @g.step
+    async def increment(ctx: StepContext[CounterState, None, None]) -> int:
+        ctx.state.value += 1
+        return ctx.state.value
+
+    @g.step
+    async def double_it(ctx: StepContext[CounterState, None, int]) -> int:
+        return ctx.inputs * 2
+
+    g.add(
+        g.edge_from(g.start_node).to(increment),
+        g.edge_from(increment).to(double_it),
+        g.edge_from(double_it).to(g.end_node),
+    )
+
+    graph = g.build()
+    state = CounterState()
+
+    # Use iter() for step-by-step execution
+    async with graph.iter(state=state) as graph_run:
+        print(f'Initial state: {state.value}')
+        #> Initial state: 0
+
+        # Advance execution step by step
+        async for event in graph_run:
+            print(f'{state.value=} | {event=}')
+            #> state.value=0 | event=[GraphTask(node_id='increment', inputs=None)]
+            #> state.value=1 | event=[GraphTask(node_id='double_it', inputs=1)]
+            #> state.value=1 | event=[GraphTask(node_id='__end__', inputs=2)]
+            #> state.value=1 | event=EndMarker(_value=2)
+            if graph_run.output is not None:
+                print(f'Final output: {graph_run.output}')
+                #> Final output: 2
+                break
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+
+The [`GraphRun`][pydantic_graph.beta.graph.GraphRun] object provides:
+
+- **Async iteration**: Iterate through execution events
+- **`next_task` property**: Inspect upcoming tasks
+- **`output` property**: Check if the graph has completed and get the final output
+- **`next()` method**: Manually advance execution with optional value injection
+
+### Visualizing Graphs
+
+Generate Mermaid diagrams of your graph structure using [`graph.render()`][pydantic_graph.beta.graph.Graph.render]:
+
+```python {title="visualize_graph.py"}
+from dataclasses import dataclass
+
+from pydantic_graph.beta import GraphBuilder, StepContext
+
+
+@dataclass
+class SimpleState:
+    pass
+
+
+g = GraphBuilder(state_type=SimpleState, output_type=str)
+
+@g.step
+async def step_a(ctx: StepContext[SimpleState, None, None]) -> int:
+    return 10
+
+@g.step
+async def step_b(ctx: StepContext[SimpleState, None, int]) -> str:
+    return f'Result: {ctx.inputs}'
+
+g.add(
+    g.edge_from(g.start_node).to(step_a),
+    g.edge_from(step_a).to(step_b),
+    g.edge_from(step_b).to(g.end_node),
+)
+
+graph = g.build()
+
+# Generate a Mermaid diagram
+mermaid_diagram = graph.render(title='My Graph', direction='LR')
+print(mermaid_diagram)
+"""
+---
+title: My Graph
+---
+stateDiagram-v2
+  direction LR
+  step_a
+  step_b
+
+  [*] --> step_a
+  step_a --> step_b
+  step_b --> [*]
+"""
+```
+
+The rendered diagram can be displayed in documentation, notebooks, or any tool that supports Mermaid syntax.
+
 ## Comparison with Original API
 
 The original graph API (documented in the [main graph page](../../graph.md)) uses a class-based approach with [`BaseNode`][pydantic_graph.nodes.BaseNode] subclasses. The beta API uses a builder pattern with decorated functions, which provides:
