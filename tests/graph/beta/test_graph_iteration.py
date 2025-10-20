@@ -238,7 +238,7 @@ async def test_iter_early_termination():
 
     async with graph.iter(state=state) as run:
         event_count = 0
-        async for _ in run:
+        async for _ in run:  # pragma: no branch
             event_count += 1
             if event_count >= 2:
                 break  # Early termination

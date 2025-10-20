@@ -34,12 +34,11 @@ lint: ## Lint the code
 	uv run ruff format --check
 	uv run ruff check
 
-PYRIGHT_PYTHON ?= 3.10
-
+PYRIGHT_PYTHON ?= 3.13
 .PHONY: typecheck-pyright
 typecheck-pyright:
 	@# PYRIGHT_PYTHON_IGNORE_WARNINGS avoids the overhead of making a request to github on every invocation
-	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright --pythonversion $(PYRIGHT_PYTHON)
+	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYRIGHT_PYTHON)) uv run pyright --pythonversion $(PYRIGHT_PYTHON)
 
 .PHONY: typecheck-mypy
 typecheck-mypy:
@@ -63,6 +62,13 @@ test-all-python: ## Run tests on Python 3.10 to 3.13
 	UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --all-packages coverage run -p -m pytest
 	UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --all-packages coverage run -p -m pytest
 	UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras --all-packages coverage run -p -m pytest
+	@uv run coverage combine
+	@uv run coverage report
+
+PYTEST_PYTHON ?= 3.13
+.PHONY: test-specific-python
+test-specific-python: ## Run tests and collect coverage data using a specific python, specified by PYTEST_PYTHON env var
+	UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON)) uv run --python $(PYTEST_PYTHON) --all-extras --all-packages coverage run -p -m pytest -n auto --dist=loadgroup --durations=20
 	@uv run coverage combine
 	@uv run coverage report
 
