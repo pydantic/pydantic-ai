@@ -344,7 +344,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             )
             if (averages := report.averages()) is not None and averages.assertions is not None:
                 experiment_metadata = {'n_cases': len(self.cases), 'averages': averages}
-                eval_span.set_attribute('experiment.metadata', experiment_metadata)
+                eval_span.set_attribute('logfire.experiment.metadata', experiment_metadata)
                 eval_span.set_attribute('assertion_pass_rate', averages.assertions)
         return report
 
