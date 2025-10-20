@@ -312,7 +312,7 @@ async def main():
 
     @g.step
     async def generate(ctx: StepContext[SimpleState, None, None]) -> list[int]:
-        return [1, 2, 3, 4, 5]
+        return [1, 12, 13, 14, 15]
 
     @g.step
     async def slow_process(ctx: StepContext[SimpleState, None, int]) -> str:
