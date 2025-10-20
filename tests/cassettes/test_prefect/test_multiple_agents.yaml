@@ -1,0 +1,1116 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '105'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=EGlv.LzYbJ3w9GCuZFkTZc6oq0QWEOM0NG7aMJPGjvk-1759436802-1.0.1.1-6oxojh3oohGyLcgU4JW0tlAp58gjOtU_gxXDExM6TYMtkY__jPait0ymNkQmMfL4if.C.4i5xBwDmMoWScw7U9pDwoE_d_f999NvYqOWu0k;
+        _cfuvid=X9yhA1__xIYNmD8jrktglFeG98OLAwcfPSs_ukpzW4c-1759436802603-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of Mexico?
+        role: user
+      model: gpt-4o
+      stream: false
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '838'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-xgcwoiiqpw3hpu7oxktn2g9g
+      openai-processing-ms:
+      - '395'
+      openai-project:
+      - proj_nKlzMl1B51a3SCL1Rndf7JTx
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The capital of Mexico is Mexico City.
+          refusal: null
+          role: assistant
+      created: 1759436807
+      id: chatcmpl-CMKAxI1j1i8pyRCGCAxRcQlfvt49J
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_cbf1785567
+      usage:
+        completion_tokens: 8
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 14
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 22
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '4707'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=EGlv.LzYbJ3w9GCuZFkTZc6oq0QWEOM0NG7aMJPGjvk-1759436802-1.0.1.1-6oxojh3oohGyLcgU4JW0tlAp58gjOtU_gxXDExM6TYMtkY__jPait0ymNkQmMfL4if.C.4i5xBwDmMoWScw7U9pDwoE_d_f999NvYqOWu0k;
+        _cfuvid=X9yhA1__xIYNmD8jrktglFeG98OLAwcfPSs_ukpzW4c-1759436802603-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: 'Tell me: the capital of the country; the weather there; the product name'
+        role: user
+      model: gpt-4o
+      stream: true
+      stream_options:
+        include_usage: true
+      tool_choice: required
+      tools:
+      - function:
+          description: ''
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: get_country
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n
+            \       Temperature in Fahrenheit\n    "
+          name: celsius_to_fahrenheit
+          parameters:
+            additionalProperties: false
+            properties:
+              celsius:
+                type: number
+            required:
+            - celsius
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
+            forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
+          name: get_weather_forecast
+          parameters:
+            additionalProperties: false
+            properties:
+              location:
+                type: string
+            required:
+            - location
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: get_image_resource
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image_resource_link
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_audio_resource
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_audio_resource_link
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_product_name
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_product_name_link
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_dict
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_error
+          parameters:
+            additionalProperties: false
+            properties:
+              value:
+                default: false
+                type: boolean
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_none
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_multiple_items
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
+          name: get_log_level
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Echo the run context.\n\n    Args:\n        ctx: Context object containing request and session information.\n\n
+            \   Returns:\n        Dictionary with an echo message and the deps.\n    "
+          name: echo_deps
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: Use sampling callback.
+          name: use_sampling
+          parameters:
+            additionalProperties: false
+            properties:
+              foo:
+                type: string
+            required:
+            - foo
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Use elicitation callback to ask the user a question.
+          name: use_elicitation
+          parameters:
+            additionalProperties: false
+            properties:
+              question:
+                type: string
+            required:
+            - question
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: external
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            $defs:
+              Answer:
+                additionalProperties: false
+                properties:
+                  answer:
+                    type: string
+                  label:
+                    type: string
+                required:
+                - label
+                - answer
+                type: object
+            additionalProperties: false
+            properties:
+              answers:
+                items:
+                  $ref: '#/$defs/Answer'
+                type: array
+            required:
+            - answers
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"chatcmpl-CMKAyUumTn5CnEH23XUT0k1X8mUbu","object":"chat.completion.chunk","created":1759436808,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","usage":null,"choices":[{"index":0,"delta":{"role":"assistant","content":null},"logprobs":null,"finish_reason":null}],"obfuscation":"3V3AbYBE5dG"}
+
+        data: {"id":"chatcmpl-CMKAyUumTn5CnEH23XUT0k1X8mUbu","object":"chat.completion.chunk","created":1759436808,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","usage":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_YLpBLd2Jc52M9Haen7Wg7eD6","type":"function","function":{"name":"get_country","arguments":""}}]},"logprobs":null,"finish_reason":null}],"obfuscation":"o4uS7rYKOP"}
+
+        data: {"id":"chatcmpl-CMKAyUumTn5CnEH23XUT0k1X8mUbu","object":"chat.completion.chunk","created":1759436808,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","usage":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{}"}}]},"logprobs":null,"finish_reason":null}],"obfuscation":"dian"}
+
+        data: {"id":"chatcmpl-CMKAyUumTn5CnEH23XUT0k1X8mUbu","object":"chat.completion.chunk","created":1759436808,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","usage":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_Gvsr5eUu5FioxDbaq5yglsVP","type":"function","function":{"name":"get_product_name","arguments":""}}]},"logprobs":null,"finish_reason":null}],"obfuscation":"7fIwy"}
+
+        data: {"id":"chatcmpl-CMKAyUumTn5CnEH23XUT0k1X8mUbu","object":"chat.completion.chunk","created":1759436808,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","usage":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{}"}}]},"logprobs":null,"finish_reason":null}],"obfuscation":"AexQ"}
+
+        data: {"id":"chatcmpl-CMKAyUumTn5CnEH23XUT0k1X8mUbu","object":"chat.completion.chunk","created":1759436808,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"tool_calls"}],"usage":null,"obfuscation":"takK"}
+
+        data: {"id":"chatcmpl-CMKAyUumTn5CnEH23XUT0k1X8mUbu","object":"chat.completion.chunk","created":1759436808,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[],"usage":{"prompt_tokens":398,"completion_tokens":40,"total_tokens":438,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":"FlYkAKU1h0LO3"}
+
+        data: [DONE]
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - user-xgcwoiiqpw3hpu7oxktn2g9g
+      openai-processing-ms:
+      - '756'
+      openai-project:
+      - proj_nKlzMl1B51a3SCL1Rndf7JTx
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '5148'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=EGlv.LzYbJ3w9GCuZFkTZc6oq0QWEOM0NG7aMJPGjvk-1759436802-1.0.1.1-6oxojh3oohGyLcgU4JW0tlAp58gjOtU_gxXDExM6TYMtkY__jPait0ymNkQmMfL4if.C.4i5xBwDmMoWScw7U9pDwoE_d_f999NvYqOWu0k;
+        _cfuvid=X9yhA1__xIYNmD8jrktglFeG98OLAwcfPSs_ukpzW4c-1759436802603-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: 'Tell me: the capital of the country; the weather there; the product name'
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: get_country
+          id: call_YLpBLd2Jc52M9Haen7Wg7eD6
+          type: function
+        - function:
+            arguments: '{}'
+            name: get_product_name
+          id: call_Gvsr5eUu5FioxDbaq5yglsVP
+          type: function
+      - content: Mexico
+        role: tool
+        tool_call_id: call_YLpBLd2Jc52M9Haen7Wg7eD6
+      - content: Pydantic AI
+        role: tool
+        tool_call_id: call_Gvsr5eUu5FioxDbaq5yglsVP
+      model: gpt-4o
+      stream: true
+      stream_options:
+        include_usage: true
+      tool_choice: required
+      tools:
+      - function:
+          description: ''
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: get_country
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n
+            \       Temperature in Fahrenheit\n    "
+          name: celsius_to_fahrenheit
+          parameters:
+            additionalProperties: false
+            properties:
+              celsius:
+                type: number
+            required:
+            - celsius
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
+            forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
+          name: get_weather_forecast
+          parameters:
+            additionalProperties: false
+            properties:
+              location:
+                type: string
+            required:
+            - location
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: get_image_resource
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image_resource_link
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_audio_resource
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_audio_resource_link
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_product_name
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_product_name_link
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_dict
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_error
+          parameters:
+            additionalProperties: false
+            properties:
+              value:
+                default: false
+                type: boolean
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_none
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_multiple_items
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
+          name: get_log_level
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Echo the run context.\n\n    Args:\n        ctx: Context object containing request and session information.\n\n
+            \   Returns:\n        Dictionary with an echo message and the deps.\n    "
+          name: echo_deps
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: Use sampling callback.
+          name: use_sampling
+          parameters:
+            additionalProperties: false
+            properties:
+              foo:
+                type: string
+            required:
+            - foo
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Use elicitation callback to ask the user a question.
+          name: use_elicitation
+          parameters:
+            additionalProperties: false
+            properties:
+              question:
+                type: string
+            required:
+            - question
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: external
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            $defs:
+              Answer:
+                additionalProperties: false
+                properties:
+                  answer:
+                    type: string
+                  label:
+                    type: string
+                required:
+                - label
+                - answer
+                type: object
+            additionalProperties: false
+            properties:
+              answers:
+                items:
+                  $ref: '#/$defs/Answer'
+                type: array
+            required:
+            - answers
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"chatcmpl-CMKAzuw71tu2Qv3CCwMsPkVXL6m3H","object":"chat.completion.chunk","created":1759436809,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_jHlZLWaFnmlufAj8mwu4Ty3g","type":"function","function":{"name":"get_weather","arguments":""}}],"refusal":null},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"ciMXtk3At"}
+
+        data: {"id":"chatcmpl-CMKAzuw71tu2Qv3CCwMsPkVXL6m3H","object":"chat.completion.chunk","created":1759436809,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"3Zm"}
+
+        data: {"id":"chatcmpl-CMKAzuw71tu2Qv3CCwMsPkVXL6m3H","object":"chat.completion.chunk","created":1759436809,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"city"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"LV"}
+
+        data: {"id":"chatcmpl-CMKAzuw71tu2Qv3CCwMsPkVXL6m3H","object":"chat.completion.chunk","created":1759436809,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"O"}
+
+        data: {"id":"chatcmpl-CMKAzuw71tu2Qv3CCwMsPkVXL6m3H","object":"chat.completion.chunk","created":1759436809,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"Mexico"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-CMKAzuw71tu2Qv3CCwMsPkVXL6m3H","object":"chat.completion.chunk","created":1759436809,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" City"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"3"}
+
+        data: {"id":"chatcmpl-CMKAzuw71tu2Qv3CCwMsPkVXL6m3H","object":"chat.completion.chunk","created":1759436809,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"}"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"NHJ"}
+
+        data: {"id":"chatcmpl-CMKAzuw71tu2Qv3CCwMsPkVXL6m3H","object":"chat.completion.chunk","created":1759436809,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"tool_calls"}],"usage":null,"obfuscation":"qxkz"}
+
+        data: {"id":"chatcmpl-CMKAzuw71tu2Qv3CCwMsPkVXL6m3H","object":"chat.completion.chunk","created":1759436809,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[],"usage":{"prompt_tokens":457,"completion_tokens":15,"total_tokens":472,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":"wCZkMJEb7Fpn8"}
+
+        data: [DONE]
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - user-xgcwoiiqpw3hpu7oxktn2g9g
+      openai-processing-ms:
+      - '658'
+      openai-project:
+      - proj_nKlzMl1B51a3SCL1Rndf7JTx
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '5412'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=EGlv.LzYbJ3w9GCuZFkTZc6oq0QWEOM0NG7aMJPGjvk-1759436802-1.0.1.1-6oxojh3oohGyLcgU4JW0tlAp58gjOtU_gxXDExM6TYMtkY__jPait0ymNkQmMfL4if.C.4i5xBwDmMoWScw7U9pDwoE_d_f999NvYqOWu0k;
+        _cfuvid=X9yhA1__xIYNmD8jrktglFeG98OLAwcfPSs_ukpzW4c-1759436802603-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: 'Tell me: the capital of the country; the weather there; the product name'
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: get_country
+          id: call_YLpBLd2Jc52M9Haen7Wg7eD6
+          type: function
+        - function:
+            arguments: '{}'
+            name: get_product_name
+          id: call_Gvsr5eUu5FioxDbaq5yglsVP
+          type: function
+      - content: Mexico
+        role: tool
+        tool_call_id: call_YLpBLd2Jc52M9Haen7Wg7eD6
+      - content: Pydantic AI
+        role: tool
+        tool_call_id: call_Gvsr5eUu5FioxDbaq5yglsVP
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Mexico City"}'
+            name: get_weather
+          id: call_jHlZLWaFnmlufAj8mwu4Ty3g
+          type: function
+      - content: sunny
+        role: tool
+        tool_call_id: call_jHlZLWaFnmlufAj8mwu4Ty3g
+      model: gpt-4o
+      stream: true
+      stream_options:
+        include_usage: true
+      tool_choice: required
+      tools:
+      - function:
+          description: ''
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: get_country
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n
+            \       Temperature in Fahrenheit\n    "
+          name: celsius_to_fahrenheit
+          parameters:
+            additionalProperties: false
+            properties:
+              celsius:
+                type: number
+            required:
+            - celsius
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
+            forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
+          name: get_weather_forecast
+          parameters:
+            additionalProperties: false
+            properties:
+              location:
+                type: string
+            required:
+            - location
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: get_image_resource
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image_resource_link
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_audio_resource
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_audio_resource_link
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_product_name
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_product_name_link
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_dict
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_error
+          parameters:
+            additionalProperties: false
+            properties:
+              value:
+                default: false
+                type: boolean
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_none
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_multiple_items
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
+          name: get_log_level
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Echo the run context.\n\n    Args:\n        ctx: Context object containing request and session information.\n\n
+            \   Returns:\n        Dictionary with an echo message and the deps.\n    "
+          name: echo_deps
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: Use sampling callback.
+          name: use_sampling
+          parameters:
+            additionalProperties: false
+            properties:
+              foo:
+                type: string
+            required:
+            - foo
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Use elicitation callback to ask the user a question.
+          name: use_elicitation
+          parameters:
+            additionalProperties: false
+            properties:
+              question:
+                type: string
+            required:
+            - question
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: external
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            $defs:
+              Answer:
+                additionalProperties: false
+                properties:
+                  answer:
+                    type: string
+                  label:
+                    type: string
+                required:
+                - label
+                - answer
+                type: object
+            additionalProperties: false
+            properties:
+              answers:
+                items:
+                  $ref: '#/$defs/Answer'
+                type: array
+            required:
+            - answers
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_TJi2Gf3aj68Ijw5LdRJXWmzA","type":"function","function":{"name":"final_result","arguments":""}}],"refusal":null},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"v8zy8ft9"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"AYQ"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"answers"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"IxuNpYbNgtsPlgI"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":["}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"ii"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"K9C"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"label"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"j"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"k"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"Capital"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"JtvwWepk6yBKxTH"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" of"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"zOz"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" the"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"IL"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" Country"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"efY1cOdst5TVQi"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\",\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"n"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"answer"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"P"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"The"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"smF"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" capital"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"dQmWkuqXE0CeIZ"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" of"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"EmP"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" Mexico"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"58P1Mp5hfHf0xMX"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" is"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"rtV"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" Mexico"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"Dh9mGtwF3FvMaXm"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" City"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"S"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":".\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"3CL"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"},{\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"M"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"label"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"Q"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"a"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"Weather"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"jrLoCkRnnRpKOOa"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" in"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"1GP"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" the"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"tD"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" Capital"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"IlFvgx29CSltKn"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\",\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"B"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"answer"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"0"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"The"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"j6C"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" weather"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"CaddHmNDphcd75"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" in"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"v5t"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" Mexico"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"l599SR14aAOnFwt"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" City"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"T"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" is"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"USa"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" currently"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"Al8AyyPWxfV5"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" sunny"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":".\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"N4t"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"},{\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"p"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"label"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"0"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"M"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"Product"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"m1SmP9Mjiu7e0Ah"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" Name"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"Y"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\",\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"8"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"answer"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"F"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"The"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"j80"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" product"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"jHtiX5MZMwYT4J"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" name"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"z"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" is"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"oXo"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" P"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"cmNY"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"yd"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"eCMt"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"antic"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"v"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" AI"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"Gsh"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":".\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"JzJ"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"XcbQm"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"]}"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"yNax"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"tool_calls"}],"usage":null,"obfuscation":"yr1S"}
+
+        data: {"id":"chatcmpl-CMKB0u5q9WXh4O7ndt9D07U3Rs7Sh","object":"chat.completion.chunk","created":1759436810,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[],"usage":{"prompt_tokens":482,"completion_tokens":68,"total_tokens":550,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":"YwxPjYfoXZDYS"}
+
+        data: [DONE]
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - user-xgcwoiiqpw3hpu7oxktn2g9g
+      openai-processing-ms:
+      - '483'
+      openai-project:
+      - proj_nKlzMl1B51a3SCL1Rndf7JTx
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...
