@@ -4,7 +4,6 @@ from __future__ import annotations as _annotations
 
 import os
 from typing import TYPE_CHECKING, Any, Literal, overload
-from urllib.parse import urljoin
 
 import httpx
 
@@ -84,22 +83,22 @@ def gateway_provider(
             ' to use the Pydantic AI Gateway provider.'
         )
 
-    base_url = base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', 'http://localhost:8787')
+    base_url = base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
     http_client = http_client or cached_async_http_client(provider=f'gateway-{upstream_provider}')
     http_client.event_hooks = {'request': [_request_hook]}
 
     if upstream_provider in ('openai', 'openai-chat'):
         from .openai import OpenAIProvider
 
-        return OpenAIProvider(api_key=api_key, base_url=urljoin(base_url, 'openai'), http_client=http_client)
+        return OpenAIProvider(api_key=api_key, base_url=_merge_url_path(base_url, 'openai'), http_client=http_client)
     elif upstream_provider == 'openai-responses':
         from .openai import OpenAIProvider
 
-        return OpenAIProvider(api_key=api_key, base_url=urljoin(base_url, 'openai'), http_client=http_client)
+        return OpenAIProvider(api_key=api_key, base_url=_merge_url_path(base_url, 'openai'), http_client=http_client)
     elif upstream_provider == 'groq':
         from .groq import GroqProvider
 
-        return GroqProvider(api_key=api_key, base_url=urljoin(base_url, 'groq'), http_client=http_client)
+        return GroqProvider(api_key=api_key, base_url=_merge_url_path(base_url, 'groq'), http_client=http_client)
     elif upstream_provider == 'anthropic':
         from anthropic import AsyncAnthropic
 
@@ -108,7 +107,7 @@ def gateway_provider(
         return AnthropicProvider(
             anthropic_client=AsyncAnthropic(
                 auth_token=api_key,
-                base_url=urljoin(base_url, 'anthropic'),
+                base_url=_merge_url_path(base_url, 'anthropic'),
                 http_client=http_client,
             )
         )
@@ -122,7 +121,7 @@ def gateway_provider(
                 vertexai=True,
                 api_key='unset',
                 http_options={
-                    'base_url': f'{base_url}/google-vertex',
+                    'base_url': _merge_url_path(base_url, 'google-vertex'),
                     'headers': {'User-Agent': get_user_agent(), 'Authorization': api_key},
                     # TODO(Marcelo): Until https://github.com/googleapis/python-genai/issues/1357 is solved.
                     'async_client_args': {
@@ -185,3 +184,13 @@ async def _request_hook(request: httpx.Request) -> httpx.Request:
     request.headers.update(headers)
 
     return request
+
+
+def _merge_url_path(base_url: str, path: str) -> str:
+    """Merge a base URL and a path.
+
+    Args:
+        base_url: The base URL to merge.
+        path: The path to merge.
+    """
+    return base_url.rstrip('/') + '/' + path.lstrip('/')

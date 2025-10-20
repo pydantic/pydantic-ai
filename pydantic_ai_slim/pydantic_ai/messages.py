@@ -595,9 +595,13 @@ class BinaryImage(BinaryContent):
         media_type: str,
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         kind: Literal['binary'] = 'binary',
+        _identifier: str | None = None,
     ):
-        super().__init__(data=data, media_type=media_type, identifier=identifier, vendor_metadata=vendor_metadata)
+        super().__init__(
+            data=data, media_type=media_type, identifier=identifier or _identifier, vendor_metadata=vendor_metadata
+        )
 
         if not self.is_image:
             raise ValueError('`BinaryImage` must be have a media type that starts with "image/"')  # pragma: no cover
@@ -1047,6 +1051,13 @@ class BaseToolCallPart:
 
     In case the tool call id is not provided by the model, Pydantic AI will generate a random one.
     """
+
+    _: KW_ONLY
+
+    id: str | None = None
+    """An optional identifier of the tool call part, separate from the tool call ID.
+
+    This is used by some APIs like OpenAI Responses."""
 
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.

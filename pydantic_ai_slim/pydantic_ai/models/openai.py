@@ -284,6 +284,7 @@ class OpenAIChatModel(Model):
             'together',
             'vercel',
             'litellm',
+            'nebius',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -312,6 +313,7 @@ class OpenAIChatModel(Model):
             'together',
             'vercel',
             'litellm',
+            'nebius',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -339,6 +341,7 @@ class OpenAIChatModel(Model):
             'together',
             'vercel',
             'litellm',
+            'nebius',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -900,7 +903,7 @@ class OpenAIResponsesModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together']
+        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'nebius']
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
@@ -1006,7 +1009,12 @@ class OpenAIResponsesModel(Model):
                         items.append(TextPart(content.text, id=item.id))
             elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(
-                    ToolCallPart(item.name, item.arguments, tool_call_id=_combine_tool_call_ids(item.call_id, item.id))
+                    ToolCallPart(
+                        item.name,
+                        item.arguments,
+                        tool_call_id=item.call_id,
+                        id=item.id,
+                    )
                 )
             elif isinstance(item, responses.ResponseCodeInterpreterToolCall):
                 call_part, return_part, file_parts = _map_code_interpreter_tool_call(item, self.system)
@@ -1180,7 +1188,7 @@ class OpenAIResponsesModel(Model):
                 truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
-                previous_response_id=previous_response_id,
+                previous_response_id=previous_response_id or NOT_GIVEN,
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 text=text or NOT_GIVEN,
@@ -1363,6 +1371,7 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(item, ToolCallPart):
                         call_id = _guard_tool_call_id(t=item)
                         call_id, id = _split_combined_tool_call_id(call_id)
+                        id = id or item.id
 
                         param = responses.ResponseFunctionToolCallParam(
                             name=item.tool_name,
@@ -1728,7 +1737,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         vendor_part_id=chunk.item.id,
                         tool_name=chunk.item.name,
                         args=chunk.item.arguments,
-                        tool_call_id=_combine_tool_call_ids(chunk.item.call_id, chunk.item.id),
+                        tool_call_id=chunk.item.call_id,
+                        id=chunk.item.id,
                     )
                 elif isinstance(chunk.item, responses.ResponseReasoningItem):
                     pass
@@ -1960,18 +1970,15 @@ def _map_usage(
     )
 
 
-def _combine_tool_call_ids(call_id: str, id: str | None) -> str:
-    # When reasoning, the Responses API requires the `ResponseFunctionToolCall` to be returned with both the `call_id` and `id` fields.
-    # Our `ToolCallPart` has only the `call_id` field, so we combine the two fields into a single string.
-    return f'{call_id}|{id}' if id else call_id
-
-
 def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
+    # When reasoning, the Responses API requires the `ResponseFunctionToolCall` to be returned with both the `call_id` and `id` fields.
+    # Before our `ToolCallPart` gained the `id` field alongside `tool_call_id` field, we combined the two fields into a single string stored on `tool_call_id`.
+
     if '|' in combined_id:
         call_id, id = combined_id.split('|', 1)
         return call_id, id
     else:
-        return combined_id, None  # pragma: no cover
+        return combined_id, None
 
 
 def _map_code_interpreter_tool_call(
