@@ -83,7 +83,7 @@ def gateway_provider(
             ' to use the Pydantic AI Gateway provider.'
         )
 
-    base_url = base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', 'http://localhost:8787/proxy')
+    base_url = base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
     http_client = http_client or cached_async_http_client(provider=f'gateway-{upstream_provider}')
     http_client.event_hooks = {'request': [_request_hook]}
 
