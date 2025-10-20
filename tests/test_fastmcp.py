@@ -592,12 +592,18 @@ server.run()"""
         fastmcp_server = FastMCP('test_server')
 
         @fastmcp_server.tool()
-        def test_tool(param1: str, param2: int = 0) -> str: ...
+        def test_tool(param1: str, param2: int = 0) -> str:
+            return f'param1={param1}, param2={param2}'
 
         toolset = FastMCPToolset(fastmcp_server)
         async with toolset:
             tools = await toolset.get_tools(run_context)
             assert 'test_tool' in tools
+
+            result = await toolset.call_tool(
+                name='test_tool', tool_args={'param1': 'hello', 'param2': 42}, ctx=run_context, tool=tools['test_tool']
+            )
+            assert result == {'result': 'param1=hello, param2=42'}
 
     async def test_from_mcp_config_dict(self):
         """Test creating toolset from MCP config dictionary."""
