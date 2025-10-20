@@ -10,6 +10,8 @@ from httpx import Timeout
 from inline_snapshot import Is, snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
+from unittest.mock import AsyncMock
+from uuid import uuid4
 
 from pydantic_ai import (
     AudioUrl,
@@ -2929,3 +2931,154 @@ async def test_google_vertexai_image_generation(allow_model_requests: None, vert
             identifier='f3edd8',
         )
     )
+
+
+async def test_google_model_stream_malformed_function_call_continue(
+    allow_model_requests: None, google_provider: GoogleProvider, monkeypatch: pytest.MonkeyPatch
+):
+    """Test that the model can continue streaming after a malformed function call."""
+    from unittest.mock import MagicMock
+
+    from google.genai.types import Candidate, Content, GenerateContentResponse, Part
+
+    mock_stream = AsyncMock()
+
+    def create_mock_response(**kwargs):
+        mock = MagicMock(spec=GenerateContentResponse)
+        for key, value in kwargs.items():
+            setattr(mock, key, value)
+        mock.model_version = 'gemini-1.5-flash'
+        mock.create_time = None
+        mock.response_id = 'test-response-id'
+        return mock
+
+    def create_mock_candidate(**kwargs):
+        mock = MagicMock(spec=Candidate)
+        for key, value in kwargs.items():
+            setattr(mock, key, value)
+        return mock
+    
+    def create_mock_content(*parts):
+        mock = MagicMock(spec=Content)
+        mock.parts = list(parts)
+        return mock
+
+    def create_mock_part(**kwargs):
+        mock = MagicMock(spec=Part)
+        mock.text = None
+        mock.function_call = None
+        for key, value in kwargs.items():
+            setattr(mock, key, value)
+        return mock
+
+
+    async def mock_stream_iterator():
+        # This part is a bit of a fiction, in reality the tool call and return would not be in the same stream.
+        # But for testing the malformed function call in between, this is fine.
+        yield create_mock_response(
+            candidates=[
+                create_mock_candidate(
+                    content=create_mock_content(
+                        create_mock_part(function_call=MagicMock(name='get_capital', args={'country': 'France'}))
+                    ),
+                    finish_reason=None,
+                )
+            ]
+        )
+
+        yield create_mock_response(
+            candidates=[create_mock_candidate(content=None, finish_reason='MALFORMED_FUNCTION_CALL')]
+        )
+        
+        yield create_mock_response(
+            candidates=[
+                create_mock_candidate(
+                    content=create_mock_content(create_mock_part(text='Here is the capital.')), finish_reason=None
+                )
+            ]
+        )
+
+        yield create_mock_response(candidates=[create_mock_candidate(content=None, finish_reason='STOP')])
+
+    mock_stream.return_value = mock_stream_iterator()
+    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    monkeypatch.setattr(model.client.aio.models, 'generate_content_stream', mock_stream)
+
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_capital(country: str) -> str:
+        """Get the capital of a country."""
+        return 'Paris' if country == 'France' else 'Unknown'
+
+    async with agent.run_stream('What is the capital of France?') as result:
+        data = await result.get_output()
+
+    assert data == 'Here is the capital.'
+    assert mock_stream.call_count == 1
+
+
+async def test_google_model_stream_malformed_function_call_retry(
+    allow_model_requests: None, google_provider: GoogleProvider, monkeypatch: pytest.MonkeyPatch
+):
+    """Test that the model retries when the stream only contains a malformed function call."""
+    from unittest.mock import MagicMock
+
+    from google.genai.types import Candidate, Content, GenerateContentResponse, Part
+
+    mock_stream = AsyncMock()
+
+    def create_mock_response(**kwargs):
+        mock = MagicMock(spec=GenerateContentResponse)
+        for key, value in kwargs.items():
+            setattr(mock, key, value)
+        mock.model_version = 'gemini-1.5-flash'
+        mock.create_time = None
+        mock.response_id = 'test-response-id'
+        return mock
+
+    def create_mock_candidate(**kwargs):
+        mock = MagicMock(spec=Candidate)
+        for key, value in kwargs.items():
+            setattr(mock, key, value)
+        return mock
+    
+    def create_mock_content(*parts):
+        mock = MagicMock(spec=Content)
+        mock.parts = list(parts)
+        return mock
+
+    def create_mock_part(**kwargs):
+        mock = MagicMock(spec=Part)
+        mock.text = None
+        for key, value in kwargs.items():
+            setattr(mock, key, value)
+        return mock
+
+    async def first_call_iterator():
+        yield create_mock_response(
+            candidates=[create_mock_candidate(content=None, finish_reason='MALFORMED_FUNCTION_CALL')]
+        )
+
+    async def second_call_iterator():
+        yield create_mock_response(
+            candidates=[
+                create_mock_candidate(
+                    content=create_mock_content(create_mock_part(text='Successful response')), finish_reason=None
+                )
+            ]
+        )
+        yield create_mock_response(candidates=[create_mock_candidate(content=None, finish_reason='STOP')])
+
+    mock_stream.side_effect = [first_call_iterator(), second_call_iterator()]
+
+    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    monkeypatch.setattr(model.client.aio.models, 'generate_content_stream', mock_stream)
+
+    agent = Agent(model, retries=1)
+
+    async with agent.run_stream('Some prompt') as result:
+        data = await result.get_output()
+
+    assert data == 'Successful response'
+    assert mock_stream.call_count == 2

@@ -640,7 +640,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 if candidate.finish_reason == 'STOP':  # pragma: no cover
                     # Normal completion - skip this chunk
                     continue
-                elif candidate.finish_reason == 'MALFORMED_FUNCTION_CALL':  # pragma: no cover
+                elif candidate.finish_reason == 'MALFORMED_FUNCTION_CALL':
                     continue
                 elif candidate.finish_reason == 'SAFETY':  # pragma: no cover
                     raise UnexpectedModelBehavior('Safety settings triggered', str(chunk))
