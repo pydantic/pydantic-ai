@@ -66,4 +66,3 @@ toolset = FastMCPToolset(fastmcp_server)
 
 agent = Agent('openai:gpt-5', toolsets=[toolset])
 ```
-
