@@ -36,6 +36,14 @@ __all__ = [
     'TemporalWrapperToolset',
 ]
 
+# We need eagerly import the anyio backends or it will happens inside workflow code and temporal has issues
+import anyio._backends._asyncio  # pyright: ignore[reportUnusedImport]
+
+try:
+    import anyio._backends._trio  # noqa F401  # pyright: ignore[reportUnusedImport]
+except ImportError:
+    pass
+
 
 class PydanticAIPlugin(ClientPlugin, WorkerPlugin):
     """Temporal client and worker plugin for Pydantic AI."""
