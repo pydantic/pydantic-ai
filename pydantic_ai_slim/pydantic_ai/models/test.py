@@ -17,6 +17,7 @@ from ..exceptions import UserError
 from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    FilePart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -110,6 +111,10 @@ class TestModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         self.last_model_request_parameters = model_request_parameters
         model_response = self._request(messages, model_settings, model_request_parameters)
         model_response.usage = _estimate_usage([*messages, model_response])
@@ -123,6 +128,10 @@ class TestModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         self.last_model_request_parameters = model_request_parameters
 
         model_response = self._request(messages, model_settings, model_request_parameters)
@@ -319,6 +328,9 @@ class TestStreamedResponse(StreamedResponse):
             elif isinstance(part, ThinkingPart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate ThinkingPart on TestModel.
                 assert False, "This should be unreachable — we don't generate ThinkingPart on TestModel."
+            elif isinstance(part, FilePart):  # pragma: no cover
+                # NOTE: There's no way to reach this part of the code, since we don't generate FilePart on TestModel.
+                assert False, "This should be unreachable — we don't generate FilePart on TestModel."
             else:
                 assert_never(part)
 

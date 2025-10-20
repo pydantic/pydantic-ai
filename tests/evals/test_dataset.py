@@ -4,9 +4,10 @@ import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
+import yaml
 from dirty_equals import HasRepr, IsNumber
 from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
@@ -106,7 +107,7 @@ def example_cases() -> list[Case[TaskInput, TaskOutput, TaskMetadata]]:
 def example_dataset(
     example_cases: list[Case[TaskInput, TaskOutput, TaskMetadata]],
 ) -> Dataset[TaskInput, TaskOutput, TaskMetadata]:
-    return Dataset[TaskInput, TaskOutput, TaskMetadata](cases=example_cases)
+    return Dataset[TaskInput, TaskOutput, TaskMetadata](name='example', cases=example_cases)
 
 
 @pytest.fixture
@@ -820,8 +821,27 @@ async def test_serialization_to_yaml(example_dataset: Dataset[TaskInput, TaskOut
     # Test loading back
     loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
     assert len(loaded_dataset.cases) == 2
+    assert loaded_dataset.name == 'example'
     assert loaded_dataset.cases[0].name == 'case1'
     assert loaded_dataset.cases[0].inputs.query == 'What is 2+2?'
+
+
+async def test_deserializing_without_name(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path
+):
+    """Test serializing a dataset to YAML."""
+    # Save the dataset
+    yaml_path = tmp_path / 'test_cases.yaml'
+    example_dataset.to_file(yaml_path)
+
+    # Rewrite the file _without_ a name to test deserializing a name-less file
+    obj = yaml.safe_load(yaml_path.read_text())
+    obj.pop('name', None)
+    yaml_path.write_text(yaml.dump(obj))
+
+    # Test loading results in the name coming from the filename stem
+    loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
+    assert loaded_dataset.name == 'test_cases'
 
 
 async def test_serialization_to_json(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path):
@@ -843,6 +863,38 @@ async def test_serialization_to_json(example_dataset: Dataset[TaskInput, TaskOut
     assert (tmp_path / schema).exists()
 
 
+def test_serializing_parts_with_discriminators(tmp_path: Path):
+    class Foo(BaseModel):
+        foo: str
+        kind: Literal['foo'] = 'foo'
+
+    class Bar(BaseModel):
+        bar: str
+        kind: Literal['bar'] = 'bar'
+
+    items = [Foo(foo='foo'), Bar(bar='bar')]
+
+    dataset = Dataset[list[Foo | Bar]](cases=[Case(inputs=items)])
+    yaml_path = tmp_path / 'test_cases.yaml'
+    dataset.to_file(yaml_path)
+
+    loaded_dataset = Dataset[list[Foo | Bar]].from_file(yaml_path)
+    assert loaded_dataset == snapshot(
+        Dataset(
+            name='test_cases',
+            cases=[
+                Case(
+                    name=None,
+                    inputs=[
+                        Foo(foo='foo'),
+                        Bar(bar='bar'),
+                    ],
+                )
+            ],
+        )
+    )
+
+
 def test_serialization_errors(tmp_path: Path):
     with pytest.raises(ValueError) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(tmp_path / 'test_cases.abc')
@@ -855,6 +907,7 @@ def test_serialization_errors(tmp_path: Path):
 async def test_from_text():
     """Test creating a dataset from text."""
     dataset_dict = {
+        'name': 'my dataset',
         'cases': [
             {
                 'name': '1',
@@ -874,6 +927,7 @@ async def test_from_text():
     }
 
     loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
+    assert loaded_dataset.name == 'my dataset'
     assert loaded_dataset.cases == snapshot(
         [
             Case(
@@ -1241,7 +1295,7 @@ async def test_dataset_evaluate_with_custom_name(example_dataset: Dataset[TaskIn
     async def task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer=inputs.query.upper())
 
-    report = await example_dataset.evaluate(task, name='custom_task')
+    report = await example_dataset.evaluate(task, task_name='custom_task')
     assert report.name == 'custom_task'
 
 
@@ -1491,42 +1545,26 @@ async def test_evaluate_async_logfire(
             (
                 'evaluate {name}',
                 {
-                    'name': 'mock_async_task',
-                    'n_cases': 2,
                     'assertion_pass_rate': 1.0,
-                    'logfire.msg_template': 'evaluate {name}',
-                    'logfire.msg': 'evaluate mock_async_task',
-                    'experiment.metadata': {
-                        'n_cases': 2,
-                        'averages': {
-                            'name': 'Averages',
-                            'scores': {'confidence': 1.0},
-                            'labels': {},
-                            'metrics': {},
-                            'assertions': 1.0,
-                            'task_duration': 1.0,
-                            'total_duration': 9.0,
-                        },
-                    },
-                    'logfire.span_type': 'span',
+                    'dataset_name': 'example',
+                    'gen_ai.operation.name': 'experiment',
                     'logfire.json_schema': {
-                        'type': 'object',
                         'properties': {
-                            'name': {},
-                            'n_cases': {},
-                            'experiment.metadata': {
-                                'type': 'object',
-                                'properties': {
-                                    'averages': {
-                                        'type': 'object',
-                                        'title': 'ReportCaseAggregate',
-                                        'x-python-datatype': 'PydanticModel',
-                                    }
-                                },
-                            },
                             'assertion_pass_rate': {},
+                            'dataset_name': {},
+                            'gen_ai.operation.name': {},
+                            'n_cases': {},
+                            'name': {},
+                            'task_name': {},
                         },
+                        'type': 'object',
                     },
+                    'logfire.msg': 'evaluate mock_async_task',
+                    'logfire.msg_template': 'evaluate {name}',
+                    'logfire.span_type': 'span',
+                    'n_cases': 2,
+                    'name': 'mock_async_task',
+                    'task_name': 'mock_async_task',
                 },
             ),
             (

@@ -7,8 +7,16 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import (
-    Agent,
+from pydantic_ai import Agent
+from pydantic_ai.direct import (
+    StreamedResponseSync,
+    _prepare_model,  # pyright: ignore[reportPrivateUsage]
+    model_request,
+    model_request_stream,
+    model_request_stream_sync,
+    model_request_sync,
+)
+from pydantic_ai.messages import (
     FinalResultEvent,
     ModelMessage,
     ModelRequest,
@@ -19,21 +27,13 @@ from pydantic_ai import (
     TextPartDelta,
     ToolCallPart,
 )
-from pydantic_ai.direct import (
-    StreamedResponseSync,
-    _prepare_model,  # pyright: ignore[reportPrivateUsage]
-    model_request,
-    model_request_stream,
-    model_request_stream_sync,
-    model_request_sync,
-)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsNow, IsStr
+from .conftest import IsDatetime, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -93,6 +93,15 @@ def test_model_request_stream_sync():
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='tool ')),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='calls)')),
             ]
+        )
+        assert stream.response == snapshot(
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+            )
         )
 
         repr_str = repr(stream)

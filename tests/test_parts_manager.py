@@ -8,7 +8,6 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import (
     BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     PartDeltaEvent,
     PartStartEvent,
     TextPart,
@@ -583,12 +582,12 @@ def test_handle_thinking_delta_no_content_or_signature():
         manager.handle_thinking_delta(vendor_part_id='thinking', content=None, signature=None)
 
 
-def test_handle_builtin_tool_call_part():
+def test_handle_part():
     manager = ModelResponsePartsManager()
 
     part = BuiltinToolCallPart(tool_name='tool1', args='{"arg1": ')
 
-    event = manager.handle_builtin_tool_call_part(vendor_part_id='builtin', part=part)
+    event = manager.handle_part(vendor_part_id='builtin', part=part)
     assert event == snapshot(PartStartEvent(index=0, part=part))
     assert manager.get_parts() == snapshot([part])
 
@@ -601,36 +600,14 @@ def test_handle_builtin_tool_call_part():
         [BuiltinToolCallPart(tool_name='tool1', args='{"arg1": "value1"}', tool_call_id=part.tool_call_id)]
     )
 
-    # Override it with handle_builtin_tool_call_part
+    # Override it with handle_part
     part2 = BuiltinToolCallPart(tool_name='tool1', args='{"arg2": ')
-    event = manager.handle_builtin_tool_call_part(vendor_part_id='builtin', part=part2)
+    event = manager.handle_part(vendor_part_id='builtin', part=part2)
     assert event == snapshot(PartStartEvent(index=0, part=part2))
     assert manager.get_parts() == snapshot([part2])
 
     # Finally, demonstrate behavior when no vendor_part_id is provided:
     part3 = BuiltinToolCallPart(tool_name='tool1', args='{"arg3": ')
-    event = manager.handle_builtin_tool_call_part(vendor_part_id=None, part=part3)
-    assert event == snapshot(PartStartEvent(index=1, part=part3))
-    assert manager.get_parts() == snapshot([part2, part3])
-
-
-def test_handle_builtin_tool_return_part():
-    manager = ModelResponsePartsManager()
-
-    part = BuiltinToolReturnPart(tool_name='tool1', content={'arg1': 'value1'})
-
-    event = manager.handle_builtin_tool_return_part(vendor_part_id='builtin', part=part)
-    assert event == snapshot(PartStartEvent(index=0, part=part))
-    assert manager.get_parts() == snapshot([part])
-
-    # Override it with handle_builtin_tool_call_part
-    part2 = BuiltinToolReturnPart(tool_name='tool1', content={'arg2': 'value2'})
-    event = manager.handle_builtin_tool_return_part(vendor_part_id='builtin', part=part2)
-    assert event == snapshot(PartStartEvent(index=0, part=part2))
-    assert manager.get_parts() == snapshot([part2])
-
-    # Finally, demonstrate behavior when no vendor_part_id is provided:
-    part3 = BuiltinToolReturnPart(tool_name='tool1', content={'arg3': 'value3'})
-    event = manager.handle_builtin_tool_return_part(vendor_part_id=None, part=part3)
+    event = manager.handle_part(vendor_part_id=None, part=part3)
     assert event == snapshot(PartStartEvent(index=1, part=part3))
     assert manager.get_parts() == snapshot([part2, part3])

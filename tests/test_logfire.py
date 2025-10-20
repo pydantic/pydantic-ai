@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from dirty_equals import IsInt, IsJson, IsList
@@ -10,7 +10,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import NotRequired, TypedDict
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -31,6 +31,7 @@ else:
 
 class SpanSummary(TypedDict):
     id: int
+    name: str
     message: str
     children: NotRequired[list[SpanSummary]]
 
@@ -49,7 +50,9 @@ class LogfireSummary:
         id_counter = 0
         for span in spans:
             tid = span['context']['trace_id'], span['context']['span_id']
-            span_lookup[tid] = span_summary = SpanSummary(id=id_counter, message=span['attributes']['logfire.msg'])
+            span_lookup[tid] = span_summary = SpanSummary(
+                id=id_counter, name=span['name'], message=span['attributes']['logfire.msg']
+            )
             self.attributes[id_counter] = span['attributes']
             id_counter += 1
             if parent := span['parent']:
@@ -76,6 +79,7 @@ def get_logfire_summary(capfire: CaptureLogfire) -> Callable[[], LogfireSummary]
         InstrumentationSettings(version=1, event_mode='attributes'),
         InstrumentationSettings(version=1, event_mode='logs'),
         InstrumentationSettings(version=2),
+        InstrumentationSettings(version=3),
     ],
 )
 def test_logfire(
@@ -97,31 +101,101 @@ def test_logfire(
         assert summary.traces == []
         return
 
-    assert summary.traces == snapshot(
-        [
-            {
-                'id': 0,
-                'message': 'my_agent run',
-                'children': [
-                    {'id': 1, 'message': 'chat test'},
-                    {
-                        'id': 2,
-                        'message': 'running 1 tool',
-                        'children': [
-                            {'id': 3, 'message': 'running tool: my_ret'},
-                        ],
-                    },
-                    {'id': 4, 'message': 'chat test'},
-                ],
-            }
-        ]
-    )
+    if isinstance(instrument, InstrumentationSettings) and instrument.version == 3:
+        assert summary.traces == snapshot(
+            [
+                {
+                    'id': 0,
+                    'name': 'invoke_agent my_agent',
+                    'message': 'my_agent run',
+                    'children': [
+                        {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                        {
+                            'id': 2,
+                            'name': 'running tools',
+                            'message': 'running 1 tool',
+                            'children': [
+                                {'id': 3, 'name': 'execute_tool my_ret', 'message': 'running tool: my_ret'},
+                            ],
+                        },
+                        {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                    ],
+                }
+            ]
+        )
+    else:
+        assert summary.traces == snapshot(
+            [
+                {
+                    'id': 0,
+                    'name': 'agent run',
+                    'message': 'my_agent run',
+                    'children': [
+                        {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                        {
+                            'id': 2,
+                            'name': 'running tools',
+                            'message': 'running 1 tool',
+                            'children': [
+                                {'id': 3, 'name': 'running tool', 'message': 'running tool: my_ret'},
+                            ],
+                        },
+                        {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                    ],
+                }
+            ]
+        )
 
-    if instrument is True or isinstance(instrument, InstrumentationSettings) and instrument.version == 2:
+    if instrument is True or (isinstance(instrument, InstrumentationSettings) and instrument.version in (2, 3)):
+        if instrument is True or isinstance(instrument, InstrumentationSettings) and instrument.version == 2:
+            # default instrumentation settings
+            assert summary.traces == snapshot(
+                [
+                    {
+                        'id': 0,
+                        'name': 'agent run',
+                        'message': 'my_agent run',
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {
+                                'id': 2,
+                                'name': 'running tools',
+                                'message': 'running 1 tool',
+                                'children': [{'id': 3, 'name': 'running tool', 'message': 'running tool: my_ret'}],
+                            },
+                            {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                        ],
+                    }
+                ]
+            )
+        else:
+            assert summary.traces == snapshot(
+                [
+                    {
+                        'id': 0,
+                        'name': 'invoke_agent my_agent',
+                        'message': 'my_agent run',
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {
+                                'id': 2,
+                                'name': 'running tools',
+                                'message': 'running 1 tool',
+                                'children': [
+                                    {'id': 3, 'name': 'execute_tool my_ret', 'message': 'running tool: my_ret'}
+                                ],
+                            },
+                            {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                        ],
+                    }
+                ]
+            )
+
         assert summary.attributes[0] == snapshot(
             {
                 'model_name': 'test',
                 'agent_name': 'my_agent',
+                'gen_ai.agent.name': 'my_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'final_result': '{"my_ret":"1"}',
@@ -175,6 +249,7 @@ def test_logfire(
             {
                 'model_name': 'test',
                 'agent_name': 'my_agent',
+                'gen_ai.agent.name': 'my_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'gen_ai.usage.input_tokens': 103,
@@ -394,6 +469,7 @@ def test_logfire(
                         'output_tools': [],
                         'output_object': None,
                         'allow_text_output': True,
+                        'allow_image_output': False,
                     }
                 )
             ),
@@ -410,10 +486,7 @@ def test_logfire(
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize(
     'instrument',
-    [
-        InstrumentationSettings(version=1),
-        InstrumentationSettings(version=2),
-    ],
+    [InstrumentationSettings(version=1), InstrumentationSettings(version=2), InstrumentationSettings(version=3)],
 )
 def test_instructions_with_structured_output(
     get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationSettings
@@ -434,6 +507,7 @@ def test_instructions_with_structured_output(
             {
                 'model_name': 'test',
                 'agent_name': 'my_agent',
+                'gen_ai.agent.name': 'my_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'gen_ai.usage.input_tokens': 51,
@@ -525,12 +599,37 @@ def test_instructions_with_structured_output(
             )
         )
     else:
+        if instrument.version == 2:
+            assert summary.traces == snapshot(
+                [
+                    {
+                        'id': 0,
+                        'name': 'agent run',
+                        'message': 'my_agent run',
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                    }
+                ]
+            )
+        else:
+            assert summary.traces == snapshot(
+                [
+                    {
+                        'id': 0,
+                        'name': 'invoke_agent my_agent',
+                        'message': 'my_agent run',
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                    }
+                ]
+            )
+
         assert summary.attributes[0] == snapshot(
             {
                 'model_name': 'test',
                 'agent_name': 'my_agent',
+                'gen_ai.agent.name': 'my_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
+                'final_result': '{"content": "a"}',
                 'gen_ai.usage.input_tokens': 51,
                 'gen_ai.usage.output_tokens': 5,
                 'pydantic_ai.all_messages': IsJson(
@@ -562,7 +661,6 @@ def test_instructions_with_structured_output(
                         ]
                     )
                 ),
-                'final_result': '{"content": "a"}',
                 'gen_ai.system_instructions': '[{"type": "text", "content": "Here are some instructions"}]',
                 'logfire.json_schema': IsJson(
                     snapshot(
@@ -619,6 +717,7 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
         {
             'model_name': 'test',
             'agent_name': 'my_agent',
+            'gen_ai.agent.name': 'my_agent',
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'gen_ai.usage.input_tokens': 51,
@@ -690,25 +789,53 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_instructions_with_structured_output_exclude_content_v2(
+@pytest.mark.parametrize('version', [2, 3])
+def test_instructions_with_structured_output_exclude_content_v2_v3(
     get_logfire_summary: Callable[[], LogfireSummary],
+    version: Literal[2, 3],
 ) -> None:
     @dataclass
     class MyOutput:
         content: str
 
-    settings: InstrumentationSettings = InstrumentationSettings(include_content=False, version=2)
+    settings: InstrumentationSettings = InstrumentationSettings(include_content=False, version=version)
 
     my_agent = Agent(model=TestModel(), instructions='Here are some instructions', instrument=settings)
 
     result = my_agent.run_sync('Hello', output_type=MyOutput)
-    assert result.output == snapshot(MyOutput(content='a'))
+    assert result.output == MyOutput(content='a')
 
     summary = get_logfire_summary()
+
+    if version == 2:
+        assert summary.traces == snapshot(
+            [
+                {
+                    'id': 0,
+                    'name': 'agent run',
+                    'message': 'my_agent run',
+                    'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                }
+            ]
+        )
+    else:
+        assert summary.traces == snapshot(
+            [
+                {
+                    'id': 0,
+                    'name': 'invoke_agent my_agent',
+                    'message': 'my_agent run',
+                    'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                }
+            ]
+        )
+
+    # Version 2 and 3 have identical snapshots for this test case
     assert summary.attributes[0] == snapshot(
         {
             'model_name': 'test',
             'agent_name': 'my_agent',
+            'gen_ai.agent.name': 'my_agent',
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'gen_ai.usage.input_tokens': 51,
@@ -784,6 +911,7 @@ def test_instructions_with_structured_output_exclude_content_v2(
                             }
                         ],
                         'allow_text_output': False,
+                        'allow_image_output': False,
                     }
                 )
             ),
@@ -888,6 +1016,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'output_object': None,
                         'output_tools': [],
                         'allow_text_output': True,
+                        'allow_image_output': False,
                     },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',
@@ -930,6 +1059,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                 'attributes': {
                     'model_name': 'test',
                     'agent_name': 'agent',
+                    'gen_ai.agent.name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'gen_ai.usage.input_tokens': 51,
@@ -1123,6 +1253,129 @@ def get_weather_info(city: str) -> WeatherInfo:
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize(
+    'instrument',
+    [
+        True,
+        False,
+        InstrumentationSettings(version=2),
+        InstrumentationSettings(version=3),
+    ],
+)
+def test_logfire_output_function_v2_v3(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    instrument: InstrumentationSettings | bool,
+) -> None:
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrument)
+    result = my_agent.run_sync('Mexico City', output_type=get_weather_info)
+    assert result.output == WeatherInfo(temperature=28.7, description='sunny')
+
+    summary = get_logfire_summary()
+
+    if instrument is True or isinstance(instrument, InstrumentationSettings) and instrument.version == 2:
+        [output_function_attributes] = [
+            attributes
+            for attributes in summary.attributes.values()
+            if attributes.get('gen_ai.tool.name') == 'final_result'
+        ]
+        assert summary.traces == snapshot(
+            [
+                {
+                    'id': 0,
+                    'name': 'agent run',
+                    'message': 'my_agent run',
+                    'children': [
+                        {'id': 1, 'name': 'chat function:call_tool:', 'message': 'chat function:call_tool:'},
+                        {
+                            'id': 2,
+                            'name': 'running output function',
+                            'message': 'running output function: final_result',
+                        },
+                    ],
+                }
+            ]
+        )
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'logfire.msg': 'running output function: final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'tool_arguments': '{"city":"Mexico City"}',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+            }
+        )
+
+    elif isinstance(instrument, InstrumentationSettings) and instrument.version == 3:
+        [output_function_attributes] = [
+            attributes
+            for attributes in summary.attributes.values()
+            if attributes.get('gen_ai.tool.name') == 'final_result'
+        ]
+        assert summary.traces == snapshot(
+            [
+                {
+                    'id': 0,
+                    'name': 'invoke_agent my_agent',
+                    'message': 'my_agent run',
+                    'children': [
+                        {'id': 1, 'name': 'chat function:call_tool:', 'message': 'chat function:call_tool:'},
+                        {
+                            'id': 2,
+                            'name': 'execute_tool final_result',
+                            'message': 'running output function: final_result',
+                        },
+                    ],
+                }
+            ]
+        )
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'logfire.msg': 'running output function: final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'gen_ai.tool.call.arguments': '{"city":"Mexico City"}',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'gen_ai.tool.call.arguments': {'type': 'object'},
+                                'gen_ai.tool.call.result': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'gen_ai.tool.call.result': '{"temperature": 28.7, "description": "sunny"}',
+            }
+        )
+    else:
+        assert summary.traces == snapshot([])
+        assert summary.attributes == snapshot({})
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize('include_content', [True, False])
 def test_output_type_function_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
@@ -1160,6 +1413,8 @@ def test_output_type_function_logfire_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
                             },
                         }
                     )
@@ -1174,6 +1429,7 @@ def test_output_type_function_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
                 'logfire.span_type': 'span',
             }
         )
@@ -1221,6 +1477,8 @@ def test_output_type_function_with_run_context_logfire_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
                             },
                         }
                     )
@@ -1235,6 +1493,7 @@ def test_output_type_function_with_run_context_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
                 'logfire.span_type': 'span',
             }
         )
@@ -1290,6 +1549,8 @@ def test_output_type_function_with_retry_logfire_attributes(
                                 'properties': {
                                     'tool_arguments': {'type': 'object'},
                                     'tool_response': {'type': 'object'},
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
                                 },
                             }
                         )
@@ -1309,6 +1570,8 @@ def test_output_type_function_with_retry_logfire_attributes(
                                 'properties': {
                                     'tool_arguments': {'type': 'object'},
                                     'tool_response': {'type': 'object'},
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
                                 },
                             }
                         )
@@ -1325,6 +1588,9 @@ def test_output_type_function_with_retry_logfire_attributes(
                     'gen_ai.tool.name': 'final_result',
                     'logfire.msg': 'running output function: final_result',
                     'gen_ai.tool.call.id': IsStr(),
+                    'logfire.json_schema': IsJson(
+                        snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
+                    ),
                     'logfire.span_type': 'span',
                     'logfire.level_num': 17,
                 },
@@ -1332,6 +1598,9 @@ def test_output_type_function_with_retry_logfire_attributes(
                     'gen_ai.tool.name': 'final_result',
                     'logfire.msg': 'running output function: final_result',
                     'gen_ai.tool.call.id': IsStr(),
+                    'logfire.json_schema': IsJson(
+                        snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
+                    ),
                     'logfire.span_type': 'span',
                 },
             ]
@@ -1378,6 +1647,8 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
                             },
                         }
                     )
@@ -1392,6 +1663,9 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
                 'gen_ai.tool.name': 'get_weather',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: get_weather',
+                'logfire.json_schema': IsJson(
+                    snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
+                ),
                 'logfire.span_type': 'span',
             }
         )
@@ -1444,6 +1718,8 @@ def test_output_type_bound_instance_method_logfire_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
                             },
                         }
                     )
@@ -1458,6 +1734,9 @@ def test_output_type_bound_instance_method_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
+                ),
                 'logfire.span_type': 'span',
             }
         )
@@ -1511,6 +1790,8 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
                             },
                         }
                     )
@@ -1525,6 +1806,9 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
+                ),
                 'logfire.span_type': 'span',
             }
         )
@@ -1573,6 +1857,8 @@ def test_output_type_async_function_logfire_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
                             },
                         }
                     )
@@ -1587,6 +1873,9 @@ def test_output_type_async_function_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
+                ),
                 'logfire.span_type': 'span',
             }
         )
@@ -1603,7 +1892,7 @@ def test_text_output_function_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
 ) -> None:
-    """Test logfire attributes for TextOutput functions (PlainTextOutputProcessor)."""
+    """Test logfire attributes for TextOutput functions (TextOutputProcessor)."""
 
     def call_text_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Return a plain text response (not a tool call)
@@ -1639,6 +1928,7 @@ def test_text_output_function_logfire_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
                             },
                         }
                     )
@@ -1652,6 +1942,7 @@ def test_text_output_function_logfire_attributes(
             {
                 'gen_ai.tool.name': 'upcase_text',
                 'logfire.msg': 'running output function: upcase_text',
+                'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
                 'logfire.span_type': 'span',
             }
         )
@@ -1709,6 +2000,7 @@ def test_prompted_output_function_logfire_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
                             },
                         }
                     )
@@ -1722,6 +2014,7 @@ def test_prompted_output_function_logfire_attributes(
             {
                 'gen_ai.tool.name': 'upcase_text',
                 'logfire.msg': 'running output function: upcase_text',
+                'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
                 'logfire.span_type': 'span',
             }
         )
@@ -1779,6 +2072,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                                 'properties': {
                                     'tool_arguments': {'type': 'object'},
                                     'tool_response': {'type': 'object'},
+                                    'gen_ai.tool.name': {},
                                 },
                             }
                         )
@@ -1797,6 +2091,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                                 'properties': {
                                     'tool_arguments': {'type': 'object'},
                                     'tool_response': {'type': 'object'},
+                                    'gen_ai.tool.name': {},
                                 },
                             }
                         )
@@ -1812,13 +2107,952 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                 {
                     'gen_ai.tool.name': 'get_weather_with_retry',
                     'logfire.msg': 'running output function: get_weather_with_retry',
+                    'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
                     'logfire.span_type': 'span',
                     'logfire.level_num': 17,
                 },
                 {
                     'gen_ai.tool.name': 'get_weather_with_retry',
                     'logfire.msg': 'running output function: get_weather_with_retry',
+                    'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
                     'logfire.span_type': 'span',
                 },
             ]
+        )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize(
+    'instrument',
+    [InstrumentationSettings(version=1), InstrumentationSettings(version=2), InstrumentationSettings(version=3)],
+)
+def test_static_function_instructions_in_agent_run_span(
+    get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationSettings
+) -> None:
+    @dataclass
+    class MyOutput:
+        content: str
+
+    my_agent = Agent(model=TestModel(), instrument=instrument)
+
+    @my_agent.instructions
+    def instructions():
+        return 'Here are some instructions'
+
+    result = my_agent.run_sync('Hello', output_type=MyOutput)
+    assert result.output == MyOutput(content='a')
+
+    summary = get_logfire_summary()
+    chat_span_attributes = summary.attributes[1]
+    if instrument.version == 1:
+        assert summary.attributes[0] == snapshot(
+            {
+                'model_name': 'test',
+                'agent_name': 'my_agent',
+                'gen_ai.agent.name': 'my_agent',
+                'logfire.msg': 'my_agent run',
+                'logfire.span_type': 'span',
+                'gen_ai.usage.input_tokens': 51,
+                'gen_ai.usage.output_tokens': 5,
+                'all_messages_events': IsJson(
+                    snapshot(
+                        [
+                            {
+                                'content': 'Here are some instructions',
+                                'role': 'system',
+                                'event.name': 'gen_ai.system.message',
+                            },
+                            {
+                                'content': 'Hello',
+                                'role': 'user',
+                                'gen_ai.message.index': 0,
+                                'event.name': 'gen_ai.user.message',
+                            },
+                            {
+                                'role': 'assistant',
+                                'tool_calls': [
+                                    {
+                                        'id': IsStr(),
+                                        'type': 'function',
+                                        'function': {'name': 'final_result', 'arguments': {'content': 'a'}},
+                                    }
+                                ],
+                                'gen_ai.message.index': 1,
+                                'event.name': 'gen_ai.assistant.message',
+                            },
+                            {
+                                'content': 'Final result processed.',
+                                'role': 'tool',
+                                'id': IsStr(),
+                                'name': 'final_result',
+                                'gen_ai.message.index': 2,
+                                'event.name': 'gen_ai.tool.message',
+                            },
+                        ]
+                    )
+                ),
+                'final_result': '{"content": "a"}',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'all_messages_events': {'type': 'array'},
+                                'final_result': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+            }
+        )
+
+        assert chat_span_attributes['events'] == IsJson(
+            snapshot(
+                [
+                    {
+                        'content': 'Here are some instructions',
+                        'role': 'system',
+                        'gen_ai.system': 'test',
+                        'event.name': 'gen_ai.system.message',
+                    },
+                    {
+                        'event.name': 'gen_ai.user.message',
+                        'content': 'Hello',
+                        'role': 'user',
+                        'gen_ai.message.index': 0,
+                        'gen_ai.system': 'test',
+                    },
+                    {
+                        'event.name': 'gen_ai.choice',
+                        'index': 0,
+                        'message': {
+                            'role': 'assistant',
+                            'tool_calls': [
+                                {
+                                    'id': IsStr(),
+                                    'type': 'function',
+                                    'function': {'name': 'final_result', 'arguments': {'content': 'a'}},
+                                }
+                            ],
+                        },
+                        'gen_ai.system': 'test',
+                    },
+                ]
+            )
+        )
+    else:
+        if instrument.version == 2:
+            assert summary.traces == snapshot(
+                [
+                    {
+                        'id': 0,
+                        'name': 'agent run',
+                        'message': 'my_agent run',
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                    }
+                ]
+            )
+        else:
+            assert summary.traces == snapshot(
+                [
+                    {
+                        'id': 0,
+                        'name': 'invoke_agent my_agent',
+                        'message': 'my_agent run',
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                    }
+                ]
+            )
+
+        assert summary.attributes[0] == snapshot(
+            {
+                'model_name': 'test',
+                'agent_name': 'my_agent',
+                'gen_ai.agent.name': 'my_agent',
+                'logfire.msg': 'my_agent run',
+                'logfire.span_type': 'span',
+                'final_result': '{"content": "a"}',
+                'gen_ai.usage.input_tokens': 51,
+                'gen_ai.usage.output_tokens': 5,
+                'pydantic_ai.all_messages': IsJson(
+                    snapshot(
+                        [
+                            {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
+                            {
+                                'role': 'assistant',
+                                'parts': [
+                                    {
+                                        'type': 'tool_call',
+                                        'id': IsStr(),
+                                        'name': 'final_result',
+                                        'arguments': {'content': 'a'},
+                                    }
+                                ],
+                            },
+                            {
+                                'role': 'user',
+                                'parts': [
+                                    {
+                                        'type': 'tool_call_response',
+                                        'id': IsStr(),
+                                        'name': 'final_result',
+                                        'result': 'Final result processed.',
+                                    }
+                                ],
+                            },
+                        ]
+                    )
+                ),
+                'gen_ai.system_instructions': '[{"type": "text", "content": "Here are some instructions"}]',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'pydantic_ai.all_messages': {'type': 'array'},
+                                'gen_ai.system_instructions': {'type': 'array'},
+                                'final_result': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+            }
+        )
+
+        assert chat_span_attributes['gen_ai.input.messages'] == IsJson(
+            snapshot([{'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]}])
+        )
+        assert chat_span_attributes['gen_ai.output.messages'] == IsJson(
+            snapshot(
+                [
+                    {
+                        'role': 'assistant',
+                        'parts': [
+                            {
+                                'type': 'tool_call',
+                                'id': IsStr(),
+                                'name': 'final_result',
+                                'arguments': {'content': 'a'},
+                            }
+                        ],
+                    }
+                ]
+            )
+        )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize(
+    'instrument',
+    [InstrumentationSettings(version=1), InstrumentationSettings(version=2), InstrumentationSettings(version=3)],
+)
+def test_dynamic_function_instructions_in_agent_run_span(
+    get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationSettings
+) -> None:
+    @dataclass
+    class MyOutput:
+        content: str
+
+    my_agent = Agent(model=TestModel(), instrument=instrument)
+
+    @my_agent.instructions
+    def instructions(ctx: RunContext[None]):
+        return f'This is step {ctx.run_step + 1}'
+
+    @my_agent.tool_plain
+    def my_tool() -> str:
+        return 'This is a tool call'
+
+    result = my_agent.run_sync('Hello', output_type=MyOutput)
+    assert result.output == MyOutput(content='a')
+
+    summary = get_logfire_summary()
+    chat_span_attributes = summary.attributes[1]
+    if instrument.version == 1:
+        assert summary.attributes[0] == snapshot(
+            {
+                'model_name': 'test',
+                'agent_name': 'my_agent',
+                'gen_ai.agent.name': 'my_agent',
+                'logfire.msg': 'my_agent run',
+                'logfire.span_type': 'span',
+                'gen_ai.usage.input_tokens': 107,
+                'gen_ai.usage.output_tokens': 9,
+                'all_messages_events': IsJson(
+                    snapshot(
+                        [
+                            {
+                                'content': 'This is step 2',
+                                'role': 'system',
+                                'event.name': 'gen_ai.system.message',
+                            },
+                            {
+                                'content': 'Hello',
+                                'role': 'user',
+                                'gen_ai.message.index': 0,
+                                'event.name': 'gen_ai.user.message',
+                            },
+                            {
+                                'role': 'assistant',
+                                'tool_calls': [
+                                    {
+                                        'id': 'pyd_ai_tool_call_id__my_tool',
+                                        'type': 'function',
+                                        'function': {'name': 'my_tool', 'arguments': {}},
+                                    }
+                                ],
+                                'gen_ai.message.index': 1,
+                                'event.name': 'gen_ai.assistant.message',
+                            },
+                            {
+                                'content': 'This is a tool call',
+                                'role': 'tool',
+                                'id': 'pyd_ai_tool_call_id__my_tool',
+                                'name': 'my_tool',
+                                'gen_ai.message.index': 2,
+                                'event.name': 'gen_ai.tool.message',
+                            },
+                            {
+                                'role': 'assistant',
+                                'tool_calls': [
+                                    {
+                                        'id': 'pyd_ai_tool_call_id__final_result',
+                                        'type': 'function',
+                                        'function': {'name': 'final_result', 'arguments': {'content': 'a'}},
+                                    }
+                                ],
+                                'gen_ai.message.index': 3,
+                                'event.name': 'gen_ai.assistant.message',
+                            },
+                            {
+                                'content': 'Final result processed.',
+                                'role': 'tool',
+                                'id': 'pyd_ai_tool_call_id__final_result',
+                                'name': 'final_result',
+                                'gen_ai.message.index': 4,
+                                'event.name': 'gen_ai.tool.message',
+                            },
+                        ]
+                    )
+                ),
+                'final_result': '{"content": "a"}',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'all_messages_events': {'type': 'array'},
+                                'final_result': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+            }
+        )
+
+        assert chat_span_attributes['events'] == IsJson(
+            snapshot(
+                [
+                    {
+                        'content': 'This is step 1',
+                        'role': 'system',
+                        'gen_ai.system': 'test',
+                        'event.name': 'gen_ai.system.message',
+                    },
+                    {
+                        'event.name': 'gen_ai.user.message',
+                        'content': 'Hello',
+                        'role': 'user',
+                        'gen_ai.message.index': 0,
+                        'gen_ai.system': 'test',
+                    },
+                    {
+                        'event.name': 'gen_ai.choice',
+                        'index': 0,
+                        'message': {
+                            'role': 'assistant',
+                            'tool_calls': [
+                                {
+                                    'id': IsStr(),
+                                    'type': 'function',
+                                    'function': {'name': 'my_tool', 'arguments': {}},
+                                }
+                            ],
+                        },
+                        'gen_ai.system': 'test',
+                    },
+                ]
+            )
+        )
+    else:
+        if instrument.version == 2:
+            assert summary.traces == snapshot(
+                [
+                    {
+                        'id': 0,
+                        'name': 'agent run',
+                        'message': 'my_agent run',
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {
+                                'id': 2,
+                                'name': 'running tools',
+                                'message': 'running 1 tool',
+                                'children': [{'id': 3, 'name': 'running tool', 'message': 'running tool: my_tool'}],
+                            },
+                            {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                        ],
+                    }
+                ]
+            )
+        else:
+            assert summary.traces == snapshot(
+                [
+                    {
+                        'id': 0,
+                        'name': 'invoke_agent my_agent',
+                        'message': 'my_agent run',
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {
+                                'id': 2,
+                                'name': 'running tools',
+                                'message': 'running 1 tool',
+                                'children': [
+                                    {'id': 3, 'name': 'execute_tool my_tool', 'message': 'running tool: my_tool'}
+                                ],
+                            },
+                            {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                        ],
+                    }
+                ]
+            )
+
+        assert summary.attributes[0] == snapshot(
+            {
+                'model_name': 'test',
+                'agent_name': 'my_agent',
+                'gen_ai.agent.name': 'my_agent',
+                'logfire.msg': 'my_agent run',
+                'logfire.span_type': 'span',
+                'final_result': '{"content": "a"}',
+                'gen_ai.usage.input_tokens': 107,
+                'gen_ai.usage.output_tokens': 9,
+                'pydantic_ai.all_messages': IsJson(
+                    snapshot(
+                        [
+                            {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
+                            {
+                                'role': 'assistant',
+                                'parts': [
+                                    {
+                                        'type': 'tool_call',
+                                        'id': 'pyd_ai_tool_call_id__my_tool',
+                                        'name': 'my_tool',
+                                        'arguments': {},
+                                    }
+                                ],
+                            },
+                            {
+                                'role': 'user',
+                                'parts': [
+                                    {
+                                        'type': 'tool_call_response',
+                                        'id': 'pyd_ai_tool_call_id__my_tool',
+                                        'name': 'my_tool',
+                                        'result': 'This is a tool call',
+                                    }
+                                ],
+                            },
+                            {
+                                'role': 'assistant',
+                                'parts': [
+                                    {
+                                        'type': 'tool_call',
+                                        'id': IsStr(),
+                                        'name': 'final_result',
+                                        'arguments': {'content': 'a'},
+                                    }
+                                ],
+                            },
+                            {
+                                'role': 'user',
+                                'parts': [
+                                    {
+                                        'type': 'tool_call_response',
+                                        'id': IsStr(),
+                                        'name': 'final_result',
+                                        'result': 'Final result processed.',
+                                    }
+                                ],
+                            },
+                        ]
+                    )
+                ),
+                'gen_ai.system_instructions': '[{"type": "text", "content": "This is step 2"}]',
+                'pydantic_ai.variable_instructions': True,
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'pydantic_ai.all_messages': {'type': 'array'},
+                                'gen_ai.system_instructions': {'type': 'array'},
+                                'pydantic_ai.variable_instructions': {},
+                                'final_result': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+            }
+        )
+
+        assert chat_span_attributes['gen_ai.input.messages'] == IsJson(
+            snapshot([{'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]}])
+        )
+        assert chat_span_attributes['gen_ai.output.messages'] == IsJson(
+            snapshot(
+                [
+                    {
+                        'role': 'assistant',
+                        'parts': [
+                            {
+                                'type': 'tool_call',
+                                'id': IsStr(),
+                                'name': 'my_tool',
+                                'arguments': {},
+                            }
+                        ],
+                    }
+                ]
+            )
+        )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize(
+    'instrument',
+    [InstrumentationSettings(version=1), InstrumentationSettings(version=2), InstrumentationSettings(version=3)],
+)
+def test_function_instructions_with_history_in_agent_run_span(
+    get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationSettings
+) -> None:
+    @dataclass
+    class MyOutput:
+        content: str
+
+    my_agent = Agent(model=TestModel(), instrument=instrument)
+
+    @my_agent.instructions
+    def instructions(ctx: RunContext[None]):
+        return 'Instructions for the current agent run'
+
+    result = my_agent.run_sync(
+        'Hello',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='Hi')], instructions='Instructions from a previous agent run'),
+            ModelResponse(parts=[TextPart(content='Hello')]),
+        ],
+        output_type=MyOutput,
+    )
+    assert result.output == MyOutput(content='a')
+
+    summary = get_logfire_summary()
+    chat_span_attributes = summary.attributes[1]
+    if instrument.version == 1:
+        assert summary.attributes[0] == snapshot(
+            {
+                'model_name': 'test',
+                'agent_name': 'my_agent',
+                'gen_ai.agent.name': 'my_agent',
+                'logfire.msg': 'my_agent run',
+                'logfire.span_type': 'span',
+                'gen_ai.usage.input_tokens': 52,
+                'gen_ai.usage.output_tokens': 6,
+                'all_messages_events': IsJson(
+                    snapshot(
+                        [
+                            {
+                                'content': 'Instructions for the current agent run',
+                                'role': 'system',
+                                'event.name': 'gen_ai.system.message',
+                            },
+                            {
+                                'content': 'Hi',
+                                'role': 'user',
+                                'gen_ai.message.index': 0,
+                                'event.name': 'gen_ai.user.message',
+                            },
+                            {
+                                'role': 'assistant',
+                                'content': 'Hello',
+                                'gen_ai.message.index': 1,
+                                'event.name': 'gen_ai.assistant.message',
+                            },
+                            {
+                                'content': 'Hello',
+                                'role': 'user',
+                                'gen_ai.message.index': 2,
+                                'event.name': 'gen_ai.user.message',
+                            },
+                            {
+                                'role': 'assistant',
+                                'tool_calls': [
+                                    {
+                                        'id': 'pyd_ai_tool_call_id__final_result',
+                                        'type': 'function',
+                                        'function': {'name': 'final_result', 'arguments': {'content': 'a'}},
+                                    }
+                                ],
+                                'gen_ai.message.index': 3,
+                                'event.name': 'gen_ai.assistant.message',
+                            },
+                            {
+                                'content': 'Final result processed.',
+                                'role': 'tool',
+                                'id': 'pyd_ai_tool_call_id__final_result',
+                                'name': 'final_result',
+                                'gen_ai.message.index': 4,
+                                'event.name': 'gen_ai.tool.message',
+                            },
+                        ]
+                    )
+                ),
+                'final_result': '{"content": "a"}',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'all_messages_events': {'type': 'array'},
+                                'final_result': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+            }
+        )
+
+        assert chat_span_attributes['events'] == IsJson(
+            snapshot(
+                [
+                    {
+                        'content': 'Instructions for the current agent run',
+                        'role': 'system',
+                        'gen_ai.system': 'test',
+                        'event.name': 'gen_ai.system.message',
+                    },
+                    {
+                        'content': 'Hi',
+                        'role': 'user',
+                        'gen_ai.system': 'test',
+                        'gen_ai.message.index': 0,
+                        'event.name': 'gen_ai.user.message',
+                    },
+                    {
+                        'role': 'assistant',
+                        'content': 'Hello',
+                        'gen_ai.system': 'test',
+                        'gen_ai.message.index': 1,
+                        'event.name': 'gen_ai.assistant.message',
+                    },
+                    {
+                        'content': 'Hello',
+                        'role': 'user',
+                        'gen_ai.system': 'test',
+                        'gen_ai.message.index': 2,
+                        'event.name': 'gen_ai.user.message',
+                    },
+                    {
+                        'event.name': 'gen_ai.choice',
+                        'index': 0,
+                        'message': {
+                            'role': 'assistant',
+                            'tool_calls': [
+                                {
+                                    'id': IsStr(),
+                                    'type': 'function',
+                                    'function': {'name': 'final_result', 'arguments': {'content': 'a'}},
+                                }
+                            ],
+                        },
+                        'gen_ai.system': 'test',
+                    },
+                ]
+            )
+        )
+    else:
+        if instrument.version == 2:
+            assert summary.traces == snapshot(
+                [
+                    {
+                        'id': 0,
+                        'name': 'agent run',
+                        'message': 'my_agent run',
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                    }
+                ]
+            )
+        else:
+            assert summary.traces == snapshot(
+                [
+                    {
+                        'id': 0,
+                        'name': 'invoke_agent my_agent',
+                        'message': 'my_agent run',
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                    }
+                ]
+            )
+
+        assert summary.attributes[0] == snapshot(
+            {
+                'model_name': 'test',
+                'agent_name': 'my_agent',
+                'gen_ai.agent.name': 'my_agent',
+                'logfire.msg': 'my_agent run',
+                'logfire.span_type': 'span',
+                'final_result': '{"content": "a"}',
+                'gen_ai.usage.input_tokens': 52,
+                'gen_ai.usage.output_tokens': 6,
+                'pydantic_ai.all_messages': IsJson(
+                    snapshot(
+                        [
+                            {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hi'}]},
+                            {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Hello'}]},
+                            {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
+                            {
+                                'role': 'assistant',
+                                'parts': [
+                                    {
+                                        'type': 'tool_call',
+                                        'id': IsStr(),
+                                        'name': 'final_result',
+                                        'arguments': {'content': 'a'},
+                                    }
+                                ],
+                            },
+                            {
+                                'role': 'user',
+                                'parts': [
+                                    {
+                                        'type': 'tool_call_response',
+                                        'id': IsStr(),
+                                        'name': 'final_result',
+                                        'result': 'Final result processed.',
+                                    }
+                                ],
+                            },
+                        ]
+                    )
+                ),
+                'pydantic_ai.new_message_index': 2,
+                'gen_ai.system_instructions': '[{"type": "text", "content": "Instructions for the current agent run"}]',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'pydantic_ai.all_messages': {'type': 'array'},
+                                'pydantic_ai.new_message_index': {},
+                                'gen_ai.system_instructions': {'type': 'array'},
+                                'final_result': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+            }
+        )
+
+        assert chat_span_attributes['gen_ai.input.messages'] == IsJson(
+            snapshot(
+                [
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hi'}]},
+                    {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Hello'}]},
+                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
+                ]
+            )
+        )
+        assert chat_span_attributes['gen_ai.output.messages'] == IsJson(
+            snapshot(
+                [
+                    {
+                        'role': 'assistant',
+                        'parts': [
+                            {
+                                'type': 'tool_call',
+                                'id': IsStr(),
+                                'name': 'final_result',
+                                'arguments': {'content': 'a'},
+                            }
+                        ],
+                    }
+                ]
+            )
+        )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize(
+    'instrument',
+    [InstrumentationSettings(version=1), InstrumentationSettings(version=2), InstrumentationSettings(version=3)],
+)
+async def test_run_stream(
+    get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationSettings
+) -> None:
+    my_agent = Agent(model=TestModel(), instrument=instrument)
+
+    @my_agent.instructions
+    def instructions(ctx: RunContext[None]):
+        return 'Instructions for the current agent run'
+
+    async with my_agent.run_stream('Hello') as stream:
+        async for _ in stream.stream_output():
+            pass
+
+    summary = get_logfire_summary()
+    chat_span_attributes = summary.attributes[1]
+    if instrument.version == 1:
+        assert summary.attributes[0] == snapshot(
+            {
+                'model_name': 'test',
+                'agent_name': 'my_agent',
+                'gen_ai.agent.name': 'my_agent',
+                'logfire.msg': 'my_agent run',
+                'logfire.span_type': 'span',
+                'final_result': 'success (no tool calls)',
+                'gen_ai.usage.input_tokens': 51,
+                'gen_ai.usage.output_tokens': 4,
+                'all_messages_events': IsJson(
+                    snapshot(
+                        [
+                            {
+                                'content': 'Instructions for the current agent run',
+                                'role': 'system',
+                                'event.name': 'gen_ai.system.message',
+                            },
+                            {
+                                'content': 'Hello',
+                                'role': 'user',
+                                'gen_ai.message.index': 0,
+                                'event.name': 'gen_ai.user.message',
+                            },
+                            {
+                                'role': 'assistant',
+                                'content': 'success (no tool calls)',
+                                'gen_ai.message.index': 1,
+                                'event.name': 'gen_ai.assistant.message',
+                            },
+                        ]
+                    )
+                ),
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'all_messages_events': {'type': 'array'},
+                                'final_result': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+            }
+        )
+
+        assert chat_span_attributes['events'] == IsJson(
+            snapshot(
+                [
+                    {
+                        'content': 'Instructions for the current agent run',
+                        'role': 'system',
+                        'gen_ai.system': 'test',
+                        'event.name': 'gen_ai.system.message',
+                    },
+                    {
+                        'content': 'Hello',
+                        'role': 'user',
+                        'gen_ai.system': 'test',
+                        'gen_ai.message.index': 0,
+                        'event.name': 'gen_ai.user.message',
+                    },
+                    {
+                        'index': 0,
+                        'message': {'role': 'assistant', 'content': 'success (no tool calls)'},
+                        'gen_ai.system': 'test',
+                        'event.name': 'gen_ai.choice',
+                    },
+                ]
+            )
+        )
+    else:
+        if instrument.version == 2:
+            assert summary.traces == snapshot(
+                [
+                    {
+                        'id': 0,
+                        'name': 'agent run',
+                        'message': 'my_agent run',
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                    }
+                ]
+            )
+        else:
+            assert summary.traces == snapshot(
+                [
+                    {
+                        'id': 0,
+                        'name': 'invoke_agent my_agent',
+                        'message': 'my_agent run',
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                    }
+                ]
+            )
+
+        assert summary.attributes[0] == snapshot(
+            {
+                'model_name': 'test',
+                'agent_name': 'my_agent',
+                'gen_ai.agent.name': 'my_agent',
+                'logfire.msg': 'my_agent run',
+                'logfire.span_type': 'span',
+                'final_result': 'success (no tool calls)',
+                'gen_ai.usage.input_tokens': 51,
+                'gen_ai.usage.output_tokens': 4,
+                'pydantic_ai.all_messages': IsJson(
+                    snapshot(
+                        [
+                            {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
+                            {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'success (no tool calls)'}]},
+                        ]
+                    )
+                ),
+                'gen_ai.system_instructions': '[{"type": "text", "content": "Instructions for the current agent run"}]',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'pydantic_ai.all_messages': {'type': 'array'},
+                                'gen_ai.system_instructions': {'type': 'array'},
+                                'final_result': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+            }
+        )
+
+        assert chat_span_attributes['gen_ai.input.messages'] == IsJson(
+            snapshot([{'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]}])
+        )
+        assert chat_span_attributes['gen_ai.output.messages'] == IsJson(
+            snapshot(
+                [
+                    {
+                        'role': 'assistant',
+                        'parts': [{'type': 'text', 'content': 'success (no tool calls)'}],
+                    }
+                ]
+            )
         )

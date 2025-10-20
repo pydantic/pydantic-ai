@@ -1,3 +1,4 @@
+import asyncio
 import functools
 import operator
 import re
@@ -12,6 +13,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     RunContext,
@@ -21,6 +23,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -253,7 +256,8 @@ async def test_tool_call_limit() -> None:
         return f'{x}-apple'
 
     with pytest.raises(
-        UsageLimitExceeded, match=re.escape('The next tool call would exceed the tool_calls_limit of 0 (tool_calls=0)')
+        UsageLimitExceeded,
+        match=re.escape('The next tool call(s) would exceed the tool_calls_limit of 0 (tool_calls=1).'),
     ):
         await test_agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=0))
 
@@ -286,8 +290,42 @@ async def test_output_tool_not_counted() -> None:
     assert result_output.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=15, tool_calls=1))
 
 
+async def test_output_tool_allowed_at_limit() -> None:
+    """Test that output tools can be called even when at the tool_calls_limit."""
+
+    class MyOutput(BaseModel):
+        result: str
+
+    def call_output_after_regular(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('regular_tool', {'x': 'test'}, 'call_1'),
+                ],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('final_result', {'result': 'success'}, 'call_2'),
+                ],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+
+    test_agent = Agent(FunctionModel(call_output_after_regular), output_type=ToolOutput(MyOutput))
+
+    @test_agent.tool_plain
+    async def regular_tool(x: str) -> str:
+        return f'{x}-processed'
+
+    result = await test_agent.run('test', usage_limits=UsageLimits(tool_calls_limit=1))
+
+    assert result.output.result == 'success'
+    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=20, output_tokens=10, tool_calls=1))
+
+
 async def test_failed_tool_calls_not_counted() -> None:
-    """Test that failed tool calls (raising ModelRetry) are not counted."""
+    """Test that failed tool calls (raising ModelRetry) are not counted in usage or against limits."""
     test_agent = Agent(TestModel())
 
     call_count = 0
@@ -300,8 +338,7 @@ async def test_failed_tool_calls_not_counted() -> None:
             raise ModelRetry('Temporary failure, please retry')
         return f'{x}-success'
 
-    result = await test_agent.run('test')
-    # The tool was called twice (1 failure + 1 success), but only the successful call should be counted
+    result = await test_agent.run('test', usage_limits=UsageLimits(tool_calls_limit=1))
     assert call_count == 2
     assert result.usage() == snapshot(RunUsage(requests=3, input_tokens=176, output_tokens=29, tool_calls=1))
 
@@ -316,3 +353,71 @@ def test_deprecated_usage_limits():
         snapshot(['DeprecationWarning: `response_tokens_limit` is deprecated, use `output_tokens_limit` instead'])
     ):
         assert UsageLimits(output_tokens_limit=100).response_tokens_limit == 100  # type: ignore
+
+
+async def test_parallel_tool_calls_limit_enforced():
+    """Parallel tool calls must not exceed the limit and should raise immediately."""
+    executed_tools: list[str] = []
+
+    model_call_count = 0
+
+    def test_model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal model_call_count
+        model_call_count += 1
+
+        if model_call_count == 1:
+            # First response: 5 parallel tool calls (within limit)
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('tool_a', {}, 'call_1'),
+                    ToolCallPart('tool_b', {}, 'call_2'),
+                    ToolCallPart('tool_c', {}, 'call_3'),
+                    ToolCallPart('tool_a', {}, 'call_4'),
+                    ToolCallPart('tool_b', {}, 'call_5'),
+                ]
+            )
+        else:
+            assert model_call_count == 2
+            # Second response: 3 parallel tool calls (would exceed limit of 6)
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('tool_c', {}, 'call_6'),
+                    ToolCallPart('tool_a', {}, 'call_7'),
+                    ToolCallPart('tool_b', {}, 'call_8'),
+                ]
+            )
+
+    test_model = FunctionModel(test_model_function)
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    async def tool_a() -> str:
+        await asyncio.sleep(0.01)
+        executed_tools.append('a')
+        return 'result a'
+
+    @agent.tool_plain
+    async def tool_b() -> str:
+        await asyncio.sleep(0.01)
+        executed_tools.append('b')
+        return 'result b'
+
+    @agent.tool_plain
+    async def tool_c() -> str:
+        await asyncio.sleep(0.01)
+        executed_tools.append('c')
+        return 'result c'
+
+    # Run with tool call limit of 6; expecting an error when trying to execute 3 more tools
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=re.escape('The next tool call(s) would exceed the tool_calls_limit of 6 (tool_calls=8).'),
+    ):
+        await agent.run('Use tools', usage_limits=UsageLimits(tool_calls_limit=6))
+
+    # Only the first batch of 5 tools should have executed
+    assert len(executed_tools) == 5
+
+
+def test_usage_unknown_provider():
+    assert RequestUsage.extract({}, provider='unknown', provider_url='', provider_fallback='') == RequestUsage()

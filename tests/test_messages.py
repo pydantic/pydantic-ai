@@ -3,23 +3,31 @@ from datetime import datetime, timezone
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import TypeAdapter
 
 from pydantic_ai import (
     AudioUrl,
     BinaryContent,
+    BinaryImage,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
+    FilePart,
     ImageUrl,
+    ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     RequestUsage,
     TextPart,
+    ThinkingPart,
     ThinkingPartDelta,
+    ToolCallPart,
     UserPromptPart,
     VideoUrl,
 )
 
-from .conftest import IsNow
+from .conftest import IsDatetime, IsNow, IsStr
 
 
 def test_image_url():
@@ -409,4 +417,170 @@ def test_pre_usage_refactor_messages_deserializable():
                 provider_response_id='chatcmpl-CBpEXeCfDAW4HRcKQwbqsRDn7u7C5',
             ),
         ]
+    )
+
+
+def test_file_part_serialization_roundtrip():
+    # Verify that a serialized BinaryImage doesn't come back as a BinaryContent.
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[FilePart(content=BinaryImage(data=b'fake', media_type='image/jpeg'))])
+    ]
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    assert serialized == snapshot(
+        [
+            {
+                'parts': [
+                    {
+                        'content': {
+                            'data': 'ZmFrZQ==',
+                            'media_type': 'image/jpeg',
+                            'identifier': 'c053ec',
+                            'vendor_metadata': None,
+                            'kind': 'binary',
+                        },
+                        'id': None,
+                        'provider_name': None,
+                        'part_kind': 'file',
+                    }
+                ],
+                'usage': {
+                    'input_tokens': 0,
+                    'cache_write_tokens': 0,
+                    'cache_read_tokens': 0,
+                    'output_tokens': 0,
+                    'input_audio_tokens': 0,
+                    'cache_audio_read_tokens': 0,
+                    'output_audio_tokens': 0,
+                    'details': {},
+                },
+                'model_name': None,
+                'timestamp': IsStr(),
+                'kind': 'response',
+                'provider_name': None,
+                'provider_details': None,
+                'provider_response_id': None,
+                'finish_reason': None,
+            }
+        ]
+    )
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+    assert deserialized == messages
+
+
+def test_model_response_convenience_methods():
+    response = ModelResponse(parts=[])
+    assert response.text == snapshot(None)
+    assert response.thinking == snapshot(None)
+    assert response.files == snapshot([])
+    assert response.images == snapshot([])
+    assert response.tool_calls == snapshot([])
+    assert response.builtin_tool_calls == snapshot([])
+
+    response = ModelResponse(
+        parts=[
+            ThinkingPart(content="Let's generate an image"),
+            ThinkingPart(content="And then, call the 'hello_world' tool"),
+            TextPart(content="I'm going to"),
+            TextPart(content=' generate an image'),
+            BuiltinToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
+            FilePart(content=BinaryImage(data=b'fake', media_type='image/jpeg')),
+            BuiltinToolReturnPart(tool_name='image_generation', content={}, tool_call_id='123'),
+            TextPart(content="I'm going to call"),
+            TextPart(content=" the 'hello_world' tool"),
+            ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123'),
+        ]
+    )
+    assert response.text == snapshot("""\
+I'm going to generate an image
+
+I'm going to call the 'hello_world' tool\
+""")
+    assert response.thinking == snapshot("""\
+Let's generate an image
+
+And then, call the 'hello_world' tool\
+""")
+    assert response.files == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
+    assert response.images == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
+    assert response.tool_calls == snapshot([ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123')])
+    assert response.builtin_tool_calls == snapshot(
+        [
+            (
+                BuiltinToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
+                BuiltinToolReturnPart(
+                    tool_name='image_generation',
+                    content={},
+                    tool_call_id='123',
+                    timestamp=IsDatetime(),
+                ),
+            )
+        ]
+    )
+
+
+def test_image_url_validation_with_optional_identifier():
+    image_url_ta = TypeAdapter(ImageUrl)
+    image = image_url_ta.validate_python({'url': 'https://example.com/image.jpg'})
+    assert image.url == snapshot('https://example.com/image.jpg')
+    assert image.identifier == snapshot('39cfc4')
+    assert image.media_type == snapshot('image/jpeg')
+    assert image_url_ta.dump_python(image) == snapshot(
+        {
+            'url': 'https://example.com/image.jpg',
+            'force_download': False,
+            'vendor_metadata': None,
+            'kind': 'image-url',
+            'media_type': 'image/jpeg',
+            'identifier': '39cfc4',
+        }
+    )
+
+    image = image_url_ta.validate_python(
+        {'url': 'https://example.com/image.jpg', 'identifier': 'foo', 'media_type': 'image/png'}
+    )
+    assert image.url == snapshot('https://example.com/image.jpg')
+    assert image.identifier == snapshot('foo')
+    assert image.media_type == snapshot('image/png')
+    assert image_url_ta.dump_python(image) == snapshot(
+        {
+            'url': 'https://example.com/image.jpg',
+            'force_download': False,
+            'vendor_metadata': None,
+            'kind': 'image-url',
+            'media_type': 'image/png',
+            'identifier': 'foo',
+        }
+    )
+
+
+def test_binary_content_validation_with_optional_identifier():
+    binary_content_ta = TypeAdapter(BinaryContent)
+    binary_content = binary_content_ta.validate_python({'data': b'fake', 'media_type': 'image/jpeg'})
+    assert binary_content.data == b'fake'
+    assert binary_content.identifier == snapshot('c053ec')
+    assert binary_content.media_type == snapshot('image/jpeg')
+    assert binary_content_ta.dump_python(binary_content) == snapshot(
+        {
+            'data': b'fake',
+            'vendor_metadata': None,
+            'kind': 'binary',
+            'media_type': 'image/jpeg',
+            'identifier': 'c053ec',
+        }
+    )
+
+    binary_content = binary_content_ta.validate_python(
+        {'data': b'fake', 'identifier': 'foo', 'media_type': 'image/png'}
+    )
+    assert binary_content.data == b'fake'
+    assert binary_content.identifier == snapshot('foo')
+    assert binary_content.media_type == snapshot('image/png')
+    assert binary_content_ta.dump_python(binary_content) == snapshot(
+        {
+            'data': b'fake',
+            'vendor_metadata': None,
+            'kind': 'binary',
+            'media_type': 'image/png',
+            'identifier': 'foo',
+        }
     )
