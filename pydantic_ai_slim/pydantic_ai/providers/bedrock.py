@@ -3,15 +3,17 @@ from __future__ import annotations as _annotations
 import os
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Literal, overload
+from typing import overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.profiles.bedrock import (
+    BedrockModelProfile,
+    bedrock_amazon_model_profile,
+    bedrock_deepseek_model_profile,
+)
 from pydantic_ai.profiles.cohere import cohere_model_profile
-from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.providers import Provider
@@ -26,34 +28,6 @@ except ImportError as _import_error:
         'Please install the `boto3` package to use the Bedrock provider, '
         'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
     ) from _import_error
-
-
-@dataclass(kw_only=True)
-class BedrockModelProfile(ModelProfile):
-    """Profile for models used with BedrockModel.
-
-    ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
-
-    bedrock_supports_tool_choice: bool = False
-    bedrock_tool_result_format: Literal['text', 'json'] = 'text'
-    bedrock_send_back_thinking_parts: bool = False
-
-
-def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
-    """Get the model profile for an Amazon model used via Bedrock."""
-    profile = amazon_model_profile(model_name)
-    if 'nova' in model_name:
-        return BedrockModelProfile(bedrock_supports_tool_choice=True).update(profile)
-    return profile
-
-
-def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
-    """Get the model profile for a DeepSeek model used via Bedrock."""
-    profile = deepseek_model_profile(model_name)
-    if 'r1' in model_name:
-        return BedrockModelProfile(bedrock_send_back_thinking_parts=True).update(profile)
-    return profile  # pragma: no cover
 
 
 class BedrockProvider(Provider[BaseClient]):

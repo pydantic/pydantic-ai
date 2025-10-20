@@ -11,6 +11,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, cached_async_http_client, get_user_agent
 
 if TYPE_CHECKING:
+    from botocore.client import BaseClient
     from google.genai import Client as GoogleClient
     from groq import AsyncGroq
     from openai import AsyncOpenAI
@@ -57,13 +58,25 @@ def gateway_provider(
 ) -> Provider[AsyncAnthropicClient]: ...
 
 
+@overload
 def gateway_provider(
-    upstream_provider: Literal['openai', 'openai-chat', 'openai-responses', 'groq', 'google-vertex', 'anthropic'] | str,
+    upstream_provider: Literal['bedrock'],
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> Provider[BaseClient]: ...
+
+
+UpstreamProvider = Literal['openai', 'openai-chat', 'openai-responses', 'groq', 'google-vertex', 'anthropic', 'bedrock']
+
+
+def gateway_provider(
+    upstream_provider: UpstreamProvider | str,
     *,
     # Every provider
     api_key: str | None = None,
     base_url: str | None = None,
-    # OpenAI & Groq
+    # OpenAI, Groq & Anthropic
     http_client: httpx.AsyncClient | None = None,
 ) -> Provider[Any]:
     """Create a new Gateway provider.
@@ -109,6 +122,21 @@ def gateway_provider(
                 auth_token=api_key,
                 base_url=_merge_url_path(base_url, 'anthropic'),
                 http_client=http_client,
+            )
+        )
+    elif upstream_provider == 'bedrock':
+        import boto3
+
+        from .bedrock import BedrockProvider
+
+        # There's no entrypoint to pass the API key on the client, therefore we need to inject in the
+        # `AWS_BEARER_TOKEN_BEDROCK` as specified in their docs: https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-use.html
+        os.environ['AWS_BEARER_TOKEN_BEDROCK'] = api_key
+
+        return BedrockProvider(
+            bedrock_client=boto3.client(  # type: ignore[reportUnknownReturnType]
+                'bedrock-runtime',
+                endpoint_url=_merge_url_path(base_url, 'bedrock'),
             )
         )
     elif upstream_provider == 'google-vertex':

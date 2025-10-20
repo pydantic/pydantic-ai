@@ -14,6 +14,7 @@ from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
@@ -150,3 +151,14 @@ async def test_gateway_provider_with_anthropic(allow_model_requests: None, gatew
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
+
+
+async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway_api_key: str):
+    provider = gateway_provider('bedrock', api_key=gateway_api_key, base_url='http://localhost:8787')
+    model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=provider)
+    agent = Agent(model)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot(
+        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. The city is known for its historical and architectural landmarks, including the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées. Paris plays a significant role in the global arts, fashion, research, technology, education, and entertainment scenes.'
+    )
