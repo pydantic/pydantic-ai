@@ -5,13 +5,13 @@ import pytest
 from pytest_mock import MockerFixture
 
 from pydantic_ai import Agent
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
-from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 
@@ -99,7 +99,11 @@ def test_cloudflare_pass_openai_client() -> None:
     assert provider.client == openai_client
 
 
-def test_cloudflare_provider_model_profile(mocker: MockerFixture):
+def test_cloudflare_provider_model_profile(mocker: MockerFixture, env: TestEnv):
+    # Set dummy API keys so we can use real GroqProvider and CerebrasProvider
+    env.set('GROQ_API_KEY', 'test-groq-key')
+    env.set('CEREBRAS_API_KEY', 'test-cerebras-key')
+
     provider = CloudflareProvider(account_id='test-account-id', gateway_id='test-gateway-id', api_key='api-key')
 
     ns = 'pydantic_ai.providers.cloudflare'
@@ -113,30 +117,8 @@ def test_cloudflare_provider_model_profile(mocker: MockerFixture):
     mistral_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
     openai_mock = mocker.patch(f'{ns}.openai_model_profile', wraps=openai_model_profile)
 
-    # Mock GroqProvider and CerebrasProvider since they handle complex model profiling internally
-    groq_provider_instance = mocker.MagicMock()
-    cerebras_provider_instance = mocker.MagicMock()
-
-    # Configure the mocks to return appropriate profiles
-    def groq_profile_func(name: str):
-        if name.lower().startswith('llama'):
-            return meta_model_profile(name)
-        elif name.lower().startswith('gemma'):
-            return google_model_profile(name)
-        else:
-            return openai_model_profile(name)
-
-    def cerebras_profile_func(name: str):
-        if name.lower().startswith('llama'):
-            return meta_model_profile(name)
-        else:
-            return openai_model_profile(name)
-
-    groq_provider_instance.model_profile.side_effect = groq_profile_func
-    cerebras_provider_instance.model_profile.side_effect = cerebras_profile_func
-
-    mocker.patch(f'{ns}.GroqProvider', return_value=groq_provider_instance)
-    mocker.patch(f'{ns}.CerebrasProvider', return_value=cerebras_provider_instance)
+    # Use real GroqProvider and CerebrasProvider - they don't make API calls for model_profile()
+    # We just need dummy API keys which are set via env vars above
 
     # Test openai provider
     profile = provider.model_profile('openai/gpt-4o')
@@ -186,15 +168,17 @@ def test_cloudflare_provider_model_profile(mocker: MockerFixture):
     assert profile is not None
     assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
-    # Test groq provider with llama model (should delegate to GroqProvider)
+    # Test groq provider with llama model (delegates to GroqProvider which returns meta profile)
+    # meta_model_profile uses InlineDefsJsonSchemaTransformer
     profile = provider.model_profile('groq/llama-3.3-70b-versatile')
-    groq_provider_instance.model_profile.assert_called_with('llama-3.3-70b-versatile')
     assert profile is not None
+    assert profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
-    # Test groq provider with gemma model (should delegate to GroqProvider)
+    # Test groq provider with gemma model (delegates to GroqProvider which returns google profile)
+    # google_model_profile uses GoogleJsonSchemaTransformer
     profile = provider.model_profile('groq/gemma-7b-it')
-    groq_provider_instance.model_profile.assert_called_with('gemma-7b-it')
     assert profile is not None
+    assert profile.json_schema_transformer == GoogleJsonSchemaTransformer
 
     # Test perplexity provider (uses OpenAI-compatible API)
     profile = provider.model_profile('perplexity/llama-3.1-sonar-small-128k-online')
@@ -208,10 +192,17 @@ def test_cloudflare_provider_model_profile(mocker: MockerFixture):
     assert profile is not None
     assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
-    # Test cerebras provider with llama model (should delegate to CerebrasProvider)
+    # Test cerebras provider with llama model (delegates to CerebrasProvider which returns meta profile)
+    # meta_model_profile uses InlineDefsJsonSchemaTransformer, wrapped by CerebrasProvider's OpenAIModelProfile
     profile = provider.model_profile('cerebras/llama3.1-8b')
-    cerebras_provider_instance.model_profile.assert_called_with('llama3.1-8b')
     assert profile is not None
+    assert profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+
+    # Test cerebras provider with qwen model (delegates to CerebrasProvider which returns qwen profile)
+    # qwen_model_profile uses InlineDefsJsonSchemaTransformer, wrapped by CerebrasProvider's OpenAIModelProfile
+    profile = provider.model_profile('cerebras/qwen3.5-8b')
+    assert profile is not None
+    assert profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
 
 def test_cloudflare_with_http_client():
@@ -317,7 +308,7 @@ async def test_cloudflare_stored_keys_strips_auth_header():
     # Get the http_client from the AsyncOpenAI client (accessing private attribute for testing)
     http_client: httpx.AsyncClient = provider.client._client  # type: ignore[attr-defined]
 
-    # Create a test request with Authorization header
+    # Test 1: Request WITH Authorization header - should be stripped
     request = http_client.build_request('POST', 'https://example.com', headers={'Authorization': 'Bearer test'})
 
     # Trigger the request event hooks
@@ -326,6 +317,19 @@ async def test_cloudflare_stored_keys_strips_auth_header():
 
     # Verify Authorization header was removed by the event hook
     assert 'authorization' not in request.headers
+
+    # Test 2: Request WITHOUT Authorization header - should pass through unchanged (covers line 192 else branch)
+    request_no_auth = http_client.build_request(
+        'POST', 'https://example.com', headers={'Content-Type': 'application/json'}
+    )
+
+    # Trigger the request event hooks
+    for hook in http_client.event_hooks.get('request', []):
+        await hook(request_no_auth)
+
+    # Verify other headers are preserved and no error occurred
+    assert 'content-type' in request_no_auth.headers
+    assert 'authorization' not in request_no_auth.headers
 
 
 def test_cloudflare_documented_patterns():
