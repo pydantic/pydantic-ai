@@ -64,13 +64,19 @@ class ReducerContext(Generic[StateT, DepsT]):
 
     @property
     def state(self) -> StateT:
+        """The state of the graph run."""
         return self._state
 
     @property
     def deps(self) -> DepsT:
+        """The deps for the graph run."""
         return self._deps
 
     def cancel_sibling_tasks(self):
+        """Cancel all sibling tasks created from the same fork.
+
+        You can call this if you want your join to have early-stopping behavior.
+        """
         self._join_state.cancelled_sibling_tasks = True
 
 
