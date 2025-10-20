@@ -10,13 +10,13 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontext
 from dataclasses import field, replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, overload
 
 import anyio
 import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from pydantic import BaseModel, Discriminator, Field, Tag
+from pydantic import AnyUrl, BaseModel, Discriminator, Field, Tag
 from pydantic_core import CoreSchema, core_schema
 from typing_extensions import Self, assert_never, deprecated
 
@@ -31,8 +31,8 @@ try:
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
     from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
+    from mcp.shared import exceptions as mcp_exceptions
     from mcp.shared.context import RequestContext
-    from mcp.shared.exceptions import McpError
     from mcp.shared.message import SessionMessage
 except ImportError as _import_error:
     raise ImportError(
@@ -42,6 +42,7 @@ except ImportError as _import_error:
 
 # after mcp imports so any import error maps to this file, not _mcp.py
 from . import _mcp, _utils, exceptions, messages, models
+from .exceptions import MCPServerCapabilitiesError, MCPServerError
 
 __all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP', 'load_mcp_servers'
 
@@ -113,6 +114,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
     _server_info: mcp_types.Implementation
+    _server_capabilities: _mcp.ServerCapabilities
 
     def __init__(
         self,
@@ -191,6 +193,15 @@ class MCPServer(AbstractToolset[Any], ABC):
             )
         return self._server_info
 
+    @property
+    def capabilities(self) -> _mcp.ServerCapabilities:
+        """Access the capabilities advertised by the MCP server during initialization."""
+        if getattr(self, '_server_capabilities', None) is None:
+            raise AttributeError(
+                f'The `{self.__class__.__name__}.capabilities` is only instantiated after initialization.'
+            )
+        return self._server_capabilities
+
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.
 
@@ -236,7 +247,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     ),
                     mcp_types.CallToolResult,
                 )
-            except McpError as e:
+            except mcp_exceptions.McpError as e:
                 raise exceptions.ModelRetry(e.error.message)
 
         if result.isError:
@@ -303,6 +314,80 @@ class MCPServer(AbstractToolset[Any], ABC):
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 
+    async def list_resources(self) -> list[_mcp.Resource]:
+        """Retrieve resources that are currently present on the server.
+
+        Note:
+        - We don't cache resources as they might change.
+        - We also don't subscribe to resource changes to avoid complexity.
+
+        Raises:
+            MCPServerCapabilitiesError: If the server does not support resources.
+            MCPServerError: If the server returns an error.
+        """
+        async with self:  # Ensure server is running
+            if not self.capabilities.resources:
+                raise MCPServerCapabilitiesError('Server does not support resources capability')
+            try:
+                result = await self._client.list_resources()
+            except mcp_exceptions.McpError as e:
+                raise MCPServerError.from_mcp_sdk_error(e) from e
+        return [_mcp.map_from_mcp_resource(r) for r in result.resources]
+
+    async def list_resource_templates(self) -> list[_mcp.ResourceTemplate]:
+        """Retrieve resource templates that are currently present on the server.
+
+        Raises:
+            MCPServerCapabilitiesError: If the server does not support resources.
+            MCPServerError: If the server returns an error.
+        """
+        async with self:  # Ensure server is running
+            if not self.capabilities.resources:
+                raise MCPServerCapabilitiesError('Server does not support resources capability')
+            try:
+                result = await self._client.list_resource_templates()
+            except mcp_exceptions.McpError as e:
+                raise MCPServerError.from_mcp_sdk_error(e) from e
+        return [_mcp.map_from_mcp_resource_template(t) for t in result.resourceTemplates]
+
+    @overload
+    async def read_resource(self, uri: str) -> str | messages.BinaryContent | list[str | messages.BinaryContent]: ...
+
+    @overload
+    async def read_resource(
+        self, uri: _mcp.Resource
+    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent]: ...
+
+    async def read_resource(
+        self, uri: str | _mcp.Resource
+    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent]:
+        """Read the contents of a specific resource by URI.
+
+        Args:
+            uri: The URI of the resource to read, or a Resource object.
+
+        Returns:
+            The resource contents. If the resource has a single content item, returns that item directly.
+            If the resource has multiple content items, returns a list of items.
+
+        Raises:
+            MCPServerCapabilitiesError: If the server does not support resources.
+            MCPServerError: If the server returns an error (e.g., resource not found).
+        """
+        resource_uri = uri if isinstance(uri, str) else uri.uri
+        async with self:  # Ensure server is running
+            if not self.capabilities.resources:
+                raise MCPServerCapabilitiesError('Server does not support resources capability')
+            try:
+                result = await self._client.read_resource(AnyUrl(resource_uri))
+            except mcp_exceptions.McpError as e:
+                raise MCPServerError.from_mcp_sdk_error(e) from e
+        return (
+            self._get_content(result.contents[0])
+            if len(result.contents) == 1
+            else [self._get_content(resource) for resource in result.contents]
+        )
+
     async def __aenter__(self) -> Self:
         """Enter the MCP server context.
 
@@ -328,6 +413,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     with anyio.fail_after(self.timeout):
                         result = await self._client.initialize()
                         self._server_info = result.serverInfo
+                        self._server_capabilities = _mcp.map_from_mcp_server_capabilities(result.capabilities)
                         if log_level := self.log_level:
                             await self._client.set_logging_level(log_level)
 
@@ -397,12 +483,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             resource = part.resource
             return self._get_content(resource)
         elif isinstance(part, mcp_types.ResourceLink):
-            resource_result: mcp_types.ReadResourceResult = await self._client.read_resource(part.uri)
-            return (
-                self._get_content(resource_result.contents[0])
-                if len(resource_result.contents) == 1
-                else [self._get_content(resource) for resource in resource_result.contents]
-            )
+            return await self.read_resource(str(part.uri))
         else:
             assert_never(part)
 

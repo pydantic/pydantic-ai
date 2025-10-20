@@ -23,8 +23,15 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._mcp import Resource, ServerCapabilities
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import (
+    MCPServerCapabilitiesError,
+    MCPServerError,
+    ModelRetry,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.mcp import MCPServerStreamableHTTP, load_mcp_servers
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
@@ -37,7 +44,13 @@ with try_import() as imports_successful:
     from mcp import ErrorData, McpError, SamplingMessage
     from mcp.client.session import ClientSession
     from mcp.shared.context import RequestContext
-    from mcp.types import CreateMessageRequestParams, ElicitRequestParams, ElicitResult, ImageContent, TextContent
+    from mcp.types import (
+        CreateMessageRequestParams,
+        ElicitRequestParams,
+        ElicitResult,
+        ImageContent,
+        TextContent,
+    )
 
     from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response
     from pydantic_ai.mcp import CallToolFunc, MCPServerSSE, MCPServerStdio, ToolResult
@@ -312,6 +325,42 @@ async def test_log_level_unset(run_context: RunContext[int]):
     async with server:
         result = await server.direct_call_tool('get_log_level', {})
         assert result == snapshot('unset')
+
+
+async def test_stdio_server_list_resources(run_context: RunContext[int]):
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        resources = await server.list_resources()
+        assert len(resources) == snapshot(3)
+
+        assert resources[0].uri == snapshot('resource://kiwi.png')
+        assert resources[0].mime_type == snapshot('image/png')
+        assert resources[0].name == snapshot('kiwi_resource')
+        assert resources[0].annotations is None
+
+        assert resources[1].uri == snapshot('resource://marcelo.mp3')
+        assert resources[1].mime_type == snapshot('audio/mpeg')
+        assert resources[1].name == snapshot('marcelo_resource')
+        assert resources[1].annotations is None
+
+        assert resources[2].uri == snapshot('resource://product_name.txt')
+        assert resources[2].mime_type == snapshot('text/plain')
+        assert resources[2].name == snapshot('product_name_resource')
+        # Test ResourceAnnotations
+        assert resources[2].annotations is not None
+        assert resources[2].annotations.audience == snapshot(['user', 'assistant'])
+        assert resources[2].annotations.priority == snapshot(0.5)
+
+
+async def test_stdio_server_list_resource_templates(run_context: RunContext[int]):
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        resource_templates = await server.list_resource_templates()
+        assert len(resource_templates) == snapshot(1)
+
+        assert resource_templates[0].uri_template == snapshot('resource://greeting/{name}')
+        assert resource_templates[0].name == snapshot('greeting_resource_template')
+        assert resource_templates[0].description == snapshot('Dynamic greeting resource template.')
 
 
 async def test_log_level_set(run_context: RunContext[int]):
@@ -1460,6 +1509,95 @@ async def test_elicitation_callback_not_set(run_context: RunContext[int]):
             await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
 
 
+async def test_read_text_resource(run_context: RunContext[int]):
+    """Test reading a text resource (converted to string)."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        # Test reading by URI string
+        content = await server.read_resource('resource://product_name.txt')
+        assert isinstance(content, str)
+        assert content == snapshot('Pydantic AI\n')
+
+        # Test reading by Resource object
+        resource = Resource(uri='resource://product_name.txt', name='product_name_resource')
+        content_from_resource = await server.read_resource(resource)
+        assert isinstance(content_from_resource, str)
+        assert content_from_resource == snapshot('Pydantic AI\n')
+
+
+async def test_read_blob_resource(run_context: RunContext[int]):
+    """Test reading a binary resource (converted to BinaryContent)."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        content = await server.read_resource('resource://kiwi.png')
+        assert isinstance(content, BinaryContent)
+        assert content.media_type == snapshot('image/png')
+        # Verify it's PNG data (starts with PNG magic bytes)
+        assert content.data[:8] == b'\x89PNG\r\n\x1a\n'  # PNG magic bytes
+
+
+async def test_read_resource_template(run_context: RunContext[int]):
+    """Test reading a resource template with parameters (converted to string)."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        content = await server.read_resource('resource://greeting/Alice')
+        assert isinstance(content, str)
+        assert content == snapshot('Hello, Alice!')
+
+
+async def test_read_resource_not_found(mcp_server: MCPServerStdio) -> None:
+    """Test that read_resource raises MCPServerError for non-existent resources."""
+    async with mcp_server:
+        with pytest.raises(MCPServerError, match='Unknown resource: resource://does_not_exist') as exc_info:
+            await mcp_server.read_resource('resource://does_not_exist')
+
+        # Verify the exception has the expected attributes
+        assert exc_info.value.code == 0
+        assert exc_info.value.message == 'Unknown resource: resource://does_not_exist'
+
+
+async def test_list_resources_error(mcp_server: MCPServerStdio) -> None:
+    """Test that list_resources converts McpError to MCPServerError."""
+    mcp_error = McpError(
+        error=ErrorData(code=-32603, message='Failed to list resources', data={'details': 'server overloaded'})
+    )
+
+    async with mcp_server:
+        with patch.object(
+            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            'list_resources',
+            new=AsyncMock(side_effect=mcp_error),
+        ):
+            with pytest.raises(MCPServerError, match='Failed to list resources') as exc_info:
+                await mcp_server.list_resources()
+
+            # Verify the exception has the expected attributes
+            assert exc_info.value.code == -32603
+            assert exc_info.value.message == 'Failed to list resources'
+            assert exc_info.value.data == {'details': 'server overloaded'}
+            assert (
+                str(exc_info.value) == "Failed to list resources (code: -32603, data: {'details': 'server overloaded'})"
+            )
+
+
+async def test_list_resource_templates_error(mcp_server: MCPServerStdio) -> None:
+    """Test that list_resource_templates converts McpError to MCPServerError."""
+    mcp_error = McpError(error=ErrorData(code=-32001, message='Service unavailable'))
+
+    async with mcp_server:
+        with patch.object(
+            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            'list_resource_templates',
+            new=AsyncMock(side_effect=mcp_error),
+        ):
+            with pytest.raises(MCPServerError, match='Service unavailable') as exc_info:
+                await mcp_server.list_resource_templates()
+
+            # Verify the exception has the expected attributes
+            assert exc_info.value.code == -32001
+            assert exc_info.value.message == 'Service unavailable'
+
+
 def test_load_mcp_servers(tmp_path: Path):
     config = tmp_path / 'mcp.json'
 
@@ -1489,3 +1627,34 @@ async def test_server_info(mcp_server: MCPServerStdio) -> None:
     async with mcp_server:
         assert mcp_server.server_info is not None
         assert mcp_server.server_info.name == 'Pydantic AI MCP Server'
+
+
+async def test_capabilities(mcp_server: MCPServerStdio) -> None:
+    with pytest.raises(
+        AttributeError, match='The `MCPServerStdio.capabilities` is only instantiated after initialization.'
+    ):
+        mcp_server.capabilities
+    async with mcp_server:
+        assert mcp_server.capabilities is not None
+        assert mcp_server.capabilities.resources is True
+        assert mcp_server.capabilities.tools is True
+        assert mcp_server.capabilities.prompts is True
+        assert mcp_server.capabilities.logging is True
+        assert mcp_server.capabilities.completions is False
+        assert mcp_server.capabilities.experimental is None
+
+
+async def test_resource_methods_without_capability(mcp_server: MCPServerStdio) -> None:
+    """Test that resource methods raise MCPServerCapabilitiesError when resources capability is not available."""
+    async with mcp_server:
+        # Mock the capabilities to not support resources
+        mock_capabilities = ServerCapabilities(resources=False)
+        with patch.object(mcp_server, '_server_capabilities', mock_capabilities):
+            with pytest.raises(MCPServerCapabilitiesError, match='Server does not support resources capability'):
+                await mcp_server.list_resources()
+
+            with pytest.raises(MCPServerCapabilitiesError, match='Server does not support resources capability'):
+                await mcp_server.list_resource_templates()
+
+            with pytest.raises(MCPServerCapabilitiesError, match='Server does not support resources capability'):
+                await mcp_server.read_resource('resource://test')

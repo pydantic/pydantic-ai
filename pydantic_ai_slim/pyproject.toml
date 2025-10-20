@@ -87,7 +87,7 @@ cli = [
     "pyperclip>=1.9.0",
 ]
 # MCP
-mcp = ["mcp>=1.12.3"]
+mcp = ["mcp>=1.18.0"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
 # A2A
