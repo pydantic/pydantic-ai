@@ -511,7 +511,9 @@ async def main():
     @g.step
     async def search(ctx: StepContext[SearchState, None, str]) -> str:
         """Simulate a slow search operation."""
-        await asyncio.sleep(0.1)
+        # make the search artificially slower for 'item4' and 'item5'
+        search_duration = 0.1 if ctx.inputs not in {'item4', 'item5'} else 1.0
+        await asyncio.sleep(search_duration)
         ctx.state.searches_completed += 1
         return ctx.inputs
 
