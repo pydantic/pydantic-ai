@@ -201,7 +201,7 @@ wheels = [
 
 [[package]]
 name = "anthropic"
-version = "0.69.0"
+version = "0.70.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -213,9 +213,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c8/9d/9ad1778b95f15c5b04e7d328c1b5f558f1e893857b7c33cd288c19c0057a/anthropic-0.69.0.tar.gz", hash = "sha256:c604d287f4d73640f40bd2c0f3265a2eb6ce034217ead0608f6b07a8bc5ae5f2", size = 480622, upload-time = "2025-09-29T16:53:45.282Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/be/a80a8678d39d77b2325b1a32a55d62ca9dc376984a3d66d351229d37da9c/anthropic-0.70.0.tar.gz", hash = "sha256:24078275246636d9fd38c94bb8cf64799ce7fc6bbad379422b36fa86b3e4deee", size = 480930, upload-time = "2025-10-15T16:54:33.577Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9b/38/75129688de5637eb5b383e5f2b1570a5cc3aecafa4de422da8eea4b90a6c/anthropic-0.69.0-py3-none-any.whl", hash = "sha256:1f73193040f33f11e27c2cd6ec25f24fe7c3f193dc1c5cde6b7a08b18a16bcc5", size = 337265, upload-time = "2025-09-29T16:53:43.686Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/81/da287ba25b9f8a16d27e822b3f2dad6ddf005fba3e3696f5dce818383850/anthropic-0.70.0-py3-none-any.whl", hash = "sha256:fa7d0dee6f2b871faa7cd0b77f6047e8006d5863618804204cf34b1b95819971", size = 337327, upload-time = "2025-10-15T16:54:32.087Z" },
 ]
 
 [[package]]
@@ -1508,16 +1508,16 @@ http = [
 
 [[package]]
 name = "genai-prices"
-version = "0.0.30"
+version = "0.0.31"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "eval-type-backport", marker = "python_full_version < '3.11'" },
     { name = "httpx" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/91/ec/247749351ad7d49770c1856860fbd681e93aba02f7d8f40e12636a79bf3b/genai_prices-0.0.30.tar.gz", hash = "sha256:3d176d4c0366a58b0480c6929d1c101c989efa5ffeaae3cb53780811d08ac2fa", size = 45722, upload-time = "2025-10-07T18:56:21.6Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3b/1d/e668a3c2045b1426485aedc95ea502b6a135f2a7ef4189d0b8b72138bcf5/genai_prices-0.0.31.tar.gz", hash = "sha256:cc98f0be0ae62beaf690bc8bf299a7cdb32671ebcaf23f8c5316bbe03e7740ed", size = 45772, upload-time = "2025-10-09T08:19:15.836Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/29/364374f38ec219f0831c062d72190cf45f133392bc1c74aa2ff9c0db4788/genai_prices-0.0.30-py3-none-any.whl", hash = "sha256:8fa326931957c95cf30b13cc663973ae8e51e619b787b1c4e2d3e58860f70adb", size = 48337, upload-time = "2025-10-07T18:56:20.231Z" },
+    { url = "https://files.pythonhosted.org/packages/39/59/8f4a65dc5a870e5b13f5da9ed87acb724b767108969c6be2c24afdf20a73/genai_prices-0.0.31-py3-none-any.whl", hash = "sha256:28707214a81122ac6cb74b1f3d255c8bccf0c11dba32366527e7d608fa49908a", size = 48368, upload-time = "2025-10-09T08:19:14.447Z" },
 ]
 
 [[package]]
@@ -1905,7 +1905,7 @@ wheels = [
 
 [[package]]
 name = "inline-snapshot"
-version = "0.23.0"
+version = "0.29.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "asttokens" },
@@ -1914,9 +1914,9 @@ dependencies = [
     { name = "rich" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8d/a3/9e78da370d20b896861cd5db3fa6fde89348b700ec144d8c1457c18ea113/inline_snapshot-0.23.0.tar.gz", hash = "sha256:872d027b1eae4e3e3b4028e0d46128bafbf62889a2424a2667dbe4b69cb1ffdf", size = 259375, upload-time = "2025-04-25T18:14:36.48Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/31/6d/535a8baebb38fcdca95aa91b93e1b7a3e6aa8196f34b29b02a8ae50249fd/inline_snapshot-0.29.3.tar.gz", hash = "sha256:f11e309d3474ab5f517687288bf23092e1acadb392e1e38ddb3d5bb165a8723e", size = 2596900, upload-time = "2025-10-04T11:48:30.806Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/71/ab/4ad6bb9808f242e659ca8437ee475efaa201f18ff20a0dd5553280c85ae5/inline_snapshot-0.23.0-py3-none-any.whl", hash = "sha256:b1a5feab675aee8d03a51f1b6291f412100ce750d846c2d58eab16c90ee2c4dd", size = 50119, upload-time = "2025-04-25T18:14:34.46Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/99/3dac7fbee50707bb658895ab1b01da64f7de4aa0a6fcd2dcf7ee1a64c043/inline_snapshot-0.29.3-py3-none-any.whl", hash = "sha256:2b2c2140d0d0709ba99c552e211907f87bf23ce685b7b90fb2bc77fd7ae045b1", size = 70917, upload-time = "2025-10-04T11:48:29.004Z" },
 ]
 
 [[package]]
@@ -3891,7 +3891,7 @@ vertexai = [
 [package.metadata]
 requires-dist = [
     { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.8" },
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.69.0" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.70.0" },
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.39.0" },
     { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.18.0" },
@@ -3899,7 +3899,7 @@ requires-dist = [
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
-    { name = "genai-prices", specifier = ">=0.0.30" },
+    { name = "genai-prices", specifier = ">=0.0.31" },
     { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.31.0" },
     { name = "griffe", specifier = ">=1.3.2" },
