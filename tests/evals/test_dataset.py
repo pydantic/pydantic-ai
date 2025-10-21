@@ -1555,6 +1555,16 @@ async def test_evaluate_async_logfire(
                             'gen_ai.operation.name': {},
                             'n_cases': {},
                             'name': {},
+                            'logfire.experiment.metadata': {
+                                'type': 'object',
+                                'properties': {
+                                    'averages': {
+                                        'type': 'object',
+                                        'title': 'ReportCaseAggregate',
+                                        'x-python-datatype': 'PydanticModel',
+                                    }
+                                },
+                            },
                             'task_name': {},
                         },
                         'type': 'object',
@@ -1563,6 +1573,18 @@ async def test_evaluate_async_logfire(
                     'logfire.msg_template': 'evaluate {name}',
                     'logfire.span_type': 'span',
                     'n_cases': 2,
+                    'logfire.experiment.metadata': {
+                        'n_cases': 2,
+                        'averages': {
+                            'name': 'Averages',
+                            'scores': {'confidence': 1.0},
+                            'labels': {},
+                            'metrics': {},
+                            'assertions': 1.0,
+                            'task_duration': 1.0,
+                            'total_duration': 9.0,
+                        },
+                    },
                     'name': 'mock_async_task',
                     'task_name': 'mock_async_task',
                 },
