@@ -8,6 +8,12 @@ import httpx
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.harmony import harmony_model_profile
+from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -35,7 +41,21 @@ class OVHcloudProvider(Provider[AsyncOpenAI]):
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
-        return None
+        if 'deepseek' in model_name.lower():
+            profile = deepseek_model_profile(model_name)
+        elif 'llama' in model_name.lower():
+            profile = meta_model_profile(model_name)
+        elif 'mistral' in model_name.lower():
+            profile = mistral_model_profile(model_name)
+        elif 'qwen' in model_name.lower():
+            profile = qwen_model_profile(model_name)
+        elif 'openai' in model_name.lower() or 'gpt' in model_name:
+            profile = harmony_model_profile(model_name)
+        else:
+            profile = None
+
+        # As the OVHcloud AI Endpoints API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer.
+        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
 
     @overload
     def __init__(self) -> None: ...
