@@ -1,20 +1,47 @@
-# Evals
+# Pydantic Evals
 
-_Evals_ is shorthand for both AI system _Evaluation_ as a broad topic and for specific _Evaluation Metrics_ or _Evaluators_ as individual tests. Ironically, the overloading of this term makes it difficult to evaluate what people are even talking about when they say "Evals" (without further context).
+**Pydantic Evals** is a powerful evaluation framework for systematically testing and evaluating AI systems, from simple LLM calls to complex multi-agent applications.
 
-!!! danger "Warning"
-    Unlike unit tests, evals are an emerging art/science; anyone who claims to know exactly how your evals should be defined can safely be ignored.
+## Design Philosophy
 
-## Pydantic Evals Package
+!!! note "Code-First Approach"
+    Pydantic Evals follows a code-first philosophy where all evaluation components are defined in Python. This differs from platforms with web-based configuration. You write and run evals in code, and can write the results to disk or view them in your terminal or in [Pydantic Logfire](https://logfire.pydantic.dev/docs/guides/web-ui/evals/).
 
-**Pydantic Evals** is a powerful evaluation framework designed to help you systematically test and evaluate the performance and accuracy of the systems you build, from augmented LLMs to multi-agent systems.
+!!! danger "Evals are an Emerging Practice"
+    Unlike unit tests, evals are an emerging art/science. Anyone who claims to know exactly how your evals should be defined can safely be ignored. We've designed Pydantic Evals to be flexible and useful without being too opinionated.
 
-Install Pydantic Evals as part of the Pydantic AI (agent framework) package, or stand-alone.
 
-We've designed Pydantic Evals to be useful while not being too opinionated since we (along with everyone else) are still figuring out best practices. We'd love your [feedback](help.md) on the package and how we can improve it.
+## Quick Navigation
 
-!!! note "In Beta"
-    Pydantic Evals support was [introduced](https://github.com/pydantic/pydantic-ai/pull/935) in v0.0.47 and is currently in beta. The API is subject to change and the documentation is incomplete.
+**Getting Started:**
+
+- [Installation](#installation)
+- [Quick Start](evals/quick-start.md)
+- [Core Concepts](evals/core-concepts.md)
+
+**Evaluators:**
+
+- [Evaluators Overview](evals/evaluators/overview.md) - When to use different evaluator types
+- [Built-in Evaluators](evals/evaluators/built-in.md) - Complete reference
+- [LLM Judge](evals/evaluators/llm-judge.md) - LLM-as-judge deep dive
+- [Custom Evaluators](evals/evaluators/custom.md) - Write your own
+- [Span-Based Evaluation](evals/evaluators/span-based.md) - Behavioral checks with OpenTelemetry
+
+**How-To Guides:**
+
+- [Logfire Integration](evals/how-to/logfire-integration.md) - Visualize results
+- [Dataset Management](evals/how-to/dataset-management.md) - Save, load, generate
+- [Concurrency & Performance](evals/how-to/concurrency.md) - Control parallel execution
+- [Retry Strategies](evals/how-to/retry-strategies.md) - Handle transient failures
+- [Metrics & Attributes](evals/how-to/metrics-attributes.md) - Track custom data
+
+**Examples:**
+
+- [Simple Validation](evals/examples/simple-validation.md) - Basic example
+
+**Reference:**
+
+- [API Documentation](api/pydantic_evals/dataset.md)
 
 ## Code-First Evaluation
 
@@ -41,6 +68,8 @@ pip/uv-add 'pydantic-evals[logfire]'
 
 ## Pydantic Evals Data Model
 
+Pydantic Evals is built around a simple data model:
+
 ### Data Model Diagram
 
 ```
@@ -57,10 +86,8 @@ Dataset (1) ──────────── (Many) Case
 ### Key Relationships
 
 1. **Dataset → Cases**: One Dataset contains many Cases
-2. **Dataset → Experiments**: One Dataset can be used across many Experiments
-   over time
-3. **Experiment → Case results**: One Experiment generates results by
-   executing each Case
+2. **Dataset → Experiments**: One Dataset can be used across many Experiments over time
+3. **Experiment → Case results**: One Experiment generates results by executing each Case
 4. **Experiment → Task**: One Experiment evaluates one defined Task
 5. **Experiment → Evaluators**: One Experiment uses multiple Evaluators. Dataset-wide Evaluators are run against all Cases, and Case-specific Evaluators against their respective Cases
 
@@ -96,12 +123,14 @@ Dataset (1) ──────────── (Many) Case
     but scores for text outputs are likely qualitative and/or categorical,
     and more open to interpretation.
 
+For a deeper understanding, see [Core Concepts](evals/core-concepts.md).
+
 ## Datasets and Cases
 
-In Pydantic Evals, everything begins with `Dataset`s and `Case`s:
+In Pydantic Evals, everything begins with [`Dataset`][pydantic_evals.Dataset]s and [`Case`][pydantic_evals.Case]s:
 
-- [`Case`][pydantic_evals.Case]: A single test scenario corresponding to Task inputs. Can also optionally have a name, expected outputs, metadata, and evaluators.
-- [`Dataset`][pydantic_evals.Dataset]: A collection of test Cases designed for the evaluation of a specific task or function.
+- **[`Dataset`][pydantic_evals.Dataset]**: A collection of test Cases designed for the evaluation of a specific task or function
+- **[`Case`][pydantic_evals.Case]**: A single test scenario corresponding to Task inputs, with optional expected outputs, metadata, and case-specific evaluators
 
 ```python {title="simple_eval_dataset.py"}
 from pydantic_evals import Case, Dataset
@@ -118,15 +147,17 @@ dataset = Dataset(cases=[case1])
 
 _(This example is complete, it can be run "as is")_
 
+See [Dataset Management](evals/how-to/dataset-management.md) to learn about saving, loading, and generating datasets.
+
 ## Evaluators
 
-Evaluators analyze and score the results of your Task when tested against a Case.
+[`Evaluator`][pydantic_evals.evaluators.Evaluator]s analyze and score the results of your Task when tested against a Case.
 
-These can be a classic unit test: deterministic, code-based checks, such as testing model output format with a regex, or checking for the appearance of PII or sensitive data. Alternatively Evaluators can assess the non-deterministic model outputs for qualities like accuracy, precision/recall, hallucinations or instruction-following.
+These can be deterministic, code-based checks (such as testing model output format with a regex, or checking for the appearance of PII or sensitive data), or they can assess non-deterministic model outputs for qualities like accuracy, precision/recall, hallucinations, or instruction-following.
 
-While both kinds of testing are useful in LLM systems, classical code-based tests are cheaper and easier than tests which require either human or machine review of model outputs. We encourage you to look for quick wins of this type, when setting up a test framework for your system.
+While both kinds of testing are useful in LLM systems, classical code-based tests are cheaper and easier than tests which require either human or machine review of model outputs.
 
-Pydantic Evals includes several built-in evaluators and allows you to define custom evaluators:
+Pydantic Evals includes several [built-in evaluators](evals/evaluators/built-in.md) and allows you to define [custom evaluators](evals/evaluators/custom.md):
 
 ```python {title="simple_eval_evaluator.py" requires="simple_eval_dataset.py"}
 from dataclasses import dataclass
@@ -161,6 +192,14 @@ dataset.add_evaluator(MyEvaluator())
 
 _(This example is complete, it can be run "as is")_
 
+Learn more:
+
+- [Evaluators Overview](evals/evaluators/overview.md) - When to use different types
+- [Built-in Evaluators](evals/evaluators/built-in.md) - Complete reference
+- [LLM Judge](evals/evaluators/llm-judge.md) - Using LLMs as evaluators
+- [Custom Evaluators](evals/evaluators/custom.md) - Write your own logic
+- [Span-Based Evaluation](evals/evaluators/span-based.md) - Analyze execution traces
+
 ## Running Experiments
 
 Performing evaluations involves running a task against all cases in a dataset, also known as running an "experiment".
@@ -194,16 +233,16 @@ class MyEvaluator(Evaluator[str, str]):
 
 dataset = Dataset(
     cases=[case1],
-    evaluators=[IsInstance(type_name='str'), MyEvaluator()],  # (3)!
+    evaluators=[IsInstance(type_name='str'), MyEvaluator()],  # (2)!
 )
 
 
-async def guess_city(question: str) -> str:  # (4)!
+async def guess_city(question: str) -> str:  # (3)!
     return 'Paris'
 
 
-report = dataset.evaluate_sync(guess_city)  # (5)!
-report.print(include_input=True, include_output=True, include_durations=False)  # (6)!
+report = dataset.evaluate_sync(guess_city)  # (4)!
+report.print(include_input=True, include_output=True, include_durations=False)  # (5)!
 """
                               Evaluation Summary: guess_city
 ┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┓
@@ -217,608 +256,14 @@ report.print(include_input=True, include_output=True, include_durations=False)  
 ```
 
 1. Create a [test case][pydantic_evals.Case] as above
-2. Also create a custom evaluator function as above
-3. Create a [`Dataset`][pydantic_evals.Dataset] with test cases, also set the [`evaluators`][pydantic_evals.Dataset.evaluators] when creating the dataset
-4. Our function to evaluate.
-5. Run the evaluation with [`evaluate_sync`][pydantic_evals.Dataset.evaluate_sync], which runs the function against all test cases in the dataset, and returns an [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] object.
-6. Print the report with [`print`][pydantic_evals.reporting.EvaluationReport.print], which shows the results of the evaluation, including input and output. We have omitted duration here just to keep the printed output from changing from run to run.
+2. Create a [`Dataset`][pydantic_evals.Dataset] with test cases and [`evaluators`][pydantic_evals.Dataset.evaluators]
+3. Our function to evaluate.
+4. Run the evaluation with [`evaluate_sync`][pydantic_evals.Dataset.evaluate_sync], which runs the function against all test cases in the dataset, and returns an [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] object.
+5. Print the report with [`print`][pydantic_evals.reporting.EvaluationReport.print], which shows the results of the evaluation. We have omitted duration here just to keep the printed output from changing from run to run.
 
 _(This example is complete, it can be run "as is")_
 
-## Evaluation with `LLMJudge`
-
-In this example we evaluate a method for generating recipes based on customer orders.
-
-```python {title="judge_recipes.py" test="skip"}
-from __future__ import annotations
-
-from typing import Any
-
-from pydantic import BaseModel
-
-from pydantic_ai import Agent, format_as_xml
-from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import IsInstance, LLMJudge
-
-
-class CustomerOrder(BaseModel):  # (1)!
-    dish_name: str
-    dietary_restriction: str | None = None
-
-
-class Recipe(BaseModel):
-    ingredients: list[str]
-    steps: list[str]
-
-
-recipe_agent = Agent(
-    'groq:llama-3.3-70b-versatile',
-    output_type=Recipe,
-    system_prompt=(
-        'Generate a recipe to cook the dish that meets the dietary restrictions.'
-    ),
-)
-
-
-async def transform_recipe(customer_order: CustomerOrder) -> Recipe:  # (2)!
-    r = await recipe_agent.run(format_as_xml(customer_order))
-    return r.output
-
-
-recipe_dataset = Dataset[CustomerOrder, Recipe, Any](  # (3)!
-    cases=[
-        Case(
-            name='vegetarian_recipe',
-            inputs=CustomerOrder(
-                dish_name='Spaghetti Bolognese', dietary_restriction='vegetarian'
-            ),
-            expected_output=None,  # (4)
-            metadata={'focus': 'vegetarian'},
-            evaluators=(
-                LLMJudge(  # (5)!
-                    rubric='Recipe should not contain meat or animal products',
-                ),
-            ),
-        ),
-        Case(
-            name='gluten_free_recipe',
-            inputs=CustomerOrder(
-                dish_name='Chocolate Cake', dietary_restriction='gluten-free'
-            ),
-            expected_output=None,
-            metadata={'focus': 'gluten-free'},
-            # Case-specific evaluator with a focused rubric
-            evaluators=(
-                LLMJudge(
-                    rubric='Recipe should not contain gluten or wheat products',
-                ),
-            ),
-        ),
-    ],
-    evaluators=[  # (6)!
-        IsInstance(type_name='Recipe'),
-        LLMJudge(
-            rubric='Recipe should have clear steps and relevant ingredients',
-            include_input=True,
-            model='anthropic:claude-3-7-sonnet-latest',  # (7)!
-        ),
-    ],
-)
-
-
-report = recipe_dataset.evaluate_sync(transform_recipe)
-print(report)
-"""
-     Evaluation Summary: transform_recipe
-┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID            ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ vegetarian_recipe  │ ✔✔✔        │     10ms │
-├────────────────────┼────────────┼──────────┤
-│ gluten_free_recipe │ ✔✔✔        │     10ms │
-├────────────────────┼────────────┼──────────┤
-│ Averages           │ 100.0% ✔   │     10ms │
-└────────────────────┴────────────┴──────────┘
-"""
-```
-
-1. Define models for our task — Input for recipe generation task and output of the task.
-2. Define our recipe generation function - this is the task we want to evaluate.
-3. Create a dataset with different test cases and different rubrics.
-4. No expected output, we'll let the LLM judge the quality.
-5. Case-specific evaluator with a focused rubric using [`LLMJudge`][pydantic_evals.evaluators.LLMJudge].
-6. Dataset-level evaluators that apply to all cases, including a general quality rubric for all recipes
-7. By default `LLMJudge` uses `openai:gpt-4o`, here we use a specific Anthropic model.
-
-_(This example is complete, it can be run "as is")_
-
-## Saving and Loading Datasets
-
-Datasets can be saved to and loaded from YAML or JSON files.
-
-```python {title="save_load_dataset_example.py" test="skip"}
-from pathlib import Path
-
-from judge_recipes import CustomerOrder, Recipe, recipe_dataset
-
-from pydantic_evals import Dataset
-
-recipe_transforms_file = Path('recipe_transform_tests.yaml')
-recipe_dataset.to_file(recipe_transforms_file)  # (1)!
-print(recipe_transforms_file.read_text())
-"""
-# yaml-language-server: $schema=recipe_transform_tests_schema.json
-cases:
-- name: vegetarian_recipe
-  inputs:
-    dish_name: Spaghetti Bolognese
-    dietary_restriction: vegetarian
-  metadata:
-    focus: vegetarian
-  evaluators:
-  - LLMJudge: Recipe should not contain meat or animal products
-- name: gluten_free_recipe
-  inputs:
-    dish_name: Chocolate Cake
-    dietary_restriction: gluten-free
-  metadata:
-    focus: gluten-free
-  evaluators:
-  - LLMJudge: Recipe should not contain gluten or wheat products
-evaluators:
-- IsInstance: Recipe
-- LLMJudge:
-    rubric: Recipe should have clear steps and relevant ingredients
-    model: anthropic:claude-3-7-sonnet-latest
-    include_input: true
-"""
-
-# Load dataset from file
-loaded_dataset = Dataset[CustomerOrder, Recipe, dict].from_file(recipe_transforms_file)
-
-print(f'Loaded dataset with {len(loaded_dataset.cases)} cases')
-#> Loaded dataset with 2 cases
-```
-
-_(This example is complete, it can be run "as is")_
-
-## Parallel Evaluation
-
-You can control concurrency during evaluation (this might be useful to prevent exceeding a rate limit):
-
-```python {title="parallel_evaluation_example.py" line_length="100" test="skip"}
-import asyncio
-import time
-
-from pydantic_evals import Case, Dataset
-
-# Create a dataset with multiple test cases
-dataset = Dataset(
-    cases=[
-        Case(
-            name=f'case_{i}',
-            inputs=i,
-            expected_output=i * 2,
-        )
-        for i in range(5)
-    ]
-)
-
-
-async def double_number(input_value: int) -> int:
-    """Function that simulates work by sleeping for a tenth of a second before returning double the input."""
-    await asyncio.sleep(0.1)  # Simulate work
-    return input_value * 2
-
-
-# Run evaluation with unlimited concurrency
-t0 = time.time()
-report_default = dataset.evaluate_sync(double_number)
-print(f'Evaluation took less than 0.5s: {time.time() - t0 < 0.5}')
-#> Evaluation took less than 0.5s: True
-
-report_default.print(include_input=True, include_output=True, include_durations=False)  # (1)!
-"""
-      Evaluation Summary:
-         double_number
-┏━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┓
-┃ Case ID  ┃ Inputs ┃ Outputs ┃
-┡━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━┩
-│ case_0   │ 0      │ 0       │
-├──────────┼────────┼─────────┤
-│ case_1   │ 1      │ 2       │
-├──────────┼────────┼─────────┤
-│ case_2   │ 2      │ 4       │
-├──────────┼────────┼─────────┤
-│ case_3   │ 3      │ 6       │
-├──────────┼────────┼─────────┤
-│ case_4   │ 4      │ 8       │
-├──────────┼────────┼─────────┤
-│ Averages │        │         │
-└──────────┴────────┴─────────┘
-"""
-
-# Run evaluation with limited concurrency
-t0 = time.time()
-report_limited = dataset.evaluate_sync(double_number, max_concurrency=1)
-print(f'Evaluation took more than 0.5s: {time.time() - t0 > 0.5}')
-#> Evaluation took more than 0.5s: True
-
-report_limited.print(include_input=True, include_output=True, include_durations=False)  # (2)!
-"""
-      Evaluation Summary:
-         double_number
-┏━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┓
-┃ Case ID  ┃ Inputs ┃ Outputs ┃
-┡━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━┩
-│ case_0   │ 0      │ 0       │
-├──────────┼────────┼─────────┤
-│ case_1   │ 1      │ 2       │
-├──────────┼────────┼─────────┤
-│ case_2   │ 2      │ 4       │
-├──────────┼────────┼─────────┤
-│ case_3   │ 3      │ 6       │
-├──────────┼────────┼─────────┤
-│ case_4   │ 4      │ 8       │
-├──────────┼────────┼─────────┤
-│ Averages │        │         │
-└──────────┴────────┴─────────┘
-"""
-```
-
-1. We have omitted duration here just to keep the printed output from changing from run to run.
-2. We have omitted duration here just to keep the printed output from changing from run to run.
-
-_(This example is complete, it can be run "as is")_
-
-## OpenTelemetry Integration
-
-Pydantic Evals integrates with OpenTelemetry for tracing.
-
-The [`EvaluatorContext`][pydantic_evals.evaluators.context.EvaluatorContext] includes a property called `span_tree`
-which returns a [`SpanTree`][pydantic_evals.otel.span_tree.SpanTree]. The `SpanTree` provides a way to query and analyze
-the spans generated during function execution. This provides a way to access the results of instrumentation during
-evaluation.
-
-!!! note
-    If you just want to write unit tests that ensure that specific spans are produced during calls to your evaluation
-    task, it's usually better to just use the `logfire.testing.capfire` fixture directly.
-
-There are two main ways this is useful.
-
-<!-- TODO: Finish this -->
-
-```python {title="opentelemetry_example.py"}
-import asyncio
-from typing import Any
-
-import logfire
-
-from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import Evaluator
-from pydantic_evals.evaluators.context import EvaluatorContext
-from pydantic_evals.otel.span_tree import SpanQuery
-
-logfire.configure(  # ensure that an OpenTelemetry tracer is configured
-    send_to_logfire='if-token-present'
-)
-
-
-class SpanTracingEvaluator(Evaluator[str, str]):
-    """Evaluator that analyzes the span tree generated during function execution."""
-
-    def evaluate(self, ctx: EvaluatorContext[str, str]) -> dict[str, Any]:
-        # Get the span tree from the context
-        span_tree = ctx.span_tree
-        if span_tree is None:
-            return {'has_spans': False, 'performance_score': 0.0}
-
-        # Find all spans with "processing" in the name
-        processing_spans = span_tree.find(lambda node: 'processing' in node.name)
-
-        # Calculate total processing time
-        total_processing_time = sum(
-            (span.duration.total_seconds() for span in processing_spans), 0.0
-        )
-
-        # Check for error spans
-        error_query: SpanQuery = {'name_contains': 'error'}
-        has_errors = span_tree.any(error_query)
-
-        # Calculate a performance score
-        performance_score = 1.0 if total_processing_time < 2.0 else 0.5
-
-        return {
-            'has_spans': True,
-            'has_errors': has_errors,
-            'performance_score': 0 if has_errors else performance_score,
-        }
-
-
-async def process_text(text: str) -> str:
-    """Function that processes text with OpenTelemetry instrumentation."""
-    with logfire.span('process_text'):
-        # Simulate initial processing
-        with logfire.span('text_processing'):
-            await asyncio.sleep(0.1)
-            processed = text.strip().lower()
-
-        # Simulate additional processing
-        with logfire.span('additional_processing'):
-            if 'error' in processed:
-                with logfire.span('error_handling'):
-                    logfire.error(f'Error detected in text: {text}')
-                    return f'Error processing: {text}'
-            await asyncio.sleep(0.2)
-            processed = processed.replace(' ', '_')
-
-        return f'Processed: {processed}'
-
-
-# Create test cases
-dataset = Dataset(
-    cases=[
-        Case(
-            name='normal_text',
-            inputs='Hello World',
-            expected_output='Processed: hello_world',
-        ),
-        Case(
-            name='text_with_error',
-            inputs='Contains error marker',
-            expected_output='Error processing: Contains error marker',
-        ),
-    ],
-    evaluators=[SpanTracingEvaluator()],
-)
-
-# Run evaluation - spans are automatically captured since logfire is configured
-report = dataset.evaluate_sync(process_text)
-
-# Print the report
-report.print(include_input=True, include_output=True, include_durations=False)  # (1)!
-"""
-                                              Evaluation Summary: process_text
-┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┓
-┃ Case ID         ┃ Inputs                ┃ Outputs                                 ┃ Scores                   ┃ Assertions ┃
-┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━┩
-│ normal_text     │ Hello World           │ Processed: hello_world                  │ performance_score: 1.00  │ ✔✗         │
-├─────────────────┼───────────────────────┼─────────────────────────────────────────┼──────────────────────────┼────────────┤
-│ text_with_error │ Contains error marker │ Error processing: Contains error marker │ performance_score: 0     │ ✔✔         │
-├─────────────────┼───────────────────────┼─────────────────────────────────────────┼──────────────────────────┼────────────┤
-│ Averages        │                       │                                         │ performance_score: 0.500 │ 75.0% ✔    │
-└─────────────────┴───────────────────────┴─────────────────────────────────────────┴──────────────────────────┴────────────┘
-"""
-```
-
-1. We have omitted duration here just to keep the printed output from changing from run to run.
-
-_(This example is complete, it can be run "as is")_
-
-## Generating Test Datasets
-
-Pydantic Evals allows you to generate test datasets using LLMs with [`generate_dataset`][pydantic_evals.generation.generate_dataset].
-
-Datasets can be generated in either JSON or YAML format, in both cases a JSON schema file is generated alongside the dataset and referenced in the dataset, so you should get type checking and auto-completion in your editor.
-
-```python {title="generate_dataset_example.py"}
-from __future__ import annotations
-
-from pathlib import Path
-
-from pydantic import BaseModel, Field
-
-from pydantic_evals import Dataset
-from pydantic_evals.generation import generate_dataset
-
-
-class QuestionInputs(BaseModel, use_attribute_docstrings=True):  # (1)!
-    """Model for question inputs."""
-
-    question: str
-    """A question to answer"""
-    context: str | None = None
-    """Optional context for the question"""
-
-
-class AnswerOutput(BaseModel, use_attribute_docstrings=True):  # (2)!
-    """Model for expected answer outputs."""
-
-    answer: str
-    """The answer to the question"""
-    confidence: float = Field(ge=0, le=1)
-    """Confidence level (0-1)"""
-
-
-class MetadataType(BaseModel, use_attribute_docstrings=True):  # (3)!
-    """Metadata model for test cases."""
-
-    difficulty: str
-    """Difficulty level (easy, medium, hard)"""
-    category: str
-    """Question category"""
-
-
-async def main():
-    dataset = await generate_dataset(  # (4)!
-        dataset_type=Dataset[QuestionInputs, AnswerOutput, MetadataType],
-        n_examples=2,
-        extra_instructions="""
-        Generate question-answer pairs about world capitals and landmarks.
-        Make sure to include both easy and challenging questions.
-        """,
-    )
-    output_file = Path('questions_cases.yaml')
-    dataset.to_file(output_file)  # (5)!
-    print(output_file.read_text())
-    """
-    # yaml-language-server: $schema=questions_cases_schema.json
-    name: null
-    cases:
-    - name: Easy Capital Question
-      inputs:
-        question: What is the capital of France?
-        context: null
-      metadata:
-        difficulty: easy
-        category: Geography
-      expected_output:
-        answer: Paris
-        confidence: 0.95
-      evaluators:
-      - EqualsExpected
-    - name: Challenging Landmark Question
-      inputs:
-        question: Which world-famous landmark is located on the banks of the Seine River?
-        context: null
-      metadata:
-        difficulty: hard
-        category: Landmarks
-      expected_output:
-        answer: Eiffel Tower
-        confidence: 0.9
-      evaluators:
-      - EqualsExpected
-    evaluators: []
-    """
-```
-
-1. Define the schema for the inputs to the task.
-2. Define the schema for the expected outputs of the task.
-3. Define the schema for the metadata of the test cases.
-4. Call [`generate_dataset`][pydantic_evals.generation.generate_dataset] to create a [`Dataset`][pydantic_evals.Dataset] with 2 cases confirming to the schema.
-5. Save the dataset to a YAML file, this will also write `questions_cases_schema.json` with the schema JSON schema for `questions_cases.yaml` to make editing easier. The magic `yaml-language-server` comment is supported by at least vscode, jetbrains/pycharm (more details [here](https://github.com/redhat-developer/yaml-language-server#using-inlined-schema)).
-
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main(answer))` to run `main`)_
-
-You can also write datasets as JSON files:
-
-```python {title="generate_dataset_example_json.py" requires="generate_dataset_example.py"}
-from pathlib import Path
-
-from pydantic_evals import Dataset
-from pydantic_evals.generation import generate_dataset
-
-from generate_dataset_example import AnswerOutput, MetadataType, QuestionInputs
-
-
-async def main():
-    dataset = await generate_dataset(  # (1)!
-        dataset_type=Dataset[QuestionInputs, AnswerOutput, MetadataType],
-        n_examples=2,
-        extra_instructions="""
-        Generate question-answer pairs about world capitals and landmarks.
-        Make sure to include both easy and challenging questions.
-        """,
-    )
-    output_file = Path('questions_cases.json')
-    dataset.to_file(output_file)  # (2)!
-    print(output_file.read_text())
-    """
-    {
-      "$schema": "questions_cases_schema.json",
-      "name": null,
-      "cases": [
-        {
-          "name": "Easy Capital Question",
-          "inputs": {
-            "question": "What is the capital of France?",
-            "context": null
-          },
-          "metadata": {
-            "difficulty": "easy",
-            "category": "Geography"
-          },
-          "expected_output": {
-            "answer": "Paris",
-            "confidence": 0.95
-          },
-          "evaluators": [
-            "EqualsExpected"
-          ]
-        },
-        {
-          "name": "Challenging Landmark Question",
-          "inputs": {
-            "question": "Which world-famous landmark is located on the banks of the Seine River?",
-            "context": null
-          },
-          "metadata": {
-            "difficulty": "hard",
-            "category": "Landmarks"
-          },
-          "expected_output": {
-            "answer": "Eiffel Tower",
-            "confidence": 0.9
-          },
-          "evaluators": [
-            "EqualsExpected"
-          ]
-        }
-      ],
-      "evaluators": []
-    }
-    """
-```
-
-1. Generate the [`Dataset`][pydantic_evals.Dataset] exactly as above.
-2. Save the dataset to a JSON file, this will also write `questions_cases_schema.json` with th JSON schema for `questions_cases.json`. This time the `$schema` key is included in the JSON file to define the schema for IDEs to use while you edit the file, there's no formal spec for this, but it works in vscode and pycharm and is discussed at length in [json-schema-org/json-schema-spec#828](https://github.com/json-schema-org/json-schema-spec/issues/828).
-
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main(answer))` to run `main`)_
-
-## Integration with Logfire
-
-Pydantic Evals is implemented using OpenTelemetry to record traces of the evaluation process. These traces contain all
-the information included in the terminal output as attributes, but also include full tracing from the executions of the
-evaluation task function.
-
-You can send these traces to any OpenTelemetry-compatible backend, including [Pydantic Logfire](https://logfire.pydantic.dev/docs/guides/web-ui/evals/).
-
-All you need to do is configure Logfire via `logfire.configure`:
-
-```python {title="logfire_integration.py" test="skip"}
-import logfire
-from judge_recipes import recipe_dataset, transform_recipe
-
-logfire.configure(
-    send_to_logfire='if-token-present',  # (1)!
-    environment='development',  # (2)!
-    service_name='evals',  # (3)!
-)
-
-recipe_dataset.evaluate_sync(transform_recipe)
-```
-
-1. The `send_to_logfire` argument controls when traces are sent to Logfire. You can set it to `'if-token-present'` to send data to Logfire only if the `LOGFIRE_TOKEN` environment variable is set. See the [Logfire configuration docs](https://logfire.pydantic.dev/docs/reference/configuration/) for more details.
-2. The `environment` argument sets the environment for the traces. It's a good idea to set this to `'development'` when running tests or evaluations and sending data to a project with production data, to make it easier to filter these traces out while reviewing data from your production environment(s).
-3. The `service_name` argument sets the service name for the traces. This is displayed in the Logfire UI to help you identify the source of the associated spans.
-
-Logfire has some special integration with Pydantic Evals traces, including a table view of the evaluation results
-on the evaluation root span (which is generated in each call to [`Dataset.evaluate`][pydantic_evals.Dataset.evaluate]):
-
-![Logfire Evals Overview](img/logfire-evals-overview.png)
-
-and a detailed view of the inputs and outputs for the execution of each case:
-
-![Logfire Evals Case](img/logfire-evals-case.png)
-
-In addition, any OpenTelemetry spans generated during the evaluation process will be sent to Logfire, allowing you to
-visualize the full execution of the code called during the evaluation process:
-
-![Logfire Evals Case Trace](img/logfire-evals-case-trace.png)
-
-This can be especially helpful when attempting to write evaluators that make use of the `span_tree` property of the
-[`EvaluatorContext`][pydantic_evals.evaluators.context.EvaluatorContext], as described in the
-[OpenTelemetry Integration](#opentelemetry-integration) section above.
-
-This allows you to write evaluations that depend on information about which code paths were executed during the call to
-the task function without needing to manually instrument the code being evaluated, as long as the code being evaluated
-is already adequately instrumented with OpenTelemetry. In the case of Pydantic AI agents, for example, this can be used
-to ensure specific tools are (or are not) called during the execution of specific cases.
-
-Using OpenTelemetry in this way also means that all data used to evaluate the task executions will be accessible in
-the traces produced by production runs of the code, making it straightforward to perform the same evaluations on
-production data.
+See [Quick Start](evals/quick-start.md) for more examples and [Concurrency & Performance](evals/how-to/concurrency.md) to learn about controlling parallel execution.
 
 ## API Reference
 
@@ -827,8 +272,9 @@ For comprehensive coverage of all classes, methods, and configuration options, s
 ## Next Steps
 
 <!-- TODO - this would be the perfect place for a full tutorial or case study  -->
-1. **Start with simple evaluations** using basic evaluators like [`IsInstance`](https://ai.pydantic.dev/api/pydantic_evals/evaluators/#pydantic_evals.evaluators.IsInstance) and [`EqualsExpected`](https://ai.pydantic.dev/api/pydantic_evals/evaluators/#pydantic_evals.evaluators.EqualsExpected)
-2. **Integrate with Logfire** to visualize results and enable team collaboration
-3. **Build comprehensive test suites** with diverse cases covering edge cases and performance requirements
-4. **Implement custom evaluators** for domain-specific quality metrics
-5. **Automate evaluation runs** as part of your development and deployment pipeline
+1. **Start with simple evaluations** using [Quick Start](evals/quick-start.md)
+2. **Understand the data model** with [Core Concepts](evals/core-concepts.md)
+3. **Explore built-in evaluators** in [Built-in Evaluators](evals/evaluators/built-in.md)
+4. **Integrate with Logfire** for visualization: [Logfire Integration](evals/how-to/logfire-integration.md)
+5. **Build comprehensive test suites** with [Dataset Management](evals/how-to/dataset-management.md)
+6. **Implement custom evaluators** for domain-specific metrics: [Custom Evaluators](evals/evaluators/custom.md)
