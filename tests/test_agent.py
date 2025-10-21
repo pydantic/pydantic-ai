@@ -1834,7 +1834,14 @@ Don't include any text or Markdown fencing before or after.\
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"additionalProperties": false, "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object", "title": "get_weather"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
