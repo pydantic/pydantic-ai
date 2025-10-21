@@ -1,7 +1,14 @@
 from inline_snapshot import snapshot
 from pydantic import TypeAdapter
 
-from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool, WebSearchUserLocation
+from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
+    ImageGenerationTool,
+    MemoryTool,
+    UrlContextTool,
+    WebSearchTool,
+    WebSearchUserLocation,
+)
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 
 ta = TypeAdapter(ModelRequestParameters)
@@ -34,7 +41,10 @@ def test_model_request_parameters_are_serializable():
         function_tools=[ToolDefinition(name='test')],
         builtin_tools=[
             WebSearchTool(user_location=WebSearchUserLocation(city='New York', country='US')),
+            CodeExecutionTool(),
+            UrlContextTool(),
             ImageGenerationTool(size='1024x1024'),
+            MemoryTool(),
         ],
         output_mode='text',
         allow_text_output=True,
@@ -65,6 +75,8 @@ def test_model_request_parameters_are_serializable():
                     'allowed_domains': None,
                     'max_uses': None,
                 },
+                {'kind': 'code_execution'},
+                {'kind': 'url_context'},
                 {
                     'kind': 'image_generation',
                     'background': 'auto',
@@ -76,6 +88,7 @@ def test_model_request_parameters_are_serializable():
                     'quality': 'auto',
                     'size': '1024x1024',
                 },
+                {'kind': 'memory'},
             ],
             'output_mode': 'text',
             'output_object': None,

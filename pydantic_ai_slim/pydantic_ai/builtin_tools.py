@@ -49,16 +49,9 @@ class AbstractBuiltinTool(ABC):
             tools_type = next(iter(tools))
         else:
             tools_annotated = [Annotated[tool, pydantic.Tag(tool.kind)] for tool in tools]
-            tools_type = Annotated[Union[tuple(tools_annotated)], pydantic.Discriminator(cls._tool_discriminator)]  # noqa: UP007
+            tools_type = Annotated[Union[tuple(tools_annotated)], pydantic.Discriminator(_tool_discriminator)]  # noqa: UP007
 
         return handler(tools_type)
-
-    @staticmethod
-    def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
-        if isinstance(tool_data, dict):
-            return tool_data.get('kind', AbstractBuiltinTool.kind)
-        else:
-            return tool_data.kind
 
 
 @dataclass(kw_only=True)
@@ -148,6 +141,7 @@ class WebSearchUserLocation(TypedDict, total=False):
     """The timezone of the user's location."""
 
 
+@dataclass(kw_only=True)
 class CodeExecutionTool(AbstractBuiltinTool):
     """A builtin tool that allows your agent to execute code.
 
@@ -162,6 +156,7 @@ class CodeExecutionTool(AbstractBuiltinTool):
     """The kind of tool."""
 
 
+@dataclass(kw_only=True)
 class UrlContextTool(AbstractBuiltinTool):
     """Allows your agent to access contents from URLs.
 
@@ -255,6 +250,7 @@ class ImageGenerationTool(AbstractBuiltinTool):
     """The kind of tool."""
 
 
+@dataclass(kw_only=True)
 class MemoryTool(AbstractBuiltinTool):
     """A builtin tool that allows your agent to use memory.
 
@@ -265,3 +261,10 @@ class MemoryTool(AbstractBuiltinTool):
 
     kind: str = 'memory'
     """The kind of tool."""
+
+
+def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
+    if isinstance(tool_data, dict):
+        return tool_data.get('kind', AbstractBuiltinTool.kind)
+    else:
+        return tool_data.kind
