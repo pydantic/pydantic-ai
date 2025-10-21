@@ -731,7 +731,7 @@ To use OVHcloud AI Endpoints, you need to create a new API key. To do so, go to 
 
 You can explore our [catalog](https://endpoints.ai.cloud.ovh.net/catalog) to find which models are available.
 
-Once you've set the `OVHCLOUD_AI_ENDPOINTS_API_KEY` environment variable with your new API key, you can run the following:
+You can set the `OVHCLOUD_API_KEY` environment variable and use [`OVHcloudProvider`][pydantic_ai.providers.ovhcloud.OVHcloudProvider] by name:
 
 ```python
 from pydantic_ai import Agent
@@ -742,16 +742,16 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
-If you need to configure the provider, you can use the [`OVHcloudAIEndpointsProvider`][pydantic_ai.providers.ovhcloud.OVHcloudAIEndpointsProvider] class:
+If you need to configure the provider, you can use the [`OVHcloudProvider`][pydantic_ai.providers.ovhcloud.OVHcloudProvider] class:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.ovhcloud import OVHcloudAIEndpointsProvider
+from pydantic_ai.providers.ovhcloud import OVHcloudProvider
 
 model = OpenAIChatModel(
     'gpt-oss-120b',
-    provider=OVHcloudAIEndpointsProvider(api_key='your-api-key'),
+    provider=OVHcloudProvider(api_key='your-api-key'),
 )
 agent = Agent(model)
 result = agent.run_sync('What is the capital of France?')

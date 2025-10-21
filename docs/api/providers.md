@@ -44,4 +44,4 @@
 
 ::: pydantic_ai.providers.nebius.NebiusProvider
 
-::: pydantic_ai.providers.ovhcloud.OVHcloudAIEndpointsProvider
+::: pydantic_ai.providers.ovhcloud.OVHcloudProvider

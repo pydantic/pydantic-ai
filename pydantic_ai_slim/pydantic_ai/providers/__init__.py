@@ -147,9 +147,9 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
 
         return NebiusProvider
     elif provider == 'ovhcloud':
-        from .ovhcloud import OVHcloudAIEndpointsProvider
+        from .ovhcloud import OVHcloudProvider
 
-        return OVHcloudAIEndpointsProvider
+        return OVHcloudProvider
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
 

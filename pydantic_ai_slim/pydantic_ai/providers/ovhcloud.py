@@ -19,7 +19,7 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
-class OVHcloudAIEndpointsProvider(Provider[AsyncOpenAI]):
+class OVHcloudProvider(Provider[AsyncOpenAI]):
     """Provider for OVHcloud AI Endpoints."""
 
     @property
@@ -56,11 +56,11 @@ class OVHcloudAIEndpointsProvider(Provider[AsyncOpenAI]):
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        api_key = api_key or os.getenv('OVHCLOUD_AI_ENDPOINTS_API_KEY')
+        api_key = api_key or os.getenv('OVHCLOUD_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
-                'Set the `OVHCLOUD_AI_ENDPOINTS_API_KEY` environment variable or pass it via '
-                '`OVHcloudAIEndpointsProvider(api_key=...)` to use OVHcloud AI Endpoints provider.'
+                'Set the `OVHCLOUD_API_KEY` environment variable or pass it via '
+                '`OVHcloudProvider(api_key=...)` to use OVHcloud AI Endpoints provider.'
             )
 
         if openai_client is not None:
