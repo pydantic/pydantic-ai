@@ -47,14 +47,10 @@ def test_multi_agent_sequential_instructions_with_output_type():
     # Run Agent1
     result1 = agent1.run_sync('Hello')
 
-    # Run Agent2 with Agent1's message history, capturing messages even if it fails
+    # Run Agent2 with Agent1's message history, capturing messages
     # This is the scenario that triggers the bug in issue #3207
     with capture_run_messages() as agent2_messages:
-        try:
-            agent2.run_sync(message_history=result1.new_messages())
-        except Exception:
-            # Even if Agent2 fails, we captured the messages it created
-            pass
+        agent2.run_sync(message_history=result1.new_messages())
 
     # Find all ModelRequest messages created by Agent2
     agent2_requests = [msg for msg in agent2_messages if isinstance(msg, ModelRequest)]
