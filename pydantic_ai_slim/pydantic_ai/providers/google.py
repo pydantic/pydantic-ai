@@ -103,8 +103,9 @@ class GoogleProvider(Provider[Client]):
             # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
             api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
 
+            vertex_ai_args_used = bool(location or project or credentials)
             if vertexai is None:
-                vertexai = bool(location or project or credentials)
+                vertexai = vertex_ai_args_used
 
             http_client = http_client or cached_async_http_client(
                 provider='google-vertex' if vertexai else 'google-gla'
@@ -124,6 +125,9 @@ class GoogleProvider(Provider[Client]):
                     )
                 self._client = Client(vertexai=False, api_key=api_key, http_options=http_options)
             else:
+                if vertex_ai_args_used:
+                    api_key = None
+
                 if api_key is None:
                     project = project or os.getenv('GOOGLE_CLOUD_PROJECT')
                     # From https://github.com/pydantic/pydantic-ai/pull/2031/files#r2169682149:
