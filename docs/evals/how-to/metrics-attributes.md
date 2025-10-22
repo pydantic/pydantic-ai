@@ -619,4 +619,4 @@ set_eval_attribute('response_keys', list(giant_response_object.keys())[:10])  # 
 
 - **[Custom Evaluators](../evaluators/custom.md)** - Use metrics/attributes in evaluators
 - **[Logfire Integration](logfire-integration.md)** - View metrics in Logfire
-- **[Performance Testing](performance-testing.md)** - Track performance metrics
+- **[Concurrency & Performance](concurrency.md)** - Optimize evaluation performance

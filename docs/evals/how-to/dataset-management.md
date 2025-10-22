@@ -270,7 +270,7 @@ async def main():
 Use generic type parameters for type safety:
 
 ```python
-from typing import TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_evals import Case, Dataset
 
@@ -592,5 +592,5 @@ report = sample.evaluate_sync(task)
 
 ## Next Steps
 
-- **[Examples: Simple Validation](../examples/simple-validation.md)** - Practical examples
-- **[Debugging](debugging.md)** - Debug dataset issues
+- **[Generating Datasets](../../evals.md#generating-test-datasets)** - Use LLMs to generate cases
+- **[Examples: Simple Validation](../examples/simple-validation.md)** - Proof of concept

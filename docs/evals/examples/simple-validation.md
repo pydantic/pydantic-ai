@@ -1,6 +1,6 @@
 # Example: Simple Validation
 
-A practical example of evaluating a simple text transformation function with deterministic checks.
+A proof of concept example of evaluating a simple text transformation function with deterministic checks.
 
 ## Scenario
 
@@ -273,7 +273,7 @@ def test_title_case_performance(title_case_dataset):
 
 ## Next Steps
 
-- **[RAG Evaluation](rag-evaluation.md)** - Evaluate retrieval-augmented generation
-- **[Agent Behavior](agent-behavior.md)** - Evaluate multi-agent systems
-- **[Performance Testing](performance.md)** - Performance benchmarking
-- **[Regression Testing](regression-testing.md)** - Track changes over time
+- **[Built-in Evaluators](../evaluators/built-in.md)** - Explore all available evaluators
+- **[Custom Evaluators](../evaluators/custom.md)** - Write your own evaluation logic
+- **[Dataset Management](../how-to/dataset-management.md)** - Save, load, and manage datasets
+- **[Concurrency & Performance](../how-to/concurrency.md)** - Optimize evaluation performance

@@ -254,7 +254,7 @@ dataset = Dataset(
 - Latency requirements
 - Timeout validation
 
-**See Also:** [Performance Testing Guide](../how-to/performance-testing.md)
+**See Also:** [Concurrency & Performance](../how-to/concurrency.md)
 
 ---
 

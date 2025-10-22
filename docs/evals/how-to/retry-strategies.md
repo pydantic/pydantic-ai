@@ -645,6 +645,5 @@ report = dataset.evaluate_sync(
 
 ## Next Steps
 
-- **[Performance Testing](performance-testing.md)** - Optimize evaluation performance
-- **[Debugging](debugging.md)** - Debug failed evaluations
+- **[Concurrency & Performance](concurrency.md)** - Optimize evaluation performance
 - **[Logfire Integration](logfire-integration.md)** - View retries in Logfire

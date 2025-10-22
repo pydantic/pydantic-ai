@@ -716,5 +716,4 @@ LLMJudge(rubric='...')  # Uses Claude
 ## Next Steps
 
 - **[Custom Evaluators](custom.md)** - Write custom evaluation logic
-- **[Debugging](../how-to/debugging.md)** - Debug failed evaluations
-- **[Examples: RAG Evaluation](../examples/rag-evaluation.md)** - Complete RAG example
+- **[Built-in Evaluators](built-in.md)** - Complete evaluator reference

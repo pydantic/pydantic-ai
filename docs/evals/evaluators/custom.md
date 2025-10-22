@@ -714,4 +714,3 @@ class APIEvaluator(Evaluator):
 
 - **[Span-Based Evaluation](span-based.md)** - Using OpenTelemetry spans
 - **[Examples](../examples/simple-validation.md)** - Practical examples
-- **[Debugging](../how-to/debugging.md)** - Debug custom evaluators

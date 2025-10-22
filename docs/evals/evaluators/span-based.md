@@ -540,4 +540,4 @@ evaluators = [
 
 - **[Logfire Integration](../how-to/logfire-integration.md)** - Set up Logfire for span capture
 - **[Custom Evaluators](custom.md)** - Write advanced span analysis
-- **[Examples: Agent Behavior](../examples/agent-behavior.md)** - Multi-agent span evaluation
+- **[Built-in Evaluators](built-in.md)** - Other evaluator types
