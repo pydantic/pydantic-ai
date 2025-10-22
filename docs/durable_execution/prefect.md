@@ -256,7 +256,7 @@ from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectAgent
 
 
-@flow(log_prints=True)
+@flow
 async def daily_report_flow(user_prompt: str):
     """Generate a daily report using the agent."""
     agent = Agent(
@@ -268,7 +268,7 @@ async def daily_report_flow(user_prompt: str):
     prefect_agent = PrefectAgent(agent)
 
     result = await prefect_agent.run(user_prompt)
-    print(result.output)
+    return result.output
 
 
 # Serve the flow with a daily schedule
