@@ -472,12 +472,7 @@ async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
     project = os.getenv('GOOGLE_PROJECT', 'pydantic-ai')
     location = os.getenv('GOOGLE_LOCATION', 'global')
     client = Client(vertexai=True, project=project, location=location)
-
-    try:
-        yield GoogleProvider(client=client)
-    finally:
-        client.aio._api_client._httpx_client.close()  # type: ignore
-        await client.aio._api_client._async_httpx_client.aclose()  # type: ignore
+    yield GoogleProvider(client=client)
 
 
 @pytest.fixture()
