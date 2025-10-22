@@ -44,6 +44,34 @@ def meta_groq_model_profile(model_name: str) -> ModelProfile | None:
         return meta_model_profile(model_name)
 
 
+def groq_provider_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a model routed through Groq provider.
+
+    This function handles model profiling for models that use Groq's API,
+    including various model families like Llama, Gemma, Qwen, etc.
+    """
+    prefix_to_profile = {
+        'llama': meta_model_profile,
+        'meta-llama/': meta_groq_model_profile,
+        'gemma': google_model_profile,
+        'qwen': qwen_model_profile,
+        'deepseek': deepseek_model_profile,
+        'mistral': mistral_model_profile,
+        'moonshotai/': groq_moonshotai_model_profile,
+        'compound-': groq_model_profile,
+        'openai/': openai_model_profile,
+    }
+
+    for prefix, profile_func in prefix_to_profile.items():
+        model_name = model_name.lower()
+        if model_name.startswith(prefix):
+            if prefix.endswith('/'):
+                model_name = model_name[len(prefix) :]
+            return profile_func(model_name)
+
+    return None
+
+
 class GroqProvider(Provider[AsyncGroq]):
     """Provider for Groq API."""
 
@@ -60,26 +88,7 @@ class GroqProvider(Provider[AsyncGroq]):
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
-        prefix_to_profile = {
-            'llama': meta_model_profile,
-            'meta-llama/': meta_groq_model_profile,
-            'gemma': google_model_profile,
-            'qwen': qwen_model_profile,
-            'deepseek': deepseek_model_profile,
-            'mistral': mistral_model_profile,
-            'moonshotai/': groq_moonshotai_model_profile,
-            'compound-': groq_model_profile,
-            'openai/': openai_model_profile,
-        }
-
-        for prefix, profile_func in prefix_to_profile.items():
-            model_name = model_name.lower()
-            if model_name.startswith(prefix):
-                if prefix.endswith('/'):
-                    model_name = model_name[len(prefix) :]
-                return profile_func(model_name)
-
-        return None
+        return groq_provider_model_profile(model_name)
 
     @overload
     def __init__(self, *, groq_client: AsyncGroq | None = None) -> None: ...
