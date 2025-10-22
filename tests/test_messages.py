@@ -1,5 +1,6 @@
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from inline_snapshot import snapshot
@@ -583,4 +584,12 @@ def test_binary_content_validation_with_optional_identifier():
             'media_type': 'image/png',
             'identifier': 'foo',
         }
+    )
+
+
+def test_binary_content_from_path(tmp_path: Path):
+    img = tmp_path / 'potato.png'
+    img.write_bytes(b'fake')
+    assert BinaryContent.from_path(img, media_type='image/png') == snapshot(
+        BinaryContent(data=b'fake', media_type='image/png')
     )
