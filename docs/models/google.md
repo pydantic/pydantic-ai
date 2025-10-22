@@ -26,7 +26,7 @@ Once you have the API key, set it as an environment variable:
 export GOOGLE_API_KEY=your-api-key
 ```
 
-You can then use `GoogleModel` in GLA mode by name:
+You can then use `GoogleModel` by name (where GLA stands for Generative Language API):
 
 ```python
 from pydantic_ai import Agent
@@ -118,7 +118,7 @@ export GOOGLE_API_KEY=your-api-key
 
 You can then use `GoogleModel` in Vertex AI mode by name:
 
-```python
+```python {test="ci_only"}
 from pydantic_ai import Agent
 
 agent = Agent('google-vertex:gemini-2.5-pro')
@@ -127,7 +127,7 @@ agent = Agent('google-vertex:gemini-2.5-pro')
 
 Or you can explicitly create the provider and model:
 
-```python {title="google_model_vertex_api_key.py" test="skip"}
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
@@ -153,7 +153,7 @@ agent = Agent(model)
 ...
 ```
 
-#### Customizing Model
+#### Model Garden
 
 You can access models from the [Model Garden](https://cloud.google.com/model-garden?hl=en) that support the `generateContent` API and are available under your GCP project, including but not limited to Gemini, using one of the following `model_name` patterns:
 
