@@ -125,20 +125,9 @@ def gateway_provider(
             )
         )
     elif upstream_provider == 'bedrock':
-        import boto3
-
         from .bedrock import BedrockProvider
 
-        # There's no entrypoint to pass the API key on the client, therefore we need to inject in the
-        # `AWS_BEARER_TOKEN_BEDROCK` as specified in their docs: https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-use.html
-        os.environ['AWS_BEARER_TOKEN_BEDROCK'] = api_key
-
-        return BedrockProvider(
-            bedrock_client=boto3.client(  # type: ignore[reportUnknownReturnType]
-                'bedrock-runtime',
-                endpoint_url=_merge_url_path(base_url, 'bedrock'),
-            )
-        )
+        return BedrockProvider(api_key=api_key, base_url=_merge_url_path(base_url, 'bedrock'))
     elif upstream_provider == 'google-vertex':
         from google.genai import Client as GoogleClient
 
