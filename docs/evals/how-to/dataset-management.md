@@ -133,7 +133,7 @@ dataset.to_file('my_dataset.yaml', schema_path=None)
 
 ### From YAML/JSON
 
-```python
+```python {test="skip"}
 from typing import Any
 
 from pydantic_evals import Dataset
@@ -190,7 +190,7 @@ dataset = Dataset[str, str, Any].from_dict(data)
 
 When loading datasets that use custom evaluators, you must pass them to `from_file()`:
 
-```python
+```python {test="skip"}
 from dataclasses import dataclass
 from typing import Any
 
@@ -429,13 +429,13 @@ for name in ['smoke_tests', 'comprehensive_tests', 'regression_tests']:
     test_dataset.to_file(f'{name}.yaml')
 
 # Smoke tests (fast, critical paths)
-smoke_tests = Dataset.from_file('smoke_tests.yaml')
+smoke_tests = Dataset[str, Any, Any].from_file('smoke_tests.yaml')
 
 # Comprehensive tests (slow, thorough)
-comprehensive = Dataset.from_file('comprehensive_tests.yaml')
+comprehensive = Dataset[str, Any, Any].from_file('comprehensive_tests.yaml')
 
 # Regression tests (specific bugs)
-regression = Dataset.from_file('regression_tests.yaml')
+regression = Dataset[str, Any, Any].from_file('regression_tests.yaml')
 ```
 
 ## Next Steps

@@ -206,19 +206,29 @@ class SmartCheck(Evaluator):
 
 ### Multiple Results
 
-Return multiple evaluations from one evaluator:
+You can return multiple evaluations from one evaluator by returning a dictionary of key-value pairs.
 
 ```python
 from dataclasses import dataclass
 
-from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.evaluators import (
+    EvaluationReason,
+    Evaluator,
+    EvaluatorContext,
+    EvaluatorOutput,
+)
 
 
 @dataclass
 class ComprehensiveCheck(Evaluator):
-    def evaluate(self, ctx: EvaluatorContext) -> dict[str, bool | float | str]:
+    def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+        format_valid = self._check_format(ctx.output)
+
         return {
-            'valid_format': self._check_format(ctx.output),  # bool
+            'valid_format': EvaluationReason(
+                value=format_valid,
+                reason='Valid JSON format' if format_valid else 'Invalid JSON format',
+            ),
             'quality_score': self._score_quality(ctx.output),  # float
             'category': self._classify(ctx.output),  # str
         }
@@ -232,6 +242,81 @@ class ComprehensiveCheck(Evaluator):
     def _classify(self, output: str) -> str:
         return 'short' if len(output) < 50 else 'long'
 ```
+
+Each key in the returned dictionary becomes a separate result in the report. Values can be:
+
+- Primitives (`bool`, `int`, `float`, `str`)
+- [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason] (value with explanation)
+- Nested dicts of these types
+
+The [`EvaluatorOutput`][pydantic_evals.evaluators.evaluator.EvaluatorOutput] type represents all legal values
+that can be returned by an evaluator, and can be used as the return type annotation for your custom `evaluate` method.
+
+### Conditional Results
+
+Evaluators can dynamically choose whether to produce results for a given case by returning an empty dict when not applicable:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_evals.evaluators import (
+    EvaluationReason,
+    Evaluator,
+    EvaluatorContext,
+    EvaluatorOutput,
+)
+
+
+@dataclass
+class SQLValidator(Evaluator):
+    """Only evaluates SQL queries, skips other outputs."""
+
+    def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+        # Check if this case is relevant for SQL validation
+        if not isinstance(ctx.output, str) or not ctx.output.strip().upper().startswith(
+            ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+        ):
+            # Return empty dict - this evaluator doesn't apply to this case
+            return {}
+
+        # This is a SQL query, perform validation
+        try:
+            # In real implementation, use sqlparse or similar
+            is_valid = self._validate_sql(ctx.output)
+            return {
+                'sql_valid': is_valid,
+                'sql_complexity': self._measure_complexity(ctx.output),
+            }
+        except Exception as e:
+            return {'sql_valid': EvaluationReason(False, reason=f'Exception: {e}')}
+
+    def _validate_sql(self, query: str) -> bool:
+        # Simplified validation
+        return 'FROM' in query.upper() or 'INTO' in query.upper()
+
+    def _measure_complexity(self, query: str) -> str:
+        joins = query.upper().count('JOIN')
+        if joins == 0:
+            return 'simple'
+        elif joins <= 2:
+            return 'moderate'
+        else:
+            return 'complex'
+```
+
+This pattern is useful when:
+
+- An evaluator only applies to certain types of outputs (e.g., code validation only for code outputs)
+- Validation depends on metadata tags (e.g., only evaluate cases marked with `language='python'`)
+- You want to run expensive checks conditionally based on other evaluator results
+
+**Key Points:**
+
+- Returning `{}` means "this evaluator doesn't apply here" - the case won't show results from this evaluator
+- Returning `{'key': value}` means "this evaluator applies and here are the results"
+- This is more practical than using case-level evaluators when it applies to a large fraction of cases, or when the
+  condition is based on the output itself
+- The evaluator still runs for every case, but can short-circuit when not relevant
 
 ## Async Evaluators
 
