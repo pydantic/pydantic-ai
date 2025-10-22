@@ -6998,6 +6998,7 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                 index=3,
                 part=BuiltinToolCallPart(
                     tool_name='mcp_server:call_tool',
+                    args='',
                     tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
                     tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     provider_name='openai',
@@ -7037,6 +7038,7 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                 index=6,
                 part=BuiltinToolCallPart(
                     tool_name='mcp_server:call_tool',
+                    args='',
                     tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
                     tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     provider_name='openai',
@@ -7642,6 +7644,7 @@ https://github.com/birbland/pydantic-ai/commits/main\
                 index=1,
                 part=BuiltinToolCallPart(
                     tool_name='mcp_server:call_tool',
+                    args='',
                     tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
                     tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
                     provider_name='openai',
@@ -7691,6 +7694,7 @@ https://github.com/birbland/pydantic-ai/commits/main\
                 index=4,
                 part=BuiltinToolCallPart(
                     tool_name='mcp_server:call_tool',
+                    args='',
                     tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
                     tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     provider_name='openai',
@@ -7730,6 +7734,7 @@ https://github.com/birbland/pydantic-ai/commits/main\
                 index=7,
                 part=BuiltinToolCallPart(
                     tool_name='mcp_server:call_tool',
+                    args='',
                     tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
                     tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     provider_name='openai',
@@ -7769,6 +7774,7 @@ https://github.com/birbland/pydantic-ai/commits/main\
                 index=10,
                 part=BuiltinToolCallPart(
                     tool_name='mcp_server:call_tool',
+                    args='',
                     tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
                     tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
                     provider_name='openai',
