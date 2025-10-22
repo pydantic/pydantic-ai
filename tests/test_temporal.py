@@ -1130,9 +1130,8 @@ async def test_temporal_agent_run_stream_events(allow_model_requests: None):
     events = [event async for event in simple_temporal_agent.run_stream_events('What is the capital of Mexico?')]
     assert events == snapshot(
         [
-            PartStartEvent(index=0, part=TextPart(content='')),
+            PartStartEvent(index=0, part=TextPart(content='The')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='The')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' capital')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' of')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' Mexico')),
