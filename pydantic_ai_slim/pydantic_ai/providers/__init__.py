@@ -73,15 +73,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .azure import AzureProvider
 
         return AzureProvider
-    elif provider == 'google-vertex':
-        from .google_vertex import GoogleVertexProvider  # type: ignore[reportDeprecated]
+    elif provider in ('google-vertex', 'google-gla'):
+        from .google import GoogleProvider
 
-        return GoogleVertexProvider  # type: ignore[reportDeprecated]
-    elif provider == 'google-gla':
-        from .google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
-
-        return GoogleGLAProvider  # type: ignore[reportDeprecated]
-    # NOTE: We don't test because there are many ways the `boto3.client` can retrieve the credentials.
+        return GoogleProvider
     elif provider == 'bedrock':
         from .bedrock import BedrockProvider
 
@@ -155,8 +150,12 @@ def infer_provider(provider: str) -> Provider[Any]:
     if provider.startswith('gateway/'):
         from .gateway import gateway_provider
 
-        provider = provider.split('/', maxsplit=1)[1]
+        provider = provider.removeprefix('gateway/')
         return gateway_provider(provider)
+    elif provider in ('google-vertex', 'google-gla'):
+        from .google import GoogleProvider
+
+        return GoogleProvider(vertexai=provider == 'google-vertex')
     else:
         provider_class = infer_provider_class(provider)
         return provider_class()

@@ -12,6 +12,7 @@ from pydantic_ai.providers import Provider, infer_provider, infer_provider_class
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from google.auth.exceptions import GoogleAuthError
     from openai import OpenAIError
 
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -22,8 +23,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.fireworks import FireworksProvider
     from pydantic_ai.providers.github import GitHubProvider
     from pydantic_ai.providers.google import GoogleProvider
-    from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
-    from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # type: ignore[reportDeprecated]
     from pydantic_ai.providers.grok import GrokProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
@@ -45,8 +44,8 @@ with try_import() as imports_successful:
         ('vercel', VercelProvider, 'VERCEL_AI_GATEWAY_API_KEY'),
         ('openai', OpenAIProvider, 'OPENAI_API_KEY'),
         ('azure', AzureProvider, 'AZURE_OPENAI'),
-        ('google-vertex', GoogleVertexProvider, None),  # type: ignore[reportDeprecated]
-        ('google-gla', GoogleGLAProvider, 'GEMINI_API_KEY'),  # type: ignore[reportDeprecated]
+        ('google-vertex', GoogleProvider, 'Your default credentials were not found'),
+        ('google-gla', GoogleProvider, 'GOOGLE_API_KEY'),
         ('groq', GroqProvider, 'GROQ_API_KEY'),
         ('mistral', MistralProvider, 'MISTRAL_API_KEY'),
         ('grok', GrokProvider, 'GROK_API_KEY'),
@@ -70,8 +69,6 @@ if not imports_successful():
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='need to install all extra packages'),
-    pytest.mark.filterwarnings('ignore:`GoogleGLAProvider` is deprecated:DeprecationWarning'),
-    pytest.mark.filterwarnings('ignore:`GoogleVertexProvider` is deprecated:DeprecationWarning'),
 ]
 
 
@@ -84,7 +81,7 @@ def empty_env():
 @pytest.mark.parametrize(('provider', 'provider_cls', 'exception_has'), test_infer_provider_params)
 def test_infer_provider(provider: str, provider_cls: type[Provider[Any]], exception_has: str | None):
     if exception_has is not None:
-        with pytest.raises((UserError, OpenAIError), match=rf'.*{exception_has}.*'):
+        with pytest.raises((UserError, OpenAIError, GoogleAuthError), match=rf'.*{exception_has}.*'):
             infer_provider(provider)
     else:
         assert isinstance(infer_provider(provider), provider_cls)

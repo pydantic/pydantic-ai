@@ -104,6 +104,7 @@ def test_gateway_provider(provider_name: str, provider_cls: type[Provider[Any]],
     )
 
 
+@patch.dict(os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key'})
 def test_gateway_provider_unknown():
     with raises(snapshot('UserError: Unknown upstream provider: foo')):
         gateway_provider('foo')

@@ -665,11 +665,12 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         provider_name = 'google-vertex'
 
     provider = infer_provider(provider_name)
-    provider_name = provider_name.removeprefix('gateway/')
 
-    if provider_name in (
+    model_kind = provider_name
+    if provider_name.startswith('gateway/'):
+        model_kind = provider_name.removeprefix('gateway/')
+    if model_kind in (
         'openai',
-        'openai-chat',
         'azure',
         'deepseek',
         'cerebras',
@@ -685,38 +686,43 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         'litellm',
         'nebius',
     ):
+        model_kind = 'openai-chat'
+    elif model_kind in ('google-gla', 'google-vertex'):
+        model_kind = 'google'
+
+    if model_kind == 'openai-chat':
         from .openai import OpenAIChatModel
 
         return OpenAIChatModel(model_name, provider=provider)
-    elif provider_name == 'openai-responses':
+    elif model_kind == 'openai-responses':
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
-    elif provider_name in ('google-gla', 'google-vertex'):
+    elif model_kind == 'google':
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)
-    elif provider_name == 'groq':
+    elif model_kind == 'groq':
         from .groq import GroqModel
 
         return GroqModel(model_name, provider=provider)
-    elif provider_name == 'cohere':
+    elif model_kind == 'cohere':
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)
-    elif provider_name == 'mistral':
+    elif model_kind == 'mistral':
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
-    elif provider_name == 'anthropic':
+    elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 
         return AnthropicModel(model_name, provider=provider)
-    elif provider_name == 'bedrock':
+    elif model_kind == 'bedrock':
         from .bedrock import BedrockConverseModel
 
         return BedrockConverseModel(model_name, provider=provider)
-    elif provider_name == 'huggingface':
+    elif model_kind == 'huggingface':
         from .huggingface import HuggingFaceModel
 
         return HuggingFaceModel(model_name, provider=provider)

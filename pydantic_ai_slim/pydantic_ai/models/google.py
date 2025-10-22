@@ -38,8 +38,6 @@ from ..messages import (
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
-from ..providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
-from ..providers.google_vertex import GoogleVertexProvider  # type: ignore[reportDeprecated]
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -87,8 +85,6 @@ try:
         UrlContextDict,
         VideoMetadataDict,
     )
-
-    from ..providers.google import GoogleProvider
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google model, '
@@ -190,9 +186,7 @@ class GoogleModel(Model):
         model_name: GoogleModelName,
         *,
         provider: Literal['google-gla', 'google-vertex', 'gateway', 'gateway/google-vertex']
-        | Provider[Client]
-        | GoogleVertexProvider  # type: ignore[reportDeprecated]
-        | GoogleGLAProvider = 'google-gla',  # type: ignore[reportDeprecated]
+        | Provider[Client] = 'google-gla',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -208,11 +202,7 @@ class GoogleModel(Model):
         """
         self._model_name = model_name
 
-        if isinstance(provider, GoogleVertexProvider) or provider == 'google-vertex':  # type: ignore[reportDeprecated]
-            provider = GoogleProvider(vertexai=True)
-        elif isinstance(provider, GoogleGLAProvider) or provider == 'google-gla':  # type: ignore[reportDeprecated]
-            provider = GoogleProvider(vertexai=False)
-        elif isinstance(provider, str):
+        if isinstance(provider, str):
             if provider == 'gateway':
                 provider = 'gateway/google-vertex'
             provider = infer_provider(provider)
