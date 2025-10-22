@@ -893,9 +893,13 @@ async def test_a2a_multiple_send_task_messages():
             task_id = result['id']
             context_id = result['context_id']
 
-            await anyio.sleep(0.1)
-            response = await a2a_client.get_task(task_id)
-            assert response.get('result') == snapshot(
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] == 'completed':
+                    result = task['result']
+                    break
+                await anyio.sleep(0.1)
+
+            assert result == snapshot(
                 {
                     'id': IsStr(),
                     'context_id': IsStr(),
@@ -958,9 +962,13 @@ async def test_a2a_multiple_send_task_messages():
                 }
             )
 
-            await anyio.sleep(0.1)
-            response = await a2a_client.get_task(task_id)
-            assert response.get('result') == snapshot(
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] == 'completed':
+                    result = task['result']
+                    break
+                await anyio.sleep(0.1)  # pragma: lax no cover
+
+            assert result == snapshot(
                 {
                     'id': IsStr(),
                     'context_id': IsStr(),
