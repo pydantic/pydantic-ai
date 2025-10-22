@@ -4,7 +4,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Self
 
-import logfire
 import pytest
 from dirty_equals import IsInt, IsJson, IsList
 from inline_snapshot import snapshot
@@ -26,6 +25,7 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 from .conftest import IsStr
 
 try:
+    import logfire
     from logfire.testing import CaptureLogfire
 except ImportError:  # pragma: lax no cover
     logfire_installed = False
