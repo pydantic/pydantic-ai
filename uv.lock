@@ -1508,16 +1508,16 @@ http = [
 
 [[package]]
 name = "genai-prices"
-version = "0.0.31"
+version = "0.0.35"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "eval-type-backport", marker = "python_full_version < '3.11'" },
     { name = "httpx" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3b/1d/e668a3c2045b1426485aedc95ea502b6a135f2a7ef4189d0b8b72138bcf5/genai_prices-0.0.31.tar.gz", hash = "sha256:cc98f0be0ae62beaf690bc8bf299a7cdb32671ebcaf23f8c5316bbe03e7740ed", size = 45772, upload-time = "2025-10-09T08:19:15.836Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0d/f4/d1d790c9d1c01e9d1d7ec17985702d2cf209bdf0b7c528a5d99d09054633/genai_prices-0.0.35.tar.gz", hash = "sha256:79b1cdfeef9a0ee7b2895781c3b2beafd22a0aec76a8864aab8aa6ff6013a9e3", size = 45930, upload-time = "2025-10-19T10:05:45.831Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/39/59/8f4a65dc5a870e5b13f5da9ed87acb724b767108969c6be2c24afdf20a73/genai_prices-0.0.31-py3-none-any.whl", hash = "sha256:28707214a81122ac6cb74b1f3d255c8bccf0c11dba32366527e7d608fa49908a", size = 48368, upload-time = "2025-10-09T08:19:14.447Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/89/84ae62f3ba944ee7bf9009840b7918249cba7f83b9b16f25b85fdfeaeaa8/genai_prices-0.0.35-py3-none-any.whl", hash = "sha256:4e53f19ffe4151074bf7e60f2dd1a0b65593b4c4a9134149bd940e3e77467db2", size = 48565, upload-time = "2025-10-19T10:05:44.464Z" },
 ]
 
 [[package]]
@@ -3899,7 +3899,7 @@ requires-dist = [
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
-    { name = "genai-prices", specifier = ">=0.0.31" },
+    { name = "genai-prices", specifier = ">=0.0.35" },
     { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.31.0" },
     { name = "griffe", specifier = ">=1.3.2" },
