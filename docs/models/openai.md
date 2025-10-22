@@ -729,7 +729,7 @@ print(result.output)
 
 To use OVHcloud AI Endpoints, you need to create a new API key. To do so, go to the [OVHcloud manager](https://ovh.com/manager), then in Public Cloud > AI Endpoints > API keys. Click on `Create a new API key` and copy your new key.
 
-You can explore our [catalog](https://endpoints.ai.cloud.ovh.net/catalog) to find which models are available.
+You can explore the [catalog](https://endpoints.ai.cloud.ovh.net/catalog) to find which models are available.
 
 You can set the `OVHCLOUD_API_KEY` environment variable and use [`OVHcloudProvider`][pydantic_ai.providers.ovhcloud.OVHcloudProvider] by name:
 

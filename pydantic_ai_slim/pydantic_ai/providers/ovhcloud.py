@@ -41,7 +41,7 @@ class OVHcloudProvider(Provider[AsyncOpenAI]):
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
-        profile = None
+        model_name = model_name.lower()
 
         prefix_to_profile = {
             'llama': meta_model_profile,
@@ -52,8 +52,9 @@ class OVHcloudProvider(Provider[AsyncOpenAI]):
             'qwen': qwen_model_profile,
         }
 
+        profile = None
         for prefix, profile_func in prefix_to_profile.items():
-            if model_name.lower().startswith(prefix):
+            if model_name.startswith(prefix):
                 profile = profile_func(model_name)
 
         # As the OVHcloud AI Endpoints API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer.
