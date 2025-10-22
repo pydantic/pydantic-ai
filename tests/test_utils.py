@@ -505,6 +505,15 @@ def test_strip_markdown_fences():
     )
     assert strip_markdown_fences('No JSON to be found') == 'No JSON to be found'
 
+    assert strip_markdown_fences('```json {"foo": "bar"}```') == '{"foo": "bar"}'
+    assert strip_markdown_fences('```json\n\n{"foo": "bar"}\n\n```') == '{"foo": "bar"}'
+    assert strip_markdown_fences('```\n{"foo": "bar"}```') == '{"foo": "bar"}'
+    assert strip_markdown_fences('```json  \n{"foo": "bar"}\n  ```') == '{"foo": "bar"}'
+    assert (
+        strip_markdown_fences('```json\n{"foo": "bar"}\n```\nSome text\n```json\n{"baz": "qux"}\n```')
+        == '{"foo": "bar"}\n```\nSome text\n```json\n{"baz": "qux"}'
+    )
+
 
 def test_validate_empty_kwargs_empty():
     """Test that empty dict passes validation."""
