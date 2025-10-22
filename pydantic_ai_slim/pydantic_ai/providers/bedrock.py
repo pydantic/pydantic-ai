@@ -210,3 +210,6 @@ class _BearerTokenSession(Session):
 
     def get_auth_token(self, **_kwargs: Any) -> FrozenAuthToken:
         return FrozenAuthToken(self.token)
+
+    def get_credentials(self) -> None:  # type: ignore[reportIncompatibleMethodOverride]
+        return None
