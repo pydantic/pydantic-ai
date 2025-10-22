@@ -11,6 +11,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, cached_async_http_client, get_user_agent
 
 if TYPE_CHECKING:
+    from botocore.client import BaseClient
     from google.genai import Client as GoogleClient
     from groq import AsyncGroq
     from openai import AsyncOpenAI
@@ -57,13 +58,25 @@ def gateway_provider(
 ) -> Provider[AsyncAnthropicClient]: ...
 
 
+@overload
 def gateway_provider(
-    upstream_provider: Literal['openai', 'openai-chat', 'openai-responses', 'groq', 'google-vertex', 'anthropic'] | str,
+    upstream_provider: Literal['bedrock'],
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> Provider[BaseClient]: ...
+
+
+UpstreamProvider = Literal['openai', 'openai-chat', 'openai-responses', 'groq', 'google-vertex', 'anthropic', 'bedrock']
+
+
+def gateway_provider(
+    upstream_provider: UpstreamProvider | str,
     *,
     # Every provider
     api_key: str | None = None,
     base_url: str | None = None,
-    # OpenAI & Groq
+    # OpenAI, Groq & Anthropic
     http_client: httpx.AsyncClient | None = None,
 ) -> Provider[Any]:
     """Create a new Gateway provider.
@@ -73,7 +86,7 @@ def gateway_provider(
         api_key: The API key to use for authentication. If not provided, the `PYDANTIC_AI_GATEWAY_API_KEY`
             environment variable will be used if available.
         base_url: The base URL to use for the Gateway. If not provided, the `PYDANTIC_AI_GATEWAY_BASE_URL`
-            environment variable will be used if available. Otherwise, defaults to `http://localhost:8787/`.
+            environment variable will be used if available. Otherwise, defaults to `https://gateway.pydantic.dev/proxy`.
         http_client: The HTTP client to use for the Gateway.
     """
     api_key = api_key or os.getenv('PYDANTIC_AI_GATEWAY_API_KEY')
@@ -110,6 +123,14 @@ def gateway_provider(
                 base_url=_merge_url_path(base_url, 'anthropic'),
                 http_client=http_client,
             )
+        )
+    elif upstream_provider == 'bedrock':
+        from .bedrock import BedrockProvider
+
+        return BedrockProvider(
+            api_key=api_key,
+            base_url=_merge_url_path(base_url, 'bedrock'),
+            region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
     elif upstream_provider == 'google-vertex':
         from google.genai import Client as GoogleClient

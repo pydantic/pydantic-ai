@@ -40,7 +40,7 @@ interactions:
       content:
       - text: The capital of France is Paris.
         type: text
-      id: msg_015tco2dv5oh9rFq1PcZAduv
+      id: msg_0116L5r52AZ42YhvvdUuHEsk
       model: claude-3-5-sonnet-20241022
       role: assistant
       stop_reason: end_turn
