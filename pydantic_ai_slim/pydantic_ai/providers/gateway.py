@@ -159,7 +159,7 @@ def gateway_provider(
                 },
             )
         )
-    else:  # pragma: no cover
+    else:
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
 
 
