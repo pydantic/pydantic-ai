@@ -164,3 +164,26 @@ async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway
     assert result.output == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. The city is known for its historical and architectural landmarks, including the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées. Paris plays a significant role in the global arts, fashion, research, technology, education, and entertainment scenes.'
     )
+
+
+@patch.dict(
+    os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
+)
+async def test_model_provider_argument():
+    model = OpenAIChatModel('gpt-5', provider='gateway')
+    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+
+    model = OpenAIResponsesModel('gpt-5', provider='gateway')
+    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+
+    model = GroqModel('llama-3.3-70b-versatile', provider='gateway')
+    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+
+    model = GoogleModel('gemini-1.5-flash', provider='gateway')
+    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+
+    model = AnthropicModel('claude-3-5-sonnet-latest', provider='gateway')
+    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+
+    model = BedrockConverseModel('amazon.nova-micro-v1:0', provider='gateway')
+    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]

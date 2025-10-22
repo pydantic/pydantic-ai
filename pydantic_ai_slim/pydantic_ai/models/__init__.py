@@ -667,7 +667,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
     provider = infer_provider(provider_name)
 
     model_kind = provider_name
-    if provider_name.startswith('gateway/'):
+    if model_kind.startswith('gateway/'):
         model_kind = provider_name.removeprefix('gateway/')
     if model_kind in (
         'openai',
