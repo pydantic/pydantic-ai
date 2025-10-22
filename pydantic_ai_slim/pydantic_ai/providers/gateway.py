@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 import httpx
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import Model, cached_async_http_client, get_user_agent
+from pydantic_ai.models import cached_async_http_client, get_user_agent
 
 if TYPE_CHECKING:
     from botocore.client import BaseClient
@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 
     from pydantic_ai.models.anthropic import AsyncAnthropicClient
     from pydantic_ai.providers import Provider
+
+GATEWAY_BASE_URL = 'https://gateway.pydantic.dev/proxy'
 
 
 @overload
@@ -67,6 +69,15 @@ def gateway_provider(
 ) -> Provider[BaseClient]: ...
 
 
+@overload
+def gateway_provider(
+    upstream_provider: str,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> Provider[Any]: ...
+
+
 UpstreamProvider = Literal['openai', 'openai-chat', 'openai-responses', 'groq', 'google-vertex', 'anthropic', 'bedrock']
 
 
@@ -92,19 +103,15 @@ def gateway_provider(
     api_key = api_key or os.getenv('PYDANTIC_AI_GATEWAY_API_KEY')
     if not api_key:
         raise UserError(
-            'Set the `PYDANTIC_AI_GATEWAY_API_KEY` environment variable or pass it via `gateway_provider(api_key=...)`'
+            'Set the `PYDANTIC_AI_GATEWAY_API_KEY` environment variable or pass it via `gateway_provider(..., api_key=...)`'
             ' to use the Pydantic AI Gateway provider.'
         )
 
-    base_url = base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
-    http_client = http_client or cached_async_http_client(provider=f'gateway-{upstream_provider}')
+    base_url = base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', GATEWAY_BASE_URL)
+    http_client = http_client or cached_async_http_client(provider=f'gateway/{upstream_provider}')
     http_client.event_hooks = {'request': [_request_hook]}
 
-    if upstream_provider in ('openai', 'openai-chat'):
-        from .openai import OpenAIProvider
-
-        return OpenAIProvider(api_key=api_key, base_url=_merge_url_path(base_url, 'openai'), http_client=http_client)
-    elif upstream_provider == 'openai-responses':
+    if upstream_provider in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
 
         return OpenAIProvider(api_key=api_key, base_url=_merge_url_path(base_url, 'openai'), http_client=http_client)
@@ -152,45 +159,8 @@ def gateway_provider(
                 },
             )
         )
-    else:  # pragma: no cover
-        raise UserError(f'Unknown provider: {upstream_provider}')
-
-
-def infer_model(model_name: str) -> Model:
-    """Infer the model class that will be used to make requests to the gateway.
-
-    Args:
-        model_name: The name of the model to infer. Must be in the format "provider/model_name".
-
-    Returns:
-        The model class that will be used to make requests to the gateway.
-    """
-    try:
-        upstream_provider, model_name = model_name.split('/', 1)
-    except ValueError:
-        raise UserError(f'The model name "{model_name}" is not in the format "provider/model_name".')
-
-    if upstream_provider in ('openai', 'openai-chat'):
-        from pydantic_ai.models.openai import OpenAIChatModel
-
-        return OpenAIChatModel(model_name, provider=gateway_provider('openai'))
-    elif upstream_provider == 'openai-responses':
-        from pydantic_ai.models.openai import OpenAIResponsesModel
-
-        return OpenAIResponsesModel(model_name, provider=gateway_provider('openai'))
-    elif upstream_provider == 'groq':
-        from pydantic_ai.models.groq import GroqModel
-
-        return GroqModel(model_name, provider=gateway_provider('groq'))
-    elif upstream_provider == 'anthropic':
-        from pydantic_ai.models.anthropic import AnthropicModel
-
-        return AnthropicModel(model_name, provider=gateway_provider('anthropic'))
-    elif upstream_provider == 'google-vertex':
-        from pydantic_ai.models.google import GoogleModel
-
-        return GoogleModel(model_name, provider=gateway_provider('google-vertex'))
-    raise UserError(f'Unknown upstream provider: {upstream_provider}')
+    else:
+        raise UserError(f'Unknown upstream provider: {upstream_provider}')
 
 
 async def _request_hook(request: httpx.Request) -> httpx.Request:
