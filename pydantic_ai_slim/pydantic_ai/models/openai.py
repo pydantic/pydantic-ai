@@ -1849,7 +1849,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     )
                 elif isinstance(chunk.item, responses.response_output_item.McpListTools):
                     call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
+                    yield self._parts_manager.handle_part(
+                        vendor_part_id=f'{chunk.item.id}-call',
+                        part=replace(call_part, args=None),
+                    )
                 else:
                     warnings.warn(  # pragma: no cover
                         f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -2259,6 +2262,7 @@ def _map_mcp_call(
         BuiltinToolCallPart(
             tool_name=MCPServerTool.CALL_TOOL,
             tool_call_id=item.id,
+            args=item.arguments,
             provider_name=provider_name,
             tool_call_metadata={
                 'mcp_server_id': item.server_label,

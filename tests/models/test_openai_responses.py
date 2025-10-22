@@ -6423,6 +6423,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                     ),
                     BuiltinToolCallPart(
                         tool_name='mcp_server:call_tool',
+                        args='{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:pydantic"}',
                         tool_call_id='mcp_04507193d793fa550068ed13e71e5c8196b9588faf7b4f61de',
                         tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                         provider_name='openai',
@@ -6446,6 +6447,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                     ),
                     BuiltinToolCallPart(
                         tool_name='mcp_server:call_tool',
+                        args='{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:Pydantic"}',
                         tool_call_id='mcp_04507193d793fa550068ed13e84cec819697e55f0f6d7baec7',
                         tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                         provider_name='openai',
@@ -6565,6 +6567,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                     ),
                     BuiltinToolCallPart(
                         tool_name='mcp_server:call_tool',
+                        args='{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:pydantic"}',
                         tool_call_id='mcp_04507193d793fa550068ed13e71e5c8196b9588faf7b4f61de',
                         tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                         provider_name='openai',
@@ -6588,6 +6591,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                     ),
                     BuiltinToolCallPart(
                         tool_name='mcp_server:call_tool',
+                        args='{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:Pydantic"}',
                         tool_call_id='mcp_04507193d793fa550068ed13e84cec819697e55f0f6d7baec7',
                         tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                         provider_name='openai',
@@ -6641,6 +6645,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                     ),
                     BuiltinToolCallPart(
                         tool_name='mcp_server:call_tool',
+                        args='{"minimal_output":false,"order":"desc","page":1,"perPage":100,"query":"user:pydantic pydantic-ai"}',
                         tool_call_id='mcp_04507193d793fa550068ed13f4e9188196ab8090591caf215d',
                         tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                         provider_name='openai',
@@ -8050,6 +8055,7 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                     ),
                     BuiltinToolCallPart(
                         tool_name='mcp_server:call_tool',
+                        args='{"time_min":"2025-10-16T00:00:00","time_max":"2025-10-16T23:59:59","timezone_str":"America/Los_Angeles","max_results":50,"query":null,"calendar_id":"primary","next_page_token":null}',
                         tool_call_id='mcp_0a104500b823a8250068f0b893a6c081978dafa14bc9767711',
                         tool_call_metadata={'mcp_server_id': 'google_calendar', 'mcp_tool_name': 'search_events'},
                         provider_name='openai',
