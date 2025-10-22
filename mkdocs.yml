@@ -46,6 +46,7 @@ nav:
           - input.md
           - thinking.md
           - retries.md
+          - mem0.md
       - MCP:
           - Overview: mcp/overview.md
           - mcp/client.md
@@ -90,6 +91,8 @@ nav:
       - Complex Workflows:
           - examples/flight-booking.md
           - examples/question-graph.md
+      - Memory & Integrations:
+          - examples/mem0-toolset.md
       - Business Applications:
           - examples/slack-lead-qualifier.md
       - UI Examples:
@@ -307,6 +310,7 @@ plugins:
           - output.md
           - retries.md
           - message-history.md
+          - memory.md
           - multi-agent-applications.md
           - thinking.md
           - third-party-tools.md
