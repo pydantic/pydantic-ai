@@ -67,6 +67,7 @@ nav:
       - How-To Guides:
           - Logfire Integration: evals/how-to/logfire-integration.md
           - Dataset Management: evals/how-to/dataset-management.md
+          - Dataset Serialization: evals/how-to/dataset-serialization.md
           - Concurrency & Performance: evals/how-to/concurrency.md
           - Retry Strategies: evals/how-to/retry-strategies.md
           - Metrics & Attributes: evals/how-to/metrics-attributes.md

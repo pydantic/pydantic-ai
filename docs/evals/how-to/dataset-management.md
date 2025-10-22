@@ -9,10 +9,12 @@ Create, save, load, and generate evaluation datasets.
 Define datasets directly in Python:
 
 ```python
+from typing import Any
+
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import EqualsExpected, IsInstance
 
-dataset = Dataset(
+dataset = Dataset[str, str, Any](
     name='my_eval_suite',
     cases=[
         Case(
@@ -36,10 +38,12 @@ dataset = Dataset(
 ### Adding Cases Dynamically
 
 ```python
+from typing import Any
+
 from pydantic_evals import Dataset
 from pydantic_evals.evaluators import IsInstance
 
-dataset = Dataset(cases=[], evaluators=[])
+dataset = Dataset[str, str, Any](cases=[], evaluators=[])
 
 # Add cases one at a time
 dataset.add_case(
@@ -54,17 +58,18 @@ dataset.add_evaluator(IsInstance(type_name='str'))
 
 ## Saving Datasets
 
+!!! info "Detailed Serialization Guide"
+    For complete details on serialization formats, JSON schema generation, and custom evaluators, see [Dataset Serialization](dataset-serialization.md).
+
 ### Save to YAML
 
 ```python
-import warnings
+from typing import Any
 
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset(cases=[Case(name='test', inputs='example')])
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', message='Could not determine the generic parameters')
-    dataset.to_file('my_dataset.yaml')
+dataset = Dataset[str, str, Any](cases=[Case(name='test', inputs='example')])
+dataset.to_file('my_dataset.yaml')
 
 # Also saves schema file: my_dataset_schema.json
 ```
@@ -92,14 +97,12 @@ evaluators:
 ### Save to JSON
 
 ```python
-import warnings
+from typing import Any
 
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset(cases=[Case(name='test', inputs='example')])
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', message='Could not determine the generic parameters')
-    dataset.to_file('my_dataset.json')
+dataset = Dataset[str, str, Any](cases=[Case(name='test', inputs='example')])
+dataset.to_file('my_dataset.json')
 
 # Also saves schema file: my_dataset_schema.json
 ```
@@ -107,25 +110,23 @@ with warnings.catch_warnings():
 ### Custom Schema Path
 
 ```python
-import warnings
 from pathlib import Path
+from typing import Any
 
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset(cases=[Case(name='test', inputs='example')])
+dataset = Dataset[str, str, Any](cases=[Case(name='test', inputs='example')])
 
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', message='Could not determine the generic parameters')
-    # Custom schema location
-    Path('data').mkdir(exist_ok=True)
-    Path('data/schemas').mkdir(parents=True, exist_ok=True)
-    dataset.to_file(
-        'data/my_dataset.yaml',
-        schema_path='schemas/my_schema.json',
-    )
+# Custom schema location
+Path('data').mkdir(exist_ok=True)
+Path('data/schemas').mkdir(parents=True, exist_ok=True)
+dataset.to_file(
+    'data/my_dataset.yaml',
+    schema_path='schemas/my_schema.json',
+)
 
-    # No schema file
-    dataset.to_file('my_dataset.yaml', schema_path=None)
+# No schema file
+dataset.to_file('my_dataset.yaml', schema_path=None)
 ```
 
 ## Loading Datasets
@@ -133,31 +134,23 @@ with warnings.catch_warnings():
 ### From YAML/JSON
 
 ```python
-import warnings
+from typing import Any
 
-from pydantic_evals import Case, Dataset
-
-# First create a file to load
-test_dataset = Dataset(cases=[Case(name='test', inputs='example')])
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', message='Could not determine the generic parameters')
-    test_dataset.to_file('my_dataset.yaml')
-    test_dataset.to_file('my_dataset.json')
+from pydantic_evals import Dataset
 
 # Infers format from extension
-dataset = Dataset.from_file('my_dataset.yaml')
-dataset = Dataset.from_file('my_dataset.json')
+dataset = Dataset[str, str, Any].from_file('my_dataset.yaml')
+dataset = Dataset[str, str, Any].from_file('my_dataset.json')
 
-# Explicit format
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', message='Could not determine the generic parameters')
-    test_dataset.to_file('data.txt', fmt='yaml')
-dataset = Dataset.from_file('data.txt', fmt='yaml')
+# Explicit format for non-standard extensions
+dataset = Dataset[str, str, Any].from_file('data.txt', fmt='yaml')
 ```
 
 ### From String
 
 ```python
+from typing import Any
+
 from pydantic_evals import Dataset
 
 yaml_content = """
@@ -169,12 +162,14 @@ evaluators:
 - EqualsExpected
 """
 
-dataset = Dataset.from_text(yaml_content, fmt='yaml')
+dataset = Dataset[str, str, Any].from_text(yaml_content, fmt='yaml')
 ```
 
 ### From Dict
 
 ```python
+from typing import Any
+
 from pydantic_evals import Dataset
 
 data = {
@@ -188,16 +183,18 @@ data = {
     'evaluators': [{'EqualsExpected': {}}],
 }
 
-dataset = Dataset.from_dict(data)
+dataset = Dataset[str, str, Any].from_dict(data)
 ```
 
 ### With Custom Evaluators
 
-```python
-import warnings
-from dataclasses import dataclass
+When loading datasets that use custom evaluators, you must pass them to `from_file()`:
 
-from pydantic_evals import Case, Dataset
+```python
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_evals import Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
 
@@ -209,18 +206,14 @@ class MyCustomEvaluator(Evaluator):
         return True
 
 
-# First create a file to load
-test_dataset = Dataset(cases=[Case(name='test', inputs='example')])
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', message='Could not determine the generic parameters')
-    test_dataset.to_file('my_dataset.yaml')
-
 # Load with custom evaluator registry
-dataset = Dataset.from_file(
+dataset = Dataset[str, str, Any].from_file(
     'my_dataset.yaml',
     custom_evaluator_types=[MyCustomEvaluator],
 )
 ```
+
+For complete details on serialization with custom evaluators, see [Dataset Serialization](dataset-serialization.md).
 
 ## Generating Datasets
 
@@ -306,16 +299,14 @@ dataset: Dataset[MyInput, MyOutput, MyMetadata] = Dataset(
 Generate JSON Schema for IDE support:
 
 ```python
-import warnings
+from typing import Any
 
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset(cases=[Case(name='test', inputs='example')])
+dataset = Dataset[str, str, Any](cases=[Case(name='test', inputs='example')])
 
 # Save with schema
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', message='Could not determine the generic parameters')
-    dataset.to_file('my_dataset.yaml')  # Creates my_dataset_schema.json
+dataset.to_file('my_dataset.yaml')  # Creates my_dataset_schema.json
 
 # Schema enables:
 # - Autocomplete in VS Code/PyCharm
@@ -327,10 +318,10 @@ Manual schema generation:
 
 ```python
 import json
-import warnings
 from dataclasses import dataclass
+from typing import Any
 
-from pydantic_evals import Case, Dataset
+from pydantic_evals import Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
 
@@ -342,13 +333,9 @@ class MyCustomEvaluator(Evaluator):
         return True
 
 
-dataset = Dataset(cases=[Case(name='test', inputs='example')])
-
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', message='Could not determine the generic parameters')
-    schema = dataset.model_json_schema_with_evaluators(
-        custom_evaluator_types=[MyCustomEvaluator],
-    )
+schema = Dataset[str, str, Any].model_json_schema_with_evaluators(
+    custom_evaluator_types=[MyCustomEvaluator],
+)
 print(json.dumps(schema, indent=2)[:66] + '...')
 """
 {
@@ -357,49 +344,6 @@ print(json.dumps(schema, indent=2)[:66] + '...')
       "additionalProperties": false,
 ...
 """
-```
-
-## Versioning Datasets
-
-### Git Integration
-
-```python
-import warnings
-from pathlib import Path
-
-from pydantic_evals import Case, Dataset
-
-version = 'v1'
-dataset = Dataset(cases=[Case(name='test', inputs='example')])
-
-# Save dataset with descriptive name
-Path(f'eval_datasets/{version}').mkdir(parents=True, exist_ok=True)
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', message='Could not determine the generic parameters')
-    dataset.to_file(f'eval_datasets/{version}/test_suite.yaml')
-
-# Commit to version control
-# git add eval_datasets/v1/test_suite.yaml
-# git commit -m "Add evaluation dataset v1"
-```
-
-### Track Dataset Changes
-
-```python
-import warnings
-from datetime import datetime
-
-from pydantic_evals import Case, Dataset
-
-# Include version info in name
-dataset = Dataset(
-    name=f'my_eval_suite_v1_{datetime.now().strftime("%Y%m%d")}',
-    cases=[Case(name='test', inputs='example')],
-)
-
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', message='Could not determine the generic parameters')
-    dataset.to_file('eval_suite_v1_20250320.yaml')
 ```
 
 ## Best Practices
@@ -475,16 +419,14 @@ Case(
 ### 5. Separate Datasets by Purpose
 
 ```python
-import warnings
+from typing import Any
 
 from pydantic_evals import Case, Dataset
 
 # First create some test datasets
 for name in ['smoke_tests', 'comprehensive_tests', 'regression_tests']:
-    test_dataset = Dataset(cases=[Case(name='test', inputs='example')])
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', message='Could not determine the generic parameters')
-        test_dataset.to_file(f'{name}.yaml')
+    test_dataset = Dataset[str, Any, Any](cases=[Case(name='test', inputs='example')])
+    test_dataset.to_file(f'{name}.yaml')
 
 # Smoke tests (fast, critical paths)
 smoke_tests = Dataset.from_file('smoke_tests.yaml')
@@ -496,101 +438,8 @@ comprehensive = Dataset.from_file('comprehensive_tests.yaml')
 regression = Dataset.from_file('regression_tests.yaml')
 ```
 
-## Working with Large Datasets
-
-### Lazy Loading
-
-```python
-import warnings
-
-from pydantic_evals import Case, Dataset
-
-# First create a test dataset
-test_dataset = Dataset(
-    cases=[
-        Case(name='test1', inputs='example1', metadata={'category': 'critical'}),
-        Case(name='test2', inputs='example2', metadata={'category': 'normal'}),
-    ],
-)
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', message='Could not determine the generic parameters')
-    test_dataset.to_file('huge_dataset.yaml')
-
-# Don't load all at once
-dataset = Dataset.from_file('huge_dataset.yaml')
-
-
-def task(inputs: str) -> str:
-    return f'result for {inputs}'
-
-
-# Filter cases
-subset = Dataset(
-    cases=[c for c in dataset.cases if c.metadata and c.metadata.get('category') == 'critical'],
-    evaluators=dataset.evaluators,
-)
-
-report = subset.evaluate_sync(task)
-```
-
-### Parallel Processing
-
-```python
-import warnings
-
-from pydantic_evals import Case, Dataset
-
-# First create a test dataset
-test_dataset = Dataset(cases=[Case(name='test', inputs='example')])
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', message='Could not determine the generic parameters')
-    test_dataset.to_file('large_dataset.yaml')
-
-
-def task(inputs: str) -> str:
-    return f'result for {inputs}'
-
-
-# Process in batches
-dataset = Dataset.from_file('large_dataset.yaml')
-
-# Control concurrency
-report = dataset.evaluate_sync(
-    task,
-    max_concurrency=10,  # Limit concurrent execution
-)
-```
-
-### Sampling
-
-```python
-import random
-import warnings
-
-from pydantic_evals import Case, Dataset
-
-# First create a test dataset
-test_dataset = Dataset(cases=[Case(name=f'test{i}', inputs=f'example{i}') for i in range(10)])
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', message='Could not determine the generic parameters')
-    test_dataset.to_file('large_dataset.yaml')
-
-
-def task(inputs: str) -> str:
-    return f'result for {inputs}'
-
-
-# Random sample
-dataset = Dataset.from_file('large_dataset.yaml')
-sample = Dataset(
-    cases=random.sample(dataset.cases, k=min(100, len(dataset.cases))),
-    evaluators=dataset.evaluators,
-)
-
-report = sample.evaluate_sync(task)
-```
-
 ## Next Steps
 
-- **[Generating Datasets](../../evals.md#generating-test-datasets)** - Use LLMs to generate cases
-- **[Examples: Simple Validation](../examples/simple-validation.md)** - Proof of concept
+- **[Dataset Serialization](dataset-serialization.md)** - In-depth guide to saving and loading datasets
+- **[Generating Datasets](#generating-datasets)** - Use LLMs to generate test cases
+- **[Examples: Simple Validation](../examples/simple-validation.md)** - Practical examples
