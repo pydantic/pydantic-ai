@@ -447,7 +447,7 @@ agent = Agent('openai:gpt-4o', toolsets=[server])
 
 async def main():
     agent.set_mcp_sampling_model()
-        result = await agent.run('Create an image of a robot in a punk style.')
+    result = await agent.run('Create an image of a robot in a punk style.')
     print(result.output)
     #> Image file written to robot_punk.svg.
 ```
