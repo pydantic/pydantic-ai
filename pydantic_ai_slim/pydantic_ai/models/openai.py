@@ -285,6 +285,8 @@ class OpenAIChatModel(Model):
             'vercel',
             'litellm',
             'nebius',
+            'gateway',
+            'gateway/openai',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -314,6 +316,8 @@ class OpenAIChatModel(Model):
             'vercel',
             'litellm',
             'nebius',
+            'gateway',
+            'gateway/openai',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -342,6 +346,8 @@ class OpenAIChatModel(Model):
             'vercel',
             'litellm',
             'nebius',
+            'gateway',
+            'gateway/openai',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -363,6 +369,8 @@ class OpenAIChatModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
+            if provider == 'gateway':
+                provider = 'gateway/openai'
             provider = infer_provider(provider)
         self._provider = provider
         self.client = provider.client
@@ -903,7 +911,18 @@ class OpenAIResponsesModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'nebius']
+        provider: Literal[
+            'openai',
+            'deepseek',
+            'azure',
+            'openrouter',
+            'grok',
+            'fireworks',
+            'together',
+            'nebius',
+            'gateway',
+            'gateway/openai',
+        ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
@@ -919,6 +938,8 @@ class OpenAIResponsesModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
+            if provider == 'gateway':
+                provider = 'gateway/openai'
             provider = infer_provider(provider)
         self._provider = provider
         self.client = provider.client

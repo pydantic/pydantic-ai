@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.providers import Provider, infer_provider
+from pydantic_ai.providers import Provider, infer_provider, infer_provider_class
 
 from ..conftest import try_import
 
@@ -16,10 +16,12 @@ with try_import() as imports_successful:
 
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
     from pydantic_ai.providers.github import GitHubProvider
+    from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # type: ignore[reportDeprecated]
     from pydantic_ai.providers.grok import GrokProvider
@@ -56,6 +58,11 @@ with try_import() as imports_successful:
         ('ollama', OllamaProvider, 'OLLAMA_BASE_URL'),
         ('litellm', LiteLLMProvider, None),
         ('nebius', NebiusProvider, 'NEBIUS_API_KEY'),
+        ('gateway/openai', OpenAIProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
+        ('gateway/groq', GroqProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
+        ('gateway/google-vertex', GoogleProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
+        ('gateway/anthropic', AnthropicProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
+        ('gateway/bedrock', BedrockProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
     ]
 
 if not imports_successful():
@@ -85,6 +92,7 @@ def test_infer_provider(provider: str, provider_cls: type[Provider[Any]], except
 
 @pytest.mark.parametrize(('provider', 'provider_cls', 'exception_has'), test_infer_provider_params)
 def test_infer_provider_class(provider: str, provider_cls: type[Provider[Any]], exception_has: str | None):
-    from pydantic_ai.providers import infer_provider_class
+    if provider.startswith('gateway/'):
+        pytest.skip('Gateway providers are not supported for this test')
 
     assert infer_provider_class(provider) == provider_cls

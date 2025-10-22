@@ -37,7 +37,9 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfileSpec
-from ..providers import Provider
+from ..providers import Provider, infer_provider
+from ..providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
+from ..providers.google_vertex import GoogleVertexProvider  # type: ignore[reportDeprecated]
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -187,7 +189,10 @@ class GoogleModel(Model):
         self,
         model_name: GoogleModelName,
         *,
-        provider: Literal['google-gla', 'google-vertex'] | Provider[Client] = 'google-gla',
+        provider: Literal['google-gla', 'google-vertex', 'gateway', 'gateway/google-vertex']
+        | Provider[Client]
+        | GoogleVertexProvider  # type: ignore[reportDeprecated]
+        | GoogleGLAProvider = 'google-gla',  # type: ignore[reportDeprecated]
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -196,15 +201,21 @@ class GoogleModel(Model):
         Args:
             model_name: The name of the model to use.
             provider: The provider to use for authentication and API access. Can be either the string
-                'google-gla' or 'google-vertex' or an instance of `Provider[httpx.AsyncClient]`.
-                If not provided, a new provider will be created using the other parameters.
+                'google-gla' or 'google-vertex' or an instance of `Provider[google.genai.AsyncClient]`.
+                Defaults to 'google-gla'.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: The model settings to use. Defaults to None.
         """
         self._model_name = model_name
 
-        if isinstance(provider, str):
-            provider = GoogleProvider(vertexai=provider == 'google-vertex')
+        if isinstance(provider, GoogleVertexProvider) or provider == 'google-vertex':  # type: ignore[reportDeprecated]
+            provider = GoogleProvider(vertexai=True)
+        elif isinstance(provider, GoogleGLAProvider) or provider == 'google-gla':  # type: ignore[reportDeprecated]
+            provider = GoogleProvider(vertexai=False)
+        elif isinstance(provider, str):
+            if provider == 'gateway':
+                provider = 'gateway/google-vertex'
+            provider = infer_provider(provider)
         self._provider = provider
         self.client = provider.client
 

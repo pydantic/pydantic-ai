@@ -141,7 +141,7 @@ class GroqModel(Model):
         self,
         model_name: GroqModelName,
         *,
-        provider: Literal['groq'] | Provider[AsyncGroq] = 'groq',
+        provider: Literal['groq', 'gateway', 'gateway/groq'] | Provider[AsyncGroq] = 'groq',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -159,6 +159,8 @@ class GroqModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
+            if provider == 'gateway':
+                provider = 'gateway/groq'
             provider = infer_provider(provider)
         self._provider = provider
         self.client = provider.client

@@ -8,7 +8,7 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from typing import Any, Generic, TypeVar
 
-from pydantic_ai import ModelProfile
+from ..profiles import ModelProfile
 
 InterfaceClient = TypeVar('InterfaceClient')
 
@@ -53,7 +53,7 @@ class Provider(ABC, Generic[InterfaceClient]):
 
 def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     """Infers the provider class from the provider name."""
-    if provider == 'openai':
+    if provider in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
 
         return OpenAIProvider
@@ -152,5 +152,11 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
 
 def infer_provider(provider: str) -> Provider[Any]:
     """Infer the provider from the provider name."""
-    provider_class = infer_provider_class(provider)
-    return provider_class()
+    if provider.startswith('gateway/'):
+        from .gateway import gateway_provider
+
+        provider = provider.split('/', maxsplit=1)[1]
+        return gateway_provider(provider)
+    else:
+        provider_class = infer_provider_class(provider)
+        return provider_class()

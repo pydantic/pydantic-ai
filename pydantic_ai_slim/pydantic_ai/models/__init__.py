@@ -43,6 +43,7 @@ from ..messages import (
 )
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
+from ..providers import infer_provider
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -637,41 +638,38 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         return TestModel()
 
     try:
-        provider, model_name = model.split(':', maxsplit=1)
+        provider_name, model_name = model.split(':', maxsplit=1)
     except ValueError:
-        provider = None
+        provider_name = None
         model_name = model
         if model_name.startswith(('gpt', 'o1', 'o3')):
-            provider = 'openai'
+            provider_name = 'openai'
         elif model_name.startswith('claude'):
-            provider = 'anthropic'
+            provider_name = 'anthropic'
         elif model_name.startswith('gemini'):
-            provider = 'google-gla'
+            provider_name = 'google-gla'
 
-        if provider is not None:
+        if provider_name is not None:
             warnings.warn(
-                f"Specifying a model name without a provider prefix is deprecated. Instead of {model_name!r}, use '{provider}:{model_name}'.",
+                f"Specifying a model name without a provider prefix is deprecated. Instead of {model_name!r}, use '{provider_name}:{model_name}'.",
                 DeprecationWarning,
             )
         else:
             raise UserError(f'Unknown model: {model}')
 
-    if provider == 'vertexai':  # pragma: no cover
+    if provider_name == 'vertexai':  # pragma: no cover
         warnings.warn(
             "The 'vertexai' provider name is deprecated. Use 'google-vertex' instead.",
             DeprecationWarning,
         )
-        provider = 'google-vertex'
+        provider_name = 'google-vertex'
 
-    if provider == 'gateway':
-        from ..providers.gateway import infer_model as infer_model_from_gateway
+    provider = infer_provider(provider_name)
+    provider_name = provider_name.removeprefix('gateway/')
 
-        return infer_model_from_gateway(model_name)
-    elif provider == 'cohere':
-        from .cohere import CohereModel
-
-        return CohereModel(model_name, provider=provider)
-    elif provider in (
+    if provider_name in (
+        'openai',
+        'openai-chat',
         'azure',
         'deepseek',
         'cerebras',
@@ -681,8 +679,6 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         'heroku',
         'moonshotai',
         'ollama',
-        'openai',
-        'openai-chat',
         'openrouter',
         'together',
         'vercel',
@@ -692,31 +688,35 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         from .openai import OpenAIChatModel
 
         return OpenAIChatModel(model_name, provider=provider)
-    elif provider == 'openai-responses':
+    elif provider_name == 'openai-responses':
         from .openai import OpenAIResponsesModel
 
-        return OpenAIResponsesModel(model_name, provider='openai')
-    elif provider in ('google-gla', 'google-vertex'):
+        return OpenAIResponsesModel(model_name, provider=provider)
+    elif provider_name in ('google-gla', 'google-vertex'):
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)
-    elif provider == 'groq':
+    elif provider_name == 'groq':
         from .groq import GroqModel
 
         return GroqModel(model_name, provider=provider)
-    elif provider == 'mistral':
+    elif provider_name == 'cohere':
+        from .cohere import CohereModel
+
+        return CohereModel(model_name, provider=provider)
+    elif provider_name == 'mistral':
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
-    elif provider == 'anthropic':
+    elif provider_name == 'anthropic':
         from .anthropic import AnthropicModel
 
         return AnthropicModel(model_name, provider=provider)
-    elif provider == 'bedrock':
+    elif provider_name == 'bedrock':
         from .bedrock import BedrockConverseModel
 
         return BedrockConverseModel(model_name, provider=provider)
-    elif provider == 'huggingface':
+    elif provider_name == 'huggingface':
         from .huggingface import HuggingFaceModel
 
         return HuggingFaceModel(model_name, provider=provider)
