@@ -259,7 +259,7 @@ from pydantic_ai.durable_exec.prefect import PrefectAgent
 @flow
 async def daily_report_flow(user_prompt: str):
     """Generate a daily report using the agent."""
-    agent = Agent(
+    agent = Agent( # (1)!
         'openai:gpt-4o',
         name='daily_report_agent',
         instructions='Generate a daily summary report.',
@@ -269,6 +269,8 @@ async def daily_report_flow(user_prompt: str):
 
     result = await prefect_agent.run(user_prompt)
     return result.output
+
+(1) Each flow run executes in an isolated process, and all inputs and dependencies must be serializable. Because Agent instances cannot be serialized, instantiate the agent inside the flow rather than at the module level.
 
 
 # Serve the flow with a daily schedule
