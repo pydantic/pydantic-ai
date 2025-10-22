@@ -297,5 +297,5 @@ class MCPServerTool(AbstractBuiltinTool):
 
     kind: str = 'mcp_server'
 
-    LIST_TOOLS_KIND: Literal['mcp_server:mcp_list_tools'] = 'mcp_server:mcp_list_tools'
-    CALL_TOOL_KIND: Literal['mcp_server:mcp_call_tool'] = 'mcp_server:mcp_call_tool'
+    LIST_TOOLS: Literal['mcp_server:list_tools'] = 'mcp_server:list_tools'
+    CALL_TOOL: Literal['mcp_server:call_tool'] = 'mcp_server:call_tool'

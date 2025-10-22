@@ -44,8 +44,6 @@ from pydantic_ai import (
 from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
-    BuiltinMCPToolCallPart,
-    BuiltinMCPToolReturnPart,
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
@@ -3101,16 +3099,15 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                         signature='EvECCkYICBgCKkCeuCUVeVlbOhA+gHNZZaHFOixlAHnq2exLDYxPuBbJXDgZ62IURpi4CC0YZ4f4nlrBm8jxa/K3FLQC3jIaQSsSEgy63wA3a52a9RyMdYYaDMw8qf3i8C22GDqdRiIwtYWltueQx95iIdHf/eIZ7Dm28zBHJU0o+07IEcf53+K046o3qjO14WjzZwkMgeJXKtgBV08pozWl5NIRRT/yvkq7du+dTSJbQ4XUsSPsjqOrclIvYcJvze/XswFlG0P9XdE8l60ABX7/iHxWOtbQxqCBN6fahkyd7QfEu51vlHjdrxkWwvqKbh3ZEKpZ/IlSHVt9bkYAFVaCg5tWua/8ytCW+m4FMqmROl34z/VjWN27HKHTYdiN0S75QWnaFny2j9cx9yqP0hqjDVn0MHIumxrnkkn59dTxLn0I8nS6t2jDOuCX6GZSomkVfpgEHEKfdt6UacvBLuLleSf1JT8ATMeUGZVZ9KOG6aOYGAE=',
                         provider_name='anthropic',
                     ),
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
                         args={'query': 'pydantic-ai in:name'},
                         tool_call_id='mcptoolu_01AmgVfcYg7HkjXerTSn1F93',
                         provider_name='anthropic',
-                        mcp_server_id='test-server',
-                        mcp_tool_name='search_repositories',
+                        tool_call_metadata={'mcp_server_id': 'test-server', 'mcp_tool_name': 'search_repositories'},
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
                         content={
                             'content': [
                                 {
@@ -3179,16 +3176,15 @@ The framework emphasizes the "Pydantic way" of building AI agents with structure
                         signature='EvECCkYICBgCKkCeuCUVeVlbOhA+gHNZZaHFOixlAHnq2exLDYxPuBbJXDgZ62IURpi4CC0YZ4f4nlrBm8jxa/K3FLQC3jIaQSsSEgy63wA3a52a9RyMdYYaDMw8qf3i8C22GDqdRiIwtYWltueQx95iIdHf/eIZ7Dm28zBHJU0o+07IEcf53+K046o3qjO14WjzZwkMgeJXKtgBV08pozWl5NIRRT/yvkq7du+dTSJbQ4XUsSPsjqOrclIvYcJvze/XswFlG0P9XdE8l60ABX7/iHxWOtbQxqCBN6fahkyd7QfEu51vlHjdrxkWwvqKbh3ZEKpZ/IlSHVt9bkYAFVaCg5tWua/8ytCW+m4FMqmROl34z/VjWN27HKHTYdiN0S75QWnaFny2j9cx9yqP0hqjDVn0MHIumxrnkkn59dTxLn0I8nS6t2jDOuCX6GZSomkVfpgEHEKfdt6UacvBLuLleSf1JT8ATMeUGZVZ9KOG6aOYGAE=',
                         provider_name='anthropic',
                     ),
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
                         args={'query': 'pydantic-ai in:name'},
                         tool_call_id='mcptoolu_01AmgVfcYg7HkjXerTSn1F93',
                         provider_name='anthropic',
-                        mcp_server_id='test-server',
-                        mcp_tool_name='search_repositories',
+                        tool_call_metadata={'mcp_server_id': 'test-server', 'mcp_tool_name': 'search_repositories'},
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
                         content={
                             'content': [
                                 {
@@ -3339,16 +3335,15 @@ I'll use the search_repositories function with a query for "pydantic-ai". To be 
                         signature='EsQECkYICBgCKkCK82+nlmjnKiZfbu6NGJSGOAp0cYf+o9ZYGIW237IaltgDWXzKJTQASoCF5Gdpp1zZ921+7qagpulTQkpoLj00EgxX4F5oVf4Jb4cSY/oaDH/eOhAD4Kj6edkFvSIwnWMSL4Mr9hpnmil8nPoxCJUqIpDJjR/NIU9Ox+gpfOv2aF9XecnhPl3sXt2RCGeAKqsDX7H4MVRaGDev9+ulOst6v9etRmvAKsJhFwksbqsmbffvfo4tkcV8cyJ2InKyiFQlEfDpUxCNosHlI2I0UBmKCv1u5i144TufwKblygIYS6q2GRu5EpasdjI+mJGnJ9DzLR2MrD3Q/6BtM/78Jg9HggEThiHRL9+95OnwoXXNQIEf/V4We2SyZmcht6EoPMBEluvLqTdq4Y1aaDYoI7XRQOcHnbYA39Scxk5X5gLBbtMaNBWkzyLHnkB5zeYqA2L357oIgdS47nxR8xexkp7yCE0sNDlu6803UYLL9I4qTcs1iX3v4JPALooB+xrnX0BSleTz45/02T540M92ysmK+chrWbjoa0dCZGbDdA6vtezxlI5yebvBJtz3ptTfxdVXj+gp/hlaZmQtbUCN/FKt1WAXwpw9gAZENC5qcF3P03OMyVBmYmXKW4vRqlHMHOcp+eYEmX4pLwAj1bNMhbnfZN0Nlv12rYIlmyrlW6y1XyycSmrlBGDW9ubtsWv0kA4v4vhLuslKVnPdlORou6/LlCUc480kz6n2dSZeKcUyIrRebOaIIVtBm8/vUhgB',
                         provider_name='anthropic',
                     ),
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
                         args='{"query": "pydantic-ai in:name", "minimal_output": false}',
                         tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM',
                         provider_name='anthropic',
-                        mcp_server_id='test-server',
-                        mcp_tool_name='search_repositories',
+                        tool_call_metadata={'mcp_server_id': 'test-server', 'mcp_tool_name': 'search_repositories'},
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
                         content={
                             'content': [
                                 {
@@ -3471,12 +3466,11 @@ I'll use the search_repositories\
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinMCPToolCallPart(
-                    tool_name='mcp_server:mcp_call_tool',
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:call_tool',
                     tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM',
                     provider_name='anthropic',
-                    mcp_server_id='test-server',
-                    mcp_tool_name='search_repositories',
+                    tool_call_metadata={'mcp_server_id': 'test-server', 'mcp_tool_name': 'search_repositories'},
                 ),
             ),
             PartDeltaEvent(
@@ -3510,8 +3504,8 @@ I'll use the search_repositories\
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinMCPToolReturnPart(
-                    tool_name='mcp_server:mcp_call_tool',
+                part=BuiltinToolReturnPart(
+                    tool_name='mcp_server:call_tool',
                     content={
                         'content': [
                             {
@@ -3624,18 +3618,17 @@ It's actively\
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',300+ forks and 331')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' open issues.')),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinMCPToolCallPart(
-                    tool_name='mcp_server:mcp_call_tool',
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:call_tool',
                     args='{"query": "pydantic-ai in:name", "minimal_output": false}',
                     tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM',
                     provider_name='anthropic',
-                    mcp_server_id='test-server',
-                    mcp_tool_name='search_repositories',
+                    tool_call_metadata={'mcp_server_id': 'test-server', 'mcp_tool_name': 'search_repositories'},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinMCPToolReturnPart(
-                    tool_name='mcp_server:mcp_call_tool',
+                result=BuiltinToolReturnPart(
+                    tool_name='mcp_server:call_tool',
                     content={
                         'content': [
                             {

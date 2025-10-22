@@ -39,8 +39,6 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
-    BuiltinMCPToolCallPart,
-    BuiltinMCPToolReturnPart,
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
@@ -53,7 +51,6 @@ from ..conftest import IsBytes, IsDatetime, IsStr, TestEnv, try_import
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
-    from openai.types.responses.response_output_item import McpListToolsTool
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
     from openai.types.responses.response_reasoning_item import ResponseReasoningItem, Summary
     from openai.types.responses.response_usage import ResponseUsage
@@ -6359,19 +6356,19 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
             ),
             ModelResponse(
                 parts=[
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_list_tools',
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:list_tools',
                         tool_call_id='mcpl_04507193d793fa550068ed13e10bec81969d1d58d6d4c7a218',
                         provider_name='openai',
-                        mcp_server_id='test_server',
+                        tool_call_metadata={'mcp_server_id': 'test_server'},
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_list_tools',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:list_tools',
                         content={
                             'error': None,
                             'tools': [
-                                McpListToolsTool(
-                                    input_schema={
+                                {
+                                    'input_schema': {
                                         'properties': {
                                             'minimal_output': {
                                                 'default': True,
@@ -6407,16 +6404,16 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                                         'required': ['query'],
                                         'type': 'object',
                                     },
-                                    name='search_repositories',
-                                    annotations={'read_only': True},
-                                    description='Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
-                                )
+                                    'name': 'search_repositories',
+                                    'annotations': {'read_only': True},
+                                    'description': 'Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
+                                }
                             ],
                         },
                         tool_call_id='mcpl_04507193d793fa550068ed13e10bec81969d1d58d6d4c7a218',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='test_server',
+                        tool_return_metadata={'mcp_server_id': 'test_server'},
                     ),
                     ThinkingPart(
                         content='',
@@ -6424,28 +6421,22 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         signature='gAAAAABo7RPwBlGhrl9wLbNIVNY20JNHmCrVJFt4aMltys-m2T5tcNUsVVQVMFZlCQnxQJRNrQIFpeMiASvak7ETlmzUAGs5dtQ0esVI-PWUYoYi85daNwlW5DAwo9uxZzm19-wy6dSHfeQtM_F2nzmL2pIoO_qxbGYXQcZVHXPLOXAqzbedzVZRTdH-1j4DVKE_c9WPb62xFpp7DAoxRsfyak40VcdTivvmpVWfJ-x47FcEE_OMew6PNnBlspi1k4yEvjKZ8_OwvbyWeKeR4SuhZUeAbz6ZWOqptQ3lHoH9pprvTjoB8h248ZipfOoAzETJ8sAzLCV-KLgo4_IcsAvXpR5RjxbvaWzgSG9UBiAGlNDlh6dwVBdvnNvDNqkeMW1wYHiqTFDUdxNvHmFnYRIVmg4ZQ6ndjrXu76QY1N7cXoo0gjHHlezzsR-atyveiKW6QmZtlGV5IzRwzZpb7uZaX-ofWa4Fc562vlgJ71WWlMwn4qMIdksm3gaQ5-n6Z65Ci0LAD7xNVTPYzcKXAvO8YzMVXShgoCePpiJsB_Pc2_3lH2YzxNCBGHnwAAqvfU529IqXOClirz5wSMMW60oSmwB-Xj4Prv5778aTQgDFBM8X12vWqJie9CXuVwsjeeyWyGt0ZNnx5jX0VdXbRUNK-mjFX3f-gWNkPvzGnVgQ6XmPFhfO53Sy5KeTEVaVEvnTZdO2YuOQFOWYFIddc7Wq5SnMK7C_LMdURnguBRs-PpEX-C2-kwDH4whkABYO-V8F_PrFPdeGh2Sx3rwhtpoPAd5qM30DDCgf1A8zmVhvMf-7H5mQzXblUJu1l4KwKlm5jWkUX9X7bOk4TwVxubej7U7Q39A8ln2AcejtAcBo-8QGLdyf_q_WsNM45UvmS2HE76iAClfQBrEvHMPZj4Tysuz0_7adhiL-OkxL8fyrcyQZls1cbQot_qudXJ3ICnbs5ss6Z8VdIPYLIPuVRpWHK8K4J_DiyxMXZC6t1Um7FjrO4qw-3lWAtFCRGA5xIDkTshqsRQReFm6XmeKO5FrfwSDkLGMTUGwMWlKjoMP3GNLPMmEdq-hJ2snp1ZlROAfXDLB6BPkmmrTOe8XQv5XCwCCqvSgjhFhfnvsC7ulNSiZLAuDu96EY_YfjX0dNIPJN7G_I_L-WwCxRqEyH85jwM5pPRoRSFxyjeRrb9_JTeIilvgmF9RXiYIB4tnWl0XNuuZZsgZlzFXtINWJ3LmOURZ6dUwkqMire_UCcalQM5caZRG4uNzG-4erAShbttJwN8_-ieNqSKbJ2PX5McUVWXcQXZmn9DZHfdrwgp2dJQT9BS8w4Zj5iASXF_9OwIsZET0E9j2JEOHC2PS1BU2HLORZRpy4C2z0GYsDZpqGf2fOBfXGHJED_p51OXbdgbJ8hxm_ZPgk4f7TMScjFW4BvaGHelldskms4e1Znv85o5J37TSKT6A55CM4RbFLWsNDRdb4OI2Rx3NLj_twcznCCXX4XkB1Ex5Tyw-BWxMwzaZkGcBK6cG-r0-Fj8LIcbAg4JIBMQWT4pPG1fopdLephXcRosrjj9gapsCV0mgGLU5gMYwztmEgdDe7t4hO659PuH6Yk0vxLWGl-U6MyZzOdeSr8vikyJ7WmsLd7nFIJOEj3lAWliEslnQlDnhmouUp79sGN7ciylSxhuxm8F6Wi8TqJGU-yJdqReK2jIhL6AmImaW4_FusxOV3twYNy7yv0a8SCIs9KPOaaxUARUiuIfvN1tRIlkTcLJUypfuII3ZzFP_vrCNJ_FUphpojUAWhh8CQhW8YeME9otpJLQkLRVb1Mv0500VkCJgTMdYHfbxAbNyxLxdFABtKBE172QKh7RwQA2rJxHm2Ng57iWusHhb2yFHp8MaRF3hN0ro780uljZ6ymAlqYy3_auqTGZb0c538_OKf2ZUQmc_NI1M05S950cZTMUyy7ll5WRb7ZIQMv3g_Pk8Q-aqtOSCuB4KpxYA1yCdh6PDaRBUfdobj9kAN_9pSqwyGxo9Jpeky2viDXtKonOEk-dZnK-BlRM_4GRPLvpQYw0MKQxVKcJ7yKRd_e-zZDl641G1zE0Ycntte9U51JkwgERzHdbs8W967tdoSGRYsU72lcKdaFTxHBrYzrlzdWxFGmLdTZ-VrfjJbxU8ZSifRnHFXAknLaCyVsZeBoBrz68sEEteE8oTFZTGUKgtkXhP3iEwrtYvLDG44fO0lAd9tOUXh23doZHcncq9zUqVe99z5Qkc3g1DieeaHBj2r8AJKHwqwI_uUWhzV3dwnCK-o6vYGoff1UztGHiJT5Zgol-qwIrL_3o6CijNZzMEuhShH7zTKMZJVdc79juY3Q9LMSRVQIH1qpsV56ISOOhy9pVamYEDcxpv_oosPs8b77bu5RztTx-BwBhsnWxz5k6S80toGtthZAOQsPETUhB81m_1ZNjkmmuzDrqK2ITA3CY-C2EZVQf-5mD4K0jAwcbtmw57PkP65WI9fEumGTGVHKnUQ3UUyl1BDm8ZGiTLtk0BjK4gEdi2CGbre-nGARfwGA8igCDqyZqw2pEg0AFV2ELu7Qia25ZOSt1UyCSX5rReYjEIG6L5IOiM34p3sISsOFmi59O4P76Ls2oNfY32TTYulDWPX2R6z8mvfBlgAHbtNh17FkATnbv7BuRU3_3ZhTIrbK2I7hROn80vVM1c_A8aMmBCLoINfifHdhooNOreTnhGSvA2uillBBVEhbsU9eXf7SqsVcZl0jA5NqlJ8DsLKk1Qc54qudZzPdGOzB9aFJQfPAubJErXFaHr9gmxlJOmoDYouYzArpX939VL0IkCt-KbK997imQ2UFtyRYtDC-7dVya2Alg4ua8XyWHtezY7ADZBcMSdpwoXvZHWd0jCBwm5mJ16oMW4dao-M4xNM5Dp2NzK5QCHPt77LxqP3fNdFI7cjsZSM32tLwxqQfvvyrsBYemE55xISrj0VGj8fNS4qBC4T8DXiJ6LJgh7-wXrPeGihvIfhpATYjdQSjyf-6TXSB8HwzkLVdoWakokXBqpWfLMG8Qn2UNNuyr3heuOqOxh7kIKdr0ucJXAd1KlyVZoVGkMZIg74pqR9CSuB82889jSqYfsBKUzzN4mk8dE9QLZDu-11nnIrlD2JmZiJYaq49ZrMpYX8KZtvM1YjdAyXHrM6WPFBs4MXco7DZJUCTgadgmSDZ5FHG1sry4Wl3bvjSA1BwSk9naQFYeKRHmANEBJXfDV-a2HT7QbY=',
                         provider_name='openai',
                     ),
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_call_tool',
-                        args={
-                            'arguments': '{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:pydantic"}'
-                        },
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
                         tool_call_id='mcp_04507193d793fa550068ed13e71e5c8196b9588faf7b4f61de',
+                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
                         content={
-                            'arguments': '{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:pydantic"}',
                             'error': {'code': 32600, 'message': 'Session terminated', 'type': 'mcp_protocol_error'},
                             'output': None,
                         },
                         tool_call_id='mcp_04507193d793fa550068ed13e71e5c8196b9588faf7b4f61de',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
+                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
                     ThinkingPart(
                         content='',
@@ -6453,28 +6444,22 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         signature='gAAAAABo7RPwhF0RC2doViW9PTmEGAAWqjmI3o6aRABDFpqWMNYpySD0RtxVltuNWYnocK5_IIoA35C4Y0k8gQLR6cHF2CzpC4nFO4GCZpm4awByYiWkk9q3AP5PICjIco5BdCszCZBsOoaAtbUVI_wjj0Qomj3D1axk0frsXvTx9mzeEnjeHQQxS6V6Z53UDcwnfQ6pxXCzUDcAb2L5VAp_pw2lKOf34npFRQ11tkuU8djhuapZjNGXI8cyaX7bZifVoIaIxELGsIA6p7pbDxaC9EaZPttde9n3vP66Jt-qJfsumebs-lz_X8aosVVwszVoKoK0XLjzfTvkRA-S_Rjl_pJBvfUSlOJqMDNc2N5BqwrHwzS8B1Dqkx_JzI7zoVIgPTNwcKpIMBWSDjUbe2vjGOAyjLJQYLO9ah4Q1curobn18dKrOay3mYhoyKq28cx78lp-zwQvABHYW4PUcpj29g9HCLTZZQz2UXb-OSqy_QHEsxzlSlXY52SneDAW5i1euMRKYGHKZ6plVlLKHHv8PWsqDktb68lMZHJLmEpNPF7dCn3Bw39QrcUhO7-yURNgad0GflXGZG7yzeQ1-68cYVECD1Kvri3I5F_aQO9Sbh6a1iV_X8_xLcITi-MSOHfKzL-aqdih7nEWJeYgsgk1bYeDvDJgrGOqckNQjjX5OEBN73X-vkEPaCtBLswJ-Vr-ENqaPGVlX5zNUyOFhzFEdZUcZ4lFGYgeTapWOsW8m0bowUouvgXP0-7neRQ25nLnt95gJjdZEYE5Sl_SuRMz016rAcNIoa7Rgw1-u7sqoKtDf9YZ9mrxXmguV8NvYQVIgRS8UvxpJTtWYQIaCKuxm2_1A4YV4uGdSpRnd5RBhVpO8tphWy3tJNUxaZIa3E_DersilTfQmJEZbVGlI8b0-OiyZvlkRAb5STX4z04-3aoiKx_D44k=',
                         provider_name='openai',
                     ),
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_call_tool',
-                        args={
-                            'arguments': '{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:Pydantic"}'
-                        },
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
                         tool_call_id='mcp_04507193d793fa550068ed13e84cec819697e55f0f6d7baec7',
+                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
                         content={
-                            'arguments': '{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:Pydantic"}',
                             'error': {'code': 32600, 'message': 'Session terminated', 'type': 'mcp_protocol_error'},
                             'output': None,
                         },
                         tool_call_id='mcp_04507193d793fa550068ed13e84cec819697e55f0f6d7baec7',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
+                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
                     ThinkingPart(
                         content='',
@@ -6513,19 +6498,19 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
             ),
             ModelResponse(
                 parts=[
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_list_tools',
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:list_tools',
                         tool_call_id='mcpl_04507193d793fa550068ed13e10bec81969d1d58d6d4c7a218',
                         provider_name='openai',
-                        mcp_server_id='test_server',
+                        tool_call_metadata={'mcp_server_id': 'test_server'},
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_list_tools',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:list_tools',
                         content={
                             'error': None,
                             'tools': [
-                                McpListToolsTool(
-                                    input_schema={
+                                {
+                                    'input_schema': {
                                         'properties': {
                                             'minimal_output': {
                                                 'default': True,
@@ -6561,16 +6546,16 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                                         'required': ['query'],
                                         'type': 'object',
                                     },
-                                    name='search_repositories',
-                                    annotations={'read_only': True},
-                                    description='Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
-                                )
+                                    'name': 'search_repositories',
+                                    'annotations': {'read_only': True},
+                                    'description': 'Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
+                                }
                             ],
                         },
                         tool_call_id='mcpl_04507193d793fa550068ed13e10bec81969d1d58d6d4c7a218',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='test_server',
+                        tool_return_metadata={'mcp_server_id': 'test_server'},
                     ),
                     ThinkingPart(
                         content='',
@@ -6578,28 +6563,22 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         signature='gAAAAABo7RPwBlGhrl9wLbNIVNY20JNHmCrVJFt4aMltys-m2T5tcNUsVVQVMFZlCQnxQJRNrQIFpeMiASvak7ETlmzUAGs5dtQ0esVI-PWUYoYi85daNwlW5DAwo9uxZzm19-wy6dSHfeQtM_F2nzmL2pIoO_qxbGYXQcZVHXPLOXAqzbedzVZRTdH-1j4DVKE_c9WPb62xFpp7DAoxRsfyak40VcdTivvmpVWfJ-x47FcEE_OMew6PNnBlspi1k4yEvjKZ8_OwvbyWeKeR4SuhZUeAbz6ZWOqptQ3lHoH9pprvTjoB8h248ZipfOoAzETJ8sAzLCV-KLgo4_IcsAvXpR5RjxbvaWzgSG9UBiAGlNDlh6dwVBdvnNvDNqkeMW1wYHiqTFDUdxNvHmFnYRIVmg4ZQ6ndjrXu76QY1N7cXoo0gjHHlezzsR-atyveiKW6QmZtlGV5IzRwzZpb7uZaX-ofWa4Fc562vlgJ71WWlMwn4qMIdksm3gaQ5-n6Z65Ci0LAD7xNVTPYzcKXAvO8YzMVXShgoCePpiJsB_Pc2_3lH2YzxNCBGHnwAAqvfU529IqXOClirz5wSMMW60oSmwB-Xj4Prv5778aTQgDFBM8X12vWqJie9CXuVwsjeeyWyGt0ZNnx5jX0VdXbRUNK-mjFX3f-gWNkPvzGnVgQ6XmPFhfO53Sy5KeTEVaVEvnTZdO2YuOQFOWYFIddc7Wq5SnMK7C_LMdURnguBRs-PpEX-C2-kwDH4whkABYO-V8F_PrFPdeGh2Sx3rwhtpoPAd5qM30DDCgf1A8zmVhvMf-7H5mQzXblUJu1l4KwKlm5jWkUX9X7bOk4TwVxubej7U7Q39A8ln2AcejtAcBo-8QGLdyf_q_WsNM45UvmS2HE76iAClfQBrEvHMPZj4Tysuz0_7adhiL-OkxL8fyrcyQZls1cbQot_qudXJ3ICnbs5ss6Z8VdIPYLIPuVRpWHK8K4J_DiyxMXZC6t1Um7FjrO4qw-3lWAtFCRGA5xIDkTshqsRQReFm6XmeKO5FrfwSDkLGMTUGwMWlKjoMP3GNLPMmEdq-hJ2snp1ZlROAfXDLB6BPkmmrTOe8XQv5XCwCCqvSgjhFhfnvsC7ulNSiZLAuDu96EY_YfjX0dNIPJN7G_I_L-WwCxRqEyH85jwM5pPRoRSFxyjeRrb9_JTeIilvgmF9RXiYIB4tnWl0XNuuZZsgZlzFXtINWJ3LmOURZ6dUwkqMire_UCcalQM5caZRG4uNzG-4erAShbttJwN8_-ieNqSKbJ2PX5McUVWXcQXZmn9DZHfdrwgp2dJQT9BS8w4Zj5iASXF_9OwIsZET0E9j2JEOHC2PS1BU2HLORZRpy4C2z0GYsDZpqGf2fOBfXGHJED_p51OXbdgbJ8hxm_ZPgk4f7TMScjFW4BvaGHelldskms4e1Znv85o5J37TSKT6A55CM4RbFLWsNDRdb4OI2Rx3NLj_twcznCCXX4XkB1Ex5Tyw-BWxMwzaZkGcBK6cG-r0-Fj8LIcbAg4JIBMQWT4pPG1fopdLephXcRosrjj9gapsCV0mgGLU5gMYwztmEgdDe7t4hO659PuH6Yk0vxLWGl-U6MyZzOdeSr8vikyJ7WmsLd7nFIJOEj3lAWliEslnQlDnhmouUp79sGN7ciylSxhuxm8F6Wi8TqJGU-yJdqReK2jIhL6AmImaW4_FusxOV3twYNy7yv0a8SCIs9KPOaaxUARUiuIfvN1tRIlkTcLJUypfuII3ZzFP_vrCNJ_FUphpojUAWhh8CQhW8YeME9otpJLQkLRVb1Mv0500VkCJgTMdYHfbxAbNyxLxdFABtKBE172QKh7RwQA2rJxHm2Ng57iWusHhb2yFHp8MaRF3hN0ro780uljZ6ymAlqYy3_auqTGZb0c538_OKf2ZUQmc_NI1M05S950cZTMUyy7ll5WRb7ZIQMv3g_Pk8Q-aqtOSCuB4KpxYA1yCdh6PDaRBUfdobj9kAN_9pSqwyGxo9Jpeky2viDXtKonOEk-dZnK-BlRM_4GRPLvpQYw0MKQxVKcJ7yKRd_e-zZDl641G1zE0Ycntte9U51JkwgERzHdbs8W967tdoSGRYsU72lcKdaFTxHBrYzrlzdWxFGmLdTZ-VrfjJbxU8ZSifRnHFXAknLaCyVsZeBoBrz68sEEteE8oTFZTGUKgtkXhP3iEwrtYvLDG44fO0lAd9tOUXh23doZHcncq9zUqVe99z5Qkc3g1DieeaHBj2r8AJKHwqwI_uUWhzV3dwnCK-o6vYGoff1UztGHiJT5Zgol-qwIrL_3o6CijNZzMEuhShH7zTKMZJVdc79juY3Q9LMSRVQIH1qpsV56ISOOhy9pVamYEDcxpv_oosPs8b77bu5RztTx-BwBhsnWxz5k6S80toGtthZAOQsPETUhB81m_1ZNjkmmuzDrqK2ITA3CY-C2EZVQf-5mD4K0jAwcbtmw57PkP65WI9fEumGTGVHKnUQ3UUyl1BDm8ZGiTLtk0BjK4gEdi2CGbre-nGARfwGA8igCDqyZqw2pEg0AFV2ELu7Qia25ZOSt1UyCSX5rReYjEIG6L5IOiM34p3sISsOFmi59O4P76Ls2oNfY32TTYulDWPX2R6z8mvfBlgAHbtNh17FkATnbv7BuRU3_3ZhTIrbK2I7hROn80vVM1c_A8aMmBCLoINfifHdhooNOreTnhGSvA2uillBBVEhbsU9eXf7SqsVcZl0jA5NqlJ8DsLKk1Qc54qudZzPdGOzB9aFJQfPAubJErXFaHr9gmxlJOmoDYouYzArpX939VL0IkCt-KbK997imQ2UFtyRYtDC-7dVya2Alg4ua8XyWHtezY7ADZBcMSdpwoXvZHWd0jCBwm5mJ16oMW4dao-M4xNM5Dp2NzK5QCHPt77LxqP3fNdFI7cjsZSM32tLwxqQfvvyrsBYemE55xISrj0VGj8fNS4qBC4T8DXiJ6LJgh7-wXrPeGihvIfhpATYjdQSjyf-6TXSB8HwzkLVdoWakokXBqpWfLMG8Qn2UNNuyr3heuOqOxh7kIKdr0ucJXAd1KlyVZoVGkMZIg74pqR9CSuB82889jSqYfsBKUzzN4mk8dE9QLZDu-11nnIrlD2JmZiJYaq49ZrMpYX8KZtvM1YjdAyXHrM6WPFBs4MXco7DZJUCTgadgmSDZ5FHG1sry4Wl3bvjSA1BwSk9naQFYeKRHmANEBJXfDV-a2HT7QbY=',
                         provider_name='openai',
                     ),
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_call_tool',
-                        args={
-                            'arguments': '{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:pydantic"}'
-                        },
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
                         tool_call_id='mcp_04507193d793fa550068ed13e71e5c8196b9588faf7b4f61de',
+                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
                         content={
-                            'arguments': '{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:pydantic"}',
                             'error': {'code': 32600, 'message': 'Session terminated', 'type': 'mcp_protocol_error'},
                             'output': None,
                         },
                         tool_call_id='mcp_04507193d793fa550068ed13e71e5c8196b9588faf7b4f61de',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
+                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
                     ThinkingPart(
                         content='',
@@ -6607,28 +6586,22 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         signature='gAAAAABo7RPwhF0RC2doViW9PTmEGAAWqjmI3o6aRABDFpqWMNYpySD0RtxVltuNWYnocK5_IIoA35C4Y0k8gQLR6cHF2CzpC4nFO4GCZpm4awByYiWkk9q3AP5PICjIco5BdCszCZBsOoaAtbUVI_wjj0Qomj3D1axk0frsXvTx9mzeEnjeHQQxS6V6Z53UDcwnfQ6pxXCzUDcAb2L5VAp_pw2lKOf34npFRQ11tkuU8djhuapZjNGXI8cyaX7bZifVoIaIxELGsIA6p7pbDxaC9EaZPttde9n3vP66Jt-qJfsumebs-lz_X8aosVVwszVoKoK0XLjzfTvkRA-S_Rjl_pJBvfUSlOJqMDNc2N5BqwrHwzS8B1Dqkx_JzI7zoVIgPTNwcKpIMBWSDjUbe2vjGOAyjLJQYLO9ah4Q1curobn18dKrOay3mYhoyKq28cx78lp-zwQvABHYW4PUcpj29g9HCLTZZQz2UXb-OSqy_QHEsxzlSlXY52SneDAW5i1euMRKYGHKZ6plVlLKHHv8PWsqDktb68lMZHJLmEpNPF7dCn3Bw39QrcUhO7-yURNgad0GflXGZG7yzeQ1-68cYVECD1Kvri3I5F_aQO9Sbh6a1iV_X8_xLcITi-MSOHfKzL-aqdih7nEWJeYgsgk1bYeDvDJgrGOqckNQjjX5OEBN73X-vkEPaCtBLswJ-Vr-ENqaPGVlX5zNUyOFhzFEdZUcZ4lFGYgeTapWOsW8m0bowUouvgXP0-7neRQ25nLnt95gJjdZEYE5Sl_SuRMz016rAcNIoa7Rgw1-u7sqoKtDf9YZ9mrxXmguV8NvYQVIgRS8UvxpJTtWYQIaCKuxm2_1A4YV4uGdSpRnd5RBhVpO8tphWy3tJNUxaZIa3E_DersilTfQmJEZbVGlI8b0-OiyZvlkRAb5STX4z04-3aoiKx_D44k=',
                         provider_name='openai',
                     ),
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_call_tool',
-                        args={
-                            'arguments': '{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:Pydantic"}'
-                        },
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
                         tool_call_id='mcp_04507193d793fa550068ed13e84cec819697e55f0f6d7baec7',
+                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
                         content={
-                            'arguments': '{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:Pydantic"}',
                             'error': {'code': 32600, 'message': 'Session terminated', 'type': 'mcp_protocol_error'},
                             'output': None,
                         },
                         tool_call_id='mcp_04507193d793fa550068ed13e84cec819697e55f0f6d7baec7',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
+                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
                     ThinkingPart(
                         content='',
@@ -6666,28 +6639,22 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         signature='gAAAAABo7RP5r0iJ3BdiQhxeJ1LDClOf-qpGHbMTzLVRTRn5QQAIeCk-6-DotZQ53w6BU4pStJO1RTufuDwwtiHu1NVXaqcB3sT8LUJa0KzmxHqu8p2idEKktPEz1LwgpIVmgRliGz7oj2UBA6JoSxT38TXti8moNQBno9UDd95dqOcEkKsORyo_b_q4rbL0i9viQKiLvsLqwNow-fsgnWeOdqoFz5RShxZBzHBEDfqQcACelFbqb3N9gpoILi3lPq15AdiO1yqo8vCDke6SZuwn0kcITbWGDCOx0174LD6_p-aRDxQJWtiXM52HuyRAiiavc95jBQ6Dg85QjO-vliUqOSfYthbrNM2N-Op2SceZw9zfGjqDcNJGu5Y5qL6ZLDHI6x2ponatUwjUN3HQ5qFtKH0JBcqajMKKcB9PUqrTd4J5GdJ9TC82kxT0Pms_N_C_mg80Mm3ByhW2L8zo34e2zha6Jqy8RV0kSprSYuhSSwEQ4XcWwIplOB7RrGKSwhDSmMAJFd7496cbttdzXr4jfpetcKg0F0pRlousKnv_026nbzS2gCLbeFAGpGlSr0M7iQL7FB9gLO08SxHNUBPylHaiCmJWiZQ7xFH0IwIzzdtjkYCMrVLf7nNneXO16s8nR4ltBxfsfRdUzVNZkEiYr-gqFSUIgoN-6F455aw8LwVklfszu9trLsZCoMgIFTKzUJDJAMelHqgbEhJFCxvMgL6wAiFpf6IIK0Z2OuL1mYK8nm8j0MO7HabG6adaQs_V2Bu5Y4YhshTZOGWoiT6jZLDMYru33afcv05bJECSJqVXO5NOAPyA7G0zUvqkFKo9tzINuIH80_vqA7ATpclgecHo-0u0YDo-4gKAIN_gt6sFHOwjGtAK_FpjZURkB5pDiYwLbu0gInFf9viQvNFIJ9vWjCX6NLgkDVAKWWbPXSLyCmZJfZyyhw6WPTHWZX0Oz3jl031T5cVipYCt-1WlR8qce_Dpb4Wzek79uGGpID6rw9urKzhuz8GK_meChgijzptnipGdmCUFi5hilbszyLfmOzudBW-E4qIBts16E4aHZDaFqfxJFBmblkR_fzyvuYKhlfm4b_1NmZ7MWFLNc-zviHyU2khWrMhf_IJqvD18u26A47JPBCWHzgSEo6mqbfMbw-lzOhEI53oH0FZRmd_sC50rpL8qguJYWIa3GBvmIgtYhFSaj4W1bRJbttjBxoA5W0Ny90ZFHsKXcGiDzSsQ5k9PJDNnbV3rqcR8RKZY5t7MN7KYfLAZD0Gc4GEU2kN4OeU6A9PSlgaqd_NSUEE3fI7rRtMywkOrCVBESRDk2bj21KYZhyeMOuZxk-SUc0urjDlJpCc2jDW9tFxng5mTORRllB4gMw_fykr5fA-KxJARwDHN4LX3zXsmJdyhn7RF3_il1_nZsuJE1SSrxWD8ACS-8Hclg3TZ8kpHohthE6tAeK_99nLL1D2px8nKOvPMljAYCNYpMy_g_2_NeYV5r3xX1leaeAG0u7d2ssBeElyzAwnpSMPtI0WStN4lcLfbs2DwAJtl7l2e-3pZtv5TODelMAYrKCyG6M4tb_vnlCpQAzw20NinJE6z8N9WT1-NO8pF4zoHzui9a9DNu4ks_j3bsM6MsYf6r7iwR0NSbpnR2RY2KngQq-RopylUTu4V4I8YgVvjufEKdkm4AMBUnVjqO_5urU6vluktGUl6x5b24vvsG6t4hUBH2TPlnkKE-cz8QwEsScIe03qMh241p8ZEMjCVSteeqpjHJCuQUAYAdCYzNidRYmpMV3HBAU8vB4x6cLX-n3Y680a44lYXw9Uefb-YPk_TXYCC4eWb5kahYZWvvmIdbA3ey-8A4nVliaJHvwedSqkMB9cGMxAtO1YbmdJdwuHG-Vmuhm2HJWjBBBFeLDdJkVaIvQN4dvb8EBlKeijTsoGjRE_ozWrgJ1LEuemnurp3O8pdhU9mLlrTHfqC89-AWRsEAUcye9pK21aWqOgXUDCLGR5WEFvuLo4-PxsdH67CjJTAakhaOom4WHwCARoXGSkRzGLNwOD48QZYHxKThnsXsWLUlFZkUoY8qxIYuODTsYMTUZnybBbM4lggf-ckL26LyQxFXHlk5KfEq4sQ7ebrLtg4CwjHYoeTYIZFUFSJqWy4_gJxTEfRTC_c2bSxUeisXLGXfdlGmDJP8uZxmvrxmyhSurZabfUFlTqYjCCYL9jwZlwmJTPGFy3EZgxHnL3oyTVE6WDswvDsllNPjTqX3e4juXViWikzY-6iqnAv419E2O85ZUgTPWk=',
                         provider_name='openai',
                     ),
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_call_tool',
-                        args={
-                            'arguments': '{"minimal_output":false,"order":"desc","page":1,"perPage":100,"query":"user:pydantic pydantic-ai"}'
-                        },
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
                         tool_call_id='mcp_04507193d793fa550068ed13f4e9188196ab8090591caf215d',
+                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
                         content={
-                            'arguments': '{"minimal_output":false,"order":"desc","page":1,"perPage":100,"query":"user:pydantic pydantic-ai"}',
                             'error': None,
                             'output': IsStr(),
                         },
                         tool_call_id='mcp_04507193d793fa550068ed13f4e9188196ab8090591caf215d',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
+                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
                     ThinkingPart(
                         content='',
@@ -6753,19 +6720,19 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
             ),
             ModelResponse(
                 parts=[
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_list_tools',
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:list_tools',
                         tool_call_id='mcpl_01264dba19113f900068ed20a0664881919b18a9a3989974cf',
                         provider_name='openai',
-                        mcp_server_id='test_server',
+                        tool_call_metadata={'mcp_server_id': 'test_server'},
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_list_tools',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:list_tools',
                         content={
                             'error': None,
                             'tools': [
-                                McpListToolsTool(
-                                    input_schema={
+                                {
+                                    'input_schema': {
                                         'properties': {
                                             'author': {
                                                 'description': 'Author username or email address to filter commits by',
@@ -6792,12 +6759,12 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                                         'required': ['owner', 'repo'],
                                         'type': 'object',
                                     },
-                                    name='list_commits',
-                                    annotations={'read_only': True},
-                                    description='Get list of commits of a branch in a GitHub repository. Returns at least 30 results per page by default, but can return more if specified using the perPage parameter (up to 100).',
-                                ),
-                                McpListToolsTool(
-                                    input_schema={
+                                    'name': 'list_commits',
+                                    'annotations': {'read_only': True},
+                                    'description': 'Get list of commits of a branch in a GitHub repository. Returns at least 30 results per page by default, but can return more if specified using the perPage parameter (up to 100).',
+                                },
+                                {
+                                    'input_schema': {
                                         'properties': {
                                             'minimal_output': {
                                                 'default': True,
@@ -6833,16 +6800,16 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                                         'required': ['query'],
                                         'type': 'object',
                                     },
-                                    name='search_repositories',
-                                    annotations={'read_only': True},
-                                    description='Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
-                                ),
+                                    'name': 'search_repositories',
+                                    'annotations': {'read_only': True},
+                                    'description': 'Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
+                                },
                             ],
                         },
                         tool_call_id='mcpl_01264dba19113f900068ed20a0664881919b18a9a3989974cf',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='test_server',
+                        tool_return_metadata={'mcp_server_id': 'test_server'},
                     ),
                     ThinkingPart(
                         content='',
@@ -6850,34 +6817,23 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         signature='gAAAAABo7SCjE_wICveOw0z6kFvwtVJSAi8SGeS7LooWILhZ1wQTZR3QZHVylNYvEkcAWc9VpOKvCjdyffXyz45penIN9cSr5WCk7vP0DULso01ZudhhFPVypQ68yogEx7xMXwmVJbOqoyOZb3M39dnKkFtjQeMWd4AzGfPC8ufjRt9SEbTlRjq06bRoNBmVYP8rQCftHh9BWIvGKU0Fe5rwB7S0BtFmcowfwFs1lMyKN89BTITrVXrTCmai6mw_JvNj9PCuDiOMfuYbtbmZKb0OZOjiUyErSSFhpdyEqQZbeBF1frZVtPjPJCEIusEIHK5cT65odpRKn2uakRcUcCKGcSB6Sv0OTiSF7nJW79p-eJIfeFXxwJwiCQswp3mUt5U2a0kVsxDv2XUhP3ONOE_-vhNS2EGwRD8IglEw1F0zYqXItUUSjb2vig0SA1sNUVK4oK_EwaxYUYgxtgaC42e7qzo3Hs_18S6FXxaMSygoyk4jVMhIVJb7xbQc7-hWF1ohdXJRTpLNSvZ-z_FTePo_3Bye3HVFpSWOpUAGd1peSVrEiXXaN5kMTJpeZfHbXVTX2FN7ugabl_IgdcVOH-seE1cD5kNbodVbjxnDdxzMx8q10xtzlI7Ze9CPFJb6BZFWKEZri-sJUJAbSRBfH8NIHJQj1UjDx5vg4YRI3TvUR8RIhedC54_25cb_6HD3_0sghACWhL_9uyzPgMw4tjzIQQNtHDduB2BWpKapkSgUkJNAaujU_YOuq-uttzV2nOBXr1H6APbbG_kgNbHs1a4Z_Fvb9Jzg2oKZ1dJOAt81_VK6s2gU50EqTWCQi_k8Hnj4MnUnQIpIyy1jjHDxheKIkOo_7eTSkYsgEapY57S0NGZ6T6Ru-XE8Hql_xa7VhW7VtRyF3LADgK5DD5rjHhzp-dIbhc6Y-4KgTLvaHU-Dohj1t8uZEP8niv3I3JKKgWDWVJ9vPbioeGqOINooUzZcIaJg4BztTcP8CBMsDX5w6MPO3IoBwnhS50YLIFrkDplwqLsnIEwpaxROm0csRrTcUpl4ZiY18R9PXyBp5J8tH0Y7BqaJ6NTAdFT2OLL6TntZ6UtTCaR7U4p_H45DUl0ZKsnjxBjNQWS67DatY2U44S69Qh86ken4gh44cXA4r5NnpRbCuZmo7BhH2wH5yDRhhZc2AQ5WUwpP0eyDnjF8xunNftbwyISfNV7WuHcdaYwiu29WOx6O3c0FLJO-KhV0LvK-VZZWXYTWY55pqv436FtVoq0XS4AiKIN4zwXHx_zuy3Zw_lO41VJUZbBNL4zcAv7GDukWyiFkocpWMBhLhISuuh0T65B3R5W8_HWYJbi-zlORXGZaw3OtJqTFPKBqhRH-chnBoSy8D15C3gahfV9FKjdIuYruJ6laevbUecvydkHG8GrdfKDizmQsRYLPAxApJX4GI8fHMG5vqBgUfdDpZaWhkEzoGwywWparXBx6LVrGVKAa2GUHAhyevUooKzLuPcIeauniU0cTSgHBpGtHLvJJf-XZFQfHMeIwYxDs9exI4EwRTKRst4wq-foobKcYhRGjqv9O7BrdFIiar8iO0yiBfzdA-gCV63WajMhhWfwh7c9svtge-ZdvCvdSCmYAJRHlgBxUZ8bN2sENy3ZuW5lVk_RQBKtcjTi0uAHm6TT66bZ0JIYTp8Mns9PDTQov-p3BDTtxp4_iNFs0RnOHXvJ7nNNvUHJ2lrdO6NzquhE5iodvXsuWa0wikvsJrxVN1J9Azg==',
                         provider_name='openai',
                     ),
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_call_tool',
-                        args={
-                            'arguments': '',
-                            'query': 'pydantic-ai',
-                            'sort': 'best match',
-                            'order': 'desc',
-                            'page': 1,
-                            'perPage': 10,
-                            'minimal_output': True,
-                        },
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
+                        args='{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
+                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
                         content={
-                            'arguments': '{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                             'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
                             'output': None,
                         },
                         tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
+                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
                     ThinkingPart(
                         content='',
@@ -6885,34 +6841,23 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         signature='gAAAAABo7SCllu3A0J5TLhrToCHtBqlJXTNnUiSjyawmoj11hxQvRsn-kRItP0vUjdkSzapSsaiTTCoHAnYP6Uh52eogYu4emHs5I3e40WoGQjQ8Aog8imp25ZxF7OHWfqynluKfum-8kCYE6GHi-1k9zTIrBPZpfdwdJPKng_AjAxgknHgaNx31Xkbyjtrwl13AkGvLNlbQXhLiD21EAwcc2gBEe46BwtRXfLlms1uFIkuUWeNUupnOaHkjOrchPrqWECJA9A8gAlg29JOaDW6THXksjb6PIBvRh0UOaY_WhKEsbqdVLU-hKnACCGY3gk4EksSwT65CHJd1ByKhvi03-n1GD3w0_tlLdAGQhHeVO25kDR_16Y5geFllZHJ26XN6EsQiIE6UCsACa07iXgrrAPH3HsnKz-FNM-fgWaxihbEJShbmg0BjmTcMIGxcmLf9xbt9sDc6Hy0iZQTgVWyDj23jN1hTpIIu382KlbgMDd-c_A8GFQp8ySlh8CmuNaTjq6e8oOknbsDDladBx19FrHGcWVmpZLkaa1WoJ-_JpAo6CzqYQJMIBdm2R4w9O9km7jNgtEVJSWe4zxdYVfNqocishUfZoeD1Ncr9bkQ4AOlw0oTmrb3kEa3mRaG1gy0KHC_EuBfPMmr89XeivxzTak8QZg9meG8n1tKSqjHf8EJEIn0VBnAReR7lFpd0Sr-vuVz7Y0kVJenvSNljm2oYmwaMXctycGh5GkHAh8FfsvvGoiRVomZ4hCIy70X2p4_0nMkwNORPGkBIfEhHuL_VcIulMqhkGdtf-Q7a7D9Q6jmuSplXvKhxZH31ay3zzUc0J-1guIboH0R3GJXmBHRLi_PXao_2GS1Nhjx38PBFejmIvtliITF6YhP7DFa29eMacvRqKEiKdGZKAX1NdluBq7YSYJhOPVnV9LVosBps-ZLIfkK6d4ZRidWPcVf1j0tRBKPTHUITctPdNrk6kzyTeXUy6wA9yhq6jkcpCqJQr0wF_tc-4OkyQ1IJ05WYhrg4fAMgmu2DIWQ7NyQ5H9gbsIHEvu_QxXfNq_wlBOcgyosyxfitEgUrxCQKUbro-7rKZaVjRRPOjfHRr8j9gry-lCh4ixC8KkDdJaJ108B3szuBKMZIuhr3b_mys6XX0UGQi7RNTxwnNgt1sWnyh-F1W0r4DN1dnf7IxnAmRVhIjcG67IHhZDgsyG71tTN-0DqxmSb2Gg7p0cW__HYDFw3uYn_BeFCByY6oJJdwIGC0hqXDxd2p3qmJTxHiLPoICPRQOM2oRC1fW_XFb2VH27swHyvS-8tdkCw4OtAIchwKpALSkpg0AUdWemc0EseGxtIo49M9c7Ed5WzFXzawWKKUxJDhWQHeV7J6xOtQFs4XmwftyzbUBYVcPDcz0nz3BvSHRq5tjdKu5H5X0t_i8L9UAZAqiF58nw==',
                         provider_name='openai',
                     ),
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_call_tool',
-                        args={
-                            'arguments': '',
-                            'query': 'pydantic-ai',
-                            'sort': 'stars',
-                            'order': 'desc',
-                            'page': 1,
-                            'perPage': 10,
-                            'minimal_output': True,
-                        },
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
+                        args='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
+                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
                         content={
-                            'arguments': '{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                             'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
                             'output': None,
                         },
                         tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
+                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
                     ThinkingPart(
                         content='',
@@ -6940,22 +6885,22 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinMCPToolCallPart(
-                    tool_name='mcp_server:mcp_list_tools',
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:list_tools',
                     tool_call_id='mcpl_01264dba19113f900068ed20a0664881919b18a9a3989974cf',
                     provider_name='openai',
-                    mcp_server_id='test_server',
+                    tool_call_metadata={'mcp_server_id': 'test_server'},
                 ),
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinMCPToolReturnPart(
-                    tool_name='mcp_server:mcp_list_tools',
+                part=BuiltinToolReturnPart(
+                    tool_name='mcp_server:list_tools',
                     content={
                         'error': None,
                         'tools': [
-                            McpListToolsTool(
-                                input_schema={
+                            {
+                                'input_schema': {
                                     'properties': {
                                         'author': {
                                             'description': 'Author username or email address to filter commits by',
@@ -6982,12 +6927,12 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                                     'required': ['owner', 'repo'],
                                     'type': 'object',
                                 },
-                                name='list_commits',
-                                annotations={'read_only': True},
-                                description='Get list of commits of a branch in a GitHub repository. Returns at least 30 results per page by default, but can return more if specified using the perPage parameter (up to 100).',
-                            ),
-                            McpListToolsTool(
-                                input_schema={
+                                'name': 'list_commits',
+                                'annotations': {'read_only': True},
+                                'description': 'Get list of commits of a branch in a GitHub repository. Returns at least 30 results per page by default, but can return more if specified using the perPage parameter (up to 100).',
+                            },
+                            {
+                                'input_schema': {
                                     'properties': {
                                         'minimal_output': {
                                             'default': True,
@@ -7023,16 +6968,16 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                                     'required': ['query'],
                                     'type': 'object',
                                 },
-                                name='search_repositories',
-                                annotations={'read_only': True},
-                                description='Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
-                            ),
+                                'name': 'search_repositories',
+                                'annotations': {'read_only': True},
+                                'description': 'Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
+                            },
                         ],
                     },
                     tool_call_id='mcpl_01264dba19113f900068ed20a0664881919b18a9a3989974cf',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    mcp_server_id='test_server',
+                    tool_return_metadata={'mcp_server_id': 'test_server'},
                 ),
             ),
             PartStartEvent(
@@ -7046,43 +6991,32 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
             ),
             PartStartEvent(
                 index=3,
-                part=BuiltinMCPToolCallPart(
-                    tool_name='mcp_server:mcp_call_tool',
-                    args={'arguments': ''},
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:call_tool',
                     tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
+                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='search_repositories',
                 ),
             ),
             PartDeltaEvent(
                 index=3,
                 delta=ToolCallPartDelta(
-                    args_delta={
-                        'query': 'pydantic-ai',
-                        'sort': 'best match',
-                        'order': 'desc',
-                        'page': 1,
-                        'perPage': 10,
-                        'minimal_output': True,
-                    },
+                    args_delta='{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                     tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
                 ),
             ),
             PartStartEvent(
                 index=4,
-                part=BuiltinMCPToolReturnPart(
-                    tool_name='mcp_server:mcp_call_tool',
+                part=BuiltinToolReturnPart(
+                    tool_name='mcp_server:call_tool',
                     content={
-                        'arguments': '{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
                         'output': None,
                     },
                     tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='search_repositories',
+                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                 ),
             ),
             PartStartEvent(
@@ -7096,43 +7030,32 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
             ),
             PartStartEvent(
                 index=6,
-                part=BuiltinMCPToolCallPart(
-                    tool_name='mcp_server:mcp_call_tool',
-                    args={'arguments': ''},
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:call_tool',
                     tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
+                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='search_repositories',
                 ),
             ),
             PartDeltaEvent(
                 index=6,
                 delta=ToolCallPartDelta(
-                    args_delta={
-                        'query': 'pydantic-ai',
-                        'sort': 'stars',
-                        'order': 'desc',
-                        'page': 1,
-                        'perPage': 10,
-                        'minimal_output': True,
-                    },
+                    args_delta='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                     tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
                 ),
             ),
             PartStartEvent(
                 index=7,
-                part=BuiltinMCPToolReturnPart(
-                    tool_name='mcp_server:mcp_call_tool',
+                part=BuiltinToolReturnPart(
+                    tool_name='mcp_server:call_tool',
                     content={
-                        'arguments': '{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
                         'output': None,
                     },
                     tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='search_repositories',
+                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                 ),
             ),
             PartStartEvent(
@@ -7232,21 +7155,21 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
             PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='-')),
             PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='ai')),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinMCPToolCallPart(
-                    tool_name='mcp_server:mcp_list_tools',
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:list_tools',
                     tool_call_id='mcpl_01264dba19113f900068ed20a0664881919b18a9a3989974cf',
                     provider_name='openai',
-                    mcp_server_id='test_server',
+                    tool_call_metadata={'mcp_server_id': 'test_server'},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinMCPToolReturnPart(
-                    tool_name='mcp_server:mcp_list_tools',
+                result=BuiltinToolReturnPart(
+                    tool_name='mcp_server:list_tools',
                     content={
                         'error': None,
                         'tools': [
-                            McpListToolsTool(
-                                input_schema={
+                            {
+                                'input_schema': {
                                     'properties': {
                                         'author': {
                                             'description': 'Author username or email address to filter commits by',
@@ -7273,12 +7196,12 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                                     'required': ['owner', 'repo'],
                                     'type': 'object',
                                 },
-                                name='list_commits',
-                                annotations={'read_only': True},
-                                description='Get list of commits of a branch in a GitHub repository. Returns at least 30 results per page by default, but can return more if specified using the perPage parameter (up to 100).',
-                            ),
-                            McpListToolsTool(
-                                input_schema={
+                                'name': 'list_commits',
+                                'annotations': {'read_only': True},
+                                'description': 'Get list of commits of a branch in a GitHub repository. Returns at least 30 results per page by default, but can return more if specified using the perPage parameter (up to 100).',
+                            },
+                            {
+                                'input_schema': {
                                     'properties': {
                                         'minimal_output': {
                                             'default': True,
@@ -7314,82 +7237,60 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                                     'required': ['query'],
                                     'type': 'object',
                                 },
-                                name='search_repositories',
-                                annotations={'read_only': True},
-                                description='Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
-                            ),
+                                'name': 'search_repositories',
+                                'annotations': {'read_only': True},
+                                'description': 'Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
+                            },
                         ],
                     },
                     tool_call_id='mcpl_01264dba19113f900068ed20a0664881919b18a9a3989974cf',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    mcp_server_id='test_server',
+                    tool_return_metadata={'mcp_server_id': 'test_server'},
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinMCPToolCallPart(
-                    tool_name='mcp_server:mcp_call_tool',
-                    args={
-                        'arguments': '',
-                        'query': 'pydantic-ai',
-                        'sort': 'best match',
-                        'order': 'desc',
-                        'page': 1,
-                        'perPage': 10,
-                        'minimal_output': True,
-                    },
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:call_tool',
+                    args='{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                     tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='search_repositories',
+                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinMCPToolReturnPart(
-                    tool_name='mcp_server:mcp_call_tool',
+                result=BuiltinToolReturnPart(
+                    tool_name='mcp_server:call_tool',
                     content={
-                        'arguments': '{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
                         'output': None,
                     },
                     tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='search_repositories',
+                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinMCPToolCallPart(
-                    tool_name='mcp_server:mcp_call_tool',
-                    args={
-                        'arguments': '',
-                        'query': 'pydantic-ai',
-                        'sort': 'stars',
-                        'order': 'desc',
-                        'page': 1,
-                        'perPage': 10,
-                        'minimal_output': True,
-                    },
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:call_tool',
+                    args='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                     tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='search_repositories',
+                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinMCPToolReturnPart(
-                    tool_name='mcp_server:mcp_call_tool',
+                result=BuiltinToolReturnPart(
+                    tool_name='mcp_server:call_tool',
                     content={
-                        'arguments': '{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
                         'output': None,
                     },
                     tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='search_repositories',
+                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                 )
             ),
         ]
@@ -7421,19 +7322,19 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
             ),
             ModelResponse(
                 parts=[
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_list_tools',
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:list_tools',
                         tool_call_id='mcpl_01264dba19113f900068ed20a0664881919b18a9a3989974cf',
                         provider_name='openai',
-                        mcp_server_id='test_server',
+                        tool_call_metadata={'mcp_server_id': 'test_server'},
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_list_tools',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:list_tools',
                         content={
                             'error': None,
                             'tools': [
-                                McpListToolsTool(
-                                    input_schema={
+                                {
+                                    'input_schema': {
                                         'properties': {
                                             'author': {
                                                 'description': 'Author username or email address to filter commits by',
@@ -7460,12 +7361,12 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                                         'required': ['owner', 'repo'],
                                         'type': 'object',
                                     },
-                                    name='list_commits',
-                                    annotations={'read_only': True},
-                                    description='Get list of commits of a branch in a GitHub repository. Returns at least 30 results per page by default, but can return more if specified using the perPage parameter (up to 100).',
-                                ),
-                                McpListToolsTool(
-                                    input_schema={
+                                    'name': 'list_commits',
+                                    'annotations': {'read_only': True},
+                                    'description': 'Get list of commits of a branch in a GitHub repository. Returns at least 30 results per page by default, but can return more if specified using the perPage parameter (up to 100).',
+                                },
+                                {
+                                    'input_schema': {
                                         'properties': {
                                             'minimal_output': {
                                                 'default': True,
@@ -7501,16 +7402,16 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                                         'required': ['query'],
                                         'type': 'object',
                                     },
-                                    name='search_repositories',
-                                    annotations={'read_only': True},
-                                    description='Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
-                                ),
+                                    'name': 'search_repositories',
+                                    'annotations': {'read_only': True},
+                                    'description': 'Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
+                                },
                             ],
                         },
                         tool_call_id='mcpl_01264dba19113f900068ed20a0664881919b18a9a3989974cf',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='test_server',
+                        tool_return_metadata={'mcp_server_id': 'test_server'},
                     ),
                     ThinkingPart(
                         content='',
@@ -7518,34 +7419,23 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         signature='gAAAAABo7SCjE_wICveOw0z6kFvwtVJSAi8SGeS7LooWILhZ1wQTZR3QZHVylNYvEkcAWc9VpOKvCjdyffXyz45penIN9cSr5WCk7vP0DULso01ZudhhFPVypQ68yogEx7xMXwmVJbOqoyOZb3M39dnKkFtjQeMWd4AzGfPC8ufjRt9SEbTlRjq06bRoNBmVYP8rQCftHh9BWIvGKU0Fe5rwB7S0BtFmcowfwFs1lMyKN89BTITrVXrTCmai6mw_JvNj9PCuDiOMfuYbtbmZKb0OZOjiUyErSSFhpdyEqQZbeBF1frZVtPjPJCEIusEIHK5cT65odpRKn2uakRcUcCKGcSB6Sv0OTiSF7nJW79p-eJIfeFXxwJwiCQswp3mUt5U2a0kVsxDv2XUhP3ONOE_-vhNS2EGwRD8IglEw1F0zYqXItUUSjb2vig0SA1sNUVK4oK_EwaxYUYgxtgaC42e7qzo3Hs_18S6FXxaMSygoyk4jVMhIVJb7xbQc7-hWF1ohdXJRTpLNSvZ-z_FTePo_3Bye3HVFpSWOpUAGd1peSVrEiXXaN5kMTJpeZfHbXVTX2FN7ugabl_IgdcVOH-seE1cD5kNbodVbjxnDdxzMx8q10xtzlI7Ze9CPFJb6BZFWKEZri-sJUJAbSRBfH8NIHJQj1UjDx5vg4YRI3TvUR8RIhedC54_25cb_6HD3_0sghACWhL_9uyzPgMw4tjzIQQNtHDduB2BWpKapkSgUkJNAaujU_YOuq-uttzV2nOBXr1H6APbbG_kgNbHs1a4Z_Fvb9Jzg2oKZ1dJOAt81_VK6s2gU50EqTWCQi_k8Hnj4MnUnQIpIyy1jjHDxheKIkOo_7eTSkYsgEapY57S0NGZ6T6Ru-XE8Hql_xa7VhW7VtRyF3LADgK5DD5rjHhzp-dIbhc6Y-4KgTLvaHU-Dohj1t8uZEP8niv3I3JKKgWDWVJ9vPbioeGqOINooUzZcIaJg4BztTcP8CBMsDX5w6MPO3IoBwnhS50YLIFrkDplwqLsnIEwpaxROm0csRrTcUpl4ZiY18R9PXyBp5J8tH0Y7BqaJ6NTAdFT2OLL6TntZ6UtTCaR7U4p_H45DUl0ZKsnjxBjNQWS67DatY2U44S69Qh86ken4gh44cXA4r5NnpRbCuZmo7BhH2wH5yDRhhZc2AQ5WUwpP0eyDnjF8xunNftbwyISfNV7WuHcdaYwiu29WOx6O3c0FLJO-KhV0LvK-VZZWXYTWY55pqv436FtVoq0XS4AiKIN4zwXHx_zuy3Zw_lO41VJUZbBNL4zcAv7GDukWyiFkocpWMBhLhISuuh0T65B3R5W8_HWYJbi-zlORXGZaw3OtJqTFPKBqhRH-chnBoSy8D15C3gahfV9FKjdIuYruJ6laevbUecvydkHG8GrdfKDizmQsRYLPAxApJX4GI8fHMG5vqBgUfdDpZaWhkEzoGwywWparXBx6LVrGVKAa2GUHAhyevUooKzLuPcIeauniU0cTSgHBpGtHLvJJf-XZFQfHMeIwYxDs9exI4EwRTKRst4wq-foobKcYhRGjqv9O7BrdFIiar8iO0yiBfzdA-gCV63WajMhhWfwh7c9svtge-ZdvCvdSCmYAJRHlgBxUZ8bN2sENy3ZuW5lVk_RQBKtcjTi0uAHm6TT66bZ0JIYTp8Mns9PDTQov-p3BDTtxp4_iNFs0RnOHXvJ7nNNvUHJ2lrdO6NzquhE5iodvXsuWa0wikvsJrxVN1J9Azg==',
                         provider_name='openai',
                     ),
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_call_tool',
-                        args={
-                            'arguments': '',
-                            'query': 'pydantic-ai',
-                            'sort': 'best match',
-                            'order': 'desc',
-                            'page': 1,
-                            'perPage': 10,
-                            'minimal_output': True,
-                        },
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
+                        args='{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
+                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
                         content={
-                            'arguments': '{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                             'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
                             'output': None,
                         },
                         tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
+                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
                     ThinkingPart(
                         content='',
@@ -7553,34 +7443,23 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         signature='gAAAAABo7SCllu3A0J5TLhrToCHtBqlJXTNnUiSjyawmoj11hxQvRsn-kRItP0vUjdkSzapSsaiTTCoHAnYP6Uh52eogYu4emHs5I3e40WoGQjQ8Aog8imp25ZxF7OHWfqynluKfum-8kCYE6GHi-1k9zTIrBPZpfdwdJPKng_AjAxgknHgaNx31Xkbyjtrwl13AkGvLNlbQXhLiD21EAwcc2gBEe46BwtRXfLlms1uFIkuUWeNUupnOaHkjOrchPrqWECJA9A8gAlg29JOaDW6THXksjb6PIBvRh0UOaY_WhKEsbqdVLU-hKnACCGY3gk4EksSwT65CHJd1ByKhvi03-n1GD3w0_tlLdAGQhHeVO25kDR_16Y5geFllZHJ26XN6EsQiIE6UCsACa07iXgrrAPH3HsnKz-FNM-fgWaxihbEJShbmg0BjmTcMIGxcmLf9xbt9sDc6Hy0iZQTgVWyDj23jN1hTpIIu382KlbgMDd-c_A8GFQp8ySlh8CmuNaTjq6e8oOknbsDDladBx19FrHGcWVmpZLkaa1WoJ-_JpAo6CzqYQJMIBdm2R4w9O9km7jNgtEVJSWe4zxdYVfNqocishUfZoeD1Ncr9bkQ4AOlw0oTmrb3kEa3mRaG1gy0KHC_EuBfPMmr89XeivxzTak8QZg9meG8n1tKSqjHf8EJEIn0VBnAReR7lFpd0Sr-vuVz7Y0kVJenvSNljm2oYmwaMXctycGh5GkHAh8FfsvvGoiRVomZ4hCIy70X2p4_0nMkwNORPGkBIfEhHuL_VcIulMqhkGdtf-Q7a7D9Q6jmuSplXvKhxZH31ay3zzUc0J-1guIboH0R3GJXmBHRLi_PXao_2GS1Nhjx38PBFejmIvtliITF6YhP7DFa29eMacvRqKEiKdGZKAX1NdluBq7YSYJhOPVnV9LVosBps-ZLIfkK6d4ZRidWPcVf1j0tRBKPTHUITctPdNrk6kzyTeXUy6wA9yhq6jkcpCqJQr0wF_tc-4OkyQ1IJ05WYhrg4fAMgmu2DIWQ7NyQ5H9gbsIHEvu_QxXfNq_wlBOcgyosyxfitEgUrxCQKUbro-7rKZaVjRRPOjfHRr8j9gry-lCh4ixC8KkDdJaJ108B3szuBKMZIuhr3b_mys6XX0UGQi7RNTxwnNgt1sWnyh-F1W0r4DN1dnf7IxnAmRVhIjcG67IHhZDgsyG71tTN-0DqxmSb2Gg7p0cW__HYDFw3uYn_BeFCByY6oJJdwIGC0hqXDxd2p3qmJTxHiLPoICPRQOM2oRC1fW_XFb2VH27swHyvS-8tdkCw4OtAIchwKpALSkpg0AUdWemc0EseGxtIo49M9c7Ed5WzFXzawWKKUxJDhWQHeV7J6xOtQFs4XmwftyzbUBYVcPDcz0nz3BvSHRq5tjdKu5H5X0t_i8L9UAZAqiF58nw==',
                         provider_name='openai',
                     ),
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_call_tool',
-                        args={
-                            'arguments': '',
-                            'query': 'pydantic-ai',
-                            'sort': 'stars',
-                            'order': 'desc',
-                            'page': 1,
-                            'perPage': 10,
-                            'minimal_output': True,
-                        },
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
+                        args='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
+                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
                         content={
-                            'arguments': '{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                             'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
                             'output': None,
                         },
                         tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
+                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
                     ThinkingPart(
                         content='',
@@ -7618,26 +7497,16 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         signature='gAAAAABo7SCtck8m9kX4XRUPQ8v6VHc-AjqlsN8f1X4ztYz_bg4UXXr8H2Ns984NfGj7c5DHDN6obl-kF0rGX_tvCO3ga2RUmcZkqu5j677MV1LkY7rB6hvsSC4CB8Mb_yCmZeq1iwP7NJkhqHGqcZueoGiJlWvFx_2QJTODOrDLbDm4zLte41ZR1WUdWtaqq9ZBFIO_EzJxLiuKvmGKuwpNG2-qAGz86IQjhXot2pnRQTszEeM4GRJEiwW4WdfLYChV1nCvhEyeRppMOULpQyrxE2rDSiky3g0sRZ3_AR7t9vl8VDwbmopXix9K5PtddpGBw6jNMfWSFsdmI4Ivleewopb3O5_NuNJjJP2sfOzQ4BmrhLi9izfkFELnRHxhTl6zjl050TGirouasJpcwVHr9KjB-IcsaNMGnpI-M2EKAV2j1Dk8QLAwiJQYxopECGcBXOTlhQ5OxOFxNJuHvZGsMIruHNS0uAgal-YunJ6wCUpIxt8X4UbILki27Tb4-FoR-7V-RQJdSQ_t_kKWts0mltzNLO8gM3178qPRMb-XhseFvclI9KxSZvqiibvagk39gkWpPATm9z0qKgbUSNr7jhipcrm77qMiXhaL5CYkml0HbYpLukVGBgtYYvNXJmDl86gBHAUOKlfbWxHYmU_BLKQh1am5R_sqqVZ61iIbuqJagvxCxgyCRJSf6YeugU3TmbqHy4GMu134tISGXsSgD5GKj1dDfHuBBDY_a7wHg7Rh7h_TS0YmdAUXrAuzuvRAd7s2WB99BYaVVi-PHpC8QOdm41a4N7wIMdBuMAiTrhcIPfLVTqApnWMvRNnpSGtScFcd1jGJpHDmCNT2Zy0eIxOgcnguDgfWIb8jjAk_l833WileKpCEnwaNQvhqd1cbGKTv-o2JZVpTIXQJTpXrUHE7lEbs6sV9A6PAnphz3Yjs-WPBwpkgYEhz1dDeF_wDiBmSnM8Bk3V8d--qGvjT2ls8Sigleu2f9QTPwYqiZNV6_LoXMwK7vBGMR3TB_NQJq2B08Gjjv8GNnlP9z83PcWSLMyeJKBNJaAGiI-pOwI9f1GO36prPmJrVlxXFxRAHmZaDJqfXm_FxSsN_TZZZsAlPENgja_YZkYrcD10oo0W0mZY_lwXUrMXNOFmyGcDUtWkc-YK10vl-L5kAGb7GzPuApE5VaBjh7_E9Fj8likVB5cqBGFNDhhOe431WpX7dgt5whhii4hfL6HAv9G985aFuu92p_Rj_7fyFofRkamPYCIzTfm3GJM0tVb-OfLfKY36qncG2DADLJIOAbHyTU3OUxdKbV842YeLiyn-dlWfotN_0z1iNl4iJBgpv7aTjBqaemZRyACTS6DOBS9HYkiYc9GPwEQmc7U_C229xTN2_KLej0n-b3AkVrflOh0R1BvppVH5Fuvv8iEmcNIPk-I8w0ozVNCl9sntU7KRoPgD0vN0ul_pC9HHyQqAs__ZgvJCLmpP2WsDmM9BnCK9mx15fnumj8pjay1EtjGBbYXix908P_0TeGAGpjGyeaWuLtWJ2Ee5-ChHbJ4fhrl36kErGL8QTl5Y8D_HAZ7TuVz_NpppkIGvxCOZ7mVDB7W20_FzxTzTgrD1nW_h04m2Zvga1Lj6UNKlnTP8WxtXmBPYtJ73oY3AJBcKgqUeUXr4SjrfubDTgUe_j70DviFd7iBnBPyVfqRYZVTTSOIb4QFUsNlUwRWWlwsNfojVthzdmxZ2IKPtaoWDyN81C4syC8Q32ujNxVw3rh3rhvRTLpUfoXHQ5yoNuZOBES9nsPxmfEPiNCR2XPWNfdp-WdQlxdpAnBc4RUV4NgwZpTJ2JnXakldJp2YemewKtbU__Bh5Q9hsDRADdm85oe1evICe8nWK7z9rPEMqK-lrIQ7g7fFc6NA3XSwquEPumcIjRbBQyyd6hamT-8mXHnVQBsA4CJDrvAxvmDxaCiG7J4BK4KjmM05iSt8RlpSoArH6kEYjBWWfdMzUJapaRQRej4VstvNbInK7bq3IGkJpfZeNCQ8laFS4SkcfkInlDn8Pk5OXgwQlSdsKTTBrRmllOgLeU2A8Lyu8tfLFpVeNTZJJug5pj1rrFwQcyLWyr6HuTBIqBa-63Ied8rMU5l-KD6OqAqOLZyQWUcwhteCLW14yBKkJJe44Ml6Ox44FJ7nPj5N-Q3r7B_VAkJSZLayG8LcjusQA1LLFZfsT2xtXbw-pke5LWxfbfhH8P-Kw4nBYZCof3BKVhr3kfgAsghO03KFtKDsBuyN6nuhUJlfnKo3RSZl0pJDRLOW698JsGtaLW42cS0ZcbNlurJJAsWf2QVfaXsKr3-aRSr399ugKkVpAlMwVLeB_wocSlsF10SM4eNF2UkZnWpSP_Hgarh6aTl0mmnxbvEhcNR1nT5kF3bLozqh9ET-4MdUvq221XPX3-GDqjAIzktzBXlfKNtKTYYzLL97YnLVBXML0rSCmv7ajkBT6rkHw42bszEed_DWvXuqXxOXUbLQ_rH6WYRZGWUFnU-084_kIL1j3f5EHsAufb5TycdF7d_ypVOJ2MMFtemdOxDiwt18spnWwMjyefVzMsHc9u8ia_2g53xuMF0XiB2THv2iWK6M0rGYAEu6XS5nlOeWt0mXINsKeNGtQDCUxL_ihmnEFds2dSymYfdccw834G882bStP40V8P3RKlMgwMB6mrt4P0LhLPmAbdFW5EbPjJEr8fGCjyg1L8tEzq_VNhtK-CK2u22mvU0lIwyp0HKFouGGf2fr49ON5-bjajNuh1H3U5VJXqThAXVmc9BYjCYGgXJrY=',
                         provider_name='openai',
                     ),
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_call_tool',
-                        args={
-                            'arguments': '',
-                            'owner': 'birbland',
-                            'repo': 'pydantic-ai',
-                            'author': '',
-                            'page': 1,
-                            'perPage': 1,
-                            'sha': '',
-                        },
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
+                        args='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":""}',
                         tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='list_commits',
+                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
                         content={
-                            'arguments': '{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":""}',
                             'error': {
                                 'type': 'mcp_tool_execution_error',
                                 'content': [
@@ -7654,8 +7523,7 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='list_commits',
+                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
                     ),
                     ThinkingPart(
                         content='',
@@ -7663,34 +7531,23 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         signature='gAAAAABo7SCvJu7D1daOEGJtJo9OqWIpUvDM8SBE622ikyy5fTFiTmgeinJJuROJ4VABk-A1ieBbPw0TY8DRAWcBZIYLdS47qRJxEg3_cgbtiJK9fsAAcKIi4loo5CPHxbd04C0uHhMOKASrThksMiH4Fa__M2O01-1JpgoO0OZ3Ll5ZXRXocxkVsEmHIxXezk0uz7A7kkoxUfo8GKjcr_BQojtku0fSQj5iQIVy7M_eGo9e7deZMFb61OPZ4xnsLjwn3ljuXi1IN8R0awjUPm27U52hKFhCFyLWKdpsmsg6IkqlKxVyhl1pfrZ81DJJUpRjCkrh-L_2ccl13fCM25EVi8gB6uIm0ts9Hk9oCliLLjwTAe45T_6SMX5ZPEK7AE0zjyFoGJ1mtlj61_1a0Eo5S0xBpHg7dJDiNMzPQ84N6sDoF_KUnv49CxZnAHZ8JNjsyUOrXcUSE9xTAnGsQ0dg_Fxmi7ZBUMuq0Ngg9gJh8ovdZ8i0Ij_Ln4iCulrFA0gB9CuXhTEn-9He-pSjoAQjoMlr8_NlRC4Jq7Y8ZMQ-xbBZVHXUps5PFW_Hqo3cospgPJiP97ybsSNO2U3430BPAQztF4C5DU_ak62FQMh5Xb27ZrNflVEIiYcaY7pluBBNNfo9r4hf3NIECd6sv5NVZnUQVSBqpWREKy1RlRTw_dMJxwPlLpsuVRWfYTUOc3WImHMy5Of1fQO4lGMZeX3iTWa0RJ-B1pNG8xSUNMGPhAi6Z5xtriRqq8KM-H8wSutQ_4I57mnZU9G2x4zNjxUk6CFJAgSTcV-wHlK_971UN1uQ_iuegWCtVdUAblJIcmWGtLx-WbR4S3OVahNExJacXRPn68DEfO2gbqyKZL6obqEZP68nhSAzbf940UqIOAQbzRiM0tpJc3KiSObI6TKNw8xHae2I0IJToXt-F0m_5fRdYWZ0wCDB5M_y71rMNQWT8gLhxi9VmFX1MCU5yjCkfA8hterEsoBHx-HtpFsKMdb4erJknsa9YCw2rqmzFqit9zLeLp_NZCpTLCuB3I0U8HBEfNBr-WVtoccJfHbX2fnt-7O99mUgeDIUd5LyHGnAf4-UZO3aVFcN2hlHIYvehz4fxhVRKtl0lyhe6nI4glXvixkv1GiAvp0nuTeLbRxKgsXV1eukObeau9Xrxy_Qu7aEb3FpJZtqlRR7r6CORSA94OCwcm0=',
                         provider_name='openai',
                     ),
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_call_tool',
-                        args={
-                            'arguments': '',
-                            'query': 'birbland/pydantic-ai',
-                            'sort': 'stars',
-                            'order': 'desc',
-                            'page': 1,
-                            'perPage': 10,
-                            'minimal_output': True,
-                        },
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
+                        args='{"query":"birbland/pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
+                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
                         content={
-                            'arguments': '{"query":"birbland/pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                             'error': None,
                             'output': '{"total_count": 0, "incomplete_results": false, "items": []}',
                         },
                         tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
+                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
                     ThinkingPart(
                         content='',
@@ -7698,34 +7555,23 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         signature='gAAAAABo7SC0SAPup3riyM8IB9BUJlA-gEqj0SdQB-vhZJiegBCPxBWfP7RYhsDhk4ZRmfX9Ea-OGfwIDP6b02QshqVwNBlV_9y5kdAWwU44csAB2i1r6tXAU95K35KbdWPF5rIlxUVunc8b8G5mEIpjrBm4o1Ja_0VPfLddFHQ3jHUGk57qp-U93EG7Owq7Mr5_0AKsa1yuiy_SnCRRujwP7KBIyzoquZd2hGgSCO5vFI31zFTo8Uq8zDbRvTjdCVvf4wXdk8NhWj9bUHtp9Udng6Up5Yk0y_4jA4Qp_sWa_auRXBYYGMg6pWHtjqfnrjzPmtJfbZI9uWW5K7-KZ7rAjj5EO2CYgAAghrtSLth80bNRvo9X3aL0Nr_33krq8ebPwMu6rYwEY0AbSJilgSqZ5RGaOO5AzGJDDzjo0SEwKxITsJnLSIGOguYf5Xq8U2DTFTuSbkUvdTBtNQErPjHouZr-jCjXska6T2M2Y_C7igyD6mlf1-y92kRmkr5HdMaqoD99soOzJIg0gvTAvxlt9HD4focgtkNGwt1qnHXCwch82lpiurr5G5uOGaql-m6GM40Fa0clmnc8sfSYemjVhfLZ8O_rzUY_-bzoUj9BbrPRd8WW01_1AJ38f5976eA7xUJ6vMgHABvsojmhHTMaRGnXNBeFz1gQDxr_ZJJ8i_O9Tursq4CfaMzSloI66W8V39OIVlM4mDwh4P8LSq2nTr9XgIo2AEenFH-m8030QyN8r6HEfbCUR-lINvXMZlfDsPYvmD9Os4g34kGIKD-LP4cnka4NWMLlO8E0k02cEzCzagOXFWjF81At11rAAECCilAOBvFFUcH8h8Vfu9vdY2zLcvrF4Vo16eA3yiykdduV2yqamhh8JqdPEcDKyCO0hgwwrBbGm6U8sXDkCb7WguIQkW9C1kKvTBjt8R6halFwwOPaTJZw1GFay5q1HwCWVYPGvBHZ8ftaOf4PvDfMPsM5DmkKWkx9JnF231k7KuaRrnBnUAfQr_OjIX6Qzx_qQlDr6d7pM91iENR4tNqECPsmLysyezf2NWFnRPGrHJCYptIIAtPryCe26yGs06h6xMH16ilOUmOqMcaR0sMWgvh7cnVzTn9Ld_GxDo7eSpuUE5fWfULn8b60ATxPxfaOWPXNah-FXBVstHjoPnjcr1UwTxZaHniIOM6x65GdV-hGq3I0GE05NoHyDmxqrrrH0e5BMDMfLSkxxioHVJH76fMr1sWM0RatfA8bp5m5SdVkqZqwNc4ISDUepOdHXMQ-L6AeOD0fTjZLgLQTiVpFiOdd1xTbOzEKoVyUC3B8BLzOgCkIXOe0Y9LWbPLBiVDQ_fTw4zA1Dg5sbTlMEo18P7gRuHCguwnwWdV1BapFKlGB4siS3_gzzANfhIrBd0DAEi58huQ7BQYyiM687bB-fdbVXDDkONkEHAHp-9NYI1uNtE2Y2dFWBrCcI_Lx3rTL160o9wPk4yWgXBV0OG7MzUi_PBvQufC8H_ZSQRr56sm3O1TvqKrxQRb-3W3SjjXTUppCJcC4GrwYt3EQGDoP4BTibpjxNOApCztBEF7Gp0cQx8-EqowPnG-Um1JPvQ_muOU3CtfH',
                         provider_name='openai',
                     ),
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_call_tool',
-                        args={
-                            'arguments': '',
-                            'query': 'pydantic-ai',
-                            'sort': 'stars',
-                            'order': 'desc',
-                            'page': 1,
-                            'perPage': 10,
-                            'minimal_output': False,
-                        },
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
+                        args='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":false}',
                         tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
+                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
                         content={
-                            'arguments': '{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":false}',
                             'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
                             'output': None,
                         },
                         tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='search_repositories',
+                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
                     ThinkingPart(
                         content='',
@@ -7733,34 +7579,23 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         signature='gAAAAABo7SC5jcGJ6jMXEXn_eUzCBYYoiNwyUku-6dq3nXHcddbsNLrIzQZ4th-nONpHrIsACXKgm0017UgYttCex_bBeeLi10biUtJBtg7nFPrCTqAxX8u5nRFb5RQy-CXZGkUFk2o0C4Pjwn_KcsTwnI2LtX_rLu8jN2B1JjHDJpfzRi9wOez8E_F3MTwXdAFWQ_ccIcNegA7v_7GcuwnsNdhTFgDsZwPrMloQ98bOWQQhmrk_gHEM8tzQKVJBNn6yzLUn_3b8nkhX6W0cN465J-xCtxWP7_KT5EurorkH2fsHNa9r1MUDEr0HH8Ls4wEAe4mVEAC9H_Bsb6BFTrIt0sM-2gM1w4KSpdSQwoe01bR71G3foU6bRqtIoG1Rdpv5XXMdkS0AR1rNUehSltCnXuHevoelk3EWEDRO9u6yzVa5oZAuvAyWv5xt_sZ-7OZCacnOYuIXyWZ5iGxSYcZ4UYFmIkaguixXRrVnZ-HhyUN_wwFB-6hqVG197Bjx0Jt9mL_7-FkOiahCYXVzQ4nMbBre0gXwA0kbxa_sl_qL6a8lIM90XRoJzTA2KiUZikYZJy8vS4AxVt3wC64qqWqDwFbveM4t2P_ymbOrUN07o_AvU1pbApdwPVQkxl_RCZ_bINVn8c2gXzXFmBSPWxBtKmAQuM6EjeqUenaHmBqNyiEs8Yg5tghy1_ORynFDdaXn4I5iKLCt4gatlnbJMyUKmUVw54zcNr4hQaetIkGnjl_pkQJ6T9G1IkhcLOljN1dfBEYjjTw1DEGLEHbJl4B1-ovhMd2igGHkW10R9AaKPwCW1ZsiGQ6R7jRedm5yIcmSZSHf_KNGafAcls73P9hPJSn6g7CDfmQyjfTC-Xv-IxTxNOGdh0Vh8aIbPhMNTrRqaGrCMoPhad1lmZ8y-OyJ68awMbt8gl3n8TRP-im2g26ZwyTIQTJG9hvEO3O4_DB9lKrZB79POCi3BGA9aKyeX2sOb3PXjurDm4agb0rvpllcVCGILWE2yal4eHW4gb3V0z54YNe4EHyfo6sO3gcUQ-fKSnfzAnD8rEpFzEzQnCZuOSiELn14pQSHllyX_3C0imhkycZI65HxsBRGqxwHdoRH361M4Cv0T5jhAL0eE3lnh3TUGQM35kwI6HKcqfl3SdPBjKcNE4-Il5uuX7jayYoQc4pDbTD07qhPUlc2alHpnxs4hCW_vtjvDeQIK-N6icdR0_hIZtXvHHcTHH7vzYX1d9WYv1vpanKVZI_bZ8wja5r_iupH2UCI6kN0GaeDpX4y2pD3znGXE9zGN0dQzZibBWuGZAYzR8KcWUmEwcDfkrtIREyFsoC4cwxJFGqP5__Ix8hXubDVT_4sAjsxhRyi6TlT8ovfcS7z2-4vt0BE3Y6snLa73eXXnOpAzoZyPn5-XHlxS1cAwE_-_H_HVPQ724LzpE5f45z4YIl7Qs4R3UdG_Qqq_7CS2uYn91YMVFk5GA5iU06DJ0TULOKFDBzOq968U6IxuzEKAVVVUfWqtrLjxGIYsS99gvaVO-UvCCIS05m3IbikU1Opq35V23jIjmj-ABf4Hb8n8xXTEbcjboJMnWNDlVa5EzlNTbHyNkTybcxn9Ms4tqH33CJo8ckkwPJjvJ-FH7yzqd_-07K3tNjiKjKC8QfuoDkDhLao8oUCvOsO17tP97Re2L7-eiayI65zbVJx6VWbLOo3uOj3m-uiSNFz0D9_PobhxtxzCO8uLdkFNgewmlvARca9b1X1cKjSyU4EQlGI70gSBMRVL8ivCmFMWqNshU6dg8JglA663OGBqn06Z6evKJ42i6Wfg_qStbKN6Q_UEb7ui3v50TYtAl85-ClCwSivnQaFp1Gmg3ZzovETulR5B7wKfEO1PkFk9qZu0YBbXw_yYgo9cDsSEg5SQWeOrvxBBevbwyTC3EOSKx-vqdMRDeKs0szu7XtTVWFwl3r4fOrVVFU_m9o7JO0=',
                         provider_name='openai',
                     ),
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_call_tool',
-                        args={
-                            'arguments': '',
-                            'owner': 'birbland',
-                            'repo': 'pydantic-ai',
-                            'author': '',
-                            'page': 1,
-                            'perPage': 1,
-                            'sha': 'main',
-                        },
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
+                        args='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":"main"}',
                         tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='list_commits',
+                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
                         content={
-                            'arguments': '{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":"main"}',
                             'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
                             'output': None,
                         },
                         tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='test_server',
-                        mcp_tool_name='list_commits',
+                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
                     ),
                     ThinkingPart(
                         content='',
@@ -7800,35 +7635,25 @@ https://github.com/birbland/pydantic-ai/commits/main\
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinMCPToolCallPart(
-                    tool_name='mcp_server:mcp_call_tool',
-                    args={'arguments': ''},
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:call_tool',
                     tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
+                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='list_commits',
                 ),
             ),
             PartDeltaEvent(
                 index=1,
                 delta=ToolCallPartDelta(
-                    args_delta={
-                        'owner': 'birbland',
-                        'repo': 'pydantic-ai',
-                        'author': '',
-                        'page': 1,
-                        'perPage': 1,
-                        'sha': '',
-                    },
+                    args_delta='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":""}',
                     tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
                 ),
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinMCPToolReturnPart(
-                    tool_name='mcp_server:mcp_call_tool',
+                part=BuiltinToolReturnPart(
+                    tool_name='mcp_server:call_tool',
                     content={
-                        'arguments': '{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":""}',
                         'error': {
                             'type': 'mcp_tool_execution_error',
                             'content': [
@@ -7845,8 +7670,7 @@ https://github.com/birbland/pydantic-ai/commits/main\
                     tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='list_commits',
+                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
                 ),
             ),
             PartStartEvent(
@@ -7860,43 +7684,32 @@ https://github.com/birbland/pydantic-ai/commits/main\
             ),
             PartStartEvent(
                 index=4,
-                part=BuiltinMCPToolCallPart(
-                    tool_name='mcp_server:mcp_call_tool',
-                    args={'arguments': ''},
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:call_tool',
                     tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
+                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='search_repositories',
                 ),
             ),
             PartDeltaEvent(
                 index=4,
                 delta=ToolCallPartDelta(
-                    args_delta={
-                        'query': 'birbland/pydantic-ai',
-                        'sort': 'stars',
-                        'order': 'desc',
-                        'page': 1,
-                        'perPage': 10,
-                        'minimal_output': True,
-                    },
+                    args_delta='{"query":"birbland/pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                     tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
                 ),
             ),
             PartStartEvent(
                 index=5,
-                part=BuiltinMCPToolReturnPart(
-                    tool_name='mcp_server:mcp_call_tool',
+                part=BuiltinToolReturnPart(
+                    tool_name='mcp_server:call_tool',
                     content={
-                        'arguments': '{"query":"birbland/pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         'error': None,
                         'output': '{"total_count": 0, "incomplete_results": false, "items": []}',
                     },
                     tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='search_repositories',
+                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                 ),
             ),
             PartStartEvent(
@@ -7910,43 +7723,32 @@ https://github.com/birbland/pydantic-ai/commits/main\
             ),
             PartStartEvent(
                 index=7,
-                part=BuiltinMCPToolCallPart(
-                    tool_name='mcp_server:mcp_call_tool',
-                    args={'arguments': ''},
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:call_tool',
                     tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
+                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='search_repositories',
                 ),
             ),
             PartDeltaEvent(
                 index=7,
                 delta=ToolCallPartDelta(
-                    args_delta={
-                        'query': 'pydantic-ai',
-                        'sort': 'stars',
-                        'order': 'desc',
-                        'page': 1,
-                        'perPage': 10,
-                        'minimal_output': False,
-                    },
+                    args_delta='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":false}',
                     tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
                 ),
             ),
             PartStartEvent(
                 index=8,
-                part=BuiltinMCPToolReturnPart(
-                    tool_name='mcp_server:mcp_call_tool',
+                part=BuiltinToolReturnPart(
+                    tool_name='mcp_server:call_tool',
                     content={
-                        'arguments': '{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":false}',
                         'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
                         'output': None,
                     },
                     tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='search_repositories',
+                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                 ),
             ),
             PartStartEvent(
@@ -7960,43 +7762,32 @@ https://github.com/birbland/pydantic-ai/commits/main\
             ),
             PartStartEvent(
                 index=10,
-                part=BuiltinMCPToolCallPart(
-                    tool_name='mcp_server:mcp_call_tool',
-                    args={'arguments': ''},
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:call_tool',
                     tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
+                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='list_commits',
                 ),
             ),
             PartDeltaEvent(
                 index=10,
                 delta=ToolCallPartDelta(
-                    args_delta={
-                        'owner': 'birbland',
-                        'repo': 'pydantic-ai',
-                        'author': '',
-                        'page': 1,
-                        'perPage': 1,
-                        'sha': 'main',
-                    },
+                    args_delta='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":"main"}',
                     tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
                 ),
             ),
             PartStartEvent(
                 index=11,
-                part=BuiltinMCPToolReturnPart(
-                    tool_name='mcp_server:mcp_call_tool',
+                part=BuiltinToolReturnPart(
+                    tool_name='mcp_server:call_tool',
                     content={
-                        'arguments': '{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":"main"}',
                         'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
                         'output': None,
                     },
                     tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='list_commits',
+                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
                 ),
             ),
             PartStartEvent(
@@ -8056,28 +7847,18 @@ https://github.com/birbland/pydantic-ai/commits/main\
             PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='its')),
             PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='/main')),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinMCPToolCallPart(
-                    tool_name='mcp_server:mcp_call_tool',
-                    args={
-                        'arguments': '',
-                        'owner': 'birbland',
-                        'repo': 'pydantic-ai',
-                        'author': '',
-                        'page': 1,
-                        'perPage': 1,
-                        'sha': '',
-                    },
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:call_tool',
+                    args='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":""}',
                     tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='list_commits',
+                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinMCPToolReturnPart(
-                    tool_name='mcp_server:mcp_call_tool',
+                result=BuiltinToolReturnPart(
+                    tool_name='mcp_server:call_tool',
                     content={
-                        'arguments': '{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":""}',
                         'error': {
                             'type': 'mcp_tool_execution_error',
                             'content': [
@@ -8094,107 +7875,73 @@ https://github.com/birbland/pydantic-ai/commits/main\
                     tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='list_commits',
+                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinMCPToolCallPart(
-                    tool_name='mcp_server:mcp_call_tool',
-                    args={
-                        'arguments': '',
-                        'query': 'birbland/pydantic-ai',
-                        'sort': 'stars',
-                        'order': 'desc',
-                        'page': 1,
-                        'perPage': 10,
-                        'minimal_output': True,
-                    },
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:call_tool',
+                    args='{"query":"birbland/pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                     tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='search_repositories',
+                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinMCPToolReturnPart(
-                    tool_name='mcp_server:mcp_call_tool',
+                result=BuiltinToolReturnPart(
+                    tool_name='mcp_server:call_tool',
                     content={
-                        'arguments': '{"query":"birbland/pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
                         'error': None,
                         'output': '{"total_count": 0, "incomplete_results": false, "items": []}',
                     },
                     tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='search_repositories',
+                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinMCPToolCallPart(
-                    tool_name='mcp_server:mcp_call_tool',
-                    args={
-                        'arguments': '',
-                        'query': 'pydantic-ai',
-                        'sort': 'stars',
-                        'order': 'desc',
-                        'page': 1,
-                        'perPage': 10,
-                        'minimal_output': False,
-                    },
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:call_tool',
+                    args='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":false}',
                     tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='search_repositories',
+                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinMCPToolReturnPart(
-                    tool_name='mcp_server:mcp_call_tool',
+                result=BuiltinToolReturnPart(
+                    tool_name='mcp_server:call_tool',
                     content={
-                        'arguments': '{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":false}',
                         'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
                         'output': None,
                     },
                     tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='search_repositories',
+                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinMCPToolCallPart(
-                    tool_name='mcp_server:mcp_call_tool',
-                    args={
-                        'arguments': '',
-                        'owner': 'birbland',
-                        'repo': 'pydantic-ai',
-                        'author': '',
-                        'page': 1,
-                        'perPage': 1,
-                        'sha': 'main',
-                    },
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:call_tool',
+                    args='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":"main"}',
                     tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='list_commits',
+                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinMCPToolReturnPart(
-                    tool_name='mcp_server:mcp_call_tool',
+                result=BuiltinToolReturnPart(
+                    tool_name='mcp_server:call_tool',
                     content={
-                        'arguments': '{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":"main"}',
                         'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
                         'output': None,
                     },
                     tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    mcp_server_id='test_server',
-                    mcp_tool_name='list_commits',
+                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
                 )
             ),
         ]
@@ -8231,19 +7978,19 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
             ),
             ModelResponse(
                 parts=[
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_list_tools',
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:list_tools',
                         tool_call_id='mcpl_0a104500b823a8250068f0b88f3c4c8197b959bbcac973ab08',
                         provider_name='openai',
-                        mcp_server_id='google_calendar',
+                        tool_call_metadata={'mcp_server_id': 'google_calendar'},
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_list_tools',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:list_tools',
                         content={
                             'error': None,
                             'tools': [
-                                McpListToolsTool(
-                                    input_schema={
+                                {
+                                    'input_schema': {
                                         'properties': {
                                             'calendar_id': {
                                                 'anyOf': [{'type': 'string'}, {'type': 'null'}],
@@ -8284,16 +8031,16 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                                         'title': 'search_events_input',
                                         'type': 'object',
                                     },
-                                    name='search_events',
-                                    annotations={'read_only': True},
-                                    description='Look up Google Calendar events using various filters.',
-                                )
+                                    'name': 'search_events',
+                                    'annotations': {'read_only': True},
+                                    'description': 'Look up Google Calendar events using various filters.',
+                                }
                             ],
                         },
                         tool_call_id='mcpl_0a104500b823a8250068f0b88f3c4c8197b959bbcac973ab08',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='google_calendar',
+                        tool_return_metadata={'mcp_server_id': 'google_calendar'},
                     ),
                     ThinkingPart(
                         content='',
@@ -8301,28 +8048,22 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                         signature='gAAAAABo8LiXEDl-avpofFl6NyGQZPMHT6ol5p_rqklDuQ-2E65wpopMUQjL1dkU_DysMx-yn8M99YxlcxqKeED-RCjaETNeiIZmE6YIwbDCOyU31ueSMF9gkWKyB58d6NjjQGWXO7QMYHTj9m2pqG2fUlUTgIm8m6Rhw2mHk-Eg-23Zz90ORXfUCJK484rgLcKSiCt1mgi0op2Ldv7eS6bsDnuGdDwVLrZixZEFosgpPdvr7ZkaGaV5lQizGxBy4dABIpNmavwZBLIEc8aj1ELr8wq6QxLYd5pqnURkxL3qNXo6ZiL0V8E-OR6Jy8X2lPFS83GTib0Il0x5MG57zFONLd8IvLScomF-5IpyMVPvJDFfzyQM9R1H0FFyfUDE15C5aQ2RlBmyCI1Rc2lmCmRVAq9phZApkIUtXgvJvx5AzzfUtpws3PnBDUhYIHBH24lGZ9ip5UhdkeZ1bOdtxEskg8wLZ_yvgSeKadgJBdv42TxKXGKDePzUPaWb_TMSgjmOkbB6cTF5pNABgNVGH_AbAdArv1lo1HWXS5eYhJS54Ntq7LVcLPQG6Jan1Owm5_zGCZuGK1erdwFGp5JCVvGjwu1KYUnp9Xns4XWugjLTnO7C4kDvIeEGTlW5WSkLvXBmQ8E6FvLaijW2KXiTq7kt4ZHMeMYOJurrKV2EbCGmZ8G30QlUUwiyMegaWWKmgsk2JtIV9IerPEMfHhLUaCHhzfCeSDc7lb25o4Jj3nZbL_xaG17aB-VLNK9rglr1xWyb1z8xCFvm-mzmPITiuuL5QYR0E4S-RQ52kvWHrYku-h-k9mEM0bmdCypG3RiQNInRE8x6aGkhIgrtGSKrReXr7h5XgBe26IGlFXMZxye8ps1yEleMB-Q-ZQ3GdlKI3XeeTnSv_9fLtfOKdzQ60CMgaBP-KHpqY2R6w8mheLKq_R1GxDGHoydBA5MC5VXz4ep-uCyecmXmCphyvpfQ1eys1vSf5Sn5-AhkFSma1-sAFHOJSvut-FNxpbOZZPzbMXbOK7NkQR5ONxPbolj1iGKNDH58RPt7hICX9zGvs0mctrPybyt9VmYspfOEDm8iS59uyb_l9g17crNqedD4wvrtWj5DmXzma7F94n8qp9QHIwWIVeCzPrlkm4NUUEgeUaZrPtAIBoGl6tbGaFHoTpvfpr4PVDsgVJ7dqrllba11tlaiheURacLnYeTgKo5mgnv87xHZPAVEk-GljCJdCE-BqO5eq2cs4JwKha5201dJ_-TbAzY5Ff5YWw3nyWWkVAL4LJDJbtcaQeDrm_rQfWLL0kuwLjtbhZqQbBfveNPeIWGn324nB3wIOYK6hk_XZyhB-v_Ivv9mLs8TQYWoOmuvd08NLeBJuwyJjOmUe8TPBbQUwHyyoustLAtPqY1SothUW9rCTaMcdTE_Cgx8Ma2J7skJXJn63eDRWCIqlJTybzcrYOTYHZSWuuI4ugUH5HheDyLJ1cQQjDDz6-rwEyu9JPSM5gV5IN_nd-RYa9jy1X41c9qKXRfY_dHqtMdH1_SGoVOcCAhQjImsYJeJ6NZwCKztM6YJWw_MsFIjB_dcOk2TnGgGjUy7WqasuPU7DqEQGqyqn_p7-PxK3uBBgIchye2m34M550s7Gb_tUuDgTerfYrNAZ6VSupgAovq0ZQsKhVnDV4C6Hna7FCVx85agb-6ZxvuC66WWAj5BZ68PrySPX1i6jRFkcUSgnreLS3qqnDSLNixN69puKU2JXv7GnA7XROPs3YLjfIX6F9OmdFqfdmO_7PfCPEVnDZb7WUioqUUEzBcfX3G5193t6cxnqScnqv19rCjVj_1RJ1OgkSMQpB19c8G7vK9XsJbpj4aUO69-l4UnQ2L-8cy-jAAU7GpknI52WES8pnrsRcxTAUHalqMMB4mnqzsDp1CHzgDeMGJjg6zaqIew677MBslvMDuoqeD7hcrKPp4cvA4ept4p_4Did3k8pXXqt7srHpfFPzGoEs9gNgYWxys4RMOFebIozbXZfdP4VNgmbDZy-H3pX5KKDtPsven6EKgYdVLfp_j3Og5P1YBfPIrUkq84TRaS9wCpV6A40G1oxHzgIlBTbnXr9qTgU98pAvM-fX6rwr-CewBOsAh83m4BkgG7s92dNS8LbTCvCFdyhyOo_IfbiXZpRZ2LmTB2MtqYSC1ncOWXdX8kD1T2UyfwxDiqJXH5jm8tWAlc8nCp_ohNYVTybU7eXM0_DJzfwfQTAuuYwse36tD-g3DFOqdUAgeHU7iaX5C5pV3DLVjirVmfelz3FBwlC-414AhsFFW28V2xEvANtBv0h2EeZJFDjwkPljSImwSlDtAlxdFXaRCziW5eM5tCkurYATgeW9D9YWuyJQl5utPxWAscUFaQ-FnxsrfX6ue2NhxQ_WTto32seLvGYXK65dPfuGDFLAdepa0osM9igRwghSuiNDBCP5Hk9qOEM7sWMu-R4Ctc1XWBHQ9VBGIn7EM4zjcl0YloAr6Nn6ewATJB4dtyU7Wv_ALEzx59ArH0B9lPSet9RBq-KpAXbISoIjf-p6A58TqbR7zyvmmIXIyx',
                         provider_name='openai',
                     ),
-                    BuiltinMCPToolCallPart(
-                        tool_name='mcp_server:mcp_call_tool',
-                        args={
-                            'arguments': '{"time_min":"2025-10-16T00:00:00","time_max":"2025-10-16T23:59:59","timezone_str":"America/Los_Angeles","max_results":50,"query":null,"calendar_id":"primary","next_page_token":null}'
-                        },
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
                         tool_call_id='mcp_0a104500b823a8250068f0b893a6c081978dafa14bc9767711',
+                        tool_call_metadata={'mcp_server_id': 'google_calendar', 'mcp_tool_name': 'search_events'},
                         provider_name='openai',
-                        mcp_server_id='google_calendar',
-                        mcp_tool_name='search_events',
                     ),
-                    BuiltinMCPToolReturnPart(
-                        tool_name='mcp_server:mcp_call_tool',
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
                         content={
-                            'arguments': '{"time_min":"2025-10-16T00:00:00","time_max":"2025-10-16T23:59:59","timezone_str":"America/Los_Angeles","max_results":50,"query":null,"calendar_id":"primary","next_page_token":null}',
                             'error': None,
                             'output': '{"events": [], "next_page_token": null}',
                         },
                         tool_call_id='mcp_0a104500b823a8250068f0b893a6c081978dafa14bc9767711',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        mcp_server_id='google_calendar',
-                        mcp_tool_name='search_events',
+                        tool_return_metadata={'mcp_server_id': 'google_calendar', 'mcp_tool_name': 'search_events'},
                     ),
                     ThinkingPart(
                         content='',

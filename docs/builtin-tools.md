@@ -432,7 +432,7 @@ but can result in optimized context use and caching, and faster performance due 
 
 | Provider | Supported | Notes                 |
 |----------|-----------|-----------------------|
-| OpenAI Responses | ✅ | Full feature support  |
+| OpenAI Responses | ✅ | Full feature support. [Connectors](https://platform.openai.com/docs/guides/tools-connectors-mcp#connectors) can be used by specifying a special `x-openai-connector:<connector_id>` URL.  |
 | Anthropic | ✅ | Full feature support  |
 | Google  | ❌ | Not supported         |
 | Groq  | ❌ | Not supported         |
@@ -511,7 +511,7 @@ print(result.output)
 #> Here are some examples of my data: Pen, Paper, Pencil.
 ```
 
-For OpenAI Responses, you can use a connector by specifying a special `x-openai-connector:` URL:
+For OpenAI Responses, you can use a [connector](https://platform.openai.com/docs/guides/tools-connectors-mcp#connectors) by specifying a special `x-openai-connector:` URL:
 
 _(This example is complete, it can be run "as is")_
 

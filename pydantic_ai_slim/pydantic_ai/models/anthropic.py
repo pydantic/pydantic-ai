@@ -17,8 +17,6 @@ from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebSea
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
-    BuiltinMCPToolCallPart,
-    BuiltinMCPToolReturnPart,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
@@ -551,12 +549,13 @@ class AnthropicModel(Model):
                                     input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
-                            elif response_part.tool_name == MCPServerTool.CALL_TOOL_KIND:  # pragma: no branch
-                                response_part = cast(BuiltinMCPToolCallPart, response_part)
+                            elif (
+                                response_part.tool_name == MCPServerTool.CALL_TOOL and response_part.tool_call_metadata
+                            ):  # pragma: no branch
                                 mcp_tool_use_block_param = BetaMCPToolUseBlockParam(
                                     id=tool_use_id,
                                     type='mcp_tool_use',
-                                    server_name=cast(str, response_part.mcp_server_id),
+                                    server_name=cast(str, response_part.tool_call_metadata.get('mcp_server_id')),
                                     name=response_part.tool_name,
                                     input=response_part.args_as_dict(),
                                 )
@@ -592,7 +591,7 @@ class AnthropicModel(Model):
                                         ),
                                     )
                                 )
-                            elif response_part.tool_name == MCPServerTool.CALL_TOOL_KIND:  # pragma: no branch
+                            elif response_part.tool_name == MCPServerTool.CALL_TOOL:  # pragma: no branch
                                 mcp_tool_result_block = cast(
                                     BetaMCPToolResultBlock,
                                     {
@@ -885,21 +884,23 @@ def _map_code_execution_tool_result_block(
     )
 
 
-def _map_mcp_server_use_block(item: BetaMCPToolUseBlock, provider_name: str) -> BuiltinMCPToolCallPart:
-    return BuiltinMCPToolCallPart(
+def _map_mcp_server_use_block(item: BetaMCPToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
+    return BuiltinToolCallPart(
         provider_name=provider_name,
-        tool_name=MCPServerTool.CALL_TOOL_KIND,
+        tool_name=MCPServerTool.CALL_TOOL,
         args=cast(dict[str, Any], item.input) or None,
         tool_call_id=item.id,
-        mcp_server_id=item.server_name,
-        mcp_tool_name=item.name,
+        tool_call_metadata={
+            'mcp_server_id': item.server_name,
+            'mcp_tool_name': item.name,
+        },
     )
 
 
-def _map_mcp_server_result_block(item: BetaMCPToolResultBlock, provider_name: str) -> BuiltinMCPToolReturnPart:
-    return BuiltinMCPToolReturnPart(
+def _map_mcp_server_result_block(item: BetaMCPToolResultBlock, provider_name: str) -> BuiltinToolReturnPart:
+    return BuiltinToolReturnPart(
         provider_name=provider_name,
-        tool_name=MCPServerTool.CALL_TOOL_KIND,
+        tool_name=MCPServerTool.CALL_TOOL,
         content=item.model_dump(mode='json', exclude={'tool_use_id', 'type'}),
         tool_call_id=item.tool_use_id,
     )
