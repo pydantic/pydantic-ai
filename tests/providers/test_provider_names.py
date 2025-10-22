@@ -32,6 +32,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
 
@@ -56,6 +57,7 @@ with try_import() as imports_successful:
         ('ollama', OllamaProvider, 'OLLAMA_BASE_URL'),
         ('litellm', LiteLLMProvider, None),
         ('nebius', NebiusProvider, 'NEBIUS_API_KEY'),
+        ('ovhcloud', OVHcloudProvider, 'OVHCLOUD_API_KEY'),
     ]
 
 if not imports_successful():
