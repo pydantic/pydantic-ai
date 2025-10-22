@@ -32,7 +32,9 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -1271,4 +1273,34 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
                 }
             ]
         }
+    )
+
+
+async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel(model_name='openai.gpt-oss-120b-1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    result: AgentRunResult | None = None
+    events: list[AgentStreamEvent] = []
+    async for event in agent.run_stream_events('Hi'):
+        if isinstance(event, AgentRunResultEvent):
+            result = event.result
+        else:
+            events.append(event)
+
+    assert result is not None
+    # The response stream contains `{'contentBlockDelta': {'delta': {'text': ''}, 'contentBlockIndex': 0}}`, but our response should not have any empty text parts.
+    assert not any(part.content == '' for part in result.response.parts if isinstance(part, TextPart))
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='The user just says "Hi". We need to respond appropriately, friendly greeting. No special instructions. Should be short.'
+                ),
+            ),
+            PartStartEvent(index=1, part=TextPart(content='Hello! How can I help')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you today?')),
+        ]
     )

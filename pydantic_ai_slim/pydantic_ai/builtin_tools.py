@@ -2,12 +2,11 @@ from __future__ import annotations as _annotations
 
 from abc import ABC
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import Annotated, Any, Literal, Union
 
+import pydantic
+from pydantic_core import core_schema
 from typing_extensions import TypedDict
-
-if TYPE_CHECKING:
-    from .builtin_tools import AbstractBuiltinTool
 
 __all__ = (
     'AbstractBuiltinTool',
@@ -19,6 +18,8 @@ __all__ = (
     'MemoryTool',
     'MCPServerTool',
 )
+
+_BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
 
 
 @dataclass(kw_only=True)
@@ -32,6 +33,26 @@ class AbstractBuiltinTool(ABC):
 
     kind: str = 'unknown_builtin_tool'
     """Built-in tool identifier, this should be available on all built-in tools as a discriminator."""
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        _BUILTIN_TOOL_TYPES[cls.kind] = cls
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, _source_type: Any, handler: pydantic.GetCoreSchemaHandler
+    ) -> core_schema.CoreSchema:
+        if cls is not AbstractBuiltinTool:
+            return handler(cls)
+
+        tools = _BUILTIN_TOOL_TYPES.values()
+        if len(tools) == 1:  # pragma: no cover
+            tools_type = next(iter(tools))
+        else:
+            tools_annotated = [Annotated[tool, pydantic.Tag(tool.kind)] for tool in tools]
+            tools_type = Annotated[Union[tuple(tools_annotated)], pydantic.Discriminator(_tool_discriminator)]  # noqa: UP007
+
+        return handler(tools_type)
 
 
 @dataclass(kw_only=True)
@@ -121,6 +142,7 @@ class WebSearchUserLocation(TypedDict, total=False):
     """The timezone of the user's location."""
 
 
+@dataclass(kw_only=True)
 class CodeExecutionTool(AbstractBuiltinTool):
     """A builtin tool that allows your agent to execute code.
 
@@ -135,6 +157,7 @@ class CodeExecutionTool(AbstractBuiltinTool):
     """The kind of tool."""
 
 
+@dataclass(kw_only=True)
 class UrlContextTool(AbstractBuiltinTool):
     """Allows your agent to access contents from URLs.
 
@@ -228,6 +251,7 @@ class ImageGenerationTool(AbstractBuiltinTool):
     """The kind of tool."""
 
 
+@dataclass(kw_only=True)
 class MemoryTool(AbstractBuiltinTool):
     """A builtin tool that allows your agent to use memory.
 
@@ -299,3 +323,10 @@ class MCPServerTool(AbstractBuiltinTool):
 
     LIST_TOOLS: Literal['mcp_server:list_tools'] = 'mcp_server:list_tools'
     CALL_TOOL: Literal['mcp_server:call_tool'] = 'mcp_server:call_tool'
+
+
+def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
+    if isinstance(tool_data, dict):
+        return tool_data.get('kind', AbstractBuiltinTool.kind)
+    else:
+        return tool_data.kind

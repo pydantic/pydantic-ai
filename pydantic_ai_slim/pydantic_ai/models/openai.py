@@ -564,24 +564,7 @@ class OpenAIChatModel(Model):
         # - https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
         # If you need this, please file an issue.
 
-        vendor_details: dict[str, Any] = {}
-
-        # Add logprobs to vendor_details if available
-        if choice.logprobs is not None and choice.logprobs.content:
-            # Convert logprobs to a serializable format
-            vendor_details['logprobs'] = [
-                {
-                    'token': lp.token,
-                    'bytes': lp.bytes,
-                    'logprob': lp.logprob,
-                    'top_logprobs': [
-                        {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
-                    ],
-                }
-                for lp in choice.logprobs.content
-            ]
-
-        if choice.message.content is not None:
+        if choice.message.content:
             items.extend(
                 (replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part)
                 for part in split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags)
@@ -598,6 +581,23 @@ class OpenAIChatModel(Model):
                     assert_never(c)
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
+
+        vendor_details: dict[str, Any] = {}
+
+        # Add logprobs to vendor_details if available
+        if choice.logprobs is not None and choice.logprobs.content:
+            # Convert logprobs to a serializable format
+            vendor_details['logprobs'] = [
+                {
+                    'token': lp.token,
+                    'bytes': lp.bytes,
+                    'logprob': lp.logprob,
+                    'top_logprobs': [
+                        {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+                    ],
+                }
+                for lp in choice.logprobs.content
+            ]
 
         raw_finish_reason = choice.finish_reason
         vendor_details['finish_reason'] = raw_finish_reason
@@ -1688,21 +1688,6 @@ class OpenAIStreamedResponse(StreamedResponse):
                 self.provider_details = {'finish_reason': raw_finish_reason}
                 self.finish_reason = _CHAT_FINISH_REASON_MAP.get(raw_finish_reason)
 
-            # Handle the text part of the response
-            content = choice.delta.content
-            if content is not None:
-                maybe_event = self._parts_manager.handle_text_delta(
-                    vendor_part_id='content',
-                    content=content,
-                    thinking_tags=self._model_profile.thinking_tags,
-                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-                )
-                if maybe_event is not None:  # pragma: no branch
-                    if isinstance(maybe_event, PartStartEvent) and isinstance(maybe_event.part, ThinkingPart):
-                        maybe_event.part.id = 'content'
-                        maybe_event.part.provider_name = self.provider_name
-                    yield maybe_event
-
             # The `reasoning_content` field is only present in DeepSeek models.
             # https://api-docs.deepseek.com/guides/reasoning_model
             if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
@@ -1723,6 +1708,21 @@ class OpenAIStreamedResponse(StreamedResponse):
                     content=reasoning,
                     provider_name=self.provider_name,
                 )
+
+            # Handle the text part of the response
+            content = choice.delta.content
+            if content:
+                maybe_event = self._parts_manager.handle_text_delta(
+                    vendor_part_id='content',
+                    content=content,
+                    thinking_tags=self._model_profile.thinking_tags,
+                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                )
+                if maybe_event is not None:  # pragma: no branch
+                    if isinstance(maybe_event, PartStartEvent) and isinstance(maybe_event.part, ThinkingPart):
+                        maybe_event.part.id = 'content'
+                        maybe_event.part.provider_name = self.provider_name
+                    yield maybe_event
 
             for dtc in choice.delta.tool_calls or []:
                 maybe_event = self._parts_manager.handle_tool_call_delta(
