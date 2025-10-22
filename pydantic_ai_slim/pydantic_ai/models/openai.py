@@ -285,6 +285,7 @@ class OpenAIChatModel(Model):
             'vercel',
             'litellm',
             'nebius',
+            'ovhcloud',
             'gateway',
             'gateway/openai',
         ]
@@ -316,6 +317,7 @@ class OpenAIChatModel(Model):
             'vercel',
             'litellm',
             'nebius',
+            'ovhcloud',
             'gateway',
             'gateway/openai',
         ]
@@ -346,6 +348,7 @@ class OpenAIChatModel(Model):
             'vercel',
             'litellm',
             'nebius',
+            'ovhcloud',
             'gateway',
             'gateway/openai',
         ]
@@ -920,6 +923,7 @@ class OpenAIResponsesModel(Model):
             'fireworks',
             'together',
             'nebius',
+            'ovhcloud',
             'gateway',
             'gateway/openai',
         ]

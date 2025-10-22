@@ -685,6 +685,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         'vercel',
         'litellm',
         'nebius',
+        'ovhcloud',
     ):
         model_kind = 'openai-chat'
     elif model_kind in ('google-gla', 'google-vertex'):
