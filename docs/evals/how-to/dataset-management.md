@@ -217,46 +217,174 @@ For complete details on serialization with custom evaluators, see [Dataset Seria
 
 ## Generating Datasets
 
-Use an LLM to generate test cases:
+Pydantic Evals allows you to generate test datasets using LLMs with [`generate_dataset`][pydantic_evals.generation.generate_dataset].
 
-```python {test="skip"}
-from pydantic import BaseModel
+Datasets can be generated in either JSON or YAML format, in both cases a JSON schema file is generated alongside the dataset and referenced in the dataset, so you should get type checking and auto-completion in your editor.
+
+```python {title="generate_dataset_example.py"}
+from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic import BaseModel, Field
 
 from pydantic_evals import Dataset
 from pydantic_evals.generation import generate_dataset
 
 
-class QuestionInput(BaseModel):
+class QuestionInputs(BaseModel, use_attribute_docstrings=True):  # (1)!
+    """Model for question inputs."""
+
     question: str
+    """A question to answer"""
     context: str | None = None
+    """Optional context for the question"""
 
 
-class AnswerOutput(BaseModel):
+class AnswerOutput(BaseModel, use_attribute_docstrings=True):  # (2)!
+    """Model for expected answer outputs."""
+
     answer: str
-    confidence: float
+    """The answer to the question"""
+    confidence: float = Field(ge=0, le=1)
+    """Confidence level (0-1)"""
 
 
-class TestMetadata(BaseModel):
+class MetadataType(BaseModel, use_attribute_docstrings=True):  # (3)!
+    """Metadata model for test cases."""
+
     difficulty: str
+    """Difficulty level (easy, medium, hard)"""
     category: str
+    """Question category"""
 
 
 async def main():
-    # Generate dataset
-    dataset = await generate_dataset(
-        dataset_type=Dataset[QuestionInput, AnswerOutput, TestMetadata],
-        n_examples=10,
-        extra_instructions='''
-            Generate questions about world capitals.
-            Include both easy and hard questions.
-            Provide context where helpful.
-        ''',
-        model='openai:gpt-4o',  # Optional, defaults to gpt-4o
+    dataset = await generate_dataset(  # (4)!
+        dataset_type=Dataset[QuestionInputs, AnswerOutput, MetadataType],
+        n_examples=2,
+        extra_instructions="""
+        Generate question-answer pairs about world capitals and landmarks.
+        Make sure to include both easy and challenging questions.
+        """,
     )
-
-    # Save generated dataset
-    dataset.to_file('generated_cases.yaml')
+    output_file = Path('questions_cases.yaml')
+    dataset.to_file(output_file)  # (5)!
+    print(output_file.read_text())
+    """
+    # yaml-language-server: $schema=questions_cases_schema.json
+    name: null
+    cases:
+    - name: Easy Capital Question
+      inputs:
+        question: What is the capital of France?
+        context: null
+      metadata:
+        difficulty: easy
+        category: Geography
+      expected_output:
+        answer: Paris
+        confidence: 0.95
+      evaluators:
+      - EqualsExpected
+    - name: Challenging Landmark Question
+      inputs:
+        question: Which world-famous landmark is located on the banks of the Seine River?
+        context: null
+      metadata:
+        difficulty: hard
+        category: Landmarks
+      expected_output:
+        answer: Eiffel Tower
+        confidence: 0.9
+      evaluators:
+      - EqualsExpected
+    evaluators: []
+    """
 ```
+
+1. Define the schema for the inputs to the task.
+2. Define the schema for the expected outputs of the task.
+3. Define the schema for the metadata of the test cases.
+4. Call [`generate_dataset`][pydantic_evals.generation.generate_dataset] to create a [`Dataset`][pydantic_evals.Dataset] with 2 cases confirming to the schema.
+5. Save the dataset to a YAML file, this will also write `questions_cases_schema.json` with the schema JSON schema for `questions_cases.yaml` to make editing easier. The magic `yaml-language-server` comment is supported by at least vscode, jetbrains/pycharm (more details [here](https://github.com/redhat-developer/yaml-language-server#using-inlined-schema)).
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main(answer))` to run `main`)_
+
+You can also write datasets as JSON files:
+
+```python {title="generate_dataset_example_json.py" requires="generate_dataset_example.py"}
+from pathlib import Path
+
+from pydantic_evals import Dataset
+from pydantic_evals.generation import generate_dataset
+
+from generate_dataset_example import AnswerOutput, MetadataType, QuestionInputs
+
+
+async def main():
+    dataset = await generate_dataset(  # (1)!
+        dataset_type=Dataset[QuestionInputs, AnswerOutput, MetadataType],
+        n_examples=2,
+        extra_instructions="""
+        Generate question-answer pairs about world capitals and landmarks.
+        Make sure to include both easy and challenging questions.
+        """,
+    )
+    output_file = Path('questions_cases.json')
+    dataset.to_file(output_file)  # (2)!
+    print(output_file.read_text())
+    """
+    {
+      "$schema": "questions_cases_schema.json",
+      "name": null,
+      "cases": [
+        {
+          "name": "Easy Capital Question",
+          "inputs": {
+            "question": "What is the capital of France?",
+            "context": null
+          },
+          "metadata": {
+            "difficulty": "easy",
+            "category": "Geography"
+          },
+          "expected_output": {
+            "answer": "Paris",
+            "confidence": 0.95
+          },
+          "evaluators": [
+            "EqualsExpected"
+          ]
+        },
+        {
+          "name": "Challenging Landmark Question",
+          "inputs": {
+            "question": "Which world-famous landmark is located on the banks of the Seine River?",
+            "context": null
+          },
+          "metadata": {
+            "difficulty": "hard",
+            "category": "Landmarks"
+          },
+          "expected_output": {
+            "answer": "Eiffel Tower",
+            "confidence": 0.9
+          },
+          "evaluators": [
+            "EqualsExpected"
+          ]
+        }
+      ],
+      "evaluators": []
+    }
+    """
+```
+
+1. Generate the [`Dataset`][pydantic_evals.Dataset] exactly as above.
+2. Save the dataset to a JSON file, this will also write `questions_cases_schema.json` with th JSON schema for `questions_cases.json`. This time the `$schema` key is included in the JSON file to define the schema for IDEs to use while you edit the file, there's no formal spec for this, but it works in vscode and pycharm and is discussed at length in [json-schema-org/json-schema-spec#828](https://github.com/json-schema-org/json-schema-spec/issues/828).
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main(answer))` to run `main`)_
 
 ## Type-Safe Datasets
 
