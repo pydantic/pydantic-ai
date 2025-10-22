@@ -270,7 +270,6 @@ async def daily_report_flow(user_prompt: str):
     result = await prefect_agent.run(user_prompt)
     return result.output
 
-(1) Each flow run executes in an isolated process, and all inputs and dependencies must be serializable. Because Agent instances cannot be serialized, instantiate the agent inside the flow rather than at the module level.
 
 
 # Serve the flow with a daily schedule
@@ -282,6 +281,8 @@ if __name__ == '__main__':
         tags=['production', 'reports'],
     )
 ```
+
+(1) Each flow run executes in an isolated process, and all inputs and dependencies must be serializable. Because Agent instances cannot be serialized, instantiate the agent inside the flow rather than at the module level.
 
 The `serve()` method accepts scheduling options:
 
