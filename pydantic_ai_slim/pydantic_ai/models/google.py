@@ -37,7 +37,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfileSpec
-from ..providers import Provider
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -85,8 +85,6 @@ try:
         UrlContextDict,
         VideoMetadataDict,
     )
-
-    from ..providers.google import GoogleProvider
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google model, '
@@ -187,7 +185,7 @@ class GoogleModel(Model):
         self,
         model_name: GoogleModelName,
         *,
-        provider: Literal['google-gla', 'google-vertex'] | Provider[Client] = 'google-gla',
+        provider: Literal['google-gla', 'google-vertex', 'gateway'] | Provider[Client] = 'google-gla',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -196,15 +194,15 @@ class GoogleModel(Model):
         Args:
             model_name: The name of the model to use.
             provider: The provider to use for authentication and API access. Can be either the string
-                'google-gla' or 'google-vertex' or an instance of `Provider[httpx.AsyncClient]`.
-                If not provided, a new provider will be created using the other parameters.
+                'google-gla' or 'google-vertex' or an instance of `Provider[google.genai.AsyncClient]`.
+                Defaults to 'google-gla'.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: The model settings to use. Defaults to None.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = GoogleProvider(vertexai=provider == 'google-vertex')
+            provider = infer_provider('gateway/google-vertex' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
@@ -668,9 +666,8 @@ class GeminiStreamedResponse(StreamedResponse):
                     if part.thought:
                         yield self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=part.text)
                     else:
-                        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        for event in self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text):
+                            yield event
                 elif part.function_call:
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=uuid4(),

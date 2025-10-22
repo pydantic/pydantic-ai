@@ -653,9 +653,8 @@ class MistralStreamedResponse(StreamedResponse):
                             tool_call_id=maybe_tool_call_part.tool_call_id,
                         )
                 else:
-                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=text)
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    for event in self._parts_manager.handle_text_delta(vendor_part_id='content', content=text):
+                        yield event
 
             # Handle the explicit tool calls
             for index, dtc in enumerate(choice.delta.tool_calls or []):

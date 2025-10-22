@@ -141,7 +141,7 @@ class GroqModel(Model):
         self,
         model_name: GroqModelName,
         *,
-        provider: Literal['groq'] | Provider[AsyncGroq] = 'groq',
+        provider: Literal['groq', 'gateway'] | Provider[AsyncGroq] = 'groq',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -159,7 +159,7 @@ class GroqModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(provider)
+            provider = infer_provider('gateway/groq' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
@@ -564,14 +564,13 @@ class GroqStreamedResponse(StreamedResponse):
                 # Handle the text part of the response
                 content = choice.delta.content
                 if content:
-                    maybe_event = self._parts_manager.handle_text_delta(
+                    for event in self._parts_manager.handle_text_delta(
                         vendor_part_id='content',
                         content=content,
                         thinking_tags=self._model_profile.thinking_tags,
                         ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event
 
                 # Handle the tool calls
                 for dtc in choice.delta.tool_calls or []:

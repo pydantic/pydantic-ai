@@ -98,7 +98,7 @@ class GoogleProvider(Provider[Client]):
             }
             if not vertexai:
                 if api_key is None:
-                    raise UserError(  # pragma: no cover
+                    raise UserError(
                         'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
                         'to use the Google Generative Language API.'
                     )

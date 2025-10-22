@@ -286,6 +286,7 @@ class OpenAIChatModel(Model):
             'litellm',
             'nebius',
             'ovhcloud',
+            'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -316,6 +317,7 @@ class OpenAIChatModel(Model):
             'litellm',
             'nebius',
             'ovhcloud',
+            'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -345,6 +347,7 @@ class OpenAIChatModel(Model):
             'litellm',
             'nebius',
             'ovhcloud',
+            'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -366,7 +369,7 @@ class OpenAIChatModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(provider)
+            provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
@@ -907,7 +910,16 @@ class OpenAIResponsesModel(Model):
         model_name: OpenAIModelName,
         *,
         provider: Literal[
-            'openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'nebius', 'ovhcloud'
+            'openai',
+            'deepseek',
+            'azure',
+            'openrouter',
+            'grok',
+            'fireworks',
+            'together',
+            'nebius',
+            'ovhcloud',
+            'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -924,7 +936,7 @@ class OpenAIResponsesModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(provider)
+            provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
@@ -1645,17 +1657,16 @@ class OpenAIStreamedResponse(StreamedResponse):
             # Handle the text part of the response
             content = choice.delta.content
             if content:
-                maybe_event = self._parts_manager.handle_text_delta(
+                for event in self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,
                     thinking_tags=self._model_profile.thinking_tags,
                     ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-                )
-                if maybe_event is not None:  # pragma: no branch
-                    if isinstance(maybe_event, PartStartEvent) and isinstance(maybe_event.part, ThinkingPart):
-                        maybe_event.part.id = 'content'
-                        maybe_event.part.provider_name = self.provider_name
-                    yield maybe_event
+                ):
+                    if isinstance(event, PartStartEvent) and isinstance(event.part, ThinkingPart):
+                        event.part.id = 'content'
+                        event.part.provider_name = self.provider_name
+                    yield event
 
             for dtc in choice.delta.tool_calls or []:
                 maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -1840,11 +1851,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                maybe_event = self._parts_manager.handle_text_delta(
+                for event in self._parts_manager.handle_text_delta(
                     vendor_part_id=chunk.item_id, content=chunk.delta, id=chunk.item_id
-                )
-                if maybe_event is not None:  # pragma: no branch
-                    yield maybe_event
+                ):
+                    yield event
 
             elif isinstance(chunk, responses.ResponseTextDoneEvent):
                 pass  # there's nothing we need to do here
