@@ -104,7 +104,7 @@ def test_logfire(
         async def call_tool(
             self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
         ) -> Any:
-            with logfire.span(f'toolset_call_tool {name}'):  # pyright: ignore[reportPossiblyUnboundVariable]
+            with logfire.span('toolset_call_tool {name}', name=name):  # pyright: ignore[reportPossiblyUnboundVariable]
                 return await super().call_tool(name, tool_args, ctx, tool)
 
     toolset = FunctionToolset()
