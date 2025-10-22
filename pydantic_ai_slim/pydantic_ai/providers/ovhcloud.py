@@ -41,18 +41,20 @@ class OVHcloudProvider(Provider[AsyncOpenAI]):
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
-        if 'deepseek' in model_name.lower():
-            profile = deepseek_model_profile(model_name)
-        elif 'llama' in model_name.lower():
-            profile = meta_model_profile(model_name)
-        elif 'mistral' in model_name.lower():
-            profile = mistral_model_profile(model_name)
-        elif 'qwen' in model_name.lower():
-            profile = qwen_model_profile(model_name)
-        elif 'openai' in model_name.lower() or 'gpt' in model_name:
-            profile = harmony_model_profile(model_name)
-        else:
-            profile = None
+        profile = None
+
+        prefix_to_profile = {
+            'llama': meta_model_profile,
+            'meta-': meta_model_profile,
+            'deepseek': deepseek_model_profile,
+            'mistral': mistral_model_profile,
+            'gpt': harmony_model_profile,
+            'qwen': qwen_model_profile,
+        }
+
+        for prefix, profile_func in prefix_to_profile.items():
+            if model_name.lower().startswith(prefix):
+                profile = profile_func(model_name)
 
         # As the OVHcloud AI Endpoints API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer.
         return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
