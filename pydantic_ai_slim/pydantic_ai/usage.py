@@ -140,7 +140,7 @@ class RequestUsage(UsageBase):
         provider: str,
         provider_url: str,
         provider_fallback: str,
-        api_flavor: str | None = None,
+        api_flavor: str = 'default',
         details: dict[str, Any] | None = None,
     ) -> RequestUsage:
         """Extract usage information from the response data using genai-prices.
