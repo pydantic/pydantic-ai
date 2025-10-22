@@ -86,7 +86,7 @@ def gateway_provider(
         api_key: The API key to use for authentication. If not provided, the `PYDANTIC_AI_GATEWAY_API_KEY`
             environment variable will be used if available.
         base_url: The base URL to use for the Gateway. If not provided, the `PYDANTIC_AI_GATEWAY_BASE_URL`
-            environment variable will be used if available. Otherwise, defaults to `http://localhost:8787/`.
+            environment variable will be used if available. Otherwise, defaults to `https://gateway.pydantic.dev/proxy`.
         http_client: The HTTP client to use for the Gateway.
     """
     api_key = api_key or os.getenv('PYDANTIC_AI_GATEWAY_API_KEY')
@@ -127,7 +127,11 @@ def gateway_provider(
     elif upstream_provider == 'bedrock':
         from .bedrock import BedrockProvider
 
-        return BedrockProvider(api_key=api_key, base_url=_merge_url_path(base_url, 'bedrock'))
+        return BedrockProvider(
+            api_key=api_key,
+            base_url=_merge_url_path(base_url, 'bedrock'),
+            region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
+        )
     elif upstream_provider == 'google-vertex':
         from google.genai import Client as GoogleClient
 
