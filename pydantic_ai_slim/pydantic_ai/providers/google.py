@@ -7,14 +7,14 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import get_user_agent
+from pydantic_ai.models import cached_async_http_client, get_user_agent
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider
 
 try:
     from google.auth.credentials import Credentials
     from google.genai import Client
-    from google.genai.types import HttpOptionsDict
+    from google.genai.types import HttpOptions
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `google-genai` package to use the Google provider, '
@@ -41,7 +41,7 @@ class GoogleProvider(Provider[Client]):
         return google_model_profile(model_name)
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient | None = None) -> None: ...
 
     @overload
     def __init__(
@@ -50,13 +50,14 @@ class GoogleProvider(Provider[Client]):
         credentials: Credentials | None = None,
         project: str | None = None,
         location: VertexAILocation | Literal['global'] | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None: ...
 
     @overload
     def __init__(self, *, client: Client) -> None: ...
 
     @overload
-    def __init__(self, *, vertexai: bool = False) -> None: ...
+    def __init__(self, *, vertexai: bool = False, http_client: httpx.AsyncClient | None = None) -> None: ...
 
     def __init__(
         self,
@@ -65,8 +66,9 @@ class GoogleProvider(Provider[Client]):
         credentials: Credentials | None = None,
         project: str | None = None,
         location: VertexAILocation | Literal['global'] | None = None,
-        client: Client | None = None,
         vertexai: bool | None = None,
+        client: Client | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Create a new Google provider.
 
@@ -81,9 +83,10 @@ class GoogleProvider(Provider[Client]):
                 (for example, GOOGLE_CLOUD_PROJECT). Applies to the Vertex AI API only.
             location: The location to send API requests to (for example, us-central1). Can be obtained from environment variables.
                 Applies to the Vertex AI API only.
-            client: A pre-initialized client to use.
             vertexai: Force the use of the Vertex AI API. If `False`, the Google Generative Language API will be used.
-                Defaults to `False`.
+                Defaults to `False` unless `location`, `project`, or `credentials` are provided.
+            client: A pre-initialized client to use.
+            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         if client is None:
             # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
@@ -92,10 +95,13 @@ class GoogleProvider(Provider[Client]):
             if vertexai is None:
                 vertexai = bool(location or project or credentials)
 
-            http_options: HttpOptionsDict = {
-                'headers': {'User-Agent': get_user_agent()},
-                'async_client_args': {'transport': httpx.AsyncHTTPTransport()},
-            }
+            http_client = http_client or cached_async_http_client(
+                provider='google-vertex' if vertexai else 'google-gla'
+            )
+            http_options = HttpOptions(
+                headers={'User-Agent': get_user_agent()},
+                httpx_async_client=http_client,
+            )
             if not vertexai:
                 if api_key is None:
                     raise UserError(  # pragma: no cover
