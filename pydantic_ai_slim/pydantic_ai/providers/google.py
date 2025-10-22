@@ -101,6 +101,8 @@ class GoogleProvider(Provider[Client]):
             http_options = HttpOptions(
                 headers={'User-Agent': get_user_agent()},
                 httpx_async_client=http_client,
+                # TODO: Remove once https://github.com/googleapis/python-genai/pull/1509#issuecomment-3430028790 is solved.
+                async_client_args={'transport': httpx.AsyncHTTPTransport()},
             )
             if not vertexai:
                 if api_key is None:
