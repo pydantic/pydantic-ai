@@ -287,7 +287,6 @@ class OpenAIChatModel(Model):
             'nebius',
             'ovhcloud',
             'gateway',
-            'gateway/openai',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -319,7 +318,6 @@ class OpenAIChatModel(Model):
             'nebius',
             'ovhcloud',
             'gateway',
-            'gateway/openai',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -350,7 +348,6 @@ class OpenAIChatModel(Model):
             'nebius',
             'ovhcloud',
             'gateway',
-            'gateway/openai',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -372,9 +369,7 @@ class OpenAIChatModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            if provider == 'gateway':
-                provider = 'gateway/openai'
-            provider = infer_provider(provider)
+            provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
@@ -925,7 +920,6 @@ class OpenAIResponsesModel(Model):
             'nebius',
             'ovhcloud',
             'gateway',
-            'gateway/openai',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -942,9 +936,7 @@ class OpenAIResponsesModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            if provider == 'gateway':
-                provider = 'gateway/openai'
-            provider = infer_provider(provider)
+            provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 

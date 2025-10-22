@@ -185,8 +185,7 @@ class GoogleModel(Model):
         self,
         model_name: GoogleModelName,
         *,
-        provider: Literal['google-gla', 'google-vertex', 'gateway', 'gateway/google-vertex']
-        | Provider[Client] = 'google-gla',
+        provider: Literal['google-gla', 'google-vertex', 'gateway'] | Provider[Client] = 'google-gla',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -203,9 +202,7 @@ class GoogleModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            if provider == 'gateway':
-                provider = 'gateway/google-vertex'
-            provider = infer_provider(provider)
+            provider = infer_provider('gateway/google-vertex' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
