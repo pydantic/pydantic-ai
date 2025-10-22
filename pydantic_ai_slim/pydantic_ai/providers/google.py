@@ -123,7 +123,7 @@ class GoogleProvider(Provider[Client]):
                         'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
                         'to use the Google Generative Language API.'
                     )
-                self._client = Client(vertexai=False, api_key=api_key, http_options=http_options)
+                self._client = _SafelyClosingClient(vertexai=False, api_key=api_key, http_options=http_options)
             else:
                 if vertex_ai_args_used:
                     api_key = None
@@ -137,7 +137,7 @@ class GoogleProvider(Provider[Client]):
                     # For more details, check: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions
                     location = location or os.getenv('GOOGLE_CLOUD_LOCATION') or 'us-central1'
 
-                self._client = Client(
+                self._client = _SafelyClosingClient(
                     vertexai=True,
                     api_key=api_key,
                     project=project,
@@ -183,3 +183,12 @@ VertexAILocation = Literal[
 """Regions available for Vertex AI.
 More details [here](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#genai-locations).
 """
+
+
+class _SafelyClosingClient(Client):
+    def close(self) -> None:
+        # This is called from `Client.__del__`, even if `Client.__init__` raised an error before `self._api_client` is set, which would raise an `AttributeError` here.
+        try:
+            super().close()
+        except AttributeError:
+            pass
