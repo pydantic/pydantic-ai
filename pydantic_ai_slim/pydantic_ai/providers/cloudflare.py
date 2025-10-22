@@ -15,10 +15,11 @@ from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.perplexity import perplexity_model_profile
 from pydantic_ai.providers import Provider
 
-from .cerebras import CerebrasProvider
-from .groq import GroqProvider
+from .cerebras import cerebras_provider_model_profile
+from .groq import groq_provider_model_profile
 
 try:
     from openai import AsyncOpenAI
@@ -27,23 +28,6 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the Cloudflare provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
-
-
-def _groq_model_profile_cloudflare(model_name: str) -> ModelProfile | None:
-    """Get the model profile for Groq models routed through Cloudflare's unified API.
-
-    Cloudflare routes to Groq's OpenAI-compatible endpoint, so we use prefix matching
-    similar to the native GroqProvider to determine the appropriate profile.
-    """
-    return GroqProvider().model_profile(model_name)
-
-
-def _cerebras_model_profile_cloudflare(model_name: str) -> ModelProfile | None:
-    """Get the model profile for Cerebras models routed through Cloudflare's unified API.
-
-    Similar to the native CerebrasProvider, use prefix matching to determine profiles.
-    """
-    return CerebrasProvider().model_profile(model_name)
 
 
 class CloudflareProvider(Provider[AsyncOpenAI]):
@@ -61,11 +45,11 @@ class CloudflareProvider(Provider[AsyncOpenAI]):
     This provider looks for these environment variables if they are not provided as parameters:
     - account_id: `CLOUDFLARE_ACCOUNT_ID`
     - gateway_id: `CLOUDFLARE_GATEWAY_ID`
-    - cf_aig_authorization: `CLOUDFLARE_AI_GATEWAY_AUTH` (optional)
+    - gateway_auth_token: `CLOUDFLARE_AI_GATEWAY_AUTH` (optional)
 
     There are three usage modes:
 
-    1. BYOK with unauthenticated gateway (bring your own API key):
+    1. User-managed keys with unauthenticated gateway:
         ```python
         from pydantic_ai import Agent
         from pydantic_ai.models.openai import OpenAIChatModel
@@ -82,7 +66,7 @@ class CloudflareProvider(Provider[AsyncOpenAI]):
         agent = Agent(model)
         ```
 
-    2. BYOK with authenticated gateway (API key + gateway authentication):
+    2. User-managed keys with authenticated gateway (API key + gateway authentication):
         ```python
         from pydantic_ai import Agent
         from pydantic_ai.models.openai import OpenAIChatModel
@@ -94,13 +78,13 @@ class CloudflareProvider(Provider[AsyncOpenAI]):
                 account_id='your-account-id',
                 gateway_id='your-gateway-id',
                 api_key='your-openai-api-key',
-                cf_aig_authorization='your-gateway-token',
+                gateway_auth_token='your-gateway-token',
             ),
         )
         agent = Agent(model)
         ```
 
-    3. Stored keys mode (use API keys stored in Cloudflare dashboard):
+    3. CF-managed keys mode (use API keys stored in Cloudflare dashboard):
         ```python
         from pydantic_ai import Agent
         from pydantic_ai.models.openai import OpenAIChatModel
@@ -111,8 +95,7 @@ class CloudflareProvider(Provider[AsyncOpenAI]):
             provider=CloudflareProvider(
                 account_id='your-account-id',
                 gateway_id='your-gateway-id',
-                cf_aig_authorization='your-gateway-token',
-                use_gateway_keys=True,
+                gateway_auth_token='your-gateway-token',
             ),
         )
         agent = Agent(model)
@@ -143,19 +126,17 @@ class CloudflareProvider(Provider[AsyncOpenAI]):
         provider_to_profile = {
             'anthropic': anthropic_model_profile,
             'openai': openai_model_profile,
-            'groq': _groq_model_profile_cloudflare,
+            'groq': groq_provider_model_profile,
             'mistral': mistral_model_profile,
             'cohere': cohere_model_profile,
             'deepseek': deepseek_model_profile,
-            # NOTE: this would be the first support for perplexity in pydantic-ai
-            # to remove this, the equivalent test in tests/providers/test_cloudflare.py::test_cloudflare_provider_model_profile would need to be removed
-            'perplexity': openai_model_profile,  # Perplexity uses OpenAI-compatible API
+            'perplexity': perplexity_model_profile,
             'workers-ai': openai_model_profile,  # Cloudflare Workers AI uses OpenAI-compatible API
             'workersai': openai_model_profile,  # Alternative naming
             'google-ai-studio': google_model_profile,
             'grok': grok_model_profile,
             'xai': grok_model_profile,  # xai is an alias for grok
-            'cerebras': _cerebras_model_profile_cloudflare,
+            'cerebras': cerebras_provider_model_profile,
         }
 
         profile = None
@@ -167,8 +148,6 @@ class CloudflareProvider(Provider[AsyncOpenAI]):
 
         if provider in provider_to_profile:
             profile = provider_to_profile[provider](model_name)
-        # If provider is not recognized, profile remains None and we fall back to OpenAI-compatible behavior.
-        # This matches VercelProvider's behavior of silently supporting unknown providers through the unified API.
 
         # As CloudflareProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
@@ -176,44 +155,16 @@ class CloudflareProvider(Provider[AsyncOpenAI]):
             json_schema_transformer=OpenAIJsonSchemaTransformer,
         ).update(profile)
 
-    @staticmethod
-    def _create_stored_keys_client(base_client: httpx.AsyncClient) -> httpx.AsyncClient:
-        """Create an HTTP client that strips the Authorization header for stored keys mode.
-
-        When using Cloudflare's stored keys feature (API keys stored in the dashboard),
-        the Authorization header must NOT be sent. If sent, it takes precedence over
-        the stored keys, breaking the feature.
-
-        This wraps the base client with an event hook that removes the Authorization header.
-        """
-
-        async def strip_auth_header(request: httpx.Request) -> None:
-            """Remove Authorization header so Cloudflare uses stored keys from dashboard."""
-            if 'authorization' in request.headers:
-                del request.headers['authorization']
-
-        # Merge event hooks - preserve any existing hooks and add our strip_auth_header hook
-        existing_hooks = base_client.event_hooks
-        new_request_hooks = list(existing_hooks.get('request', []))
-        new_request_hooks.append(strip_auth_header)
-
-        merged_hooks = dict(existing_hooks)
-        merged_hooks['request'] = new_request_hooks
-
-        # Create new client based on the base client's configuration
-        base_client._event_hooks = merged_hooks  # type: ignore[attr-defined]
-        return base_client
-
-    # Scenario 1: BYOK with unauthenticated gateway (api_key required)
+    # Scenario 1: User-managed keys with unauthenticated gateway (api_key required)
     @overload
     def __init__(self, *, account_id: str, gateway_id: str, api_key: str) -> None: ...
 
     @overload
     def __init__(self, *, account_id: str, gateway_id: str, api_key: str, http_client: httpx.AsyncClient) -> None: ...
 
-    # Scenario 2: BYOK with authenticated gateway (api_key + cf_aig_authorization)
+    # Scenario 2: User-managed keys with authenticated gateway (api_key + gateway_auth_token)
     @overload
-    def __init__(self, *, account_id: str, gateway_id: str, api_key: str, cf_aig_authorization: str) -> None: ...
+    def __init__(self, *, account_id: str, gateway_id: str, api_key: str, gateway_auth_token: str) -> None: ...
 
     @overload
     def __init__(
@@ -222,15 +173,13 @@ class CloudflareProvider(Provider[AsyncOpenAI]):
         account_id: str,
         gateway_id: str,
         api_key: str,
-        cf_aig_authorization: str,
+        gateway_auth_token: str,
         http_client: httpx.AsyncClient,
     ) -> None: ...
 
-    # Scenario 3: Stored keys with authenticated gateway (use_gateway_keys=True, cf_aig_authorization required)
+    # Scenario 3: CF-managed keys with authenticated gateway (no api_key, gateway_auth_token required)
     @overload
-    def __init__(
-        self, *, account_id: str, gateway_id: str, cf_aig_authorization: str, use_gateway_keys: bool = True
-    ) -> None: ...
+    def __init__(self, *, account_id: str, gateway_id: str, gateway_auth_token: str) -> None: ...
 
     @overload
     def __init__(
@@ -238,9 +187,8 @@ class CloudflareProvider(Provider[AsyncOpenAI]):
         *,
         account_id: str,
         gateway_id: str,
-        cf_aig_authorization: str,
+        gateway_auth_token: str,
         http_client: httpx.AsyncClient,
-        use_gateway_keys: bool = True,
     ) -> None: ...
 
     # Advanced: Pre-configured OpenAI client
@@ -253,10 +201,9 @@ class CloudflareProvider(Provider[AsyncOpenAI]):
         account_id: str | None = None,
         gateway_id: str | None = None,
         api_key: str | None = None,
-        cf_aig_authorization: str | None = None,
+        gateway_auth_token: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
-        use_gateway_keys: bool = False,
     ) -> None:
         """Initialize the Cloudflare AI Gateway provider.
 
@@ -264,22 +211,18 @@ class CloudflareProvider(Provider[AsyncOpenAI]):
             account_id: Your Cloudflare account ID. Can also be set via CLOUDFLARE_ACCOUNT_ID environment variable.
             gateway_id: Your Cloudflare AI Gateway ID. Can also be set via CLOUDFLARE_GATEWAY_ID environment variable.
             api_key: The API key for the upstream provider (OpenAI, Anthropic, etc.).
-                - Required for BYOK (bring your own key) mode (default)
-                - Do NOT provide when use_gateway_keys=True (conflicts with stored keys mode)
+                - Required for user-managed mode
+                - Omit this (along with providing gateway_auth_token) to use CF-managed keys mode
                 - Optional when using the openai_client parameter (pre-configured client)
-            cf_aig_authorization: Authorization token for authenticated gateways.
-                - Required when use_gateway_keys=True (stored keys mode)
-                - Optional for BYOK mode (provides additional gateway authentication)
+            gateway_auth_token: Authorization token for authenticated gateways.
+                - Required for CF-managed keys mode (when api_key is omitted)
+                - Optional for user-managed mode (provides additional gateway authentication)
                 - Can also be set via CLOUDFLARE_AI_GATEWAY_AUTH environment variable
             openai_client: Optional pre-configured AsyncOpenAI client for advanced use cases.
             http_client: Optional HTTP client to use for requests.
-            use_gateway_keys: Whether to use API keys stored in your Cloudflare dashboard (default: False).
-                - Set to True to use stored keys mode (requires cf_aig_authorization)
-                - When True, do not provide api_key (they are mutually exclusive)
-                - When False (default), you must provide api_key for BYOK mode
 
         Raises:
-            UserError: If use_gateway_keys=True and api_key is also provided (conflicting configuration).
+            UserError: If configuration is invalid (e.g., neither api_key nor CF-managed keys mode is configured).
         """
         account_id = account_id or os.getenv('CLOUDFLARE_ACCOUNT_ID')
         gateway_id = gateway_id or os.getenv('CLOUDFLARE_GATEWAY_ID')
@@ -296,29 +239,20 @@ class CloudflareProvider(Provider[AsyncOpenAI]):
                 'or pass it via `CloudflareProvider(gateway_id=...)` to use the Cloudflare provider.'
             )
 
-        cf_aig_authorization = cf_aig_authorization or os.getenv('CLOUDFLARE_AI_GATEWAY_AUTH')
+        gateway_auth_token = gateway_auth_token or os.getenv('CLOUDFLARE_AI_GATEWAY_AUTH')
 
-        if use_gateway_keys:
-            # Stored keys mode requires authenticated gateway
-            if cf_aig_authorization is None:
-                raise UserError(
-                    'When use_gateway_keys=True, you must provide cf_aig_authorization.\n'
-                    'Stored keys (API keys stored in Cloudflare dashboard) require an authenticated gateway.'
-                )
-            # Can't use both stored keys and provide your own api_key
-            if api_key is not None:
-                raise UserError(
-                    'When use_gateway_keys=True, do not provide an api_key.\n'
-                    'use_gateway_keys=True means using API keys stored in your Cloudflare dashboard,\n'
-                    'which is incompatible with providing your own api_key (BYOK mode).'
-                )
-            # Use placeholder for AsyncOpenAI (required by AsyncOpenAI client) but we'll strip the Authorization header
-            api_key = 'stored-keys-placeholder'
+        # Detect CF-managed keys mode: no api_key provided + gateway_auth_token present + no pre-configured client
+        use_cf_managed_keys = api_key is None and gateway_auth_token is not None and openai_client is None
+
+        if use_cf_managed_keys:
+            # CF-managed keys mode: use API keys stored in Cloudflare dashboard
+            # Use empty string for AsyncOpenAI - this prevents the Authorization header from being sent
+            api_key = ''
         elif api_key is None and openai_client is None:
-            # Not using stored keys, so api_key is required (unless using pre-configured openai_client)
+            # Not using CF-managed keys, so api_key is required (unless using pre-configured openai_client)
             raise UserError(
-                'When use_gateway_keys=False (the default), you must provide an api_key for BYOK mode.\n'
-                'To use API keys stored in your Cloudflare dashboard, set use_gateway_keys=True and provide cf_aig_authorization.'
+                'You must provide an api_key for user-managed mode.\n'
+                'To use API keys stored in your Cloudflare dashboard (CF-managed), omit api_key and provide gateway_auth_token instead.'
             )
 
         self._base_url = f'https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/compat'
@@ -328,23 +262,17 @@ class CloudflareProvider(Provider[AsyncOpenAI]):
             'x-title': 'pydantic-ai',
         }
 
-        if cf_aig_authorization:
-            default_headers['cf-aig-authorization'] = cf_aig_authorization
+        if gateway_auth_token:
+            default_headers['cf-aig-authorization'] = gateway_auth_token
 
         if openai_client is not None:
             self._client = openai_client
         elif http_client is not None:
-            # If user provided http_client and we're in stored keys mode, we need to wrap it
-            if use_gateway_keys:
-                http_client = self._create_stored_keys_client(http_client)
             self._client = AsyncOpenAI(
                 base_url=self._base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
             )
         else:
             http_client = cached_async_http_client(provider='cloudflare')
-            # In stored keys mode, wrap the client to strip Authorization header
-            if use_gateway_keys:
-                http_client = self._create_stored_keys_client(http_client)
             self._client = AsyncOpenAI(
                 base_url=self._base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
             )

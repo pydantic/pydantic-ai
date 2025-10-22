@@ -70,6 +70,18 @@ def test_known_model_names():  # pragma: lax no cover
     openai_names = [f'openai:{n}' for n in get_model_names(OpenAIModelName)]
     bedrock_names = [f'bedrock:{n}' for n in get_model_names(BedrockModelName)]
     deepseek_names = ['deepseek:deepseek-chat', 'deepseek:deepseek-reasoner']
+    cloudflare_names = [
+        'cloudflare:anthropic/claude-3-5-sonnet',
+        'cloudflare:cohere/command-r-plus',
+        'cloudflare:deepseek/deepseek-chat',
+        'cloudflare:google/gemini-2.0-flash',
+        'cloudflare:groq/llama-3.3-70b-versatile',
+        'cloudflare:mistral/mistral-large-latest',
+        'cloudflare:openai/gpt-4o',
+        'cloudflare:perplexity/llama-3.1-sonar-small-128k-online',
+        'cloudflare:workers-ai/@cf/meta/llama-3.1-8b-instruct',
+        'cloudflare:xai/grok-2-1212',
+    ]
     huggingface_names = [f'huggingface:{n}' for n in get_model_names(HuggingFaceModelName)]
     heroku_names = get_heroku_model_names()
     cerebras_names = get_cerebras_model_names()
@@ -86,6 +98,7 @@ def test_known_model_names():  # pragma: lax no cover
         + openai_names
         + bedrock_names
         + deepseek_names
+        + cloudflare_names
         + huggingface_names
         + heroku_names
         + cerebras_names

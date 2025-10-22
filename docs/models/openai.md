@@ -448,7 +448,21 @@ To use [Cloudflare AI Gateway](https://developers.cloudflare.com/ai-gateway/), f
 !!! note
     This provider uses Cloudflare's [unified API endpoint](https://developers.cloudflare.com/ai-gateway/usage/chat-completion/) for routing requests to multiple AI providers. For the full list of supported providers, see [Cloudflare's documentation](https://developers.cloudflare.com/ai-gateway/usage/chat-completion/#supported-providers).
 
-You can set the `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_GATEWAY_ID`, and optionally `CLOUDFLARE_AI_GATEWAY_AUTH` environment variables and use [`CloudflareProvider`][pydantic_ai.providers.cloudflare.CloudflareProvider]:
+You can set the `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_GATEWAY_ID`, and optionally `CLOUDFLARE_AI_GATEWAY_AUTH` environment variables and use the `cloudflare:` model name prefix:
+
+```python test="skip - requires actual API keys"
+from pydantic_ai import Agent
+
+# Set via environment or in code:
+# CLOUDFLARE_ACCOUNT_ID='your-account-id'
+# CLOUDFLARE_GATEWAY_ID='your-gateway-id'
+# OPENAI_API_KEY='your-openai-api-key'
+
+agent = Agent('cloudflare:openai/gpt-4o')
+...
+```
+
+Or use [`CloudflareProvider`][pydantic_ai.providers.cloudflare.CloudflareProvider] directly:
 
 ```python
 from pydantic_ai import Agent
@@ -479,8 +493,7 @@ model = OpenAIChatModel(
     provider=CloudflareProvider(
         account_id='your-account-id',
         gateway_id='your-gateway-id',
-        cf_aig_authorization='your-gateway-token',
-        use_gateway_keys=True,
+        gateway_auth_token='your-gateway-token',
     ),
 )
 agent = Agent(model)

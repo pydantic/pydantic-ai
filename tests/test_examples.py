@@ -170,6 +170,8 @@ def test_docs_examples(  # noqa: C901
     env.set('AWS_DEFAULT_REGION', 'us-east-1')
     env.set('VERCEL_AI_GATEWAY_API_KEY', 'testing')
     env.set('CEREBRAS_API_KEY', 'testing')
+    env.set('CLOUDFLARE_ACCOUNT_ID', 'testing')
+    env.set('CLOUDFLARE_GATEWAY_ID', 'testing')
     env.set('NEBIUS_API_KEY', 'testing')
     env.set('HEROKU_INFERENCE_KEY', 'testing')
     env.set('FIREWORKS_API_KEY', 'testing')

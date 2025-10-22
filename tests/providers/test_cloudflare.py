@@ -14,6 +14,7 @@ from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_mode
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
+from pydantic_ai.profiles.perplexity import perplexity_model_profile
 
 from ..conftest import TestEnv, try_import
 
@@ -72,17 +73,17 @@ def test_cloudflare_provider_from_env(env: TestEnv) -> None:
     assert provider.client.api_key == 'env-api-key'
 
 
-def test_cloudflare_provider_with_cf_aig_authorization():
+def test_cloudflare_provider_with_gateway_auth_token():
     provider = CloudflareProvider(
         account_id='test-account-id',
         gateway_id='test-gateway-id',
         api_key='api-key',
-        cf_aig_authorization='gateway-token',
+        gateway_auth_token='gateway-token',
     )
     assert provider.client.default_headers['cf-aig-authorization'] == 'gateway-token'
 
 
-def test_cloudflare_provider_cf_aig_authorization_from_env(env: TestEnv) -> None:
+def test_cloudflare_provider_gateway_auth_token_from_env(env: TestEnv) -> None:
     env.set('CLOUDFLARE_ACCOUNT_ID', 'test-account-id')
     env.set('CLOUDFLARE_GATEWAY_ID', 'test-gateway-id')
     env.set('CLOUDFLARE_AI_GATEWAY_AUTH', 'env-gateway-token')
@@ -116,6 +117,7 @@ def test_cloudflare_provider_model_profile(mocker: MockerFixture, env: TestEnv):
     grok_mock = mocker.patch(f'{ns}.grok_model_profile', wraps=grok_model_profile)
     mistral_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
     openai_mock = mocker.patch(f'{ns}.openai_model_profile', wraps=openai_model_profile)
+    perplexity_mock = mocker.patch(f'{ns}.perplexity_model_profile', wraps=perplexity_model_profile)
 
     # Use real GroqProvider and CerebrasProvider - they don't make API calls for model_profile()
     # We just need dummy API keys which are set via env vars above
@@ -180,9 +182,9 @@ def test_cloudflare_provider_model_profile(mocker: MockerFixture, env: TestEnv):
     assert profile is not None
     assert profile.json_schema_transformer == GoogleJsonSchemaTransformer
 
-    # Test perplexity provider (uses OpenAI-compatible API)
+    # Test perplexity provider (currently returns None, falls back to OpenAI-compatible)
     profile = provider.model_profile('perplexity/llama-3.1-sonar-small-128k-online')
-    openai_mock.assert_called_with('llama-3.1-sonar-small-128k-online')
+    perplexity_mock.assert_called_with('llama-3.1-sonar-small-128k-online')
     assert profile is not None
     assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
@@ -240,96 +242,38 @@ def test_cloudflare_default_headers():
 
 
 def test_cloudflare_provider_stored_keys():
-    """Test stored keys mode - API keys stored in Cloudflare dashboard (requires authenticated gateway)."""
+    """Test CF-managed keys mode - API keys stored in Cloudflare dashboard (requires authenticated gateway)."""
     provider = CloudflareProvider(
         account_id='test-account-id',
         gateway_id='test-gateway-id',
-        cf_aig_authorization='gateway-token',
-        use_gateway_keys=True,
+        gateway_auth_token='gateway-token',
     )
-    # api_key is set to placeholder for AsyncOpenAI, but Authorization header will be stripped
-    assert provider.client.api_key == 'stored-keys-placeholder'
+    # api_key is set to empty string for AsyncOpenAI to prevent Authorization header
+    assert provider.client.api_key == ''
     assert provider.base_url == 'https://gateway.ai.cloudflare.com/v1/test-account-id/test-gateway-id/compat'
     assert provider.client.default_headers['cf-aig-authorization'] == 'gateway-token'
 
 
 def test_cloudflare_provider_missing_credentials():
-    """Test that error is raised when api_key is missing and use_gateway_keys=False."""
+    """Test that error is raised when api_key is missing and not in CF-managed keys mode."""
     with pytest.raises(
         UserError,
-        match=re.escape('When use_gateway_keys=False (the default), you must provide an api_key for BYOK mode.'),
+        match=re.escape('You must provide an api_key for user-managed mode.'),
     ):
         CloudflareProvider(account_id='test-account-id', gateway_id='test-gateway-id')  # type: ignore[call-overload]
 
 
-def test_cloudflare_provider_use_gateway_keys_with_api_key_conflict():
-    """Test that error is raised when both use_gateway_keys=True and api_key are provided."""
-    with pytest.raises(
-        UserError,
-        match=re.escape('When use_gateway_keys=True, do not provide an api_key.'),
-    ):
-        CloudflareProvider(  # type: ignore[call-overload]
-            account_id='test-account-id',
-            gateway_id='test-gateway-id',
-            cf_aig_authorization='gateway-token',
-            api_key='sk-test',
-            use_gateway_keys=True,
-        )
-
-
-def test_cloudflare_provider_use_gateway_keys_without_auth():
-    """Test that error is raised when use_gateway_keys=True but cf_aig_authorization is missing."""
-    with pytest.raises(
-        UserError,
-        match=re.escape('When use_gateway_keys=True, you must provide cf_aig_authorization.'),
-    ):
-        CloudflareProvider(
-            account_id='test-account-id',
-            gateway_id='test-gateway-id',
-            use_gateway_keys=True,  # type: ignore[call-overload]
-        )
-
-
-async def test_cloudflare_stored_keys_strips_auth_header():
-    """Test that Authorization header is stripped in stored keys mode so Cloudflare uses stored keys."""
-    import httpx
-
-    # Create a custom http_client to pass to the provider
-    custom_client = httpx.AsyncClient()
-
+def test_cloudflare_stored_keys_no_auth_header():
+    """Test that Authorization header is not sent in CF-managed keys mode (empty api_key)."""
     provider = CloudflareProvider(
         account_id='test-account-id',
         gateway_id='test-gateway-id',
-        cf_aig_authorization='gateway-token',
-        http_client=custom_client,
-        use_gateway_keys=True,
+        gateway_auth_token='gateway-token',
     )
 
-    # Get the http_client from the AsyncOpenAI client (accessing private attribute for testing)
-    http_client: httpx.AsyncClient = provider.client._client  # type: ignore[attr-defined]
-
-    # Test 1: Request WITH Authorization header - should be stripped
-    request = http_client.build_request('POST', 'https://example.com', headers={'Authorization': 'Bearer test'})
-
-    # Trigger the request event hooks
-    for hook in http_client.event_hooks.get('request', []):
-        await hook(request)
-
-    # Verify Authorization header was removed by the event hook
-    assert 'authorization' not in request.headers
-
-    # Test 2: Request WITHOUT Authorization header - should pass through unchanged (covers line 192 else branch)
-    request_no_auth = http_client.build_request(
-        'POST', 'https://example.com', headers={'Content-Type': 'application/json'}
-    )
-
-    # Trigger the request event hooks
-    for hook in http_client.event_hooks.get('request', []):
-        await hook(request_no_auth)
-
-    # Verify other headers are preserved and no error occurred
-    assert 'content-type' in request_no_auth.headers
-    assert 'authorization' not in request_no_auth.headers
+    # In CF-managed keys mode, api_key is empty string which prevents OpenAI SDK from adding Authorization header
+    assert provider.client.api_key == ''
+    assert provider.client.default_headers['cf-aig-authorization'] == 'gateway-token'
 
 
 def test_cloudflare_documented_patterns():
@@ -358,8 +302,7 @@ def test_cloudflare_documented_patterns():
         provider=CloudflareProvider(
             account_id='your-account-id',
             gateway_id='your-gateway-id',
-            cf_aig_authorization='your-gateway-token',
-            use_gateway_keys=True,
+            gateway_auth_token='your-gateway-token',
         ),
     )
     agent = Agent(model)
