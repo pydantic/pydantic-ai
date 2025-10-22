@@ -378,41 +378,6 @@ report = dataset.evaluate_sync(
 
 See [Retry Strategies](retry-strategies.md) for handling transient failures.
 
-## Large Datasets
-
-For very large datasets, consider batching:
-
-```python
-from pydantic_evals import Case, Dataset
-
-
-def my_task(inputs: str) -> str:
-    return f'Result: {inputs}'
-
-
-# Split dataset into batches
-def batch_evaluate(dataset: Dataset, task, batch_size=100):
-    all_cases = dataset.cases
-    reports = []
-
-    for i in range(0, len(all_cases), batch_size):
-        batch_cases = all_cases[i : i + batch_size]
-        batch_dataset = Dataset(
-            cases=batch_cases,
-            evaluators=dataset.evaluators,
-        )
-        report = batch_dataset.evaluate_sync(task, max_concurrency=10)
-        reports.append(report)
-
-    return reports
-
-
-large_dataset = Dataset(cases=[Case(inputs=f'test{i}') for i in range(1000)])
-
-# Process 1000 cases in batches of 100
-reports = batch_evaluate(large_dataset, my_task)
-```
-
 ## Next Steps
 
 - **[Retry Strategies](retry-strategies.md)** - Handle transient failures
