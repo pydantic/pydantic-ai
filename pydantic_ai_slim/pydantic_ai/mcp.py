@@ -113,7 +113,6 @@ class MCPServer(AbstractToolset[Any], ABC):
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
     _server_info: mcp_types.Implementation
-    _tools: list[mcp_types.Tool] | None
 
     def __init__(
         self,
@@ -149,7 +148,6 @@ class MCPServer(AbstractToolset[Any], ABC):
         self._enter_lock = Lock()
         self._running_count = 0
         self._exit_stack = None
-        self._tools = None
 
     @abstractmethod
     @asynccontextmanager
@@ -196,14 +194,13 @@ class MCPServer(AbstractToolset[Any], ABC):
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.
 
-        Note that we don't subscribe to the server to avoid complexity.
+        Note:
+        - We don't cache tools as they might change.
+        - We also don't subscribe to the server to avoid complexity.
         """
-        if self._tools is not None:
-            return self._tools
         async with self:  # Ensure server is running
             result = await self._client.list_tools()
-        self._tools = result.tools
-        return self._tools
+        return result.tools
 
     async def direct_call_tool(
         self,
