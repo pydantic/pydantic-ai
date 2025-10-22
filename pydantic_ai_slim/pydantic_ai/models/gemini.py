@@ -13,9 +13,6 @@ import pydantic
 from httpx import USE_CLIENT_DEFAULT, Response as HTTPResponse
 from typing_extensions import NotRequired, TypedDict, assert_never, deprecated
 
-from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
-from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # type: ignore[reportDeprecated]
-
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
@@ -135,8 +132,12 @@ class GeminiModel(Model):
 
         if isinstance(provider, str):
             if provider == 'google-gla':
+                from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
+
                 provider = GoogleGLAProvider()  # type: ignore[reportDeprecated]
             else:
+                from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # type: ignore[reportDeprecated]
+
                 provider = GoogleVertexProvider()  # type: ignore[reportDeprecated]
         self._provider = provider
         self.client = provider.client
