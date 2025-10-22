@@ -461,13 +461,10 @@ async def main():
 
     print(f'Result: {result}')
     #> Result: ReducedMetrics(count=5, sum=200)
-    # > Result: {'count': 4, 'total': 200}
     print(f'State total_count: {state.total_count}')
     #> State total_count: 9
-    # > State items_processed: 4
     print(f'State total_sum: {state.total_sum}')
     #> State total_sum: 275
-    # > State sum_total: 200
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
