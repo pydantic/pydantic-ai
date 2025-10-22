@@ -37,6 +37,9 @@ __all__ = [
 ]
 
 # We need eagerly import the anyio backends or it will happens inside workflow code and temporal has issues
+# Note: It's difficult to add a test that covers this because pytest presumably does these imports itself
+# when you have a @pytest.mark.anyio somewhere.
+# I suppose we could add a test that runs a python script in a separate process, but I have not done that...
 import anyio._backends._asyncio  # pyright: ignore[reportUnusedImport]
 
 try:
