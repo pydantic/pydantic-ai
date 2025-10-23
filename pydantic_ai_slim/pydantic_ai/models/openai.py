@@ -1485,7 +1485,7 @@ class OpenAIResponsesModel(Model):
                                         id=item.tool_call_id,
                                         type='mcp_list_tools',
                                         server_label=server_id,
-                                        tools=[],
+                                        tools=[],  # These can be read server-side
                                     )
                                     openai_messages.append(mcp_list_tools_item)
                                 elif (  # pragma: no branch
@@ -1498,7 +1498,7 @@ class OpenAIResponsesModel(Model):
                                         server_label=server_id,
                                         name=tool_name,
                                         arguments=to_json(tool_args).decode(),
-                                        error=None,  # These can be read server-side # TODO (DouweM): Or not?
+                                        error=None,  # These can be read server-side
                                         output=None,  # These can be read server-side
                                         type='mcp_call',
                                     )

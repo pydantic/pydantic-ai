@@ -42,13 +42,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '9727'
+      - '11759'
       content-type:
       - application/json
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '22077'
+      - '26025'
       openai-project:
       - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
@@ -61,9 +61,9 @@ interactions:
       background: false
       billing:
         payer: developer
-      created_at: 1761255603
+      created_at: 1761262977
       error: null
-      id: resp_0109ee23c01d02ff0068faa0b36cf081a38afe2a7309ffae10
+      id: resp_0083938b3a28070e0068fabd81970881a0a1195f2cab45bd04
       incomplete_details: null
       instructions: You are a helpful assistant.
       max_output_tokens: null
@@ -72,7 +72,7 @@ interactions:
       model: o4-mini-2025-04-16
       object: response
       output:
-      - id: mcpl_0109ee23c01d02ff0068faa0b38a1481a3a99669f3aa518000
+      - id: mcpl_0083938b3a28070e0068fabd81d51081a09d4b183ced693273
         server_label: deepwiki
         tools:
         - annotations:
@@ -94,73 +94,72 @@ interactions:
             type: object
           name: ask_question
         type: mcp_list_tools
-      - encrypted_content: gAAAAABo-qDJP9036xVAbi58wQno-FAT2cN1of2iuIwZvIsRz42fNQdsIkUNXunKbW2gpgKM2bv4gwI1Leeo1L1MSZVxnweAOytVB5TQkoFt45QJKddU_sNorQaeClHkdtEZRsZ9BTJlgEGqmW7CA3zxlT1VsitjXq0uH4tjZIMwaw3fl3NYN0ECNcwm34Y6X6W_DVNM6Er3U_d6zsQZejYexvVP-J47p9F0uMgR4o8qWjsjVDlbPNMV7jDvacpSCAHASx3iycF7YCa6auZjfXRTB3UE8Thv4eKvN22Whn85-GD91pHP8CcLdpavrtlnbzZYRkFELD0Tc9fEiCqMwJmEiPmoCNvIvSDD8-6cqLYKtUO7CeylkTh1NmVLXQrOFQr4NlahOYT3hGJUytkLI-mbYBawPT9W2RaU4EBFqohJ3NsEfXYXIFtt7t2kUaAv3QiViYXKLcVk2hJnrAecjFcdmcz6kP8ZmfljPKcRW4AD4nh9rJGXdtS95bDTt3J3oKY8TlR_k4HbZlChglIcUxvOeD4acYP_TtFJlMLX0LP_oop0V7PUJkiFtKHl7xpendJCJ7D8tGUzT_YiKj4gaVwQT40-Q8sGMtYZQUeW6f1ZY3t4nqmRZPl5U3NfeQZQWcSm6AIMQ1EdQzANTfro25wWQNt-rSrelUyYKiPBQlfbPsPAPfCqpVBLxCxvJXdk9nAMna-vJUEj1IFrOaF_c6wXQPzs8hq4g6VCjGLw2SuVoLwQSTBfEOetanrsA6UilE02bYzn0V-cPeEEilWGzOCw2mwUqUla0vW3gx-U6jJHNKLSgjvL-wkXQnkGtFc7xXJ7QpudqNqtmprBa6_npDDHd8BGpr-T0vMOQz1rAy2Z1UejYOI7Wue0f7Y2QIfrsDdxK203fxEyD94tDH8lESqg7kP89tcUDcryl7oJQY7TKpBz0fOK4AP8TctnZ1r_b5eMCLgLoj15P0j5KDbHDEZMLjUgY6PFHtD6sob-bWAJIcsE3c8YClXqkHvCS7LSCm_P3UXfpm40PtvAGsxbpzWrD5e_LQWVkg6TAotsU80ggTFMPDhYbSDpfwb4zF7YWSQDcccXR2K_HNpb0S_cqYkvJWCYmHgCTey3_iqInjS-3-cloMZ4SdZ6Zn1h4hiKSCXmpSPXhdhouz8w57g07YUg5o7EoMMhq9pazoS3LeLfRDOg9ZtkCAUdbiffvLJbdnHs1ggAX8ae08XP6KSK5b-dNvM1aPUNNn8wGNkScHoCUeAEhtr_aCbJzEjK77fReaE2hBpQ3C9KDeAuxELDe430fldVY50wGt4MxBaP9BOdeDA0gIUDla5bDP8qWR_fp_N8lWCjGO_2yLTz5pNL9KOVWBFGiSuCQ--5_4PP3iacJ8Y99Q9ylyIM6ZhgZOPLiMIsgJVstZswIaSxZLtOI5idDSpf8LDvofc16N8jqSSeoKZsThZExcxcZQJOIUfD0LvwVYmxSSap0BAg4mlbm8dA3G97ocZvVDr1kTNQP-UBIs18H-EqKwrEyava4SY5st0cNKRnROk85WJBUz0A-DJDqaA3naUjh_1d8qZ9FjoJXKq1Vk_1sCddCfQAhVUyG68oaRuGhH2It7o_g-6jF438Ta18olPmtDQiWYdULScZuC5L27pvhouHu3ohnkJjZvU_oiRVOWyHWlNd9MrGC-APrJct3xTjDOOxpleF5hE7q_CF9ckoJ59s_vxBZ7dpU5gclkiPXp7o85Z3YC4nCcHId3ZqzmD12ba_gJ9azKp2WCYRY5eGDQoDI_yqQKG7xO20XZV_xY1F8ozjZrjlAZNW30aKhbEkVdRcv8pLkLFhEMLP9KAMBSVCjNEhWG5xLR0P6cpm0AaYjCjaR6NCvtIAZ8yFoVB9lg==
-        id: rs_0109ee23c01d02ff0068faa0b683c481a396fef8bbc184ca9f
+      - encrypted_content: gAAAAABo-r2bs6ChS2NtAXH6S8ZWRHzygQvAZrQGsb5ziJKg6dINF9TQnq4llBquiZh-3Ngx2Ha4S-2_TLSbgcsglradULI8c8N2CnilghcqlLE90MXgHWzGfMDbmnRVpTW9iJsOnBn4ferQtNLIsXzfGWq4Ov0Bbvlw_fCm9pQsqOavcJ5Kop2lJ9Xqb__boYMcBCPq3FcNlfC3aia2wZkacS4qKZGqytqQP13EX3q6LwFVnAMIFuwn5XLrh4lFf-S5u8UIw3C6wvVIXEUatY6-awgHHJKXxWUxqRQPJegatMb8KE-QtuKQUfdvEE0ykdHtWqT7nnC3qTY67UaSCCvJ9SdXj-t806GVei9McSUe8riU3viHnfY0R0u9GIXsVnfVthIDRnX7KzpF5ot_CpCrgbCmD9Rj2AAos5pCdSzpc08G5auUuuMZfoiWANADTHHhO2OvflSEpmO8pb-QAYfMoK9exYVQ8Oig-Nj35unupcYy7A2bDCViXzqy32aw9QHmH7rErI4v72beWQxRVdX15Z7VS2c6L1dD7cU18K35CWqlSz9hEX5AcGqEEtIDVu1TdF3m1m2u4ooc4TjYpRecjYoG8Ib-vVKoX5C65a7G1cTbCo8dO0DYKGgM8jM7ZDubxbCcZ22Sxk58f8cer7WxHyp7WRo5-6zvMwMCk8uEY44RJmg-m0Oxl_6qxdr4Md80xZah_6tCCB62agQmYwCrR75_r93xOckQAK0R_37khvQD5gWVlE5Rg-01eUTboiPGqYmIsqWvOkziMGnxgKVw_yUf8swHU1ciWr7O1EdVPHLG7YXlVQTHTE_CX3uOsE2FoZnpS_MgpxGfjb76majV50h7mJ6ySVPF_3NF3RQXx64W08SW4eVFD8JJf0yChqXDmlwu2CDZN1n99xdaE9QbMODNEOmfTQOPhQ9g-4LhstNTKCCxWDh0qiv_dq2qAd0I9Gupoit33xGpb66mndc0nuuNFe8-16iC_KzQtHBNzgasgYK-r83KFVmiYK3Jxvz_2dfdwe0M1q7NLBvbnWc6k9LIf8iDUF6Q1J-cfC7SsncCbROtzIPlKpQwxhP-M09Xy3RVxlH9dcvuk3_qqEAartUQC8ZbuLRbhiq66eE1RvQzdNd2tsoBQ85cdNs57Penio7w9zILUf1JP5O8-zCe5GPC3W3EXTIEvHR-kiuxJvhcsySijpldGmuygRx05ARNOIT7VDCZvF23RfmnRduY1X1FAqb_i_aMStK7iyHr_2ohwOWLuklpyuoG0Y1ulvq1A9-hyCZ0mpvTEF6om2tAZ9_7h8W9ksiOkey0yA-6ze17MCjfnK2XcbqmSMgOngW1PrD81oKoheMnIeJdcWgF2mk8VDqmAwaDTxMxdnXkzK74rA43a4rWk3d2bUts8dAUkuYXTwJwKQw4LfXtu-mwwgJ6BkT_GiBcBJ6ulBuPsNZfpwPuxox6PS6KpzVTQ94cKNqSIIyFCD4xZsEvPALud09-gmAEDHxdnPjqLSi2U8xd0j-6XYKN0JtZ45kwEIRsOrFu-SYLz1OcYFKI5A5P-vYlzGx1WhEnoeUlyooJBhNj6ZBfj9f63SByxm7sgh260vf1t-4OGzVTIUKFluxkI4ubigLZ-g4q4dSwiEWXn50JFPrtuPs5VxsIIz_lXbh1SrKeQ647KdDSAQZFgEfzOOt3el5K97V1x7V7gEWCCgmqDIz3yZPpwD6qmUQKqlj_p8-OQrniamGULkXrmrgbNQVfV-Qw7Hg6ELw4aHF_IZME9Qnyn7peFhH6ai_YapuNF7FK-MBtPYoMaqBf05U2-uJAVUas3VuT_-pTyHvhtFmB7vc0-qgf_CtVNIXSPq2_vXdQdEwwCVPPwW6xWm-invrzhyQR_mf3OQqZT6_zOHIMPBJUaXcQKT0KTdoBZUDamAR-ECZl8r6wdLCn0HjAEwj3ifUCNMzQ7CZHUQG46rj61YyasNWO__4Ef4kTcApKgljosuABqP4HAdmkP5eEnX-6nutrL50iv-Mms_R-T7SKtmEEf9wihTu4Meb441cU9DI4WwSyiBSnsYdGy9FJKmHwP7HD0FmpmWkOrtROkQVMlMVKQFlKK8OBtxafHYsZkWDawbA1eetzMBzQ3PP8PSvva6SJWjbgURHVm5RjXV8Hk6toIBEDx9r9vAIczSp49eDCkQbzPkGAVilO3KLQpNx2itBbZzgE36uV0neZZsVs7aqafI4qCTQOLzYA8YFDKz92yhgdIzl5VPFLFNHqRS4duPRQImQ7vb6yKSxjDThiyQQUTPBX_EXUAAR7JHwJI1i8la3V
+        id: rs_0083938b3a28070e0068fabd84727c81a0a52c171d2568a947
         summary: []
         type: reasoning
       - approval_request_id: null
-        arguments: '{"repoName":"pydantic/pydantic-ai","question":"What is the pydantic/pydantic-ai repository? Summarize
-          its purpose and main features."}'
+        arguments: '{"repoName":"pydantic/pydantic-ai","question":"Provide a brief summary of the repository, including purpose,
+          main features, and status."}'
         error: null
-        id: mcp_0109ee23c01d02ff0068faa0b9381c81a3b9cee8be673b743a
+        id: mcp_0083938b3a28070e0068fabd88db5c81a08e56f163bbc6088b
         name: ask_question
         output: |
-          The `pydantic/pydantic-ai` repository is a Python agent framework designed to simplify the development of production-grade applications using Generative AI  . It aims to provide an ergonomic developer experience and type-safety, similar to FastAPI, for AI agent development  .
+          Pydantic AI is a Python agent framework designed to build production-grade applications using Generative AI, emphasizing an ergonomic developer experience and type-safety . It provides type-safe agents, a model-agnostic design supporting over 15 LLM providers, structured outputs with Pydantic validation, comprehensive observability, and production-ready tooling . The project is structured as a UV workspace monorepo, including core framework components, an evaluation system, a graph execution engine, examples, and a CLI tool .
 
-          ## Purpose
-          The primary purpose of `pydantic-ai` is to enable developers to build reliable AI applications by offering a framework that is type-safe, model-agnostic, and includes comprehensive observability and production-ready tooling . It leverages Pydantic's validation capabilities to ensure type safety and structured outputs in AI agent interactions  .
+          ## Purpose <cite/>
 
-          ## Main Features
+          The primary purpose of Pydantic AI is to simplify the development of reliable AI applications by offering a robust framework that integrates type-safety and an intuitive developer experience . It aims to provide a unified approach to interacting with various LLM providers and managing complex agent workflows .
 
-          ### Type-Safe Agents
-          The framework provides generic `Agent[Deps, Output]` for compile-time validation, utilizing `RunContext[Deps]` for dependency injection and Pydantic `output_type` for validation  . This ensures that agents are robust and predictable  .
+          ## Main Features <cite/>
 
-          ### Model-Agnostic Design
-          `pydantic-ai` supports over 15 LLM providers through a unified `Model` interface, allowing for flexibility in choosing and switching between different large language models   . This includes support for OpenAI, Anthropic, Google, Groq, Mistral, Cohere, and Bedrock, among others . Custom models can also be implemented by subclassing the `Model` abstract base class .
+          ### Type-Safe Agents <cite/>
+          Pydantic AI agents are generic `Agent[Deps, Output]` for compile-time validation, utilizing `RunContext[Deps]` for dependency injection and Pydantic `output_type` for output validation  . This ensures that the inputs and outputs of agents are strictly typed and validated .
 
-          ### Structured Outputs and Tool System
-          The framework facilitates structured outputs with automatic Pydantic validation and reflection/self-correction . It includes a tool system where functions can be registered using `@agent.tool` or `@agent.tool_plain` decorators, with automatic JSON schema generation from function signatures and docstrings  . This allows models to perform actions and retrieve information, making agents more capable and reliable .
+          ### Model-Agnostic Design <cite/>
+          The framework supports over 15 LLM providers through a unified `Model` interface, allowing developers to switch between different models without significant code changes  . Implementations for providers like OpenAI, Anthropic, and Google are available .
 
-          ### Comprehensive Observability
-          `pydantic-ai` offers comprehensive observability through OpenTelemetry and native Logfire integration   . It provides instrumentation for agent runs, model requests, and tool executions, with spans and metrics for token usage and costs .
+          ### Structured Outputs <cite/>
+          Pydantic AI leverages Pydantic for automatic validation and self-correction of structured outputs from LLMs . This is crucial for ensuring data integrity and reliability in AI applications .
 
-          ### Production-Ready Tooling
-          The repository includes an evaluation framework (`pydantic-evals`) for systematically testing and evaluating agent performance    . It also supports durable execution for long-running workflows and integrations with protocols like MCP (Model Context Protocol), A2A (Agent2Agent), and AG-UI (Agent-User Interaction)   .
+          ### Comprehensive Observability <cite/>
+          The framework includes comprehensive observability features via OpenTelemetry and native Logfire integration . This allows for tracing agent runs, model requests, tool executions, and monitoring token usage and costs  .
 
-          ### Graph-Based Execution
-          The execution flow of agents is managed by a graph-based state machine using `pydantic_graph.Graph`  . This allows for orchestration of model requests and responses through core node types like `UserPromptNode`, `ModelRequestNode`, and `CallToolsNode`  .
+          ### Production-Ready Tooling <cite/>
+          Pydantic AI offers an evaluation framework, durable execution capabilities, and protocol integrations .
+          *   **Tool System**: Tools can be registered using the `@agent.tool` decorator, with automatic JSON schema generation from function signatures and docstrings .
+          *   **Graph Execution**: The `pydantic_graph.Graph` module provides a graph-based state machine for orchestrating agent execution, using nodes like `UserPromptNode`, `ModelRequestNode`, and `CallToolsNode` .
+          *   **Evaluation Framework**: The `pydantic-evals` package provides tools for creating datasets, running evaluators (e.g., `ExactMatch`, `LLMEvaluator`), and generating reports .
+          *   **Integrations**: It integrates with various protocols and environments, including Model Context Protocol (MCP) for external tool servers, AG-UI for interactive frontends, and Temporal/DBOS for durable execution .
 
-          ## Repository Structure
-          The `pydantic/pydantic-ai` repository is organized as a UV workspace monorepo, containing several packages :
-          *   `pydantic-ai-slim`: The core framework with agent, model, and tool functionalities  .
-          *   `pydantic-graph`: The graph execution engine .
-          *   `pydantic-evals`: The evaluation framework .
-          *   `examples`: Contains example applications .
-          *   `clai`: A CLI interface .
-          *   `pydantic-ai`: A meta-package that includes all optional extras  .
+          ## Status <cite/>
+          The project is actively maintained and considered "Production/Stable"  . It supports Python versions 3.10 through 3.13  . The documentation is built using MkDocs and includes API references and examples  .
 
-          Notes:
-          The `CLAUDE.md` file provides guidance for Claude Code when working with the repository, outlining development commands and project architecture. This is a specific instruction file for an AI assistant and not a core component of the framework itself.
+          ## Notes <cite/>
+          The repository is organized as a monorepo using `uv` for package management  . Key packages include `pydantic-ai-slim` (core framework), `pydantic-evals` (evaluation system), `pydantic-graph` (graph execution engine), `examples` (example applications), and `clai` (CLI tool) .
 
           Wiki pages you might want to explore:
           - [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)
 
-          View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpydanticai_e00708e4-1510-447b-979d-a80a0442c1f1
+          View this search on DeepWiki: https://deepwiki.com/search/provide-a-brief-summary-of-the_a5712f6e-e928-4886-bcea-b9b75761aac5
         server_label: deepwiki
         status: completed
         type: mcp_call
+      - encrypted_content: gAAAAABo-r2bD-v0Y3pAlyAEK1Sb8qJJcJRKSRtYwymHwLNXY-SKCqd_Q5RbN0DLCclspuPCAasGLm1WM1Q2Y_3szaEEr_OJalXTVEfRvhCJE1iTgoz2Uyf7KttZ4W92hlYjE8cjgdo5tKtSVkNyzTs4JUHKRHoDMutL2KivjZKuK_4n-lo9paJC_jmz6RWO8wUoXo3_fGxjliOGnWyRXwEPmgAcEWNOSVgCgAEO3vXerXRPLie02HegWcLMtK6WORDHd02Kr86QSK3W30bnvU7glAFX6VhSSnR8G0ceAM-ImoomQ8obEDyedX1-pYDKPOa4pZ5iTjD24ABYOwz-0L7SNziQJLycwwsr11Fj0_Au9yJph8YkNb2nAyFeiNVCRjKul51B7dZgz-UZ9juWO2ffeI0GNtQTYzf46_Y1t0qykGW6w59xjmBHTKf5SiSe0pqWxZ6LOLoPx01rX2gLaKgNZZiERSbO0iwbA4tpxb9ur-qeFVv5tS7xy8KFYOa8SPrypvFWDoY6CjSwTS3ir0vyfpbJy-n6bcYP_pTwDZxy_1aVkciim8Tmm_9wYgI0uY5kcA9VYJuyc4cg7S7ykTUxMZz7xiLMf8FoXl1gHbVJrYriyZzh2poYTWlcCuSCiUaXhQKxcxMRrt_P7WANx0n68ENQ40HkoJ6rThvWUuwtmEYqZ0ldh3XSFtyNrqha4PQ5eg_DudlU_5CxyykuzWmi_o5MEW4_XW4b9vdXg1laqx4189_jEuV_JPGNeL3Ke4EbMbKHzsiaGePRZGgNutnlERagmU4VFTeoE5bN3oHlR_Au4PeQxdb7BuBmZRDDCnnIRd2NfSWb7bgfUozkA4S6rm_089OlRBeRVoLtA8zZZinNGtOZl7MtkLnoJVIWpF1rr7D_47eWSyyegUIIS2e5UKLJfCLkNgSlWPU9VquHEzSfqeHfzoN5ccoVwrvrHmeveTjI-wIJygdfuyti5cMgOOkAtLzjWmbs4CjmlWcbZKeidtDj5YpCSmYAGFuZze-cSbNjMv4th639dCu_jmRMze-l2Y5npbRwMqEJr7VLXghmLc1vhOsaQM3gxoF0CJJlmvtR4jxPqhE3694YRva6LS1WjR4oueM6zfpVeB2kC0hQgqaL6MiwtTRYFfuCzEHi18TwA5bqqkfgrDXedmjAzlEGSZFe2EBRlF_ZtagrVVTCagHQArnH3DkVQMEDCHCqDxA_PINR_997IxeNgGPsvazVdOOBef7sO4rvAWrC94nIlt7d4aViqbTNMW-W8rqjGFOqj1swrM0yoX5y6LY5oXPc3Mu35xeitn_paqtGPkvuH6WeGzAiNZFDoQkUdLkZ4SIH2lr4ZXmMI3nuTzCrwyshwcEu-hhVtGAEQEqVrIn8J75IzYTs1UGLBvhmcpHxCfG04MFNoVf-EPI4SgjNEgV61861TYshxCRrydVhaJmbLqYh8yzLYBHK6oIymv-BrIJ0LX222LwoGbSc0gMTMaudtthlFXrHdnswKf81ubhF7viiD3Y=
+        id: rs_0083938b3a28070e0068fabd97008081a0ad1b2362bcb153c9
+        summary: []
+        type: reasoning
       - content:
         - annotations: []
           logprobs: []
-          text: "pydantic/pydantic-ai is a Python framework for building production-grade, type-safe AI agents. It uses Pydantic
-            for input/output validation, supports 15+ LLMs (OpenAI, Anthropic, Google, etc.) via a unified Model API, and
-            offers:\n\n• Type-safe agents with dependency injection  \n• Structured outputs and self-correction via Pydantic
-            schemas  \n• A tool system (register functions as “tools” with auto-generated JSON schemas)  \n• Comprehensive
-            observability (OpenTelemetry, Logfire)  \n• Evaluation suite (pydantic-evals) and durable workflows  \n• Graph-based
-            execution engine (pydantic-graph)\n\nIt’s organized as a monorepo: core (`pydantic-ai-slim`), graph engine, evals,
-            examples, CLI and a meta-package bundling everything."
+          text: "Pydantic AI is a Python agent framework for building production-grade AI apps with:\n\n• Type-safe agents
+            (generic Agent[Deps, Output] + Pydantic validation)  \n• Model-agnostic support (15+ LLM providers via a unified
+            Model interface)  \n• Structured outputs (automatic Pydantic validation & self-correction)  \n• Observability
+            (OpenTelemetry + Logfire tracing, token/cost monitoring)  \n• Production tooling (decorator-driven tool system,
+            graph execution engine, evaluation framework, CLI)  \n\nIt’s a UV-workspace monorepo (core packages, evals, graph
+            engine, examples, CLI), supports Python 3.10–3.13, and is actively maintained under an open-source license."
           type: output_text
-        id: msg_0109ee23c01d02ff0068faa0c771d481a3a04ab24cfba6eaf3
+        id: msg_0083938b3a28070e0068fabd989bb481a08c61416ab343ef49
         role: assistant
         status: completed
         type: message
@@ -194,13 +193,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 1144
+        input_tokens: 1207
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 366
+        output_tokens: 535
         output_tokens_details:
-          reasoning_tokens: 128
-        total_tokens: 1510
+          reasoning_tokens: 320
+        total_tokens: 1742
       user: null
     status:
       code: 200
@@ -214,12 +213,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3969'
+      - '5961'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=QRDIG0hLcvFfjWLgrYwbmGGaS3.hDTc1EO2Hp1kxj1A-1761255625-1.0.1.1-TjJaBm9uALr.x65ERA1etk_68FHvZd0003dek1Ryyt98lXjChME5nxadFvHGWUQGndbpPE52pvCHkVAkWjKH12KH2Tabl86O3.3GsPqo_g0;
-        _cfuvid=EsACdgUBDYAXwEN5sdcKrMAa7CMMl3w_Dpoh1fZfflk-1761255625527-0.0.1.1-604800000
+      - __cf_bm=I1KszUjNwv2uNOtjsRRsldNvnVOw8h1u.wxWNcm3jQA-1761263003-1.0.1.1-akBJ4N038sDJQ5.bA.t0OOiJp.ZjUeBgcfh74f1WlJ4udDx4xKQgBLcuIt2baVr2HvEZeWvaVmBhENKyB0o_ICNY1qotoNSJ0NLlfi6aFmI;
+        _cfuvid=ZOdy7lYvFxE_5RaRILLwN_uBW1gic_STDgqG0ZvJuX0-1761263003633-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -229,37 +228,40 @@ interactions:
       input:
       - content: Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short
         role: user
-      - id: mcpl_0109ee23c01d02ff0068faa0b38a1481a3a99669f3aa518000
+      - id: mcpl_0083938b3a28070e0068fabd81d51081a09d4b183ced693273
         server_label: deepwiki
         tools: []
         type: mcp_list_tools
-      - encrypted_content: gAAAAABo-qDJP9036xVAbi58wQno-FAT2cN1of2iuIwZvIsRz42fNQdsIkUNXunKbW2gpgKM2bv4gwI1Leeo1L1MSZVxnweAOytVB5TQkoFt45QJKddU_sNorQaeClHkdtEZRsZ9BTJlgEGqmW7CA3zxlT1VsitjXq0uH4tjZIMwaw3fl3NYN0ECNcwm34Y6X6W_DVNM6Er3U_d6zsQZejYexvVP-J47p9F0uMgR4o8qWjsjVDlbPNMV7jDvacpSCAHASx3iycF7YCa6auZjfXRTB3UE8Thv4eKvN22Whn85-GD91pHP8CcLdpavrtlnbzZYRkFELD0Tc9fEiCqMwJmEiPmoCNvIvSDD8-6cqLYKtUO7CeylkTh1NmVLXQrOFQr4NlahOYT3hGJUytkLI-mbYBawPT9W2RaU4EBFqohJ3NsEfXYXIFtt7t2kUaAv3QiViYXKLcVk2hJnrAecjFcdmcz6kP8ZmfljPKcRW4AD4nh9rJGXdtS95bDTt3J3oKY8TlR_k4HbZlChglIcUxvOeD4acYP_TtFJlMLX0LP_oop0V7PUJkiFtKHl7xpendJCJ7D8tGUzT_YiKj4gaVwQT40-Q8sGMtYZQUeW6f1ZY3t4nqmRZPl5U3NfeQZQWcSm6AIMQ1EdQzANTfro25wWQNt-rSrelUyYKiPBQlfbPsPAPfCqpVBLxCxvJXdk9nAMna-vJUEj1IFrOaF_c6wXQPzs8hq4g6VCjGLw2SuVoLwQSTBfEOetanrsA6UilE02bYzn0V-cPeEEilWGzOCw2mwUqUla0vW3gx-U6jJHNKLSgjvL-wkXQnkGtFc7xXJ7QpudqNqtmprBa6_npDDHd8BGpr-T0vMOQz1rAy2Z1UejYOI7Wue0f7Y2QIfrsDdxK203fxEyD94tDH8lESqg7kP89tcUDcryl7oJQY7TKpBz0fOK4AP8TctnZ1r_b5eMCLgLoj15P0j5KDbHDEZMLjUgY6PFHtD6sob-bWAJIcsE3c8YClXqkHvCS7LSCm_P3UXfpm40PtvAGsxbpzWrD5e_LQWVkg6TAotsU80ggTFMPDhYbSDpfwb4zF7YWSQDcccXR2K_HNpb0S_cqYkvJWCYmHgCTey3_iqInjS-3-cloMZ4SdZ6Zn1h4hiKSCXmpSPXhdhouz8w57g07YUg5o7EoMMhq9pazoS3LeLfRDOg9ZtkCAUdbiffvLJbdnHs1ggAX8ae08XP6KSK5b-dNvM1aPUNNn8wGNkScHoCUeAEhtr_aCbJzEjK77fReaE2hBpQ3C9KDeAuxELDe430fldVY50wGt4MxBaP9BOdeDA0gIUDla5bDP8qWR_fp_N8lWCjGO_2yLTz5pNL9KOVWBFGiSuCQ--5_4PP3iacJ8Y99Q9ylyIM6ZhgZOPLiMIsgJVstZswIaSxZLtOI5idDSpf8LDvofc16N8jqSSeoKZsThZExcxcZQJOIUfD0LvwVYmxSSap0BAg4mlbm8dA3G97ocZvVDr1kTNQP-UBIs18H-EqKwrEyava4SY5st0cNKRnROk85WJBUz0A-DJDqaA3naUjh_1d8qZ9FjoJXKq1Vk_1sCddCfQAhVUyG68oaRuGhH2It7o_g-6jF438Ta18olPmtDQiWYdULScZuC5L27pvhouHu3ohnkJjZvU_oiRVOWyHWlNd9MrGC-APrJct3xTjDOOxpleF5hE7q_CF9ckoJ59s_vxBZ7dpU5gclkiPXp7o85Z3YC4nCcHId3ZqzmD12ba_gJ9azKp2WCYRY5eGDQoDI_yqQKG7xO20XZV_xY1F8ozjZrjlAZNW30aKhbEkVdRcv8pLkLFhEMLP9KAMBSVCjNEhWG5xLR0P6cpm0AaYjCjaR6NCvtIAZ8yFoVB9lg==
-        id: rs_0109ee23c01d02ff0068faa0b683c481a396fef8bbc184ca9f
+      - encrypted_content: gAAAAABo-r2bs6ChS2NtAXH6S8ZWRHzygQvAZrQGsb5ziJKg6dINF9TQnq4llBquiZh-3Ngx2Ha4S-2_TLSbgcsglradULI8c8N2CnilghcqlLE90MXgHWzGfMDbmnRVpTW9iJsOnBn4ferQtNLIsXzfGWq4Ov0Bbvlw_fCm9pQsqOavcJ5Kop2lJ9Xqb__boYMcBCPq3FcNlfC3aia2wZkacS4qKZGqytqQP13EX3q6LwFVnAMIFuwn5XLrh4lFf-S5u8UIw3C6wvVIXEUatY6-awgHHJKXxWUxqRQPJegatMb8KE-QtuKQUfdvEE0ykdHtWqT7nnC3qTY67UaSCCvJ9SdXj-t806GVei9McSUe8riU3viHnfY0R0u9GIXsVnfVthIDRnX7KzpF5ot_CpCrgbCmD9Rj2AAos5pCdSzpc08G5auUuuMZfoiWANADTHHhO2OvflSEpmO8pb-QAYfMoK9exYVQ8Oig-Nj35unupcYy7A2bDCViXzqy32aw9QHmH7rErI4v72beWQxRVdX15Z7VS2c6L1dD7cU18K35CWqlSz9hEX5AcGqEEtIDVu1TdF3m1m2u4ooc4TjYpRecjYoG8Ib-vVKoX5C65a7G1cTbCo8dO0DYKGgM8jM7ZDubxbCcZ22Sxk58f8cer7WxHyp7WRo5-6zvMwMCk8uEY44RJmg-m0Oxl_6qxdr4Md80xZah_6tCCB62agQmYwCrR75_r93xOckQAK0R_37khvQD5gWVlE5Rg-01eUTboiPGqYmIsqWvOkziMGnxgKVw_yUf8swHU1ciWr7O1EdVPHLG7YXlVQTHTE_CX3uOsE2FoZnpS_MgpxGfjb76majV50h7mJ6ySVPF_3NF3RQXx64W08SW4eVFD8JJf0yChqXDmlwu2CDZN1n99xdaE9QbMODNEOmfTQOPhQ9g-4LhstNTKCCxWDh0qiv_dq2qAd0I9Gupoit33xGpb66mndc0nuuNFe8-16iC_KzQtHBNzgasgYK-r83KFVmiYK3Jxvz_2dfdwe0M1q7NLBvbnWc6k9LIf8iDUF6Q1J-cfC7SsncCbROtzIPlKpQwxhP-M09Xy3RVxlH9dcvuk3_qqEAartUQC8ZbuLRbhiq66eE1RvQzdNd2tsoBQ85cdNs57Penio7w9zILUf1JP5O8-zCe5GPC3W3EXTIEvHR-kiuxJvhcsySijpldGmuygRx05ARNOIT7VDCZvF23RfmnRduY1X1FAqb_i_aMStK7iyHr_2ohwOWLuklpyuoG0Y1ulvq1A9-hyCZ0mpvTEF6om2tAZ9_7h8W9ksiOkey0yA-6ze17MCjfnK2XcbqmSMgOngW1PrD81oKoheMnIeJdcWgF2mk8VDqmAwaDTxMxdnXkzK74rA43a4rWk3d2bUts8dAUkuYXTwJwKQw4LfXtu-mwwgJ6BkT_GiBcBJ6ulBuPsNZfpwPuxox6PS6KpzVTQ94cKNqSIIyFCD4xZsEvPALud09-gmAEDHxdnPjqLSi2U8xd0j-6XYKN0JtZ45kwEIRsOrFu-SYLz1OcYFKI5A5P-vYlzGx1WhEnoeUlyooJBhNj6ZBfj9f63SByxm7sgh260vf1t-4OGzVTIUKFluxkI4ubigLZ-g4q4dSwiEWXn50JFPrtuPs5VxsIIz_lXbh1SrKeQ647KdDSAQZFgEfzOOt3el5K97V1x7V7gEWCCgmqDIz3yZPpwD6qmUQKqlj_p8-OQrniamGULkXrmrgbNQVfV-Qw7Hg6ELw4aHF_IZME9Qnyn7peFhH6ai_YapuNF7FK-MBtPYoMaqBf05U2-uJAVUas3VuT_-pTyHvhtFmB7vc0-qgf_CtVNIXSPq2_vXdQdEwwCVPPwW6xWm-invrzhyQR_mf3OQqZT6_zOHIMPBJUaXcQKT0KTdoBZUDamAR-ECZl8r6wdLCn0HjAEwj3ifUCNMzQ7CZHUQG46rj61YyasNWO__4Ef4kTcApKgljosuABqP4HAdmkP5eEnX-6nutrL50iv-Mms_R-T7SKtmEEf9wihTu4Meb441cU9DI4WwSyiBSnsYdGy9FJKmHwP7HD0FmpmWkOrtROkQVMlMVKQFlKK8OBtxafHYsZkWDawbA1eetzMBzQ3PP8PSvva6SJWjbgURHVm5RjXV8Hk6toIBEDx9r9vAIczSp49eDCkQbzPkGAVilO3KLQpNx2itBbZzgE36uV0neZZsVs7aqafI4qCTQOLzYA8YFDKz92yhgdIzl5VPFLFNHqRS4duPRQImQ7vb6yKSxjDThiyQQUTPBX_EXUAAR7JHwJI1i8la3V
+        id: rs_0083938b3a28070e0068fabd84727c81a0a52c171d2568a947
         summary: []
         type: reasoning
-      - arguments: '{"repoName":"pydantic/pydantic-ai","question":"What is the pydantic/pydantic-ai repository? Summarize
-          its purpose and main features."}'
+      - arguments: '{"repoName":"pydantic/pydantic-ai","question":"Provide a brief summary of the repository, including purpose,
+          main features, and status."}'
         error: null
-        id: mcp_0109ee23c01d02ff0068faa0b9381c81a3b9cee8be673b743a
+        id: mcp_0083938b3a28070e0068fabd88db5c81a08e56f163bbc6088b
         name: ask_question
         output: null
         server_label: deepwiki
         type: mcp_call
+      - encrypted_content: gAAAAABo-r2bD-v0Y3pAlyAEK1Sb8qJJcJRKSRtYwymHwLNXY-SKCqd_Q5RbN0DLCclspuPCAasGLm1WM1Q2Y_3szaEEr_OJalXTVEfRvhCJE1iTgoz2Uyf7KttZ4W92hlYjE8cjgdo5tKtSVkNyzTs4JUHKRHoDMutL2KivjZKuK_4n-lo9paJC_jmz6RWO8wUoXo3_fGxjliOGnWyRXwEPmgAcEWNOSVgCgAEO3vXerXRPLie02HegWcLMtK6WORDHd02Kr86QSK3W30bnvU7glAFX6VhSSnR8G0ceAM-ImoomQ8obEDyedX1-pYDKPOa4pZ5iTjD24ABYOwz-0L7SNziQJLycwwsr11Fj0_Au9yJph8YkNb2nAyFeiNVCRjKul51B7dZgz-UZ9juWO2ffeI0GNtQTYzf46_Y1t0qykGW6w59xjmBHTKf5SiSe0pqWxZ6LOLoPx01rX2gLaKgNZZiERSbO0iwbA4tpxb9ur-qeFVv5tS7xy8KFYOa8SPrypvFWDoY6CjSwTS3ir0vyfpbJy-n6bcYP_pTwDZxy_1aVkciim8Tmm_9wYgI0uY5kcA9VYJuyc4cg7S7ykTUxMZz7xiLMf8FoXl1gHbVJrYriyZzh2poYTWlcCuSCiUaXhQKxcxMRrt_P7WANx0n68ENQ40HkoJ6rThvWUuwtmEYqZ0ldh3XSFtyNrqha4PQ5eg_DudlU_5CxyykuzWmi_o5MEW4_XW4b9vdXg1laqx4189_jEuV_JPGNeL3Ke4EbMbKHzsiaGePRZGgNutnlERagmU4VFTeoE5bN3oHlR_Au4PeQxdb7BuBmZRDDCnnIRd2NfSWb7bgfUozkA4S6rm_089OlRBeRVoLtA8zZZinNGtOZl7MtkLnoJVIWpF1rr7D_47eWSyyegUIIS2e5UKLJfCLkNgSlWPU9VquHEzSfqeHfzoN5ccoVwrvrHmeveTjI-wIJygdfuyti5cMgOOkAtLzjWmbs4CjmlWcbZKeidtDj5YpCSmYAGFuZze-cSbNjMv4th639dCu_jmRMze-l2Y5npbRwMqEJr7VLXghmLc1vhOsaQM3gxoF0CJJlmvtR4jxPqhE3694YRva6LS1WjR4oueM6zfpVeB2kC0hQgqaL6MiwtTRYFfuCzEHi18TwA5bqqkfgrDXedmjAzlEGSZFe2EBRlF_ZtagrVVTCagHQArnH3DkVQMEDCHCqDxA_PINR_997IxeNgGPsvazVdOOBef7sO4rvAWrC94nIlt7d4aViqbTNMW-W8rqjGFOqj1swrM0yoX5y6LY5oXPc3Mu35xeitn_paqtGPkvuH6WeGzAiNZFDoQkUdLkZ4SIH2lr4ZXmMI3nuTzCrwyshwcEu-hhVtGAEQEqVrIn8J75IzYTs1UGLBvhmcpHxCfG04MFNoVf-EPI4SgjNEgV61861TYshxCRrydVhaJmbLqYh8yzLYBHK6oIymv-BrIJ0LX222LwoGbSc0gMTMaudtthlFXrHdnswKf81ubhF7viiD3Y=
+        id: rs_0083938b3a28070e0068fabd97008081a0ad1b2362bcb153c9
+        summary: []
+        type: reasoning
       - content:
         - annotations: []
-          text: "pydantic/pydantic-ai is a Python framework for building production-grade, type-safe AI agents. It uses Pydantic
-            for input/output validation, supports 15+ LLMs (OpenAI, Anthropic, Google, etc.) via a unified Model API, and
-            offers:\n\n• Type-safe agents with dependency injection  \n• Structured outputs and self-correction via Pydantic
-            schemas  \n• A tool system (register functions as “tools” with auto-generated JSON schemas)  \n• Comprehensive
-            observability (OpenTelemetry, Logfire)  \n• Evaluation suite (pydantic-evals) and durable workflows  \n• Graph-based
-            execution engine (pydantic-graph)\n\nIt’s organized as a monorepo: core (`pydantic-ai-slim`), graph engine, evals,
-            examples, CLI and a meta-package bundling everything."
+          text: "Pydantic AI is a Python agent framework for building production-grade AI apps with:\n\n• Type-safe agents
+            (generic Agent[Deps, Output] + Pydantic validation)  \n• Model-agnostic support (15+ LLM providers via a unified
+            Model interface)  \n• Structured outputs (automatic Pydantic validation & self-correction)  \n• Observability
+            (OpenTelemetry + Logfire tracing, token/cost monitoring)  \n• Production tooling (decorator-driven tool system,
+            graph execution engine, evaluation framework, CLI)  \n\nIt’s a UV-workspace monorepo (core packages, evals, graph
+            engine, examples, CLI), supports Python 3.10–3.13, and is actively maintained under an open-source license."
           type: output_text
-        id: msg_0109ee23c01d02ff0068faa0c771d481a3a04ab24cfba6eaf3
+        id: msg_0083938b3a28070e0068fabd989bb481a08c61416ab343ef49
         role: assistant
         status: completed
         type: message
-      - content: How about the pydantic repo in the same org?
+      - content: What packages does the repo contain?
         role: user
       instructions: You are a helpful assistant.
       model: o4-mini
@@ -283,13 +285,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '9473'
+      - '5265'
       content-type:
       - application/json
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '19783'
+      - '4861'
       openai-project:
       - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
@@ -302,9 +304,9 @@ interactions:
       background: false
       billing:
         payer: developer
-      created_at: 1761255629
+      created_at: 1761263005
       error: null
-      id: resp_0109ee23c01d02ff0068faa0cd2ff881a399817905573e1e03
+      id: resp_0083938b3a28070e0068fabd9d414881a089cf24784f80e021
       incomplete_details: null
       instructions: You are a helpful assistant.
       max_output_tokens: null
@@ -313,93 +315,19 @@ interactions:
       model: o4-mini-2025-04-16
       object: response
       output:
-      - encrypted_content: gAAAAABo-qDgr8Eph6uEWOoliXMB7fKVhUds1TKweueaF45XInOLAI-08u32n5KyJy6ZHvQKTWPjd-1hdU153SJhUW7KYBGGXkzw9alGd125UrVO_vzCASR1luxGsJJiUuRVcIVFFLd6cuWETgcp6UyTINuxGCI3Qsq3rhj6iXi39zr-YsTzRTaWQYbUleHEThDYRoLoKIa7hI_1u0rpQwr8HaX7O0ydhOH4NNSdZhqjPfTcQQN-ocAcL2BFonmnH1auDXMg4r6LPU9ucp14v0W6fNGfS63hLvB30negB9WM8YO6pfBxtOcB1gmSSgcasEsOBbKNF8QSU_w8_rkrQeZflACg5J2PYqqRxd8ZS4DgJzYsOQGW1me8p53Q5moDHuNv6N3EkatDEvil8_yw4esxz30iU1RHEs5t6WDiYnXC6HqD0yVC-6_UthXF683drBfaK4jzNUgKDQ5qOWle5qmTwhWUKDlZ19egDwH1SQS6DH9PTi5boLmT6WzvDdwHQK6bFr9GDG9uAZlR5L36SSMyQXv5gTDeWgb0FdePYgpiBWmmHko_yfK3RjUhWO8HNP7bWmpJ-swuFxKlASL1eTcuWoPRTAQwXZL7xPpi8idhmhDp6TGac1thnUrQXpWp7EYnqTVwze9XBV5qkfl5m8SNxMPqurvlof4X3YsFhFhj7KvYTiww53N3vVJfcgQG66YKSnIHz5fhXNSZjzqNpvg7l2Qu_ntXdwWLierzEqzySYl27Kn3rvvRMJN62Mqpr0FZafInQEro5u7WxBHTyQySZDvxZECIQjjRjUVlHhEAgSJ6o3jz9wwFTUZv7N8eRAaS03eKDf2tCs7Wx2jKCgAD9ha6hF4FVLeHeTNl0ihwU0cIwR1h5ZmSvjkAr7yW-sRJjjkgvwXW-NVAUi2MX7BGZOJ01U9G-T47JcWO9yDdycwlvAGa4nr1w00o88bNDzFd868I2E2c3FbEANjVB6rJyaxnsmW4A7UuvPR9uz9dl42-wTXsOQU68VA-xOSToqYt_e-WT-OFqJEkx7QnxAKJJzia0Uu-Ts7uKBSSzBCRcj0I0szclTeDhskuaeVZq-YHsHMcjpuaZmVCpbK0HW2_Id00jxbAwkb7R3sEIjngS7cY8Lo6cV34KqRm1C5rNOts29GzDxTlavH6t6eAVEgkzYY__mslKUJ_NIv-lcvRVU9RkWQXmP1uhu8Cb0zkoV9LWTa-wBPuPe40gbowLIJnhUjx7JFoH6Y3YodQTssEG6AiddGgzi-trenZn7jQ-Je3ZZmks77H_Lu8MF2SPLZbRMfOTmXud31_ACgTVR7ZS_KFqBcbIaOqlwku0X8iru1eeVGc22eneXsC9eQZsrh8ibfhJEDmdwRxeJGY_goGuYKrDt5aeMQF9pCJHneszYugWOYYU5uFmG_8KVKiRm7K-i3UMczNNGsLW2PBlfXi9R5a1L03pe0iqZaJAYRIv7ex9WS8nIH_lJWZ5xkzfaXiY0fZCvPQutesmFeJVsNs5e4NNeTZco4A0q65-EeovuQpjxui-ANZu3CyilRjEKE5zZVXR2sI_Q2xriOhldqtGoyQwfAgI1FDdiYYXI0ZNlN4CQFCcioG5QHFszrwVcYbWXMLZf-ZBFJxA-U4nk2YudY2YSIvYLkl60AmlhyQfusdADzEdZYJ8CS8JMHhfgj9QFdljTGbhAfHz3CmfcNgeayJIUoJd7RrhBiGIjc-x84kuyUXUQWG9UWzDEBf79JqYKYzPc20b2WuUla5Mi-ZydZBXDB3mxHLna_OMjkhadSyny_Vn62_clnNeh0xV_dPC-THeOe8iV9etL5CTB-J1YSZJEFVEmHWB-X-kgI5moxgq7C2ne98ad56f7n-U1XSKsVavlnnN0dEWKMr1HUmo9Lu8KNCsVoFgQ6xA2DpPxuS3gPemW3SQEhD40dKlBPspW0zEZth7LBv_4OuG6kWNacDWlbo3s6aRGq6ZwgMAvdjzoRZNcyUFF666jBrtxwumhCVz5zpl9Tszua94nYUlDmH44BbRi9xAU1ufbTdbaBV69_jtECNNFir1oT5VmoSqeHNoyT-5Vw20RW4o0Sa1HcyJxzdtwmm4nLWlGQD3-77xLNKUtnysLVAQfzooNjl0Bwh0ybDij-IoTD07KfBlJ-YKmIc9ckN1H2eLz9X-x_w4L400lkPqTW-MqruxjAto358-rTCNnmskRNh_esIJH73WBysCk8=
-        id: rs_0109ee23c01d02ff0068faa0ce8c9c81a392cc294095110c0a
+      - encrypted_content: gAAAAABo-r2izZacxe_jVh_p3URhewxBJuyLNqkJOd0owsDPt9uCE7MXn06WHhO_mp6gLDAqcF1uhMhXCqwztJ1Nbpc0cEDAxUpUCUn2bKSgG6r8Snc_FPtKGgQWDsByvW_Nigx55CyPuNeDO_MiDgYee_WeUw7ASLPfiGOx_9YNc_BFYo1ngsb8CKZcJn3AoponMheLoxkVAPgOjMgteRVaQTr13MljTDUlBIZLIOhVbtIu_dI23saXPigbgwR4RhGn5mCHG_a9ILNkXDJUmGy5TKklIEi2HuJM3ZJ3gfoGYS3OONvzmU4AgMP2UrU17YKZAYKxUBKSpyAqigd4RJSYWzxBCoYzCTmiITwdZ6Cpsw1X9Wox_TQSGt5G2Xu0UY2TQZGRNNH8knJpWs-UQxBBV4L3alMwJuIeV-uzqeKr5fKO5rL_c9as-qQIW_EGQItjvR5z80Hi-S9VXthWCmtqZFIJkgLB5JfTYuFL86valsFVLzSavUIWJAG5qOcxag2mbZMwMRRNfvR__BBtoqBoeGIqveQAbIeZbG0ymw30PH1a2v1mmSrpkK6PB3AHYRDdpkezXLkbyGYgidyV2DAAtPaFplsubWCh_74UxmOuk4BH-9cWkE15mRUBrvtnbTb793RsPzOe7nPmkMpdgqa3nqc6RcQZ_M30lFLUViAbfpEpMVrCzz2cv1RklT1JUzpuVXBTKqQ4FxVCfnvzSgQ2INQ8K50E1X5w_7TAWhrHbNg6LetCa-4KWe9ps0GH6r1x9FWvGyVxSwa7SIdPq3sGpxjOydluPECbBOnHWFUB-3rI2DcUl4rGWYbv2FEFNeCH9Zr67uUvMc4Doi8nVMoeb1lJxFCrfziGhbEXY0FepH3zIzlj-_dXqLAL1qqhfCznT_xkDMVYg-D5gMu-_p3r2SirjJbeaz5UFmP-Dihd9v7jWgD6hx_Mq1uIdzIPE8ImGiDPR7PK64svkvwYg1Czdrc_7GmrKRuzsBL0720UXe19NQqCZfYvUJAjgbEqr3tuS_RkhuEQeeVORn88xkhkrGCEgBS0LHFpe4tcnUEXKnaYYRnoYtk5xo4EyOGVKR2yhF9ht2zrMTo83YuRAPcNT38Jk4gMtVhBaJw_GOfee-IWN_F258rpmU4p8sRV-1iSuQI3Arm4JBU66QuyjoY-KJmTcE9ft3Bfm9If3yG5W0RFRJrsVb--GjHmiiXDGWiR5Q8L1of_RnSD5QDEbXXxhn4dsDejtCXUaQXE9Ty-NvkvA7G6Ru8cMvIKqP2fXS9SmiW6ePJ2Znrlyafxx6L58pT26RF42h90BVrSldf6SjxQApK3AKZW6q8AkuJnYWTtkR9-qfIDl7W94BsgOFoEd-SDQGxWzGJV9YqAu6_SQKiNDQoZZHrJkRSOPEW_b3-BAdrpwL700I92Rye4-BdhlgeK1RwhT3w1Z-z1tvGZXJtPwdpPa3iIw2TIlesMbC1ZJ22iT3CB_r0lnlZhMtIH6o50l50UGfSDuv8HZ_RNgGnYEPqP3FW-o_VD_Yu_KBqGSA0Eb5xAJjl0vpin2vFGO1P4RdgI17eZXRsCp1KvkpWjbEQTWAvJz39yr7wFQ4BrPfgxUqMP0-ZI_h1DkdPBzWs1uKqHw-4qC77sZXgxgHGEIU1tfKosTy_fK4c-WAbdqIHNTh9VdlM1EdrUJQ4rs2rsUG8o9WXwnGTFchI9Ao64LiCFTFTiFL_dvKI4ZraNNXXprfPhxsdLBaNfgj2CIfUwBMJ9xMGmHKQKLtwZdHpQNVqi8DNm1qjvs3CxbSXGKtkl5K8UhJtI1g4OnEnbq3jDO8DGIyDl0NH-0bcCDqS2yAkh8I3IobzxTg16mqU3roXLQ4pGXnWbx26A_9zb4Y1jV7rzCq24VIfNJzMUtW4fVMYzlrp3X1l32I5hF3YP-tU2paD98xobgc2Cn2RWXd3OirrdjKAE088KhXYLZZY59y4LYRLC6MDMHSX0cbEXbBvl6mKmbaFig2_7ICiSa7rR_Ij6PpQRxIW7NfS7ZMu5w7TnhLJyg5nuwMI8A5pVxfy3gYg2L60wepuX7UUV0USaHNKi8qxbp4RJj4nO-GdE8TbLJtvPw-OzrH9Qiv7iDHVMHOe1CDPLD5IeGqmVB0tuLqlyASuIe3oPxTU7QdctyxHa1z-sO8nN6kpPnzmVmS6XK8bY-h5do28dkZvefomSquXwKeiVg9VAMWVziKLPWWg5iWp2x-spLkWcQsQle2T7xizyETaF1t6YbecXtSoVFmu90_o6ns07etU3RVK1YpQLgqUIJwwF3ZwP65MaWPwqDuWCuoQErlApdhRptxId67KE3UC4j8cAaGSoG0kXnws-jzpPyAg1GU8c-Gu_K0F-h-KFbHPMiWCrrQqzVfvoA2wLaQz3NPAqpq-kbFmrXRGkzLIeIvRVxck-sKkxQIcg3amSV5Dykl-lRCXGxlWNiFG_1SFrTSfp5VKyg7l1KjJzXUXHtqAErsPtMyhxaMmlh4An5a8NIaM9W6tafJrBXpUh85DfwZ8W92OAi1WOgoJIwWXSSeSuo6ECDstjVWW3OQQh9183jliwS7Bis3eu9jgAF3q8sYILBdwjrJRa6aAna2GirNwqZMEIg60kIlvmf1U6S2PgYaPm9UDzvMxjpzwjhXhzxHJitfU1tfl0vo-ATaTV8CxmKerNzy2AjlIZnjknG3xLyonCHbGbAe33QQTclb98y_vr5nA4WKlrls413o0a0f8GL8GjINCOd1RHVMjV
+        id: rs_0083938b3a28070e0068fabd9de42881a08fbb49a65d0f9b06
         summary: []
         type: reasoning
-      - approval_request_id: null
-        arguments: '{"repoName":"pydantic/pydantic","question":"What is the pydantic/pydantic repository? Summarize its purpose
-          and main features."}'
-        error: null
-        id: mcp_0109ee23c01d02ff0068faa0d0fc9881a3b32a49034e60403d
-        name: ask_question
-        output: |
-          The `pydantic/pydantic` repository contains the Pydantic Validation library, a widely used Python library for data validation, parsing, and serialization using type hints  . Its core purpose is to ensure that data conforms to specified types and constraints at runtime, providing a robust way to define and validate data structures .
-
-          ## Purpose and Main Features
-
-          ### Data Validation with Type Hints
-          Pydantic leverages Python type hints to define data schemas . This integration allows for seamless use with static typing tools like MyPy and IDEs . The library ensures that the output data structure precisely conforms to the applied type hints, even coercing input data to match the expected types .
-
-          ### Performance
-          A key feature of Pydantic is its performance, achieved by implementing the core validation logic in `pydantic-core`, a separate library written in Rust  . This makes Pydantic one of the fastest data validation libraries for Python .
-
-          ### Core Architecture and APIs
-          Pydantic's architecture includes user-facing APIs, a schema generation layer, and a Rust-based validation engine .
-          The main entry points for validation are:
-          *   `BaseModel`: Used for defining class-based models with fields, suitable for domain models, API schemas, and configuration .
-          *   `TypeAdapter`: For validating arbitrary types, useful for one-off validation or generic types .
-          *   `@dataclass`: Provides enhanced dataclasses with validation capabilities .
-          *   `@validate_call`: For validating function arguments .
-
-          All these APIs utilize the same underlying schema generation and validation pipeline .
-
-          ### Version Management and Compatibility
-          Pydantic maintains strict version compatibility between the Python package (`pydantic`) and the Rust-based `pydantic-core` . This compatibility is enforced at import time, raising a `SystemError` if there's a mismatch, unless Pydantic is installed in editable mode .
-
-          ### Development and Deployment Infrastructure
-          The repository includes a comprehensive development and deployment infrastructure , featuring:
-          *   **Testing Framework**: A comprehensive test suite with `pytest` fixtures and utilities .
-          *   **CI/CD Pipeline**: GitHub Actions workflows for linting, testing across multiple operating systems and Python versions, and deployment  .
-          *   **Documentation System**: MkDocs-based documentation with versioning via `mike`  .
-          *   **Release Process**: Automated PyPI publishing with trusted publishing and changelog generation .
-          *   **Third-Party Integration Testing**: Regular testing against popular projects like FastAPI and SQLModel to ensure compatibility .
-
-          ### Migration from V1 to V2
-          Pydantic V2 is a significant rewrite with performance improvements and new features compared to V1 . A compatibility layer is provided through `pydantic.v1` for gradual migration  .
-
-          ## Example Usage
-          A simple example demonstrates how to define a `BaseModel` and validate data against it :
-          ```python
-          from datetime import datetime
-          from typing import Optional
-          from pydantic import BaseModel
-
-          class User(BaseModel):
-              id: int
-              name: str = 'John Doe'
-              signup_ts: Optional[datetime] = None
-              friends: list[int] = []
-
-          external_data = {'id': '123', 'signup_ts': '2017-06-01 12:22', 'friends': [1, '2', b'3']}
-          user = User(**external_data)
-          print(user)
-          print(user.id)
-          ```
-          This code defines a `User` model with type hints and then validates `external_data` against it, demonstrating Pydantic's ability to coerce types (e.g., string '123' to int 123) .
-
-          ## Notes
-          The `pydantic/pydantic` repository focuses on the core Pydantic library. Related projects like `pydantic-settings` and `pydantic-extra-types` are tested for integration but reside in separate repositories . The `HISTORY.md` file provides a detailed changelog, highlighting new features and breaking changes across versions .
-
-          Wiki pages you might want to explore:
-          - [Overview (pydantic/pydantic)](/wiki/pydantic/pydantic#1)
-          - [Development and Deployment (pydantic/pydantic)](/wiki/pydantic/pydantic#7)
-
-          View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpydantic-r_89fe7465-e65d-4c86-a269-5173882a91da
-        server_label: deepwiki
-        status: completed
-        type: mcp_call
       - content:
         - annotations: []
           logprobs: []
-          text: "Pydantic (pydantic/pydantic) is a Python library for data parsing, validation and serialization using standard
-            type hints.\n\nMain features:\n• BaseModel: define schemas with fields, defaults and validators  \n• TypeAdapter,
-            @dataclass and @validate_call for validating any data or function args  \n• High performance via a Rust-based
-            core (`pydantic-core`)  \n• Strict version pairing between Python and Rust packages  \n• Rich dev/deployment infra:
-            pytest suite, GitHub Actions CI, MkDocs docs, PyPI publishing  \n• V2 rewrite with a V1 compatibility layer  \n\nIt’s
-            the go-to tool behind FastAPI, SQLModel, and many other Python frameworks."
+          text: "The monorepo is organized into these main packages:  \n\n• pydantic-ai-slim – core agent framework (type-safe
+            agents, model interface, tooling)  \n• pydantic-evals  – evaluation system (datasets, metrics, evaluators, reports)
+            \ \n• pydantic-graph  – graph-based execution engine (state-machine orchestration)  \n• clai       – CLI for scaffolding
+            and running agents  \n• examples    – sample apps & demos showing real-world usage"
           type: output_text
-        id: msg_0109ee23c01d02ff0068faa0dfa2ec81a3996d6bb05770b374
+        id: msg_0083938b3a28070e0068fabda04de881a089010e6710637ab3
         role: assistant
         status: completed
         type: message
@@ -433,13 +361,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 2337
+        input_tokens: 1109
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 390
+        output_tokens: 444
         output_tokens_details:
-          reasoning_tokens: 192
-        total_tokens: 2727
+          reasoning_tokens: 320
+        total_tokens: 1553
       user: null
     status:
       code: 200
