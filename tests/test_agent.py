@@ -27,6 +27,7 @@ from pydantic_ai import (
     DocumentUrl,
     FunctionToolset,
     ImageUrl,
+    IncompleteToolCall,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelProfile,
@@ -63,6 +64,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import StructuredDict, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResultEvent
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
@@ -1834,7 +1836,14 @@ Don't include any text or Markdown fencing before or after.\
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"additionalProperties": false, "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object", "title": "get_weather"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
@@ -2446,6 +2455,45 @@ def test_unknown_tool_fix():
             ),
         ]
     )
+
+
+def test_tool_exceeds_token_limit_error():
+    def return_incomplete_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        resp = ModelResponse(parts=[ToolCallPart('dummy_tool', args='{"foo": "bar",')])
+        resp.finish_reason = 'length'
+        return resp
+
+    agent = Agent(FunctionModel(return_incomplete_tool), output_type=str)
+
+    with pytest.raises(
+        IncompleteToolCall,
+        match=r'Model token limit \(10\) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.',
+    ):
+        agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+
+    with pytest.raises(
+        IncompleteToolCall,
+        match=r'Model token limit \(provider default\) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.',
+    ):
+        agent.run_sync('Hello')
+
+
+def test_tool_exceeds_token_limit_but_complete_args():
+    def return_complete_tool_but_hit_limit(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            resp = ModelResponse(parts=[ToolCallPart('dummy_tool', args='{"foo": "bar"}')])
+            resp.finish_reason = 'length'
+            return resp
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(return_complete_tool_but_hit_limit), output_type=str)
+
+    @agent.tool_plain
+    def dummy_tool(foo: str) -> str:
+        return 'tool-ok'
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'done'
 
 
 def test_model_requests_blocked(env: TestEnv):
@@ -3809,6 +3857,32 @@ You are a potato.\
 """,
         )
     )
+
+
+def test_multi_agent_instructions_with_structured_output():
+    """Test that Agent2 uses its own instructions when called with Agent1's history.
+
+    Reproduces issue #3207: when running agents sequentially with no user_prompt
+    and structured output, Agent2's instructions were ignored.
+    """
+
+    class Output(BaseModel):
+        text: str
+
+    agent1 = Agent('test', instructions='Agent 1 instructions')
+    agent2 = Agent('test', instructions='Agent 2 instructions', output_type=Output)
+
+    result1 = agent1.run_sync('Hello')
+
+    # TestModel doesn't support structured output, so this will fail with retries
+    # But we can still verify that Agent2's instructions are used in retry requests
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior):
+            agent2.run_sync(message_history=result1.new_messages())
+
+    # Verify Agent2's retry requests used Agent2's instructions (not Agent1's)
+    requests = [m for m in messages if isinstance(m, ModelRequest)]
+    assert any(r.instructions == 'Agent 2 instructions' for r in requests)
 
 
 def test_empty_final_response():
