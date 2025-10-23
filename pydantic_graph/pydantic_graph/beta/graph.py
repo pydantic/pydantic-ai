@@ -7,8 +7,6 @@ the graph-based workflow system.
 
 from __future__ import annotations as _annotations
 
-import inspect
-import types
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Iterable, Sequence
 from contextlib import AbstractContextManager, ExitStack, asynccontextmanager, contextmanager
@@ -188,7 +186,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         """
         if infer_name and self.name is None:
             inferred_name = infer_obj_name(self, depth=2)
-            if inferred_name is not None:
+            if inferred_name is not None:  # pragma: no branch
                 self.name = inferred_name
 
         async with self.iter(state=state, deps=deps, inputs=inputs, span=span, infer_name=False) as graph_run:
@@ -229,9 +227,9 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             A GraphRun instance that can be iterated for step-by-step execution
         """
         if infer_name and self.name is None:
-            # f_back because `asynccontextmanager` adds one frame
-            if frame := inspect.currentframe():  # pragma: no branch
-                self._infer_name(frame.f_back)
+            inferred_name = infer_obj_name(self, depth=3)  # depth=3 because asynccontextmanager adds one
+            if inferred_name is not None:  # pragma: no branch
+                self.name = inferred_name
 
         with ExitStack() as stack:
             entered_span: AbstractSpan | None = None
@@ -276,26 +274,6 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             A string containing the Mermaid diagram of the graph
         """
         return self.render()
-
-    def _infer_name(self, function_frame: types.FrameType | None) -> None:
-        """Infer the agent name from the call frame.
-
-        Usage should be `self._infer_name(inspect.currentframe())`.
-
-        Copied from `Agent`.
-        """
-        assert self.name is None, 'Name already set'
-        if function_frame is not None and (parent_frame := function_frame.f_back):  # pragma: no branch
-            for name, item in parent_frame.f_locals.items():
-                if item is self:
-                    self.name = name
-                    return
-            if parent_frame.f_locals != parent_frame.f_globals:  # pragma: no branch
-                # if we couldn't find the agent in locals and globals are a different dict, try globals
-                for name, item in parent_frame.f_globals.items():  # pragma: no branch
-                    if item is self:
-                        self.name = name
-                        return
 
 
 @dataclass

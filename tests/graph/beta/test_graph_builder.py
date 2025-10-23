@@ -411,7 +411,7 @@ async def test_validation_unreachable_nodes():
 
     @g.step
     async def reachable_step(ctx: StepContext[None, None, None]) -> int:
-        return 10
+        return 10  # pragma: no cover
 
     @g.step
     async def unreachable_step(ctx: StepContext[None, None, int]) -> int:

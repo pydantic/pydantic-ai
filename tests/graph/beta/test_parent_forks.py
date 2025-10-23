@@ -271,3 +271,34 @@ def test_parent_fork_explicit_fail_with_cycle():
         match="There is a cycle in the graph passing through 'J' that does not include 'F'. Parent forks of a join must be a part of any cycles involving that join.",
     ):
         finder.find_parent_fork(join_id, parent_fork_id='F')
+
+
+def test_parent_fork_ancestor_fork_with_cycle():
+    """Test early return when ancestor fork has cycle but descendant fork is valid.
+
+    This test covers the case where:
+    - F2 is a valid parent fork (part of the cycle, so skipped during backwards walk)
+    - F1 is an ancestor of F2 but invalid (cycle to J bypasses F1)
+    - Should return F2 as the parent fork when walking up the dominator chain
+    """
+    join_id = 'J'
+    nodes = {'start', 'F1', 'F2', 'A', 'J', 'end'}
+    start_ids = {'start'}
+    fork_ids = {'F1', 'F2'}
+    # J -> F2 creates a cycle, but F2 is part of it so it's valid.
+    # F1 is an ancestor but the cycle bypasses it.
+    edges = {
+        'start': ['F1'],
+        'F1': ['F2'],
+        'F2': ['A'],
+        'A': ['J'],
+        'J': ['F2', 'end'],  # Cycle back to F2
+    }
+
+    finder = ParentForkFinder(nodes, start_ids, fork_ids, edges)
+    parent_fork = finder.find_parent_fork(join_id)
+
+    # Should find F2 as valid parent, then hit F1 which has a cycle,
+    # and return F2 (hitting the early return path with assert False)
+    assert parent_fork is not None
+    assert parent_fork.fork_id == 'F2'

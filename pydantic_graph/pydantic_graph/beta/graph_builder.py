@@ -641,7 +641,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
 
         Args:
             validate_graph_structure: whether to perform validation of the graph structure
-            See the docstring of `_validate_graph_structure` below for more details.
+                See the docstring of _validate_graph_structure below for more details.
 
         Returns:
             A complete Graph instance ready for execution
