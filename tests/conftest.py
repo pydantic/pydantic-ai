@@ -14,7 +14,7 @@ from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import httpx
 import pytest
@@ -463,21 +463,13 @@ async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
-        from google.genai import Client
-
-        from pydantic_ai.providers.google import GoogleProvider
+        from pydantic_ai.providers.google import GoogleProvider, VertexAILocation
     except ImportError:  # pragma: lax no cover
         pytest.skip('google is not installed')
 
     project = os.getenv('GOOGLE_PROJECT', 'pydantic-ai')
     location = os.getenv('GOOGLE_LOCATION', 'global')
-    client = Client(vertexai=True, project=project, location=location)
-
-    try:
-        yield GoogleProvider(client=client)
-    finally:
-        client.aio._api_client._httpx_client.close()  # type: ignore
-        await client.aio._api_client._async_httpx_client.aclose()  # type: ignore
+    yield GoogleProvider(project=project, location=cast(VertexAILocation, location))
 
 
 @pytest.fixture()
