@@ -22,7 +22,7 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai.exceptions import ExceptionGroup
 from pydantic_graph import exceptions
-from pydantic_graph._utils import AbstractSpan, get_traceparent, logfire_span
+from pydantic_graph._utils import AbstractSpan, get_traceparent, logfire_span, infer_obj_name
 from pydantic_graph.beta.decision import Decision
 from pydantic_graph.beta.id_types import ForkID, ForkStack, ForkStackItem, GraphRunID, JoinID, NodeID, NodeRunID, TaskID
 from pydantic_graph.beta.join import Join, JoinNode, JoinState, ReducerContext
@@ -187,7 +187,9 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             The final output from the graph execution
         """
         if infer_name and self.name is None:
-            self._infer_name(inspect.currentframe())
+            inferred_name = infer_obj_name(self, depth=2)
+            if inferred_name is not None:
+                self.name = inferred_name
 
         async with self.iter(state=state, deps=deps, inputs=inputs, span=span, infer_name=False) as graph_run:
             # Note: This would probably be better using `async for _ in graph_run`, but this tests the `next` method,
@@ -602,7 +604,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                         for afs in active_fork_stacks
                                     ):
                                         # this join_state is a strict prefix for one of the other active join_states
-                                        continue  # pragma: no cover  # TODO: We should cover this
+                                        continue  # pragma: no cover  # It's difficult to cover this
                                     self.active_reducers.pop(
                                         (join_id, fork_run_id)
                                     )  # we're handling it now, so we can pop it

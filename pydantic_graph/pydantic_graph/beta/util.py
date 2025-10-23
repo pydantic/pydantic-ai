@@ -4,7 +4,6 @@ This module provides helper classes and functions for working with Python's type
 including workarounds for type checker limitations and utilities for runtime type inspection.
 """
 
-import inspect
 from dataclasses import dataclass
 from typing import Any, Generic, cast, get_args, get_origin
 
@@ -17,16 +16,16 @@ T = TypeVar('T', infer_variance=True)
 class TypeExpression(Generic[T]):
     """A workaround for type checker limitations when using complex type expressions.
 
-    This class serves as a wrapper for types that cannot normally be used in positions
+        This class serves as a wrapper for types that cannot normally be used in positions
     requiring `type[T]`, such as `Any`, `Union[...]`, or `Literal[...]`. It provides a
-    way to pass these complex type expressions to functions expecting concrete types.
+        way to pass these complex type expressions to functions expecting concrete types.
 
-    Example:
-        Instead of `output_type=Union[str, int]` (which may cause type errors),
-        use `output_type=TypeExpression[Union[str, int]]`.
+        Example:
+            Instead of `output_type=Union[str, int]` (which may cause type errors),
+            use `output_type=TypeExpression[Union[str, int]]`.
 
-    Note:
-        This is a workaround for the lack of TypeForm in the Python type system.
+        Note:
+            This is a workaround for the lack of TypeForm in the Python type system.
     """
 
     pass
@@ -89,44 +88,3 @@ def get_callable_name(callable_: Any) -> str:
         The callable's __name__ attribute if available, otherwise its string representation.
     """
     return getattr(callable_, '__name__', str(callable_))
-
-
-def infer_name(obj: Any, *, depth: int) -> str | None:
-    """Infer the variable name of an object from the calling frame's scope.
-
-    This function examines the call stack to find what variable name was used
-    for the given object in the calling scope. This is useful for automatic
-    naming of objects based on their variable names.
-
-    Args:
-        obj: The object whose variable name to infer.
-        depth: Number of stack frames to traverse upward from the current frame.
-
-    Returns:
-        The inferred variable name if found, None otherwise.
-
-    Example:
-        Usage should generally look like `infer_name(self, depth=2)` or similar.
-
-    Note:
-        TODO(P3): Use this or lose it
-    """
-    target_frame = inspect.currentframe()
-    if target_frame is None:
-        return None  # pragma: no cover
-    for _ in range(depth):
-        target_frame = target_frame.f_back
-        if target_frame is None:
-            return None
-
-    for name, item in target_frame.f_locals.items():
-        if item is obj:
-            return name
-
-    if target_frame.f_locals != target_frame.f_globals:  # pragma: no branch
-        # if we couldn't find the agent in locals and globals are a different dict, try globals
-        for name, item in target_frame.f_globals.items():
-            if item is obj:
-                return name
-
-    return None
