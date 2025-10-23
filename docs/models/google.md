@@ -11,7 +11,6 @@ To use `GoogleModel`, you need to either install `pydantic-ai`, or install `pyda
 pip/uv-add "pydantic-ai-slim[google]"
 ```
 
----
 
 ## Configuration
 
@@ -27,7 +26,16 @@ Once you have the API key, set it as an environment variable:
 export GOOGLE_API_KEY=your-api-key
 ```
 
-You can then use `GoogleModel` by explicitly creating a provider:
+You can then use `GoogleModel` by name (where GLA stands for Generative Language API):
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('google-gla:gemini-2.5-pro')
+...
+```
+
+Or you can explicitly create the provider:
 
 ```python
 from pydantic_ai import Agent
@@ -35,31 +43,38 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
 provider = GoogleProvider(api_key='your-api-key')
-model = GoogleModel('gemini-1.5-flash', provider=provider)
+model = GoogleModel('gemini-2.5-pro', provider=provider)
 agent = Agent(model)
 ...
 ```
 
 ### Vertex AI (Enterprise/Cloud)
 
-If you are an enterprise user, you can use the `google-vertex` provider with `GoogleModel` to access Gemini via Vertex AI.
+If you are an enterprise user, you can also use `GoogleModel` to access Gemini via Vertex AI.
 
 This interface has a number of advantages over the Generative Language API:
 
 1. The VertexAI API comes with more enterprise readiness guarantees.
-2. You can [purchase provisioned throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput#purchase-provisioned-throughput) with VertexAI to guarantee capacity.
+2. You can [purchase provisioned throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput#purchase-provisioned-throughput) with Vertex AI to guarantee capacity.
 3. If you're running Pydantic AI inside GCP, you don't need to set up authentication, it should "just work".
 4. You can decide which region to use, which might be important from a regulatory perspective, and might improve latency.
 
-The big disadvantage is that for local development you may need to create and configure a "service account", which can be challenging to get right.
+You can authenticate using [application default credentials](https://cloud.google.com/docs/authentication/application-default-credentials), a service account, or an [API key](https://cloud.google.com/vertex-ai/generative-ai/docs/start/api-keys?usertype=expressmode).
 
-Whichever way you authenticate, you'll need to have VertexAI enabled in your GCP account.
-
-To use Vertex AI, you may need to set up [application default credentials](https://cloud.google.com/docs/authentication/application-default-credentials) or use a service account. You can also specify the region.
+Whichever way you authenticate, you'll need to have Vertex AI enabled in your GCP account.
 
 #### Application Default Credentials
 
-If you have the [`gcloud` CLI](https://cloud.google.com/sdk/gcloud) installed and configured, you can use:
+If you have the [`gcloud` CLI](https://cloud.google.com/sdk/gcloud) installed and configured, you can use `GoogleProvider` in Vertex AI mode by name:
+
+```python {test="ci_only"}
+from pydantic_ai import Agent
+
+agent = Agent('google-vertex:gemini-2.5-pro')
+...
+```
+
+Or you can explicitly create the provider and model:
 
 ```python {test="ci_only"}
 from pydantic_ai import Agent
@@ -67,14 +82,14 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
 provider = GoogleProvider(vertexai=True)
-model = GoogleModel('gemini-1.5-flash', provider=provider)
+model = GoogleModel('gemini-2.5-pro', provider=provider)
 agent = Agent(model)
 ...
 ```
 
 #### Service Account
 
-To use a service account JSON file:
+To use a service account JSON file, explicitly create the provider and model:
 
 ```python {title="google_model_service_account.py" test="skip"}
 from google.oauth2 import service_account
@@ -93,24 +108,54 @@ agent = Agent(model)
 ...
 ```
 
-#### Customizing Location
+#### API Key
 
-You can specify the location when using Vertex AI:
+To use Vertex AI with an API key, [create a key](https://cloud.google.com/vertex-ai/generative-ai/docs/start/api-keys?usertype=expressmode) and set it as an environment variable:
+
+```bash
+export GOOGLE_API_KEY=your-api-key
+```
+
+You can then use `GoogleModel` in Vertex AI mode by name:
+
+```python {test="ci_only"}
+from pydantic_ai import Agent
+
+agent = Agent('google-vertex:gemini-2.5-pro')
+...
+```
+
+Or you can explicitly create the provider and model:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.providers.google import GoogleProvider
+
+provider = GoogleProvider(vertexai=True, api_key='your-api-key')
+model = GoogleModel('gemini-2.5-pro', provider=provider)
+agent = Agent(model)
+...
+```
+
+#### Customizing Location or Project
+
+You can specify the location and/or projectwhen using Vertex AI:
 
 ```python {title="google_model_location.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
-provider = GoogleProvider(vertexai=True, location='asia-east1')
-model = GoogleModel('gemini-1.5-flash', provider=provider)
+provider = GoogleProvider(vertexai=True, location='asia-east1', project='your-gcp-project-id')
+model = GoogleModel('gemini-2.5-pro', provider=provider)
 agent = Agent(model)
 ...
 ```
 
-#### Customizing Model
+#### Model Garden
 
-You can access models from the [Model Garden](https://cloud.google.com/model-garden?hl=en) that support the generateContent API and are available under your GCP project, including but not limited to Gemini, using one of the following `model_name` patterns:
+You can access models from the [Model Garden](https://cloud.google.com/model-garden?hl=en) that support the `generateContent` API and are available under your GCP project, including but not limited to Gemini, using one of the following `model_name` patterns:
 
 - `{model_id}` for Gemini models
 - `{publisher}/{model_id}`
@@ -118,18 +163,11 @@ You can access models from the [Model Garden](https://cloud.google.com/model-gar
 - `projects/{project}/locations/{location}/publishers/{publisher}/models/{model_id}`
 
 ```python {test="skip"}
-from google.oauth2 import service_account
-
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
-credentials = service_account.Credentials.from_service_account_file(
-    'path/to/service-account.json',
-    scopes=['https://www.googleapis.com/auth/cloud-platform'],
-)
 provider = GoogleProvider(
-    credentials=credentials,
     project='your-gcp-project-id',
     location='us-central1',  # the region where the model is available
 )
@@ -138,31 +176,32 @@ agent = Agent(model)
 ...
 ```
 
-## Provider Argument
+## Custom HTTP Client
 
-You can supply a custom `GoogleProvider` instance using the `provider` argument to configure advanced client options, such as setting a custom `base_url`.
-
-This is useful if you're using a custom-compatible endpoint with the Google Generative Language API.
+You can customize the `GoogleProvider` with a custom `httpx.AsyncClient`:
 
 ```python
-from google.genai import Client
-from google.genai.types import HttpOptions
+from httpx import AsyncClient
 
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
-client = Client(
-    api_key='gemini-custom-api-key',
-    http_options=HttpOptions(base_url='gemini-custom-base-url'),
+custom_http_client = AsyncClient(timeout=30)
+model = GoogleModel(
+    'gemini-2.5-pro',
+    provider=GoogleProvider(api_key='your-api-key', http_client=custom_http_client),
 )
-provider = GoogleProvider(client=client)
-model = GoogleModel('gemini-1.5-flash', provider=provider)
 agent = Agent(model)
 ...
 ```
 
-## Model Settings
+
+## Document, Image, Audio, and Video Input
+
+`GoogleModel` supports multi-modal input, including documents, images, audio, and video. See the [input documentation](../input.md) for details and examples.
+
+## Model settings
 
 You can customize model behavior using [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings]:
 
@@ -187,16 +226,6 @@ model = GoogleModel('gemini-1.5-flash')
 agent = Agent(model, model_settings=settings)
 ...
 ```
-
-See the [Gemini API docs](https://ai.google.dev/gemini-api/docs/safety-settings) for more on safety settings, and [thinking config](https://ai.google.dev/gemini-api/docs/thinking).
-
-## Document, Image, Audio, and Video Input
-
-`GoogleModel` supports multi-modal input, including documents, images, audio, and video. See the [input documentation](../input.md) for details and examples.
-
-## Model settings
-
-You can use the [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings] class to customize the model request.
 
 ### Disable thinking
 

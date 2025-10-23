@@ -3,12 +3,13 @@
 from __future__ import annotations as _annotations
 
 import os
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client, get_user_agent
+from pydantic_ai.models import cached_async_http_client
 
 if TYPE_CHECKING:
     from botocore.client import BaseClient
@@ -109,7 +110,7 @@ def gateway_provider(
 
     base_url = base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', GATEWAY_BASE_URL)
     http_client = http_client or cached_async_http_client(provider=f'gateway/{upstream_provider}')
-    http_client.event_hooks = {'request': [_request_hook]}
+    http_client.event_hooks = {'request': [_request_hook(api_key)]}
 
     if upstream_provider in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
@@ -140,41 +141,37 @@ def gateway_provider(
             region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
     elif upstream_provider == 'google-vertex':
-        from google.genai import Client as GoogleClient
-
         from .google import GoogleProvider
 
         return GoogleProvider(
-            client=GoogleClient(
-                vertexai=True,
-                api_key='unset',
-                http_options={
-                    'base_url': _merge_url_path(base_url, 'google-vertex'),
-                    'headers': {'User-Agent': get_user_agent(), 'Authorization': api_key},
-                    # TODO(Marcelo): Until https://github.com/googleapis/python-genai/issues/1357 is solved.
-                    'async_client_args': {
-                        'transport': httpx.AsyncHTTPTransport(),
-                        'event_hooks': {'request': [_request_hook]},
-                    },
-                },
-            )
+            vertexai=True,
+            api_key=api_key,
+            base_url=_merge_url_path(base_url, 'google-vertex'),
+            http_client=http_client,
         )
     else:
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
 
 
-async def _request_hook(request: httpx.Request) -> httpx.Request:
+def _request_hook(api_key: str) -> Callable[[httpx.Request], Awaitable[httpx.Request]]:
     """Request hook for the gateway provider.
 
-    It adds the `"traceparent"` header to the request.
+    It adds the `"traceparent"` and `"Authorization"` headers to the request.
     """
-    from opentelemetry.propagate import inject
 
-    headers: dict[str, Any] = {}
-    inject(headers)
-    request.headers.update(headers)
+    async def _hook(request: httpx.Request) -> httpx.Request:
+        from opentelemetry.propagate import inject
 
-    return request
+        headers: dict[str, Any] = {}
+        inject(headers)
+        request.headers.update(headers)
+
+        if 'Authorization' not in request.headers:
+            request.headers['Authorization'] = f'Bearer {api_key}'
+
+        return request
+
+    return _hook
 
 
 def _merge_url_path(base_url: str, path: str) -> str:
