@@ -662,14 +662,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         try:
-            async with toolset:
-                async with graph.iter(
-                    start_node,
-                    state=state,
-                    deps=graph_deps,
-                    span=use_span(run_span) if run_span.is_recording() else None,
-                    infer_name=False,
-                ) as graph_run:
+            async with graph.iter(
+                start_node,
+                state=state,
+                deps=graph_deps,
+                span=use_span(run_span) if run_span.is_recording() else None,
+                infer_name=False,
+            ) as graph_run:
+                async with toolset:
                     agent_run = AgentRun(graph_run)
                     yield agent_run
                     if (final_result := agent_run.result) is not None and run_span.is_recording():
