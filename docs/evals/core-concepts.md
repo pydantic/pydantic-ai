@@ -303,7 +303,7 @@ class Classifier(Evaluator):
 ```
 
 Evaluators can also return instances of [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason], and dictionaries mapping labels to output values.
-See the [custom evaluator return types](evaluators/custom/#return-types) docs for more detail.
+See the [custom evaluator return types](evaluators/custom.md#return-types) docs for more detail.
 
 ### EvaluatorContext
 

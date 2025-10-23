@@ -234,7 +234,7 @@ Case-specific evaluators are one of the most powerful features for building comp
 
 ```python
 from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import LLMJudge, IsInstance
+from pydantic_evals.evaluators import IsInstance, LLMJudge
 
 dataset = Dataset(
     cases=[
