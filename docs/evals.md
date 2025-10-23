@@ -21,11 +21,11 @@
 
 **Evaluators:**
 
-- [Evaluators Overview](evals/evaluators/overview.md) - When to use different evaluator types
-- [Built-in Evaluators](evals/evaluators/built-in.md) - Complete reference
-- [LLM Judge](evals/evaluators/llm-judge.md) - LLM-as-judge deep dive
-- [Custom Evaluators](evals/evaluators/custom.md) - Write your own
-- [Span-Based Evaluation](evals/evaluators/span-based.md) - Behavioral checks with OpenTelemetry
+- [Evaluators Overview](evals/evaluators/overview.md) - Compare evaluator types and learn when to use each approach
+- [Built-in Evaluators](evals/evaluators/built-in.md) - Complete reference for exact match, instance checks, and other ready-to-use evaluators
+- [LLM as a Judge](evals/evaluators/llm-judge.md) - Use LLMs to evaluate subjective qualities, complex criteria, and natural language outputs
+- [Custom Evaluators](evals/evaluators/custom.md) - Implement domain-specific scoring logic and custom evaluation metrics
+- [Span-Based Evaluation](evals/evaluators/span-based.md) - Evaluate internal agent behavior (tool calls, execution flow) using OpenTelemetry traces. Essential for complex agents where correctness depends on _how_ the answer was reached, not just the final output. Also ensures eval assertions align with production telemetry.
 
 **How-To Guides:**
 

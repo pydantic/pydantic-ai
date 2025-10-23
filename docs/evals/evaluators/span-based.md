@@ -10,14 +10,38 @@ Evaluate AI system behavior by analyzing OpenTelemetry spans captured during exe
 
 ## Overview
 
-When you configure logfire (`logfire.configure()`), Pydantic Evals captures all OpenTelemetry spans generated during task execution. You can then evaluate based on:
+Span-based evaluation enables you to evaluate **how** your AI system executes, not just **what** it produces. This is essential for complex agents where ensuring the desired behavior depends on the execution path taken, not just the final output.
 
-- **Which tools were called** - Verify expected behavior
-- **Code paths executed** - Ensure specific functions ran
-- **Timing characteristics** - Check individual operation latency
-- **Error conditions** - Detect specific failures
+### Why Span-Based Evaluation?
 
-This is powerful for evaluating **how** your AI system works, not just **what** it produces.
+Traditional evaluators assess task inputs and outputs. For simple tasks, this may be sufficient—if the output is correct, the task succeeded. But for complex multi-step agents, the _process_ matters as much as the result:
+
+- **A correct answer reached incorrectly** - An agent might produce the right output by accident (e.g., guessing, using cached data when it should have searched, calling the wrong tools but getting lucky)
+- **Verification of required behaviors** - You need to ensure specific tools were called, certain code paths executed, or particular patterns followed
+- **Performance and efficiency** - The agent should reach the answer efficiently, without unnecessary tool calls, infinite loops, or excessive retries
+- **Safety and compliance** - Critical to verify that dangerous operations weren't attempted, sensitive data wasn't accessed inappropriately, or guardrails weren't bypassed
+
+### Real-World Scenarios
+
+Span-based evaluation is particularly valuable for:
+
+- **RAG systems** - Verify documents were retrieved and reranked before generation, not just that the answer included citations
+- **Multi-agent coordination** - Ensure the orchestrator delegated to the right specialist agents in the correct order
+- **Tool-calling agents** - Confirm specific tools were used (or avoided), and in the expected sequence
+- **Debugging and regression testing** - Catch behavioral regressions where outputs remain correct but the internal logic deteriorates
+- **Production alignment** - Ensure your evaluation assertions operate on the same telemetry data captured in production, so eval insights directly translate to production monitoring
+
+### How It Works
+
+When you configure logfire (`logfire.configure()`), Pydantic Evals captures all OpenTelemetry spans generated during task execution. You can then write evaluators that assert conditions on:
+
+- **Which tools were called** - `HasMatchingSpan(query={'name_contains': 'search_tool'})`
+- **Code paths executed** - Verify specific functions ran or particular branches taken
+- **Timing characteristics** - Check that operations complete within SLA bounds
+- **Error conditions** - Detect retries, fallbacks, or specific failure modes
+- **Execution structure** - Verify parent-child relationships, delegation patterns, or execution order
+
+This creates a fundamentally different evaluation paradigm: you're testing behavioral contracts, not just input-output relationships.
 
 ## Basic Usage
 

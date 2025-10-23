@@ -127,7 +127,7 @@ dataset = Dataset(
 )
 ```
 
-### LLM-as-Judge Evaluation
+### LLM-as-a-Judge Evaluation
 
 Use an LLM to evaluate subjective qualities like accuracy or helpfulness:
 

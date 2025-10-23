@@ -31,7 +31,7 @@ Use deterministic evaluators when you can define exact rules:
 - Performance requirements (latency, token counts)
 - Behavioral checks (which tools were called, which code paths executed)
 
-### LLM-as-Judge (Flexible & Nuanced)
+### LLM-as-a-Judge (Flexible & Nuanced)
 
 Use [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] when evaluation requires understanding or judgment:
 
@@ -309,6 +309,6 @@ Use retry configuration to handle transient failures (see [Retry Strategies](../
 ## Next Steps
 
 - **[Built-in Evaluators](built-in.md)** - Complete reference of all provided evaluators
-- **[LLM Judge](llm-judge.md)** - Deep dive on LLM-as-judge evaluation
+- **[LLM Judge](llm-judge.md)** - Deep dive on LLM-as-a-Judge evaluation
 - **[Custom Evaluators](custom.md)** - Write your own evaluation logic
 - **[Span-Based Evaluation](span-based.md)** - Evaluate using OpenTelemetry spans

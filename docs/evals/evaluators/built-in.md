@@ -258,7 +258,7 @@ dataset = Dataset(
 
 ---
 
-## LLM-as-Judge
+## LLM-as-a-Judge
 
 ### LLMJudge
 
@@ -451,6 +451,6 @@ This approach:
 
 ## Next Steps
 
-- **[LLM Judge](llm-judge.md)** - Deep dive on LLM-as-judge evaluation
+- **[LLM Judge](llm-judge.md)** - Deep dive on LLM-as-a-Judge evaluation
 - **[Custom Evaluators](custom.md)** - Write your own evaluation logic
 - **[Span-Based Evaluation](span-based.md)** - Using OpenTelemetry spans for behavioral checks
