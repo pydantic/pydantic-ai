@@ -9,7 +9,6 @@ import sys
 from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass, field
 from inspect import FrameInfo
-from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +19,6 @@ from devtools import debug
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_examples.config import ExamplesConfig as BaseExamplesConfig
 from pytest_mock import MockerFixture
-from rich.console import Console
 
 from pydantic_ai import (
     AbstractToolset,
@@ -117,7 +115,7 @@ def tmp_path_cwd(tmp_path: Path):
     'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
 )
 @pytest.mark.parametrize('example', find_filter_examples())
-def test_docs_examples(  # noqa: C901
+def test_docs_examples(
     example: CodeExample,
     eval_example: EvalExample,
     mocker: MockerFixture,
@@ -144,12 +142,8 @@ def test_docs_examples(  # noqa: C901
 
     class CustomEvaluationReport(EvaluationReport):
         def print(self, *args: Any, **kwargs: Any) -> None:
-            if 'width' in kwargs:  # pragma: lax no cover
-                raise ValueError('width should not be passed to CustomEvaluationReport')
-            table = self.console_table(*args, **kwargs)
-            io_file = StringIO()
-            Console(file=io_file, width=150).print(table)
-            print(io_file.getvalue())
+            kwargs['width'] = 150
+            super().print(*args, **kwargs)
 
     mocker.patch('pydantic_evals.dataset.EvaluationReport', side_effect=CustomEvaluationReport)
 

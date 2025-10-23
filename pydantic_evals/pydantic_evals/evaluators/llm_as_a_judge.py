@@ -201,7 +201,7 @@ async def judge_output_expected(
     ).output
 
 
-def set_default_judge_model(model: models.Model | models.KnownModelName) -> None:  # pragma: no cover
+def set_default_judge_model(model: models.Model | models.KnownModelName) -> None:
     """Set the default model used for judging.
 
     This model is used if `None` is passed to the `model` argument of `judge_output` and `judge_input_output`.
