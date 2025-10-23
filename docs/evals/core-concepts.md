@@ -454,7 +454,7 @@ When you call `dataset.evaluate_sync(task)`:
 
 ## Evaluation Flow
 
-Here's what happens when you run `dataset.evaluate_sync(task)`:
+Here's what happens when you run `dataset.evaluate(task)`:
 
 ```mermaid
 sequenceDiagram
@@ -468,7 +468,6 @@ sequenceDiagram
     D->>E: Evaluate(context)
     E->>D: Return scores/assertions
     D->>R: Collect results
-    R->>D: Return report
 ```
 
 ### Step by Step
