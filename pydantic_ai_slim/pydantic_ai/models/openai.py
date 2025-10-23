@@ -286,6 +286,7 @@ class OpenAIChatModel(Model):
             'litellm',
             'nebius',
             'ovhcloud',
+            'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -316,6 +317,7 @@ class OpenAIChatModel(Model):
             'litellm',
             'nebius',
             'ovhcloud',
+            'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -345,6 +347,7 @@ class OpenAIChatModel(Model):
             'litellm',
             'nebius',
             'ovhcloud',
+            'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -366,7 +369,7 @@ class OpenAIChatModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(provider)
+            provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
@@ -907,7 +910,16 @@ class OpenAIResponsesModel(Model):
         model_name: OpenAIModelName,
         *,
         provider: Literal[
-            'openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'nebius', 'ovhcloud'
+            'openai',
+            'deepseek',
+            'azure',
+            'openrouter',
+            'grok',
+            'fireworks',
+            'together',
+            'nebius',
+            'ovhcloud',
+            'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -924,7 +936,7 @@ class OpenAIResponsesModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(provider)
+            provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 

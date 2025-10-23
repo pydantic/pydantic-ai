@@ -589,7 +589,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # as the empty response and request will not create any items in the API payload,
                     # in the hope the model will return a non-empty response this time.
                     ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
-                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[]))
+                    run_context = build_run_context(ctx)
+                    instructions = await ctx.deps.get_instructions(run_context)
+                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                        _messages.ModelRequest(parts=[], instructions=instructions)
+                    )
                     return
 
                 text = ''
@@ -653,7 +657,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     ctx.state.increment_retries(
                         ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
                     )
-                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
+                    run_context = build_run_context(ctx)
+                    instructions = await ctx.deps.get_instructions(run_context)
+                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                        _messages.ModelRequest(parts=[e.tool_retry], instructions=instructions)
+                    )
 
             self._events_iterator = _run_stream()
 
