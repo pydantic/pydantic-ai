@@ -636,30 +636,26 @@ class Bar(BaseModel):
     assert got_tool_call_name == snapshot('final_result_Bar')
 
 
-def test_output_type_generic_class_name_sanitization(create_module: Callable[[str], Any]):
+def test_output_type_generic_class_name_sanitization():
     """Test that generic class names with brackets are properly sanitized."""
-    module_code = '''
-from pydantic import BaseModel
-from typing import Generic, TypeVar
+    from typing import Generic, TypeVar
 
-T = TypeVar('T')
+    T = TypeVar('T')
 
-class Result(BaseModel, Generic[T]):
-    """A generic result class."""
-    value: T
-    success: bool
+    class Result(BaseModel, Generic[T]):
+        """A generic result class."""
 
-class StringData(BaseModel):
-    text: str
+        value: T
+        success: bool
 
-# This will have a name like "Result[StringData]" which needs sanitization
-OutputType = [Result[StringData], Result[int]]
-    '''
+    class StringData(BaseModel):
+        text: str
 
-    mod = create_module(module_code)
+    # This will have a name like "Result[StringData]" which needs sanitization
+    output_type = [Result[StringData], Result[int]]
 
     m = TestModel()
-    agent = Agent(m, output_type=mod.OutputType)
+    agent = Agent(m, output_type=output_type)
     agent.run_sync('Hello')
 
     # The sanitizer should remove brackets from the generic type name
@@ -668,7 +664,12 @@ OutputType = [Result[StringData], Result[int]]
     assert len(m.last_model_request_parameters.output_tools) == 2
 
     tool_names = [tool.name for tool in m.last_model_request_parameters.output_tools]
-    assert tool_names == snapshot(['final_result_ResultStringData', 'final_result_Resultint'])
+    assert tool_names == snapshot(
+        [
+            'final_result_Resulttest_output_type_generic_class_name_sanitizationlocalsStringData',
+            'final_result_Resultint',
+        ]
+    )
 
 
 def test_output_type_with_two_descriptions():
