@@ -256,10 +256,8 @@ def cli(
 
     context_defaults = {_CLI_CONTEXT_DEFAULTS_KEY: default_model}
 
-    if any(a in ('-h', '--help') for a in args):  # pragma: no cover - exercised via hook
+    if any(a in ('-h', '--help') for a in args):
         _click_main.main(args=args, prog_name=prog_name, standalone_mode=True, obj=context_defaults)
-        # should not get here
-        return 0
 
     try:
         _click_main.main(args=args, prog_name=prog_name, standalone_mode=True, obj=context_defaults)
