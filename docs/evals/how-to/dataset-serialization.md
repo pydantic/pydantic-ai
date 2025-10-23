@@ -450,40 +450,6 @@ evaluators:
 - ShortName  # Instead of VeryLongDescriptiveEvaluatorName
 ```
 
-## Advanced: Custom Serialization
-
-Override serialization behavior for complex types:
-
-```python
-from dataclasses import dataclass
-from typing import Any
-
-from pydantic_evals.evaluators import Evaluator, EvaluatorContext
-
-
-@dataclass
-class ComplexEvaluator(Evaluator):
-    # Field with complex type
-    config: dict[str, Any]
-
-    def build_serialization_arguments(self) -> dict[str, Any]:
-        """Customize how this evaluator is serialized."""
-        # Only serialize non-default values
-        args = super().build_serialization_arguments()
-
-        # Add custom logic
-        if 'config' in args:
-            args['config'] = {
-                k: v for k, v in args['config'].items()
-                if v is not None
-            }
-
-        return args
-
-    def evaluate(self, ctx: EvaluatorContext) -> bool:
-        return True
-```
-
 ## Troubleshooting
 
 ### Schema Not Found in IDE
