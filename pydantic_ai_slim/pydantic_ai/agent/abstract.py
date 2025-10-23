@@ -524,6 +524,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                     await stream.get_output(), final_result.tool_name, final_result.tool_call_id
                                 )
 
+                                # When we get here, the `ModelRequestNode` has completed streaming after the final result was found.
+                                # When running an agent with `agent.run`, we'd then move to `CallToolsNode` to execute the tool calls and
+                                # find the final result.
+                                # We also want to execute tool calls (in case `agent.end_strategy == 'exhaustive'`) here, but
+                                # we don't want to use run the `CallToolsNode` logic to determine the final output, as it would be
+                                # wasteful and could produce a different result (e.g. when text output is followed by tool calls).
+                                # So we call `process_tool_calls` directly and then end the run with the found final result.
+
                                 parts: list[_messages.ModelRequestPart] = []
                                 async for _event in _agent_graph.process_tool_calls(
                                     tool_manager=graph_ctx.deps.tool_manager,
@@ -534,8 +542,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                     output_parts=parts,
                                 ):
                                     pass
+
+                                # For backwards compatibility, append a new ModelRequest using the tool returns and retries
                                 if parts:
                                     messages.append(_messages.ModelRequest(parts))
+
+                                await agent_run.next(_agent_graph.SetFinalResult(final_result))
 
                             yield StreamedRunResult(
                                 messages,
