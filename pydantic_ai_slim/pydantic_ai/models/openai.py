@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import json
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -1257,7 +1258,7 @@ class OpenAIResponsesModel(Model):
                 if tool.authorization_token:  # pragma: no branch
                     mcp_tool['authorization'] = tool.authorization_token
 
-                if tool.allowed_tools:  # pragma: no branch
+                if tool.allowed_tools is not None:  # pragma: no branch
                     mcp_tool['allowed_tools'] = tool.allowed_tools
 
                 if tool.description:  # pragma: no branch
@@ -1458,33 +1459,33 @@ class OpenAIResponsesModel(Model):
                             elif (
                                 item.tool_name == MCPServerTool.LIST_TOOLS
                                 and item.tool_call_id
-                                and item.tool_call_metadata
+                                and (args := item.args_as_dict())
+                                and (server_id := args.get('server_id'))
                             ):
                                 mcp_list_tools_item = responses.response_input_item_param.McpListTools(
                                     id=item.tool_call_id,
                                     type='mcp_list_tools',
-                                    server_label=cast(str, item.tool_call_metadata.get('mcp_server_id')),
+                                    server_label=server_id,
                                     tools=[],
                                 )
                                 openai_messages.append(mcp_list_tools_item)
                             elif (  # pragma: no branch
                                 item.tool_name == MCPServerTool.CALL_TOOL
                                 and item.tool_call_id
-                                and item.tool_call_metadata
                                 and (args := item.args_as_dict())
+                                and (server_id := args.get('server_id'))
+                                and (tool_name := args.get('tool_name'))
+                                and (tool_args := args.get('tool_args'))
                             ):
-                                error = args.pop('error', None)
-                                mcp_call_item = cast(
-                                    responses.response_input_item_param.McpCall,
-                                    {
-                                        **args,
-                                        'id': item.tool_call_id,
-                                        'type': 'mcp_call',
-                                        'server_label': cast(str, item.tool_call_metadata.get('mcp_server_id')),
-                                        'name': cast(str, item.tool_call_metadata.get('mcp_tool_name')),
-                                    },
+                                mcp_call_item = responses.response_input_item_param.McpCall(
+                                    id=item.tool_call_id,
+                                    server_label=server_id,
+                                    name=tool_name,
+                                    arguments=to_json(tool_args).decode(),
+                                    error=None,  # These can be read server-side # TODO (DouweM): Or not?
+                                    output=None,  # These can be read server-side
+                                    type='mcp_call',
                                 )
-                                mcp_call_item['error'] = error
                                 openai_messages.append(mcp_call_item)
 
                     elif isinstance(item, BuiltinToolReturnPart):
@@ -1827,7 +1828,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     args_json = call_part.args_as_json_str()
                     # Drop the final `"}` so that we can add code deltas
                     args_json_delta = args_json[:-2]
-                    assert args_json_delta.endswith('code":"')
+                    assert args_json_delta.endswith('"code":"'), f'Expected {args_json_delta!r} to end in `"code":"`'
 
                     yield self._parts_manager.handle_part(
                         vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
@@ -1843,16 +1844,26 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
                 elif isinstance(chunk.item, responses.response_output_item.McpCall):
                     call_part, _ = _map_mcp_call(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=f'{chunk.item.id}-call',
-                        part=call_part,
+
+                    args_json = call_part.args_as_json_str()
+                    # Drop the final `{}}` so that we can add tool args deltas
+                    args_json_delta = args_json[:-3]
+                    assert args_json_delta.endswith('"tool_args":'), (
+                        f'Expected {args_json_delta!r} to end in `"tool_args":"`'
                     )
+
+                    yield self._parts_manager.handle_part(
+                        vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
+                    )
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=f'{chunk.item.id}-call',
+                        args=args_json_delta,
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
                 elif isinstance(chunk.item, responses.response_output_item.McpListTools):
                     call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=f'{chunk.item.id}-call',
-                        part=replace(call_part, args=None),
-                    )
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
                 else:
                     warnings.warn(  # pragma: no cover
                         f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -1995,7 +2006,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item_id}-file', part=file_part)
 
             elif isinstance(chunk, responses.ResponseMcpCallArgumentsDoneEvent):
-                pass  # there's nothing we need to do here
+                maybe_event = self._parts_manager.handle_tool_call_delta(
+                    vendor_part_id=f'{chunk.item_id}-call',
+                    args='}',
+                )
+                if maybe_event is not None:  # pragma: no branch
+                    yield maybe_event
 
             elif isinstance(chunk, responses.ResponseMcpCallArgumentsDeltaEvent):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -2131,7 +2147,7 @@ def _map_code_interpreter_tool_call(
             tool_call_id=item.id,
             args={
                 'container_id': item.container_id,
-                'code': item.code,
+                'code': item.code or '',
             },
             provider_name=provider_name,
         ),
@@ -2228,24 +2244,18 @@ def _map_image_generation_tool_call(
 def _map_mcp_list_tools(
     item: responses.response_output_item.McpListTools, provider_name: str
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
-    result_serialized = {
-        'error': item.error,
-        'tools': item.model_dump(mode='json').get('tools'),
-    }
-
     return (
         BuiltinToolCallPart(
             tool_name=MCPServerTool.LIST_TOOLS,
             tool_call_id=item.id,
             provider_name=provider_name,
-            tool_call_metadata={'mcp_server_id': item.server_label},
+            args={'server_id': item.server_label},
         ),
         BuiltinToolReturnPart(
             tool_name=MCPServerTool.LIST_TOOLS,
             tool_call_id=item.id,
-            content=result_serialized,
+            content=item.model_dump(mode='json', include={'tools', 'error'}),
             provider_name=provider_name,
-            tool_return_metadata={'mcp_server_id': item.server_label},
         ),
     )
 
@@ -2253,30 +2263,24 @@ def _map_mcp_list_tools(
 def _map_mcp_call(
     item: responses.response_output_item.McpCall, provider_name: str
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
-    result_serialized = {
-        'error': item.error,
-        'output': item.output,
-    }
-
     return (
         BuiltinToolCallPart(
             tool_name=MCPServerTool.CALL_TOOL,
             tool_call_id=item.id,
-            args=item.arguments,
-            provider_name=provider_name,
-            tool_call_metadata={
-                'mcp_server_id': item.server_label,
-                'mcp_tool_name': item.name,
+            args={
+                'server_id': item.server_label,
+                'tool_name': item.name,
+                'tool_args': json.loads(item.arguments) if item.arguments else {},
             },
+            provider_name=provider_name,
         ),
         BuiltinToolReturnPart(
             tool_name=MCPServerTool.CALL_TOOL,
             tool_call_id=item.id,
-            content=result_serialized,
-            provider_name=provider_name,
-            tool_return_metadata={
-                'mcp_server_id': item.server_label,
-                'mcp_tool_name': item.name,
+            content={
+                'output': item.output,
+                'error': item.error,
             },
+            provider_name=provider_name,
         ),
     )

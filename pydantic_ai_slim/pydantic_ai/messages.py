@@ -826,9 +826,6 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
     provider_name: str | None = None
     """The name of the provider that generated the response."""
 
-    tool_return_metadata: dict[str, Any] | None = None
-    """The metadata associated with the tool return message."""
-
     part_kind: Literal['builtin-tool-return'] = 'builtin-tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
@@ -1119,9 +1116,6 @@ class BuiltinToolCallPart(BaseToolCallPart):
 
     Built-in tool calls are only sent back to the same provider.
     """
-
-    tool_call_metadata: dict[str, Any] | None = None
-    """The metadata associated with the tool call."""
 
     part_kind: Literal['builtin-tool-call'] = 'builtin-tool-call'
     """Part type identifier, this is available on all parts as a discriminator."""

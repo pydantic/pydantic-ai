@@ -1,5 +1,4 @@
 import json
-import os
 import re
 from dataclasses import replace
 from typing import Any, cast
@@ -6333,23 +6332,23 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
         instructions='You are a helpful assistant.',
         builtin_tools=[
             MCPServerTool(
-                id='test_server',
-                url='https://api.githubcopilot.com/mcp/',
-                description='GitHub MCP server',
-                authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),
-                allowed_tools=['search_repositories'],
+                id='deepwiki',
+                url='https://mcp.deepwiki.com/mcp',
+                description='DeepWiki MCP server',
+                allowed_tools=['ask_question'],
                 headers={'custom-header-key': 'custom-header-value'},
             ),
         ],
     )
 
-    result = await agent.run('How many current public repos does user @Pydantic have?')
+    result = await agent.run('Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='How many current public repos does user @Pydantic have?', timestamp=IsDatetime()
+                        content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
+                        timestamp=IsDatetime(),
                     )
                 ],
                 instructions='You are a helpful assistant.',
@@ -6358,278 +6357,137 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='mcp_server:list_tools',
-                        tool_call_id='mcpl_04507193d793fa550068ed13e10bec81969d1d58d6d4c7a218',
+                        args={'server_id': 'deepwiki'},
+                        tool_call_id='mcpl_0109ee23c01d02ff0068faa0b38a1481a3a99669f3aa518000',
                         provider_name='openai',
-                        tool_call_metadata={'mcp_server_id': 'test_server'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:list_tools',
                         content={
-                            'error': None,
                             'tools': [
                                 {
                                     'input_schema': {
+                                        'type': 'object',
                                         'properties': {
-                                            'minimal_output': {
-                                                'default': True,
-                                                'description': 'Return minimal repository information (default: true). When false, returns full GitHub API repository objects.',
-                                                'type': 'boolean',
-                                            },
-                                            'order': {
-                                                'description': 'Sort order',
-                                                'enum': ['asc', 'desc'],
+                                            'repoName': {
                                                 'type': 'string',
+                                                'description': 'GitHub repository: owner/repo (e.g. "facebook/react")',
                                             },
-                                            'page': {
-                                                'description': 'Page number for pagination (min 1)',
-                                                'minimum': 1,
-                                                'type': 'number',
-                                            },
-                                            'perPage': {
-                                                'description': 'Results per page for pagination (min 1, max 100)',
-                                                'maximum': 100,
-                                                'minimum': 1,
-                                                'type': 'number',
-                                            },
-                                            'query': {
-                                                'description': "Repository search query. Examples: 'machine learning in:name stars:>1000 language:python', 'topic:react', 'user:facebook'. Supports advanced search syntax for precise filtering.",
+                                            'question': {
                                                 'type': 'string',
-                                            },
-                                            'sort': {
-                                                'description': 'Sort repositories by field, defaults to best match',
-                                                'enum': ['stars', 'forks', 'help-wanted-issues', 'updated'],
-                                                'type': 'string',
+                                                'description': 'The question to ask about the repository',
                                             },
                                         },
-                                        'required': ['query'],
-                                        'type': 'object',
+                                        'required': ['repoName', 'question'],
+                                        'additionalProperties': False,
+                                        '$schema': 'http://json-schema.org/draft-07/schema#',
                                     },
-                                    'name': 'search_repositories',
-                                    'annotations': {'read_only': True},
-                                    'description': 'Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
+                                    'name': 'ask_question',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Ask any question about a GitHub repository',
                                 }
                             ],
+                            'error': None,
                         },
-                        tool_call_id='mcpl_04507193d793fa550068ed13e10bec81969d1d58d6d4c7a218',
+                        tool_call_id='mcpl_0109ee23c01d02ff0068faa0b38a1481a3a99669f3aa518000',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'test_server'},
                     ),
                     ThinkingPart(
                         content='',
-                        id='rs_04507193d793fa550068ed13e3445c81968bfac1f471006aa8',
-                        signature='gAAAAABo7RPwBlGhrl9wLbNIVNY20JNHmCrVJFt4aMltys-m2T5tcNUsVVQVMFZlCQnxQJRNrQIFpeMiASvak7ETlmzUAGs5dtQ0esVI-PWUYoYi85daNwlW5DAwo9uxZzm19-wy6dSHfeQtM_F2nzmL2pIoO_qxbGYXQcZVHXPLOXAqzbedzVZRTdH-1j4DVKE_c9WPb62xFpp7DAoxRsfyak40VcdTivvmpVWfJ-x47FcEE_OMew6PNnBlspi1k4yEvjKZ8_OwvbyWeKeR4SuhZUeAbz6ZWOqptQ3lHoH9pprvTjoB8h248ZipfOoAzETJ8sAzLCV-KLgo4_IcsAvXpR5RjxbvaWzgSG9UBiAGlNDlh6dwVBdvnNvDNqkeMW1wYHiqTFDUdxNvHmFnYRIVmg4ZQ6ndjrXu76QY1N7cXoo0gjHHlezzsR-atyveiKW6QmZtlGV5IzRwzZpb7uZaX-ofWa4Fc562vlgJ71WWlMwn4qMIdksm3gaQ5-n6Z65Ci0LAD7xNVTPYzcKXAvO8YzMVXShgoCePpiJsB_Pc2_3lH2YzxNCBGHnwAAqvfU529IqXOClirz5wSMMW60oSmwB-Xj4Prv5778aTQgDFBM8X12vWqJie9CXuVwsjeeyWyGt0ZNnx5jX0VdXbRUNK-mjFX3f-gWNkPvzGnVgQ6XmPFhfO53Sy5KeTEVaVEvnTZdO2YuOQFOWYFIddc7Wq5SnMK7C_LMdURnguBRs-PpEX-C2-kwDH4whkABYO-V8F_PrFPdeGh2Sx3rwhtpoPAd5qM30DDCgf1A8zmVhvMf-7H5mQzXblUJu1l4KwKlm5jWkUX9X7bOk4TwVxubej7U7Q39A8ln2AcejtAcBo-8QGLdyf_q_WsNM45UvmS2HE76iAClfQBrEvHMPZj4Tysuz0_7adhiL-OkxL8fyrcyQZls1cbQot_qudXJ3ICnbs5ss6Z8VdIPYLIPuVRpWHK8K4J_DiyxMXZC6t1Um7FjrO4qw-3lWAtFCRGA5xIDkTshqsRQReFm6XmeKO5FrfwSDkLGMTUGwMWlKjoMP3GNLPMmEdq-hJ2snp1ZlROAfXDLB6BPkmmrTOe8XQv5XCwCCqvSgjhFhfnvsC7ulNSiZLAuDu96EY_YfjX0dNIPJN7G_I_L-WwCxRqEyH85jwM5pPRoRSFxyjeRrb9_JTeIilvgmF9RXiYIB4tnWl0XNuuZZsgZlzFXtINWJ3LmOURZ6dUwkqMire_UCcalQM5caZRG4uNzG-4erAShbttJwN8_-ieNqSKbJ2PX5McUVWXcQXZmn9DZHfdrwgp2dJQT9BS8w4Zj5iASXF_9OwIsZET0E9j2JEOHC2PS1BU2HLORZRpy4C2z0GYsDZpqGf2fOBfXGHJED_p51OXbdgbJ8hxm_ZPgk4f7TMScjFW4BvaGHelldskms4e1Znv85o5J37TSKT6A55CM4RbFLWsNDRdb4OI2Rx3NLj_twcznCCXX4XkB1Ex5Tyw-BWxMwzaZkGcBK6cG-r0-Fj8LIcbAg4JIBMQWT4pPG1fopdLephXcRosrjj9gapsCV0mgGLU5gMYwztmEgdDe7t4hO659PuH6Yk0vxLWGl-U6MyZzOdeSr8vikyJ7WmsLd7nFIJOEj3lAWliEslnQlDnhmouUp79sGN7ciylSxhuxm8F6Wi8TqJGU-yJdqReK2jIhL6AmImaW4_FusxOV3twYNy7yv0a8SCIs9KPOaaxUARUiuIfvN1tRIlkTcLJUypfuII3ZzFP_vrCNJ_FUphpojUAWhh8CQhW8YeME9otpJLQkLRVb1Mv0500VkCJgTMdYHfbxAbNyxLxdFABtKBE172QKh7RwQA2rJxHm2Ng57iWusHhb2yFHp8MaRF3hN0ro780uljZ6ymAlqYy3_auqTGZb0c538_OKf2ZUQmc_NI1M05S950cZTMUyy7ll5WRb7ZIQMv3g_Pk8Q-aqtOSCuB4KpxYA1yCdh6PDaRBUfdobj9kAN_9pSqwyGxo9Jpeky2viDXtKonOEk-dZnK-BlRM_4GRPLvpQYw0MKQxVKcJ7yKRd_e-zZDl641G1zE0Ycntte9U51JkwgERzHdbs8W967tdoSGRYsU72lcKdaFTxHBrYzrlzdWxFGmLdTZ-VrfjJbxU8ZSifRnHFXAknLaCyVsZeBoBrz68sEEteE8oTFZTGUKgtkXhP3iEwrtYvLDG44fO0lAd9tOUXh23doZHcncq9zUqVe99z5Qkc3g1DieeaHBj2r8AJKHwqwI_uUWhzV3dwnCK-o6vYGoff1UztGHiJT5Zgol-qwIrL_3o6CijNZzMEuhShH7zTKMZJVdc79juY3Q9LMSRVQIH1qpsV56ISOOhy9pVamYEDcxpv_oosPs8b77bu5RztTx-BwBhsnWxz5k6S80toGtthZAOQsPETUhB81m_1ZNjkmmuzDrqK2ITA3CY-C2EZVQf-5mD4K0jAwcbtmw57PkP65WI9fEumGTGVHKnUQ3UUyl1BDm8ZGiTLtk0BjK4gEdi2CGbre-nGARfwGA8igCDqyZqw2pEg0AFV2ELu7Qia25ZOSt1UyCSX5rReYjEIG6L5IOiM34p3sISsOFmi59O4P76Ls2oNfY32TTYulDWPX2R6z8mvfBlgAHbtNh17FkATnbv7BuRU3_3ZhTIrbK2I7hROn80vVM1c_A8aMmBCLoINfifHdhooNOreTnhGSvA2uillBBVEhbsU9eXf7SqsVcZl0jA5NqlJ8DsLKk1Qc54qudZzPdGOzB9aFJQfPAubJErXFaHr9gmxlJOmoDYouYzArpX939VL0IkCt-KbK997imQ2UFtyRYtDC-7dVya2Alg4ua8XyWHtezY7ADZBcMSdpwoXvZHWd0jCBwm5mJ16oMW4dao-M4xNM5Dp2NzK5QCHPt77LxqP3fNdFI7cjsZSM32tLwxqQfvvyrsBYemE55xISrj0VGj8fNS4qBC4T8DXiJ6LJgh7-wXrPeGihvIfhpATYjdQSjyf-6TXSB8HwzkLVdoWakokXBqpWfLMG8Qn2UNNuyr3heuOqOxh7kIKdr0ucJXAd1KlyVZoVGkMZIg74pqR9CSuB82889jSqYfsBKUzzN4mk8dE9QLZDu-11nnIrlD2JmZiJYaq49ZrMpYX8KZtvM1YjdAyXHrM6WPFBs4MXco7DZJUCTgadgmSDZ5FHG1sry4Wl3bvjSA1BwSk9naQFYeKRHmANEBJXfDV-a2HT7QbY=',
+                        id='rs_0109ee23c01d02ff0068faa0b683c481a396fef8bbc184ca9f',
+                        signature='gAAAAABo-qDJP9036xVAbi58wQno-FAT2cN1of2iuIwZvIsRz42fNQdsIkUNXunKbW2gpgKM2bv4gwI1Leeo1L1MSZVxnweAOytVB5TQkoFt45QJKddU_sNorQaeClHkdtEZRsZ9BTJlgEGqmW7CA3zxlT1VsitjXq0uH4tjZIMwaw3fl3NYN0ECNcwm34Y6X6W_DVNM6Er3U_d6zsQZejYexvVP-J47p9F0uMgR4o8qWjsjVDlbPNMV7jDvacpSCAHASx3iycF7YCa6auZjfXRTB3UE8Thv4eKvN22Whn85-GD91pHP8CcLdpavrtlnbzZYRkFELD0Tc9fEiCqMwJmEiPmoCNvIvSDD8-6cqLYKtUO7CeylkTh1NmVLXQrOFQr4NlahOYT3hGJUytkLI-mbYBawPT9W2RaU4EBFqohJ3NsEfXYXIFtt7t2kUaAv3QiViYXKLcVk2hJnrAecjFcdmcz6kP8ZmfljPKcRW4AD4nh9rJGXdtS95bDTt3J3oKY8TlR_k4HbZlChglIcUxvOeD4acYP_TtFJlMLX0LP_oop0V7PUJkiFtKHl7xpendJCJ7D8tGUzT_YiKj4gaVwQT40-Q8sGMtYZQUeW6f1ZY3t4nqmRZPl5U3NfeQZQWcSm6AIMQ1EdQzANTfro25wWQNt-rSrelUyYKiPBQlfbPsPAPfCqpVBLxCxvJXdk9nAMna-vJUEj1IFrOaF_c6wXQPzs8hq4g6VCjGLw2SuVoLwQSTBfEOetanrsA6UilE02bYzn0V-cPeEEilWGzOCw2mwUqUla0vW3gx-U6jJHNKLSgjvL-wkXQnkGtFc7xXJ7QpudqNqtmprBa6_npDDHd8BGpr-T0vMOQz1rAy2Z1UejYOI7Wue0f7Y2QIfrsDdxK203fxEyD94tDH8lESqg7kP89tcUDcryl7oJQY7TKpBz0fOK4AP8TctnZ1r_b5eMCLgLoj15P0j5KDbHDEZMLjUgY6PFHtD6sob-bWAJIcsE3c8YClXqkHvCS7LSCm_P3UXfpm40PtvAGsxbpzWrD5e_LQWVkg6TAotsU80ggTFMPDhYbSDpfwb4zF7YWSQDcccXR2K_HNpb0S_cqYkvJWCYmHgCTey3_iqInjS-3-cloMZ4SdZ6Zn1h4hiKSCXmpSPXhdhouz8w57g07YUg5o7EoMMhq9pazoS3LeLfRDOg9ZtkCAUdbiffvLJbdnHs1ggAX8ae08XP6KSK5b-dNvM1aPUNNn8wGNkScHoCUeAEhtr_aCbJzEjK77fReaE2hBpQ3C9KDeAuxELDe430fldVY50wGt4MxBaP9BOdeDA0gIUDla5bDP8qWR_fp_N8lWCjGO_2yLTz5pNL9KOVWBFGiSuCQ--5_4PP3iacJ8Y99Q9ylyIM6ZhgZOPLiMIsgJVstZswIaSxZLtOI5idDSpf8LDvofc16N8jqSSeoKZsThZExcxcZQJOIUfD0LvwVYmxSSap0BAg4mlbm8dA3G97ocZvVDr1kTNQP-UBIs18H-EqKwrEyava4SY5st0cNKRnROk85WJBUz0A-DJDqaA3naUjh_1d8qZ9FjoJXKq1Vk_1sCddCfQAhVUyG68oaRuGhH2It7o_g-6jF438Ta18olPmtDQiWYdULScZuC5L27pvhouHu3ohnkJjZvU_oiRVOWyHWlNd9MrGC-APrJct3xTjDOOxpleF5hE7q_CF9ckoJ59s_vxBZ7dpU5gclkiPXp7o85Z3YC4nCcHId3ZqzmD12ba_gJ9azKp2WCYRY5eGDQoDI_yqQKG7xO20XZV_xY1F8ozjZrjlAZNW30aKhbEkVdRcv8pLkLFhEMLP9KAMBSVCjNEhWG5xLR0P6cpm0AaYjCjaR6NCvtIAZ8yFoVB9lg==',
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='mcp_server:call_tool',
-                        args='{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:pydantic"}',
-                        tool_call_id='mcp_04507193d793fa550068ed13e71e5c8196b9588faf7b4f61de',
-                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
+                        args={
+                            'server_id': 'deepwiki',
+                            'tool_name': 'ask_question',
+                            'tool_args': {
+                                'repoName': 'pydantic/pydantic-ai',
+                                'question': 'What is the pydantic/pydantic-ai repository? Summarize its purpose and main features.',
+                            },
+                        },
+                        tool_call_id='mcp_0109ee23c01d02ff0068faa0b9381c81a3b9cee8be673b743a',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:call_tool',
                         content={
-                            'error': {'code': 32600, 'message': 'Session terminated', 'type': 'mcp_protocol_error'},
-                            'output': None,
+                            'error': None,
+                            'output': """\
+The `pydantic/pydantic-ai` repository is a Python agent framework designed to simplify the development of production-grade applications using Generative AI  . It aims to provide an ergonomic developer experience and type-safety, similar to FastAPI, for AI agent development  .
+
+## Purpose
+The primary purpose of `pydantic-ai` is to enable developers to build reliable AI applications by offering a framework that is type-safe, model-agnostic, and includes comprehensive observability and production-ready tooling . It leverages Pydantic's validation capabilities to ensure type safety and structured outputs in AI agent interactions  .
+
+## Main Features
+
+### Type-Safe Agents
+The framework provides generic `Agent[Deps, Output]` for compile-time validation, utilizing `RunContext[Deps]` for dependency injection and Pydantic `output_type` for validation  . This ensures that agents are robust and predictable  .
+
+### Model-Agnostic Design
+`pydantic-ai` supports over 15 LLM providers through a unified `Model` interface, allowing for flexibility in choosing and switching between different large language models   . This includes support for OpenAI, Anthropic, Google, Groq, Mistral, Cohere, and Bedrock, among others . Custom models can also be implemented by subclassing the `Model` abstract base class .
+
+### Structured Outputs and Tool System
+The framework facilitates structured outputs with automatic Pydantic validation and reflection/self-correction . It includes a tool system where functions can be registered using `@agent.tool` or `@agent.tool_plain` decorators, with automatic JSON schema generation from function signatures and docstrings  . This allows models to perform actions and retrieve information, making agents more capable and reliable .
+
+### Comprehensive Observability
+`pydantic-ai` offers comprehensive observability through OpenTelemetry and native Logfire integration   . It provides instrumentation for agent runs, model requests, and tool executions, with spans and metrics for token usage and costs .
+
+### Production-Ready Tooling
+The repository includes an evaluation framework (`pydantic-evals`) for systematically testing and evaluating agent performance    . It also supports durable execution for long-running workflows and integrations with protocols like MCP (Model Context Protocol), A2A (Agent2Agent), and AG-UI (Agent-User Interaction)   .
+
+### Graph-Based Execution
+The execution flow of agents is managed by a graph-based state machine using `pydantic_graph.Graph`  . This allows for orchestration of model requests and responses through core node types like `UserPromptNode`, `ModelRequestNode`, and `CallToolsNode`  .
+
+## Repository Structure
+The `pydantic/pydantic-ai` repository is organized as a UV workspace monorepo, containing several packages :
+*   `pydantic-ai-slim`: The core framework with agent, model, and tool functionalities  .
+*   `pydantic-graph`: The graph execution engine .
+*   `pydantic-evals`: The evaluation framework .
+*   `examples`: Contains example applications .
+*   `clai`: A CLI interface .
+*   `pydantic-ai`: A meta-package that includes all optional extras  .
+
+Notes:
+The `CLAUDE.md` file provides guidance for Claude Code when working with the repository, outlining development commands and project architecture. This is a specific instruction file for an AI assistant and not a core component of the framework itself.
+
+Wiki pages you might want to explore:
+- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)
+
+View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpydanticai_e00708e4-1510-447b-979d-a80a0442c1f1
+""",
                         },
-                        tool_call_id='mcp_04507193d793fa550068ed13e71e5c8196b9588faf7b4f61de',
+                        tool_call_id='mcp_0109ee23c01d02ff0068faa0b9381c81a3b9cee8be673b743a',
                         timestamp=IsDatetime(),
-                        provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    ),
-                    ThinkingPart(
-                        content='',
-                        id='rs_04507193d793fa550068ed13e7caa88196ad5ec0abaa0315a3',
-                        signature='gAAAAABo7RPwhF0RC2doViW9PTmEGAAWqjmI3o6aRABDFpqWMNYpySD0RtxVltuNWYnocK5_IIoA35C4Y0k8gQLR6cHF2CzpC4nFO4GCZpm4awByYiWkk9q3AP5PICjIco5BdCszCZBsOoaAtbUVI_wjj0Qomj3D1axk0frsXvTx9mzeEnjeHQQxS6V6Z53UDcwnfQ6pxXCzUDcAb2L5VAp_pw2lKOf34npFRQ11tkuU8djhuapZjNGXI8cyaX7bZifVoIaIxELGsIA6p7pbDxaC9EaZPttde9n3vP66Jt-qJfsumebs-lz_X8aosVVwszVoKoK0XLjzfTvkRA-S_Rjl_pJBvfUSlOJqMDNc2N5BqwrHwzS8B1Dqkx_JzI7zoVIgPTNwcKpIMBWSDjUbe2vjGOAyjLJQYLO9ah4Q1curobn18dKrOay3mYhoyKq28cx78lp-zwQvABHYW4PUcpj29g9HCLTZZQz2UXb-OSqy_QHEsxzlSlXY52SneDAW5i1euMRKYGHKZ6plVlLKHHv8PWsqDktb68lMZHJLmEpNPF7dCn3Bw39QrcUhO7-yURNgad0GflXGZG7yzeQ1-68cYVECD1Kvri3I5F_aQO9Sbh6a1iV_X8_xLcITi-MSOHfKzL-aqdih7nEWJeYgsgk1bYeDvDJgrGOqckNQjjX5OEBN73X-vkEPaCtBLswJ-Vr-ENqaPGVlX5zNUyOFhzFEdZUcZ4lFGYgeTapWOsW8m0bowUouvgXP0-7neRQ25nLnt95gJjdZEYE5Sl_SuRMz016rAcNIoa7Rgw1-u7sqoKtDf9YZ9mrxXmguV8NvYQVIgRS8UvxpJTtWYQIaCKuxm2_1A4YV4uGdSpRnd5RBhVpO8tphWy3tJNUxaZIa3E_DersilTfQmJEZbVGlI8b0-OiyZvlkRAb5STX4z04-3aoiKx_D44k=',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
-                        args='{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:Pydantic"}',
-                        tool_call_id='mcp_04507193d793fa550068ed13e84cec819697e55f0f6d7baec7',
-                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                        provider_name='openai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
-                        content={
-                            'error': {'code': 32600, 'message': 'Session terminated', 'type': 'mcp_protocol_error'},
-                            'output': None,
-                        },
-                        tool_call_id='mcp_04507193d793fa550068ed13e84cec819697e55f0f6d7baec7',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    ),
-                    ThinkingPart(
-                        content='',
-                        id='rs_04507193d793fa550068ed13e8fedc81968c9fe669111ef8b0',
-                        signature='gAAAAABo7RPwDENXNHyUucg1eGSOTdXv5VI0iMY2uLpeev4ModlAMbFZKrQYiSbAgmXgRSK80Uwl1ykNsxDjWMdcvlVeSQ3t40RjcfBpPfkZS5exjeNiHHT4I8p1M6-d9JhXY9BjtdATrArGIhchWnWTs0s1RfQbimhKIUlFLDNqty35mg6qZbS6lcGCTmc_yFuqTAlgQIEcsYDhDo6GBwHIJOKAoK-U7ZgGhaXi3TXfscV7qyqnd9O4UBY3GAYX4VfBem6y4QgCOamr7UA3-KyouI3m0XQrKcIxCB1KD9kY8NbU9ZJtpGOBq_yccjZ8hLTpuSClgiIIPFCryRzFyGsmWLgXNpH1eK3W5na2BTxMyopZYHdEKg-pce-cKoVun590by4G7-RQC7BHIB_SOzs7s_dvjFIelh8KrI0nTVXPDnNj4aDWkxXzFw_eWHTlEc1--ex34MPdQ9EIxTmHfJl8prE3Ld3SQd1FXl-TqpwQnI42MuPMRisAXP6mwfmDR-tkn0xvcP2SjLLs2BFEuTjTaxzHZUpnKMCw_y67_MdNZW8nlr0Ameo-iybsW_tRNf7QmQKYfDeiq43kx-dE53FghotnomFH-bMnDk5mdbfsxj7Y6Dd9m5slOD96s_D9SE9JRFk6w3Kok6E94d5_8vx9pKmVGlq7MCoPHxdtMjuiPdYLdUIcn-Tb5bZXtU2ISlwD56ez8AIB5D4Xh0k_hN5CuI6Zp6Rx5W6bJiIhtt7s51RyKOE8vOJCl2tAx5u15bCSwcocyGRoNxv8xzUYhDCuEeN8QSyxY_qSPJUJk6d0XtCa8fUuWEvuxgE12tFaWZjXunZ8y7u6352lfzKgYukB-5tMwrNXfa0wDhtvr1ZePBwy47A7vbgk1jBt1NMljSD0fs_AmaFv1pA9VwElq2eTKRR2PoZKNKLS_GhVWjNKKlXKDPmNYEcg5Qf4xa3o8lhb_hl4bHfUfbs8eXmnHLIkeiCQy7ukdhgDCDVKt4ryzjccCZKC5TaIv8tUDfkuFrQ_M-bFxBzeeTFGaTqTpUeMhjR3eUtfnAo643IxlLYHR6B4JmqaXkWvA0qtCj9U40URpsAldcXMC60E00SzsiagZUGQrw3dpHRF12d9KAMKd56lTvRRTicph3UWYjjt82929kPCBufb1lWd83MCTlDOAcqr00LfO-NJXxkUQNcpT_Pb1qYV8u9tC_8I1uBejfhVmK6X7vRN4eCGGVHqwZug3I6s4Y3ClkTZFfCqjJV908wjSs9TJtd8XJd8nn6ZixmuvDZs8080z3EWaucj2WeaDxjSAkqtsM_G420OpzLqWFjNH_Eu_FT5ofRxb25OfJdy4GJ9-G6AFEMfwjS2DGFuIWLsNY20sR34f7RC_zfW8miN7RRoIXMVl9xVGafoKU4s9z_jVI3qmAQFoWP2fKV2naA-0LxR2-YwRfGb_Np7ThJlVkSE7sJNc2-Chy3IkUijHmoa65uX3EAk26UyLRzjkpT1yf3VBZM7tfYVMctxX1BMn7pWFB4Vx7QcndfXQXBdd9j9GvgluWnJF3j11Z9Ix86k1ru7OvuT8ZvnUgaa8qnhmPw7swqPZi1ucC0wGWa4AGAf8icjSKDBPH2du_N3sDWkp38BxKZN3xj0kyXzZTTwa09yNoPFGjtI1AyRV6boUlnx6Pi1hiTIl6RTtyx21rLPRI71GGFGkr92TIG_xKtQn7DvEIDxLkyl_Mt0MXVr1pibSydYcKMmpxM_k1Mg6_nzbTZb_6MMZtQVV0JrOt5e054I8iBvK6k1A5625UKdKHFhEjO4ygQHwfWqUBMFw8CZ13FhIHmIR04AJOwvgrGWgIyeyemLkVFa3tBPmSPiBUg0Zisg-8I9E_34rplqj-GiQhtMEAWCUYIemN56LPaI90M8w6kiJAw4mMn5cGLivlFOp_ny2t0ttwAahibffZy1wrbVDKC32jHEbkf8-RoTnXG4NKe7ZXODPmfqvAcZWAbQgdbjv6w_NR_rVYu5Exfr8egKauuiqJm3I2gumKlQ7RALjSQs1ZoMAftz9g8a2cBtB8pIyoqynp7sXEPTY9yVmPtIuUjK_n2conlxTgVs-Tf2coPyQpXI93QpZ7WFXXV9LBmqBWJSjZkJlYjVIrmf382ly-WvUeqPxXJp43kmxdR-YFVQH-DyBNfWFJAiDh8nXlfukn9PsCqHcZHlg2Ejeq5ZJkIrjxE1_Ql-9l9ndeaiSmo4dTjDXh7LSa26AzvF_Ra7itBza1LHx6E9OGYKf5CFeAAdocV7zThCHwVb6Q7VMIlm6yX6Yk5geE4qqiOYB24CsJYXV5oDOrhyfQ0v35-FukeTEPRdG_NuXg-_29rBz9WYjXekvsmaJ_I4kilBKEfBVCPHKTHN2R3UHWAWxRicrwKJG70W7gdbbZFdnwKcV6OQvSRbi6ffuwYcWAkZu9HnMwjVvNTwRqh4A0LX8rCTyYuzbIUAvkr3pHKOEHMLZa3fmveOauA_PQLpX4q8zDIhjxqKqYkR74pFym3Bsu4Vu72TCb0x3YHcM9SOEwaKiZplZmHtYqJlxJA_4KO5xaDVL0Rvp_QfDegBj15BzUemyZIet0n5fF8MkzuslWBEkar_NodUE6Qsq0Xgx7Ph7yiuZSdqQy8W-r1KzME_FhserB8plVYLfW-gU826FXU5MS9ulk1ROi6oI8fsmUEPcSU8Qt1ao6e6HUARrMusInIHjilwF3b9BPY1apfeh3nEfMsgvjATxroITsiTnVORNlcyr9DBIUfbj3A8Fby9ZYYLp8K-VBIc7w1xckiHJEotdGSsDBDXUYNiZiC7CXy0TKws2xpxY4GFXw7HBC-ImgHEDZqzw7GjEJFnNYbNnjoRR54C9lG2o_QGtl89VHUXXqUVCMesAs6E9BqdX3u6B1fQlTfJ6zPN5V7NDIz3rspEYFa2HUIF0SzsKhANovwwu9PYGkzwTC-rCmxN1LCn_nRI5BgfnbtTxPRDOHoGgLCrvCRCKXdSpzdmaZ0a-Ivp2HufIKsEJFPdOc0clPocrmhIrJyX3FVTSNin7D-hBxOONVCHupHE5zxQCLqvKM_p8-dEYwuusMEyxr8Jg-dBK2B29WM4-ee9XHqFc8UL0I5on1Z2ujNRCKXTqfW5KrfyVClnG4jkm5NeJmPqBYdjnFqJnr29ZbULWFm9ku1VcE_61z6eJn-4JEFS8-1fkJtRpR1807yZ9o6ZmxtE7pGL1c9wiTZFtOg6N5IXQDmqaWnvRZkluzhZbUQfQszlgrq_h12uvC5bmcmBwnKYLRO3TwL77QmAMHvfSU79xPdawXfdmYZ3Ux0NgEjzbLIrbngMxJa8Y0UJGE5g4rao6apAj5U6UoVZScuO5et7Prkujfxodn4QbfOZipYDLitm9Wl7-Oeg-y37iyjheNeEqGKURI-29cIgZ_MEsG82Hvn2AAVYay69Qa9wemwz0ICYEdscv0iXy3weEXfpt1T-IB1OrPHnR2triX2Nj2jaXlgaOKZC27wHcREP8Yjb7IxjFECA7toB0I9Sbiqr6QGytWtuAbCtlCbAnVhQZs8BRCXn3uyGdUtK_849RYFdRq18X8HRGz-x2pb7oaryKrl-iGtE29IMACtHbDXHfRnUn1R7uaCbkrHyAsp-QjMClXkWraSGlmtxFBtq-HDyJvscvSfFuZumwBDZLtRXMlIwBV0ueyTGHyBA-g39rYZyLmG3Y5gf2TsuAqmn5lqYGWmgUP3AUI_O2EMbmCR1QYlCSgbz_Xp9VBzZrNztMxP3W6-uFtengj4uSH4Gxr9QjFwDTBmJtTexfUbKJFrQUemZmnqzb1Y2jIJl7_g3gFWen10mn6s4Bgt0ICqd0sxuhwOyrdFWt2CSb77gnSdbflBXCQa5xdLRHfOAcgYAseq4a8Pjve2QtjUdCAI1yUn7A4D90JssIZ6uRJYrnE-Gi4Di2b4CUBhsEhpvvAZMj-Shp9EC5bj2VwqQUHIB8iflPKs0brzwKGmF_6LgEyMb32f4sG_pkkHzdWXvTnhwNI_g0WxhTHBlBXlmatIEnJL-5d9UX0duYCqv5Il2V8E4nLq5RVOXiwyhI74N7optrqR6vhUMU-ntuTshc01k3cqEo-XRso09X7BY5AHnoLI_QaQWLFfBOmnF8VM-ecuWHCWaZHACgDkZ9_RT0PMXd8YrWxf1Al9a8kkp0FVSq1gG_s_7DzgpQ8oi9Twp9fhs4SVtjpg2JZBaSjq3e7G8uvllXiuI_k5uZ6p4zdfH6n_GB2plSAXOiEJRE9cCyGfOYxf54d5MprslS8tLUCT_5hTz_6ciPgGUXI1JhypORYMZ1Ah3OrWI9YusIkO3LLZ2ECh1MSO_uELFMNHDAB49x6GGsZYsZv6xW0s4Zav2yLsyap1GJjNmw0uUXxMwRZf9_A2TCnxB1RS0Ds0tfRFlCeeXHDfT8OXT4aN1gXF33736vOUOrKkfuFYAcbvWl4naLu5siVfZUVpeIZsn028fhvuhOmsJUcGGcSWtsT1gbmcRDq9WjV-k9qcPOIgQjrhyOTrrukV7AWt0cnmTF3qYptviW9OAtUOvVk095YsAOBFiT4l6KiEnf3k6iW8HwLCNWHgEpLTiyfeix_Ax9ff92JrMkU-3uOT6jTHit9Cs8pAyHTUvuBEHsT8ca-lAdlqYiNAmTM2lF23ECg3z6WK8dOyua-ZZ1fotW1u3DsMWX5hBJI5Dc6P_VSsGQMj7KLgeEgeV_n_VhMxUb__yZ2ezfQsImFtZrSIztLBmkwWHaoB_KaNQVgWX9pbEbCfaRNRrY-ZDVLEEgd8my41v0tqnBQ-iN9n_32OJuLFWCxlV9wNB3vw5mqSskIxvxMJfcgL3Gy3jZF3R14xRjRgnLX58cmNJjKqRt6fQX7ClI6GfXUz23dPvt57GZios46E3dMZuVuZSpLQ1g3xneP6pBDc2l5fFHtRtDqG5CrUVyJzl1sDGgDreyfIgFZ7ixUtR8ptf9wEG-G_JP6YUoomSATnli-odJxpHySoLstvQmPfD8rWzqiSDKsBKejXZYIVnsv4Z0xGF5IwbID6N1xVrW1jE5psusQF73uCxHlOEXaLuS1Od3BMyp7zQFEhjjkVb9k0t7GY-_xys0kwInyeL34ov9TZ8hO5cii6HgXv4Gg866_MRghXse1P4z7Y5CR6ieHwls6ue996_MQY2gpZBnzvzaSUq096z5R5wp3bsGMIPLeaLptTtaJF7Cj7DylfmdLJOSVi86a53anitDCk8VYfmn7vi6HwYHAgVF6-84MlEKzp-5QeELmOZyVLjEv4IuyG5bvJglwQLhoTecSNS8haaWe88UTn_RfOTZ51aM9HJWeaxa8oONxdXq0UihgFPBMLd6UsPAoXkhutK7tzYOyTuzOGFaqSw0L4JtT9fn-hriBEtFWy6Cofuc4tpDsJuKT_IiaIX6JaU1vP1bflmcNuiOFd0K_WvgaZK0YvF2rMT7QmSiLGReiSGThb1GGS-IGU1wM4FJ5RoMh598hM8bLfqcQYZcIJlR7m9VHo2qyPZUiCtgFzUsqvmQoTYCYRBVn34CM9UMJGT3gEXpYBVvW-FVWTeNWR9a1QFQbEdlS2tVzyb34SwLaq9TZHns2f21PIOp3zl2Q4o3XQUeFPyYQVkBypUL4Fv9ZwoBrUWtxCoEd859dsgv93XfYozZtbL2WuZYXlzAW_5GHxwpUcrGScyfF8BF8U_vfGG2alDzRpGN1t9A1FTjjktmeOBNyVeuGzjilGq1_at-d-tiltXMyK2wL-I6Hp5xBk-MUj9mD9vVNALdWrFywfpJHJayRIlW0ML86vFbwG4YIjOM9gBOi1Pz3cQ7hQFN4fv9IZ4oooIo6V2jq-FL0kTGCSDv2CTU0xNj48ta8uSzhLO0kf4',
                         provider_name='openai',
                     ),
                     TextPart(
-                        content='As of right now, the Pydantic GitHub account has 17 public repositories.',
-                        id='msg_04507193d793fa550068ed13f02d7c8196afba59eeeb18c096',
+                        content=IsStr(),
+                        id='msg_0109ee23c01d02ff0068faa0c771d481a3a04ab24cfba6eaf3',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=871, output_tokens=1392, details={'reasoning_tokens': 1280}),
+                usage=RequestUsage(input_tokens=1144, output_tokens=366, details={'reasoning_tokens': 128}),
                 model_name='o4-mini-2025-04-16',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_04507193d793fa550068ed13e0cc488196a6f4c49747240ea9',
+                provider_response_id='resp_0109ee23c01d02ff0068faa0b36cf081a38afe2a7309ffae10',
                 finish_reason='stop',
             ),
         ]
     )
+
     messages = result.all_messages()
-    result = await agent.run(
-        'Can you tell me more about pydantic-ai repo? Keep your answer short', message_history=messages
-    )
-    assert result.all_messages() == snapshot(
+    result = await agent.run('How about the pydantic repo in the same org?', message_history=messages)
+    assert result.new_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='How many current public repos does user @Pydantic have?', timestamp=IsDatetime()
-                    )
-                ],
-                instructions='You are a helpful assistant.',
-            ),
-            ModelResponse(
-                parts=[
-                    BuiltinToolCallPart(
-                        tool_name='mcp_server:list_tools',
-                        tool_call_id='mcpl_04507193d793fa550068ed13e10bec81969d1d58d6d4c7a218',
-                        provider_name='openai',
-                        tool_call_metadata={'mcp_server_id': 'test_server'},
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='mcp_server:list_tools',
-                        content={
-                            'error': None,
-                            'tools': [
-                                {
-                                    'input_schema': {
-                                        'properties': {
-                                            'minimal_output': {
-                                                'default': True,
-                                                'description': 'Return minimal repository information (default: true). When false, returns full GitHub API repository objects.',
-                                                'type': 'boolean',
-                                            },
-                                            'order': {
-                                                'description': 'Sort order',
-                                                'enum': ['asc', 'desc'],
-                                                'type': 'string',
-                                            },
-                                            'page': {
-                                                'description': 'Page number for pagination (min 1)',
-                                                'minimum': 1,
-                                                'type': 'number',
-                                            },
-                                            'perPage': {
-                                                'description': 'Results per page for pagination (min 1, max 100)',
-                                                'maximum': 100,
-                                                'minimum': 1,
-                                                'type': 'number',
-                                            },
-                                            'query': {
-                                                'description': "Repository search query. Examples: 'machine learning in:name stars:>1000 language:python', 'topic:react', 'user:facebook'. Supports advanced search syntax for precise filtering.",
-                                                'type': 'string',
-                                            },
-                                            'sort': {
-                                                'description': 'Sort repositories by field, defaults to best match',
-                                                'enum': ['stars', 'forks', 'help-wanted-issues', 'updated'],
-                                                'type': 'string',
-                                            },
-                                        },
-                                        'required': ['query'],
-                                        'type': 'object',
-                                    },
-                                    'name': 'search_repositories',
-                                    'annotations': {'read_only': True},
-                                    'description': 'Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
-                                }
-                            ],
-                        },
-                        tool_call_id='mcpl_04507193d793fa550068ed13e10bec81969d1d58d6d4c7a218',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'test_server'},
-                    ),
-                    ThinkingPart(
-                        content='',
-                        id='rs_04507193d793fa550068ed13e3445c81968bfac1f471006aa8',
-                        signature='gAAAAABo7RPwBlGhrl9wLbNIVNY20JNHmCrVJFt4aMltys-m2T5tcNUsVVQVMFZlCQnxQJRNrQIFpeMiASvak7ETlmzUAGs5dtQ0esVI-PWUYoYi85daNwlW5DAwo9uxZzm19-wy6dSHfeQtM_F2nzmL2pIoO_qxbGYXQcZVHXPLOXAqzbedzVZRTdH-1j4DVKE_c9WPb62xFpp7DAoxRsfyak40VcdTivvmpVWfJ-x47FcEE_OMew6PNnBlspi1k4yEvjKZ8_OwvbyWeKeR4SuhZUeAbz6ZWOqptQ3lHoH9pprvTjoB8h248ZipfOoAzETJ8sAzLCV-KLgo4_IcsAvXpR5RjxbvaWzgSG9UBiAGlNDlh6dwVBdvnNvDNqkeMW1wYHiqTFDUdxNvHmFnYRIVmg4ZQ6ndjrXu76QY1N7cXoo0gjHHlezzsR-atyveiKW6QmZtlGV5IzRwzZpb7uZaX-ofWa4Fc562vlgJ71WWlMwn4qMIdksm3gaQ5-n6Z65Ci0LAD7xNVTPYzcKXAvO8YzMVXShgoCePpiJsB_Pc2_3lH2YzxNCBGHnwAAqvfU529IqXOClirz5wSMMW60oSmwB-Xj4Prv5778aTQgDFBM8X12vWqJie9CXuVwsjeeyWyGt0ZNnx5jX0VdXbRUNK-mjFX3f-gWNkPvzGnVgQ6XmPFhfO53Sy5KeTEVaVEvnTZdO2YuOQFOWYFIddc7Wq5SnMK7C_LMdURnguBRs-PpEX-C2-kwDH4whkABYO-V8F_PrFPdeGh2Sx3rwhtpoPAd5qM30DDCgf1A8zmVhvMf-7H5mQzXblUJu1l4KwKlm5jWkUX9X7bOk4TwVxubej7U7Q39A8ln2AcejtAcBo-8QGLdyf_q_WsNM45UvmS2HE76iAClfQBrEvHMPZj4Tysuz0_7adhiL-OkxL8fyrcyQZls1cbQot_qudXJ3ICnbs5ss6Z8VdIPYLIPuVRpWHK8K4J_DiyxMXZC6t1Um7FjrO4qw-3lWAtFCRGA5xIDkTshqsRQReFm6XmeKO5FrfwSDkLGMTUGwMWlKjoMP3GNLPMmEdq-hJ2snp1ZlROAfXDLB6BPkmmrTOe8XQv5XCwCCqvSgjhFhfnvsC7ulNSiZLAuDu96EY_YfjX0dNIPJN7G_I_L-WwCxRqEyH85jwM5pPRoRSFxyjeRrb9_JTeIilvgmF9RXiYIB4tnWl0XNuuZZsgZlzFXtINWJ3LmOURZ6dUwkqMire_UCcalQM5caZRG4uNzG-4erAShbttJwN8_-ieNqSKbJ2PX5McUVWXcQXZmn9DZHfdrwgp2dJQT9BS8w4Zj5iASXF_9OwIsZET0E9j2JEOHC2PS1BU2HLORZRpy4C2z0GYsDZpqGf2fOBfXGHJED_p51OXbdgbJ8hxm_ZPgk4f7TMScjFW4BvaGHelldskms4e1Znv85o5J37TSKT6A55CM4RbFLWsNDRdb4OI2Rx3NLj_twcznCCXX4XkB1Ex5Tyw-BWxMwzaZkGcBK6cG-r0-Fj8LIcbAg4JIBMQWT4pPG1fopdLephXcRosrjj9gapsCV0mgGLU5gMYwztmEgdDe7t4hO659PuH6Yk0vxLWGl-U6MyZzOdeSr8vikyJ7WmsLd7nFIJOEj3lAWliEslnQlDnhmouUp79sGN7ciylSxhuxm8F6Wi8TqJGU-yJdqReK2jIhL6AmImaW4_FusxOV3twYNy7yv0a8SCIs9KPOaaxUARUiuIfvN1tRIlkTcLJUypfuII3ZzFP_vrCNJ_FUphpojUAWhh8CQhW8YeME9otpJLQkLRVb1Mv0500VkCJgTMdYHfbxAbNyxLxdFABtKBE172QKh7RwQA2rJxHm2Ng57iWusHhb2yFHp8MaRF3hN0ro780uljZ6ymAlqYy3_auqTGZb0c538_OKf2ZUQmc_NI1M05S950cZTMUyy7ll5WRb7ZIQMv3g_Pk8Q-aqtOSCuB4KpxYA1yCdh6PDaRBUfdobj9kAN_9pSqwyGxo9Jpeky2viDXtKonOEk-dZnK-BlRM_4GRPLvpQYw0MKQxVKcJ7yKRd_e-zZDl641G1zE0Ycntte9U51JkwgERzHdbs8W967tdoSGRYsU72lcKdaFTxHBrYzrlzdWxFGmLdTZ-VrfjJbxU8ZSifRnHFXAknLaCyVsZeBoBrz68sEEteE8oTFZTGUKgtkXhP3iEwrtYvLDG44fO0lAd9tOUXh23doZHcncq9zUqVe99z5Qkc3g1DieeaHBj2r8AJKHwqwI_uUWhzV3dwnCK-o6vYGoff1UztGHiJT5Zgol-qwIrL_3o6CijNZzMEuhShH7zTKMZJVdc79juY3Q9LMSRVQIH1qpsV56ISOOhy9pVamYEDcxpv_oosPs8b77bu5RztTx-BwBhsnWxz5k6S80toGtthZAOQsPETUhB81m_1ZNjkmmuzDrqK2ITA3CY-C2EZVQf-5mD4K0jAwcbtmw57PkP65WI9fEumGTGVHKnUQ3UUyl1BDm8ZGiTLtk0BjK4gEdi2CGbre-nGARfwGA8igCDqyZqw2pEg0AFV2ELu7Qia25ZOSt1UyCSX5rReYjEIG6L5IOiM34p3sISsOFmi59O4P76Ls2oNfY32TTYulDWPX2R6z8mvfBlgAHbtNh17FkATnbv7BuRU3_3ZhTIrbK2I7hROn80vVM1c_A8aMmBCLoINfifHdhooNOreTnhGSvA2uillBBVEhbsU9eXf7SqsVcZl0jA5NqlJ8DsLKk1Qc54qudZzPdGOzB9aFJQfPAubJErXFaHr9gmxlJOmoDYouYzArpX939VL0IkCt-KbK997imQ2UFtyRYtDC-7dVya2Alg4ua8XyWHtezY7ADZBcMSdpwoXvZHWd0jCBwm5mJ16oMW4dao-M4xNM5Dp2NzK5QCHPt77LxqP3fNdFI7cjsZSM32tLwxqQfvvyrsBYemE55xISrj0VGj8fNS4qBC4T8DXiJ6LJgh7-wXrPeGihvIfhpATYjdQSjyf-6TXSB8HwzkLVdoWakokXBqpWfLMG8Qn2UNNuyr3heuOqOxh7kIKdr0ucJXAd1KlyVZoVGkMZIg74pqR9CSuB82889jSqYfsBKUzzN4mk8dE9QLZDu-11nnIrlD2JmZiJYaq49ZrMpYX8KZtvM1YjdAyXHrM6WPFBs4MXco7DZJUCTgadgmSDZ5FHG1sry4Wl3bvjSA1BwSk9naQFYeKRHmANEBJXfDV-a2HT7QbY=',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
-                        args='{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:pydantic"}',
-                        tool_call_id='mcp_04507193d793fa550068ed13e71e5c8196b9588faf7b4f61de',
-                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                        provider_name='openai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
-                        content={
-                            'error': {'code': 32600, 'message': 'Session terminated', 'type': 'mcp_protocol_error'},
-                            'output': None,
-                        },
-                        tool_call_id='mcp_04507193d793fa550068ed13e71e5c8196b9588faf7b4f61de',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    ),
-                    ThinkingPart(
-                        content='',
-                        id='rs_04507193d793fa550068ed13e7caa88196ad5ec0abaa0315a3',
-                        signature='gAAAAABo7RPwhF0RC2doViW9PTmEGAAWqjmI3o6aRABDFpqWMNYpySD0RtxVltuNWYnocK5_IIoA35C4Y0k8gQLR6cHF2CzpC4nFO4GCZpm4awByYiWkk9q3AP5PICjIco5BdCszCZBsOoaAtbUVI_wjj0Qomj3D1axk0frsXvTx9mzeEnjeHQQxS6V6Z53UDcwnfQ6pxXCzUDcAb2L5VAp_pw2lKOf34npFRQ11tkuU8djhuapZjNGXI8cyaX7bZifVoIaIxELGsIA6p7pbDxaC9EaZPttde9n3vP66Jt-qJfsumebs-lz_X8aosVVwszVoKoK0XLjzfTvkRA-S_Rjl_pJBvfUSlOJqMDNc2N5BqwrHwzS8B1Dqkx_JzI7zoVIgPTNwcKpIMBWSDjUbe2vjGOAyjLJQYLO9ah4Q1curobn18dKrOay3mYhoyKq28cx78lp-zwQvABHYW4PUcpj29g9HCLTZZQz2UXb-OSqy_QHEsxzlSlXY52SneDAW5i1euMRKYGHKZ6plVlLKHHv8PWsqDktb68lMZHJLmEpNPF7dCn3Bw39QrcUhO7-yURNgad0GflXGZG7yzeQ1-68cYVECD1Kvri3I5F_aQO9Sbh6a1iV_X8_xLcITi-MSOHfKzL-aqdih7nEWJeYgsgk1bYeDvDJgrGOqckNQjjX5OEBN73X-vkEPaCtBLswJ-Vr-ENqaPGVlX5zNUyOFhzFEdZUcZ4lFGYgeTapWOsW8m0bowUouvgXP0-7neRQ25nLnt95gJjdZEYE5Sl_SuRMz016rAcNIoa7Rgw1-u7sqoKtDf9YZ9mrxXmguV8NvYQVIgRS8UvxpJTtWYQIaCKuxm2_1A4YV4uGdSpRnd5RBhVpO8tphWy3tJNUxaZIa3E_DersilTfQmJEZbVGlI8b0-OiyZvlkRAb5STX4z04-3aoiKx_D44k=',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
-                        args='{"minimal_output":true,"order":"desc","page":1,"perPage":100,"query":"user:Pydantic"}',
-                        tool_call_id='mcp_04507193d793fa550068ed13e84cec819697e55f0f6d7baec7',
-                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                        provider_name='openai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
-                        content={
-                            'error': {'code': 32600, 'message': 'Session terminated', 'type': 'mcp_protocol_error'},
-                            'output': None,
-                        },
-                        tool_call_id='mcp_04507193d793fa550068ed13e84cec819697e55f0f6d7baec7',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    ),
-                    ThinkingPart(
-                        content='',
-                        id='rs_04507193d793fa550068ed13e8fedc81968c9fe669111ef8b0',
-                        signature='gAAAAABo7RPwDENXNHyUucg1eGSOTdXv5VI0iMY2uLpeev4ModlAMbFZKrQYiSbAgmXgRSK80Uwl1ykNsxDjWMdcvlVeSQ3t40RjcfBpPfkZS5exjeNiHHT4I8p1M6-d9JhXY9BjtdATrArGIhchWnWTs0s1RfQbimhKIUlFLDNqty35mg6qZbS6lcGCTmc_yFuqTAlgQIEcsYDhDo6GBwHIJOKAoK-U7ZgGhaXi3TXfscV7qyqnd9O4UBY3GAYX4VfBem6y4QgCOamr7UA3-KyouI3m0XQrKcIxCB1KD9kY8NbU9ZJtpGOBq_yccjZ8hLTpuSClgiIIPFCryRzFyGsmWLgXNpH1eK3W5na2BTxMyopZYHdEKg-pce-cKoVun590by4G7-RQC7BHIB_SOzs7s_dvjFIelh8KrI0nTVXPDnNj4aDWkxXzFw_eWHTlEc1--ex34MPdQ9EIxTmHfJl8prE3Ld3SQd1FXl-TqpwQnI42MuPMRisAXP6mwfmDR-tkn0xvcP2SjLLs2BFEuTjTaxzHZUpnKMCw_y67_MdNZW8nlr0Ameo-iybsW_tRNf7QmQKYfDeiq43kx-dE53FghotnomFH-bMnDk5mdbfsxj7Y6Dd9m5slOD96s_D9SE9JRFk6w3Kok6E94d5_8vx9pKmVGlq7MCoPHxdtMjuiPdYLdUIcn-Tb5bZXtU2ISlwD56ez8AIB5D4Xh0k_hN5CuI6Zp6Rx5W6bJiIhtt7s51RyKOE8vOJCl2tAx5u15bCSwcocyGRoNxv8xzUYhDCuEeN8QSyxY_qSPJUJk6d0XtCa8fUuWEvuxgE12tFaWZjXunZ8y7u6352lfzKgYukB-5tMwrNXfa0wDhtvr1ZePBwy47A7vbgk1jBt1NMljSD0fs_AmaFv1pA9VwElq2eTKRR2PoZKNKLS_GhVWjNKKlXKDPmNYEcg5Qf4xa3o8lhb_hl4bHfUfbs8eXmnHLIkeiCQy7ukdhgDCDVKt4ryzjccCZKC5TaIv8tUDfkuFrQ_M-bFxBzeeTFGaTqTpUeMhjR3eUtfnAo643IxlLYHR6B4JmqaXkWvA0qtCj9U40URpsAldcXMC60E00SzsiagZUGQrw3dpHRF12d9KAMKd56lTvRRTicph3UWYjjt82929kPCBufb1lWd83MCTlDOAcqr00LfO-NJXxkUQNcpT_Pb1qYV8u9tC_8I1uBejfhVmK6X7vRN4eCGGVHqwZug3I6s4Y3ClkTZFfCqjJV908wjSs9TJtd8XJd8nn6ZixmuvDZs8080z3EWaucj2WeaDxjSAkqtsM_G420OpzLqWFjNH_Eu_FT5ofRxb25OfJdy4GJ9-G6AFEMfwjS2DGFuIWLsNY20sR34f7RC_zfW8miN7RRoIXMVl9xVGafoKU4s9z_jVI3qmAQFoWP2fKV2naA-0LxR2-YwRfGb_Np7ThJlVkSE7sJNc2-Chy3IkUijHmoa65uX3EAk26UyLRzjkpT1yf3VBZM7tfYVMctxX1BMn7pWFB4Vx7QcndfXQXBdd9j9GvgluWnJF3j11Z9Ix86k1ru7OvuT8ZvnUgaa8qnhmPw7swqPZi1ucC0wGWa4AGAf8icjSKDBPH2du_N3sDWkp38BxKZN3xj0kyXzZTTwa09yNoPFGjtI1AyRV6boUlnx6Pi1hiTIl6RTtyx21rLPRI71GGFGkr92TIG_xKtQn7DvEIDxLkyl_Mt0MXVr1pibSydYcKMmpxM_k1Mg6_nzbTZb_6MMZtQVV0JrOt5e054I8iBvK6k1A5625UKdKHFhEjO4ygQHwfWqUBMFw8CZ13FhIHmIR04AJOwvgrGWgIyeyemLkVFa3tBPmSPiBUg0Zisg-8I9E_34rplqj-GiQhtMEAWCUYIemN56LPaI90M8w6kiJAw4mMn5cGLivlFOp_ny2t0ttwAahibffZy1wrbVDKC32jHEbkf8-RoTnXG4NKe7ZXODPmfqvAcZWAbQgdbjv6w_NR_rVYu5Exfr8egKauuiqJm3I2gumKlQ7RALjSQs1ZoMAftz9g8a2cBtB8pIyoqynp7sXEPTY9yVmPtIuUjK_n2conlxTgVs-Tf2coPyQpXI93QpZ7WFXXV9LBmqBWJSjZkJlYjVIrmf382ly-WvUeqPxXJp43kmxdR-YFVQH-DyBNfWFJAiDh8nXlfukn9PsCqHcZHlg2Ejeq5ZJkIrjxE1_Ql-9l9ndeaiSmo4dTjDXh7LSa26AzvF_Ra7itBza1LHx6E9OGYKf5CFeAAdocV7zThCHwVb6Q7VMIlm6yX6Yk5geE4qqiOYB24CsJYXV5oDOrhyfQ0v35-FukeTEPRdG_NuXg-_29rBz9WYjXekvsmaJ_I4kilBKEfBVCPHKTHN2R3UHWAWxRicrwKJG70W7gdbbZFdnwKcV6OQvSRbi6ffuwYcWAkZu9HnMwjVvNTwRqh4A0LX8rCTyYuzbIUAvkr3pHKOEHMLZa3fmveOauA_PQLpX4q8zDIhjxqKqYkR74pFym3Bsu4Vu72TCb0x3YHcM9SOEwaKiZplZmHtYqJlxJA_4KO5xaDVL0Rvp_QfDegBj15BzUemyZIet0n5fF8MkzuslWBEkar_NodUE6Qsq0Xgx7Ph7yiuZSdqQy8W-r1KzME_FhserB8plVYLfW-gU826FXU5MS9ulk1ROi6oI8fsmUEPcSU8Qt1ao6e6HUARrMusInIHjilwF3b9BPY1apfeh3nEfMsgvjATxroITsiTnVORNlcyr9DBIUfbj3A8Fby9ZYYLp8K-VBIc7w1xckiHJEotdGSsDBDXUYNiZiC7CXy0TKws2xpxY4GFXw7HBC-ImgHEDZqzw7GjEJFnNYbNnjoRR54C9lG2o_QGtl89VHUXXqUVCMesAs6E9BqdX3u6B1fQlTfJ6zPN5V7NDIz3rspEYFa2HUIF0SzsKhANovwwu9PYGkzwTC-rCmxN1LCn_nRI5BgfnbtTxPRDOHoGgLCrvCRCKXdSpzdmaZ0a-Ivp2HufIKsEJFPdOc0clPocrmhIrJyX3FVTSNin7D-hBxOONVCHupHE5zxQCLqvKM_p8-dEYwuusMEyxr8Jg-dBK2B29WM4-ee9XHqFc8UL0I5on1Z2ujNRCKXTqfW5KrfyVClnG4jkm5NeJmPqBYdjnFqJnr29ZbULWFm9ku1VcE_61z6eJn-4JEFS8-1fkJtRpR1807yZ9o6ZmxtE7pGL1c9wiTZFtOg6N5IXQDmqaWnvRZkluzhZbUQfQszlgrq_h12uvC5bmcmBwnKYLRO3TwL77QmAMHvfSU79xPdawXfdmYZ3Ux0NgEjzbLIrbngMxJa8Y0UJGE5g4rao6apAj5U6UoVZScuO5et7Prkujfxodn4QbfOZipYDLitm9Wl7-Oeg-y37iyjheNeEqGKURI-29cIgZ_MEsG82Hvn2AAVYay69Qa9wemwz0ICYEdscv0iXy3weEXfpt1T-IB1OrPHnR2triX2Nj2jaXlgaOKZC27wHcREP8Yjb7IxjFECA7toB0I9Sbiqr6QGytWtuAbCtlCbAnVhQZs8BRCXn3uyGdUtK_849RYFdRq18X8HRGz-x2pb7oaryKrl-iGtE29IMACtHbDXHfRnUn1R7uaCbkrHyAsp-QjMClXkWraSGlmtxFBtq-HDyJvscvSfFuZumwBDZLtRXMlIwBV0ueyTGHyBA-g39rYZyLmG3Y5gf2TsuAqmn5lqYGWmgUP3AUI_O2EMbmCR1QYlCSgbz_Xp9VBzZrNztMxP3W6-uFtengj4uSH4Gxr9QjFwDTBmJtTexfUbKJFrQUemZmnqzb1Y2jIJl7_g3gFWen10mn6s4Bgt0ICqd0sxuhwOyrdFWt2CSb77gnSdbflBXCQa5xdLRHfOAcgYAseq4a8Pjve2QtjUdCAI1yUn7A4D90JssIZ6uRJYrnE-Gi4Di2b4CUBhsEhpvvAZMj-Shp9EC5bj2VwqQUHIB8iflPKs0brzwKGmF_6LgEyMb32f4sG_pkkHzdWXvTnhwNI_g0WxhTHBlBXlmatIEnJL-5d9UX0duYCqv5Il2V8E4nLq5RVOXiwyhI74N7optrqR6vhUMU-ntuTshc01k3cqEo-XRso09X7BY5AHnoLI_QaQWLFfBOmnF8VM-ecuWHCWaZHACgDkZ9_RT0PMXd8YrWxf1Al9a8kkp0FVSq1gG_s_7DzgpQ8oi9Twp9fhs4SVtjpg2JZBaSjq3e7G8uvllXiuI_k5uZ6p4zdfH6n_GB2plSAXOiEJRE9cCyGfOYxf54d5MprslS8tLUCT_5hTz_6ciPgGUXI1JhypORYMZ1Ah3OrWI9YusIkO3LLZ2ECh1MSO_uELFMNHDAB49x6GGsZYsZv6xW0s4Zav2yLsyap1GJjNmw0uUXxMwRZf9_A2TCnxB1RS0Ds0tfRFlCeeXHDfT8OXT4aN1gXF33736vOUOrKkfuFYAcbvWl4naLu5siVfZUVpeIZsn028fhvuhOmsJUcGGcSWtsT1gbmcRDq9WjV-k9qcPOIgQjrhyOTrrukV7AWt0cnmTF3qYptviW9OAtUOvVk095YsAOBFiT4l6KiEnf3k6iW8HwLCNWHgEpLTiyfeix_Ax9ff92JrMkU-3uOT6jTHit9Cs8pAyHTUvuBEHsT8ca-lAdlqYiNAmTM2lF23ECg3z6WK8dOyua-ZZ1fotW1u3DsMWX5hBJI5Dc6P_VSsGQMj7KLgeEgeV_n_VhMxUb__yZ2ezfQsImFtZrSIztLBmkwWHaoB_KaNQVgWX9pbEbCfaRNRrY-ZDVLEEgd8my41v0tqnBQ-iN9n_32OJuLFWCxlV9wNB3vw5mqSskIxvxMJfcgL3Gy3jZF3R14xRjRgnLX58cmNJjKqRt6fQX7ClI6GfXUz23dPvt57GZios46E3dMZuVuZSpLQ1g3xneP6pBDc2l5fFHtRtDqG5CrUVyJzl1sDGgDreyfIgFZ7ixUtR8ptf9wEG-G_JP6YUoomSATnli-odJxpHySoLstvQmPfD8rWzqiSDKsBKejXZYIVnsv4Z0xGF5IwbID6N1xVrW1jE5psusQF73uCxHlOEXaLuS1Od3BMyp7zQFEhjjkVb9k0t7GY-_xys0kwInyeL34ov9TZ8hO5cii6HgXv4Gg866_MRghXse1P4z7Y5CR6ieHwls6ue996_MQY2gpZBnzvzaSUq096z5R5wp3bsGMIPLeaLptTtaJF7Cj7DylfmdLJOSVi86a53anitDCk8VYfmn7vi6HwYHAgVF6-84MlEKzp-5QeELmOZyVLjEv4IuyG5bvJglwQLhoTecSNS8haaWe88UTn_RfOTZ51aM9HJWeaxa8oONxdXq0UihgFPBMLd6UsPAoXkhutK7tzYOyTuzOGFaqSw0L4JtT9fn-hriBEtFWy6Cofuc4tpDsJuKT_IiaIX6JaU1vP1bflmcNuiOFd0K_WvgaZK0YvF2rMT7QmSiLGReiSGThb1GGS-IGU1wM4FJ5RoMh598hM8bLfqcQYZcIJlR7m9VHo2qyPZUiCtgFzUsqvmQoTYCYRBVn34CM9UMJGT3gEXpYBVvW-FVWTeNWR9a1QFQbEdlS2tVzyb34SwLaq9TZHns2f21PIOp3zl2Q4o3XQUeFPyYQVkBypUL4Fv9ZwoBrUWtxCoEd859dsgv93XfYozZtbL2WuZYXlzAW_5GHxwpUcrGScyfF8BF8U_vfGG2alDzRpGN1t9A1FTjjktmeOBNyVeuGzjilGq1_at-d-tiltXMyK2wL-I6Hp5xBk-MUj9mD9vVNALdWrFywfpJHJayRIlW0ML86vFbwG4YIjOM9gBOi1Pz3cQ7hQFN4fv9IZ4oooIo6V2jq-FL0kTGCSDv2CTU0xNj48ta8uSzhLO0kf4',
-                        provider_name='openai',
-                    ),
-                    TextPart(
-                        content='As of right now, the Pydantic GitHub account has 17 public repositories.',
-                        id='msg_04507193d793fa550068ed13f02d7c8196afba59eeeb18c096',
-                    ),
-                ],
-                usage=RequestUsage(input_tokens=871, output_tokens=1392, details={'reasoning_tokens': 1280}),
-                model_name='o4-mini-2025-04-16',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_04507193d793fa550068ed13e0cc488196a6f4c49747240ea9',
-                finish_reason='stop',
-            ),
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Can you tell me more about pydantic-ai repo? Keep your answer short',
+                        content='How about the pydantic repo in the same org?',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -6639,45 +6497,107 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                 parts=[
                     ThinkingPart(
                         content='',
-                        id='rs_04507193d793fa550068ed13f269d481969f71e83863052982',
-                        signature='gAAAAABo7RP5r0iJ3BdiQhxeJ1LDClOf-qpGHbMTzLVRTRn5QQAIeCk-6-DotZQ53w6BU4pStJO1RTufuDwwtiHu1NVXaqcB3sT8LUJa0KzmxHqu8p2idEKktPEz1LwgpIVmgRliGz7oj2UBA6JoSxT38TXti8moNQBno9UDd95dqOcEkKsORyo_b_q4rbL0i9viQKiLvsLqwNow-fsgnWeOdqoFz5RShxZBzHBEDfqQcACelFbqb3N9gpoILi3lPq15AdiO1yqo8vCDke6SZuwn0kcITbWGDCOx0174LD6_p-aRDxQJWtiXM52HuyRAiiavc95jBQ6Dg85QjO-vliUqOSfYthbrNM2N-Op2SceZw9zfGjqDcNJGu5Y5qL6ZLDHI6x2ponatUwjUN3HQ5qFtKH0JBcqajMKKcB9PUqrTd4J5GdJ9TC82kxT0Pms_N_C_mg80Mm3ByhW2L8zo34e2zha6Jqy8RV0kSprSYuhSSwEQ4XcWwIplOB7RrGKSwhDSmMAJFd7496cbttdzXr4jfpetcKg0F0pRlousKnv_026nbzS2gCLbeFAGpGlSr0M7iQL7FB9gLO08SxHNUBPylHaiCmJWiZQ7xFH0IwIzzdtjkYCMrVLf7nNneXO16s8nR4ltBxfsfRdUzVNZkEiYr-gqFSUIgoN-6F455aw8LwVklfszu9trLsZCoMgIFTKzUJDJAMelHqgbEhJFCxvMgL6wAiFpf6IIK0Z2OuL1mYK8nm8j0MO7HabG6adaQs_V2Bu5Y4YhshTZOGWoiT6jZLDMYru33afcv05bJECSJqVXO5NOAPyA7G0zUvqkFKo9tzINuIH80_vqA7ATpclgecHo-0u0YDo-4gKAIN_gt6sFHOwjGtAK_FpjZURkB5pDiYwLbu0gInFf9viQvNFIJ9vWjCX6NLgkDVAKWWbPXSLyCmZJfZyyhw6WPTHWZX0Oz3jl031T5cVipYCt-1WlR8qce_Dpb4Wzek79uGGpID6rw9urKzhuz8GK_meChgijzptnipGdmCUFi5hilbszyLfmOzudBW-E4qIBts16E4aHZDaFqfxJFBmblkR_fzyvuYKhlfm4b_1NmZ7MWFLNc-zviHyU2khWrMhf_IJqvD18u26A47JPBCWHzgSEo6mqbfMbw-lzOhEI53oH0FZRmd_sC50rpL8qguJYWIa3GBvmIgtYhFSaj4W1bRJbttjBxoA5W0Ny90ZFHsKXcGiDzSsQ5k9PJDNnbV3rqcR8RKZY5t7MN7KYfLAZD0Gc4GEU2kN4OeU6A9PSlgaqd_NSUEE3fI7rRtMywkOrCVBESRDk2bj21KYZhyeMOuZxk-SUc0urjDlJpCc2jDW9tFxng5mTORRllB4gMw_fykr5fA-KxJARwDHN4LX3zXsmJdyhn7RF3_il1_nZsuJE1SSrxWD8ACS-8Hclg3TZ8kpHohthE6tAeK_99nLL1D2px8nKOvPMljAYCNYpMy_g_2_NeYV5r3xX1leaeAG0u7d2ssBeElyzAwnpSMPtI0WStN4lcLfbs2DwAJtl7l2e-3pZtv5TODelMAYrKCyG6M4tb_vnlCpQAzw20NinJE6z8N9WT1-NO8pF4zoHzui9a9DNu4ks_j3bsM6MsYf6r7iwR0NSbpnR2RY2KngQq-RopylUTu4V4I8YgVvjufEKdkm4AMBUnVjqO_5urU6vluktGUl6x5b24vvsG6t4hUBH2TPlnkKE-cz8QwEsScIe03qMh241p8ZEMjCVSteeqpjHJCuQUAYAdCYzNidRYmpMV3HBAU8vB4x6cLX-n3Y680a44lYXw9Uefb-YPk_TXYCC4eWb5kahYZWvvmIdbA3ey-8A4nVliaJHvwedSqkMB9cGMxAtO1YbmdJdwuHG-Vmuhm2HJWjBBBFeLDdJkVaIvQN4dvb8EBlKeijTsoGjRE_ozWrgJ1LEuemnurp3O8pdhU9mLlrTHfqC89-AWRsEAUcye9pK21aWqOgXUDCLGR5WEFvuLo4-PxsdH67CjJTAakhaOom4WHwCARoXGSkRzGLNwOD48QZYHxKThnsXsWLUlFZkUoY8qxIYuODTsYMTUZnybBbM4lggf-ckL26LyQxFXHlk5KfEq4sQ7ebrLtg4CwjHYoeTYIZFUFSJqWy4_gJxTEfRTC_c2bSxUeisXLGXfdlGmDJP8uZxmvrxmyhSurZabfUFlTqYjCCYL9jwZlwmJTPGFy3EZgxHnL3oyTVE6WDswvDsllNPjTqX3e4juXViWikzY-6iqnAv419E2O85ZUgTPWk=',
+                        id='rs_0109ee23c01d02ff0068faa0ce8c9c81a392cc294095110c0a',
+                        signature='gAAAAABo-qDgr8Eph6uEWOoliXMB7fKVhUds1TKweueaF45XInOLAI-08u32n5KyJy6ZHvQKTWPjd-1hdU153SJhUW7KYBGGXkzw9alGd125UrVO_vzCASR1luxGsJJiUuRVcIVFFLd6cuWETgcp6UyTINuxGCI3Qsq3rhj6iXi39zr-YsTzRTaWQYbUleHEThDYRoLoKIa7hI_1u0rpQwr8HaX7O0ydhOH4NNSdZhqjPfTcQQN-ocAcL2BFonmnH1auDXMg4r6LPU9ucp14v0W6fNGfS63hLvB30negB9WM8YO6pfBxtOcB1gmSSgcasEsOBbKNF8QSU_w8_rkrQeZflACg5J2PYqqRxd8ZS4DgJzYsOQGW1me8p53Q5moDHuNv6N3EkatDEvil8_yw4esxz30iU1RHEs5t6WDiYnXC6HqD0yVC-6_UthXF683drBfaK4jzNUgKDQ5qOWle5qmTwhWUKDlZ19egDwH1SQS6DH9PTi5boLmT6WzvDdwHQK6bFr9GDG9uAZlR5L36SSMyQXv5gTDeWgb0FdePYgpiBWmmHko_yfK3RjUhWO8HNP7bWmpJ-swuFxKlASL1eTcuWoPRTAQwXZL7xPpi8idhmhDp6TGac1thnUrQXpWp7EYnqTVwze9XBV5qkfl5m8SNxMPqurvlof4X3YsFhFhj7KvYTiww53N3vVJfcgQG66YKSnIHz5fhXNSZjzqNpvg7l2Qu_ntXdwWLierzEqzySYl27Kn3rvvRMJN62Mqpr0FZafInQEro5u7WxBHTyQySZDvxZECIQjjRjUVlHhEAgSJ6o3jz9wwFTUZv7N8eRAaS03eKDf2tCs7Wx2jKCgAD9ha6hF4FVLeHeTNl0ihwU0cIwR1h5ZmSvjkAr7yW-sRJjjkgvwXW-NVAUi2MX7BGZOJ01U9G-T47JcWO9yDdycwlvAGa4nr1w00o88bNDzFd868I2E2c3FbEANjVB6rJyaxnsmW4A7UuvPR9uz9dl42-wTXsOQU68VA-xOSToqYt_e-WT-OFqJEkx7QnxAKJJzia0Uu-Ts7uKBSSzBCRcj0I0szclTeDhskuaeVZq-YHsHMcjpuaZmVCpbK0HW2_Id00jxbAwkb7R3sEIjngS7cY8Lo6cV34KqRm1C5rNOts29GzDxTlavH6t6eAVEgkzYY__mslKUJ_NIv-lcvRVU9RkWQXmP1uhu8Cb0zkoV9LWTa-wBPuPe40gbowLIJnhUjx7JFoH6Y3YodQTssEG6AiddGgzi-trenZn7jQ-Je3ZZmks77H_Lu8MF2SPLZbRMfOTmXud31_ACgTVR7ZS_KFqBcbIaOqlwku0X8iru1eeVGc22eneXsC9eQZsrh8ibfhJEDmdwRxeJGY_goGuYKrDt5aeMQF9pCJHneszYugWOYYU5uFmG_8KVKiRm7K-i3UMczNNGsLW2PBlfXi9R5a1L03pe0iqZaJAYRIv7ex9WS8nIH_lJWZ5xkzfaXiY0fZCvPQutesmFeJVsNs5e4NNeTZco4A0q65-EeovuQpjxui-ANZu3CyilRjEKE5zZVXR2sI_Q2xriOhldqtGoyQwfAgI1FDdiYYXI0ZNlN4CQFCcioG5QHFszrwVcYbWXMLZf-ZBFJxA-U4nk2YudY2YSIvYLkl60AmlhyQfusdADzEdZYJ8CS8JMHhfgj9QFdljTGbhAfHz3CmfcNgeayJIUoJd7RrhBiGIjc-x84kuyUXUQWG9UWzDEBf79JqYKYzPc20b2WuUla5Mi-ZydZBXDB3mxHLna_OMjkhadSyny_Vn62_clnNeh0xV_dPC-THeOe8iV9etL5CTB-J1YSZJEFVEmHWB-X-kgI5moxgq7C2ne98ad56f7n-U1XSKsVavlnnN0dEWKMr1HUmo9Lu8KNCsVoFgQ6xA2DpPxuS3gPemW3SQEhD40dKlBPspW0zEZth7LBv_4OuG6kWNacDWlbo3s6aRGq6ZwgMAvdjzoRZNcyUFF666jBrtxwumhCVz5zpl9Tszua94nYUlDmH44BbRi9xAU1ufbTdbaBV69_jtECNNFir1oT5VmoSqeHNoyT-5Vw20RW4o0Sa1HcyJxzdtwmm4nLWlGQD3-77xLNKUtnysLVAQfzooNjl0Bwh0ybDij-IoTD07KfBlJ-YKmIc9ckN1H2eLz9X-x_w4L400lkPqTW-MqruxjAto358-rTCNnmskRNh_esIJH73WBysCk8=',
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='mcp_server:call_tool',
-                        args='{"minimal_output":false,"order":"desc","page":1,"perPage":100,"query":"user:pydantic pydantic-ai"}',
-                        tool_call_id='mcp_04507193d793fa550068ed13f4e9188196ab8090591caf215d',
-                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
+                        args={
+                            'server_id': 'deepwiki',
+                            'tool_name': 'ask_question',
+                            'tool_args': {
+                                'repoName': 'pydantic/pydantic',
+                                'question': 'What is the pydantic/pydantic repository? Summarize its purpose and main features.',
+                            },
+                        },
+                        tool_call_id='mcp_0109ee23c01d02ff0068faa0d0fc9881a3b32a49034e60403d',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:call_tool',
                         content={
                             'error': None,
-                            'output': IsStr(),
+                            'output': """\
+The `pydantic/pydantic` repository contains the Pydantic Validation library, a widely used Python library for data validation, parsing, and serialization using type hints  . Its core purpose is to ensure that data conforms to specified types and constraints at runtime, providing a robust way to define and validate data structures .
+
+## Purpose and Main Features
+
+### Data Validation with Type Hints
+Pydantic leverages Python type hints to define data schemas . This integration allows for seamless use with static typing tools like MyPy and IDEs . The library ensures that the output data structure precisely conforms to the applied type hints, even coercing input data to match the expected types .
+
+### Performance
+A key feature of Pydantic is its performance, achieved by implementing the core validation logic in `pydantic-core`, a separate library written in Rust  . This makes Pydantic one of the fastest data validation libraries for Python .
+
+### Core Architecture and APIs
+Pydantic's architecture includes user-facing APIs, a schema generation layer, and a Rust-based validation engine .
+The main entry points for validation are:
+*   `BaseModel`: Used for defining class-based models with fields, suitable for domain models, API schemas, and configuration .
+*   `TypeAdapter`: For validating arbitrary types, useful for one-off validation or generic types .
+*   `@dataclass`: Provides enhanced dataclasses with validation capabilities .
+*   `@validate_call`: For validating function arguments .
+
+All these APIs utilize the same underlying schema generation and validation pipeline .
+
+### Version Management and Compatibility
+Pydantic maintains strict version compatibility between the Python package (`pydantic`) and the Rust-based `pydantic-core` . This compatibility is enforced at import time, raising a `SystemError` if there's a mismatch, unless Pydantic is installed in editable mode .
+
+### Development and Deployment Infrastructure
+The repository includes a comprehensive development and deployment infrastructure , featuring:
+*   **Testing Framework**: A comprehensive test suite with `pytest` fixtures and utilities .
+*   **CI/CD Pipeline**: GitHub Actions workflows for linting, testing across multiple operating systems and Python versions, and deployment  .
+*   **Documentation System**: MkDocs-based documentation with versioning via `mike`  .
+*   **Release Process**: Automated PyPI publishing with trusted publishing and changelog generation .
+*   **Third-Party Integration Testing**: Regular testing against popular projects like FastAPI and SQLModel to ensure compatibility .
+
+### Migration from V1 to V2
+Pydantic V2 is a significant rewrite with performance improvements and new features compared to V1 . A compatibility layer is provided through `pydantic.v1` for gradual migration  .
+
+## Example Usage
+A simple example demonstrates how to define a `BaseModel` and validate data against it :
+```python
+from datetime import datetime
+from typing import Optional
+from pydantic import BaseModel
+
+class User(BaseModel):
+    id: int
+    name: str = 'John Doe'
+    signup_ts: Optional[datetime] = None
+    friends: list[int] = []
+
+external_data = {'id': '123', 'signup_ts': '2017-06-01 12:22', 'friends': [1, '2', b'3']}
+user = User(**external_data)
+print(user)
+print(user.id)
+```
+This code defines a `User` model with type hints and then validates `external_data` against it, demonstrating Pydantic's ability to coerce types (e.g., string '123' to int 123) .
+
+## Notes
+The `pydantic/pydantic` repository focuses on the core Pydantic library. Related projects like `pydantic-settings` and `pydantic-extra-types` are tested for integration but reside in separate repositories . The `HISTORY.md` file provides a detailed changelog, highlighting new features and breaking changes across versions .
+
+Wiki pages you might want to explore:
+- [Overview (pydantic/pydantic)](/wiki/pydantic/pydantic#1)
+- [Development and Deployment (pydantic/pydantic)](/wiki/pydantic/pydantic#7)
+
+View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpydantic-r_89fe7465-e65d-4c86-a269-5173882a91da
+""",
                         },
-                        tool_call_id='mcp_04507193d793fa550068ed13f4e9188196ab8090591caf215d',
+                        tool_call_id='mcp_0109ee23c01d02ff0068faa0d0fc9881a3b32a49034e60403d',
                         timestamp=IsDatetime(),
-                        provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    ),
-                    ThinkingPart(
-                        content='',
-                        id='rs_04507193d793fa550068ed13f6449881968c5c319e16192cda',
-                        signature='gAAAAABo7RP5gjcL2-vaNfHjHEQTB9hn4YlILP4D3ORA_ftdOzSO1j6kdWEhHjETQLsNAOMFrpotZVLV8gkSKoRZi2-ro9UOO0uK59UNr0bfJ0by6CSdq51oYRyIxj-V9JIwwugY5Uv8m9yQytkWuZC-78EZCYOJFlw3msPOwaiIG1Aflxtqt0PerQxB-ESilTBA1ta3lzmOcOELngKwFsTMhwcQ99N5G2l2KMbG3nSxUGXFooIWev_dMKwDNYne31xrZlfGuAfpaz5bXAhNhdHrc21m-KxjF9Vwz3GwlUCKLUZ305qZWEdwr1GNnES_jnoU3HKyIfqfKqfmrk4Sa6fSDagEOhADX52A4Ghg6WLOxungr10fFj8S48b43CA_ei36t8ZNOnwljkHO6AxaPDYbaB8JZTjE2EmQ-rV2fCUespp-k45LIDlRqLxJOzzhweo9k37AEHd8pdowD9MpRYQS4KhggJaZ1tuUPxBwWfbjKeQ19AF8gyfk772-T1geH2D3SI53TiQqvJofTI4CVxF-M1dJIFGcgGimXmxJOjKEnvwRtsdTprX0t-0p5G_PpoMGomrRVwXvjh4Y8i8H02gkcW6--lHMXxt-MmjA-OQys0vEvuKs5JgklEL4m2eDNnH5Pief-8PpLveZn05ZTcButXYSpNbSCi-otcC18MljwuMALMTxh3GPCE-yULJNeaeYmub3mWU6tdXBkwx81k71pTMsTK880Ci7aGeMZkqvdoHf4pNHCWEavnu1ocFto3RN3PCKWPQhJHMzhEU903fkr_8CE7pqcOMz4cfj1dFSrBl_oa1NncrJX3xAqiF1fVPQxgJA-LKZyGp247imr-oqSOkdMBnF5PlxfaVgfWM3UbfX0xBRSS00jlSuqY45Tfk2554Dr9c0-b-IynItnBTIXJ-VwckozHmh8jKoO3MaBsFtZkWOypNlpldnDSZ7LWgvptpbkyz5mN71YivY9yb9jfxV-RGKSFIo8P8pP91HBsDFFpBHeSdTbmQpF_NZQEFkRCVgazNvGQgiYvWVmtvijtsD2XhoZvjkVRUhFgKsKeAcscqEzXUf_dHinoO0b2bVZumN8IUCeZxUYOw8JG9BZPC2BPkKql3XkFCgWhp-SJmaDzkWLX_qRVYtYP5sWatJRCUI6Rb0MpE5cF-Qhn2I7ZAE0w15vKYX1PJt1ffonSbnXtGHWwZv3hc2zPA-2tfTUUw8wrEhb8RVdX-qwrxW8cgAkb2UbSrCloGdNMyy9NFtej1fETM8e-QkfrxFY_-51H9tQIWr5bT7tTfWt54PkT49F7TtGPU_fXtBK5XrLi25daBX3MC4X_FDXbKb_97-A7-U4CPl8EQx9ElQo6Evoyhhdv1vn-FncKVO74tiM2xfglHPb64zTFUn6TD0h-Tty2PCzm_z3Ph7jkCW_tWenVRt_x51FqkMfyVC8llzxsvwg6hvHDFb342CyrEjenv2Umw4i1HJ49kitgO-ZmFcAgmRrJWDm8GTwWTHbN-AUpIJdfnoacuoblfROKw1FcoZPnr4lkmAVhrzdvqPqXxR1ZRhrXsOuUsFPb9FCIt2GuB-Sd4lRjOpeeD-QY7TG4UAVrUE42YQbVuKedOOy2IBPYMvGZiy_42-gxfj3fNdubhk8_ybfONpXpV302sNjH105lyI6QtZ4Q705Kd3q8KSrvo7YyJrvZK0VLc7Hk2ApQbMFogGbCSp9_pyTg_cD4hycyWZGG91FBq9Hl79FHGQDlXQcyfyY71NUf2hJO8BE7QISjqcWSKZSIlcnhxKGgzMbsKjvo0Zadue7J3ZrqSDX0-qpLRigrsULPjzxHD3VjE77Z70T3LjMl774q3QWuAt87pF-l9sEkWYFLNcFkTHVznxeHLMCyvZLBOQDsxySNdJxG5FDCyFYKkcnop5h6mIIV5s_MpQ',
                         provider_name='openai',
                     ),
                     TextPart(
-                        content='pydantic-ai is Pydantic GenAI agent framework (Python), with ~12.9 K ⭐, ~1.3 K forks, 326 open issues; homepage: https://ai.pydantic.dev.',
-                        id='msg_04507193d793fa550068ed13f84688819697b035b4d76faaa5',
+                        content=IsStr(),
+                        id='msg_0109ee23c01d02ff0068faa0dfa2ec81a3996d6bb05770b374',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=7256, output_tokens=490, details={'reasoning_tokens': 384}),
+                usage=RequestUsage(input_tokens=2337, output_tokens=390, details={'reasoning_tokens': 192}),
                 model_name='o4-mini-2025-04-16',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_04507193d793fa550068ed13f1127c819686aa079952ab515c',
+                provider_response_id='resp_0109ee23c01d02ff0068faa0cd2ff881a399817905573e1e03',
                 finish_reason='stop',
             ),
         ]
@@ -6691,10 +6611,9 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
         instructions='You are a helpful assistant.',
         builtin_tools=[
             MCPServerTool(
-                id='test_server',
-                url='https://api.githubcopilot.com/mcp/',
-                authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),
-                allowed_tools=['search_repositories', 'list_commits'],
+                id='deepwiki',
+                url='https://mcp.deepwiki.com/mcp',
+                allowed_tools=['ask_question', 'read_wiki_structure'],
             ),
         ],
     )
@@ -6702,13 +6621,17 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
     event_parts: list[Any] = []
 
     async with agent.iter(
-        user_prompt='Can you tell me more about pydantic-ai repo? Keep your answer short'
+        user_prompt='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'
     ) as agent_run:
         async for node in agent_run:
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        event_parts.append(event)
+                        if (
+                            isinstance(event, PartStartEvent)
+                            and isinstance(event.part, BuiltinToolCallPart | BuiltinToolReturnPart)
+                        ) or (isinstance(event, PartDeltaEvent) and isinstance(event.delta, ToolCallPartDelta)):
+                            event_parts.append(event)
 
     assert agent_run.result is not None
     messages = agent_run.result.all_messages()
@@ -6717,7 +6640,7 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Can you tell me more about pydantic-ai repo? Keep your answer short',
+                        content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -6727,903 +6650,172 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='mcp_server:list_tools',
-                        tool_call_id='mcpl_01264dba19113f900068ed20a0664881919b18a9a3989974cf',
+                        args={'server_id': 'deepwiki'},
+                        tool_call_id='mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd',
                         provider_name='openai',
-                        tool_call_metadata={'mcp_server_id': 'test_server'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:list_tools',
                         content={
-                            'error': None,
                             'tools': [
                                 {
                                     'input_schema': {
-                                        'properties': {
-                                            'author': {
-                                                'description': 'Author username or email address to filter commits by',
-                                                'type': 'string',
-                                            },
-                                            'owner': {'description': 'Repository owner', 'type': 'string'},
-                                            'page': {
-                                                'description': 'Page number for pagination (min 1)',
-                                                'minimum': 1,
-                                                'type': 'number',
-                                            },
-                                            'perPage': {
-                                                'description': 'Results per page for pagination (min 1, max 100)',
-                                                'maximum': 100,
-                                                'minimum': 1,
-                                                'type': 'number',
-                                            },
-                                            'repo': {'description': 'Repository name', 'type': 'string'},
-                                            'sha': {
-                                                'description': 'Commit SHA, branch or tag name to list commits of. If not provided, uses the default branch of the repository. If a commit SHA is provided, will list commits up to that SHA.',
-                                                'type': 'string',
-                                            },
-                                        },
-                                        'required': ['owner', 'repo'],
                                         'type': 'object',
+                                        'properties': {
+                                            'repoName': {
+                                                'type': 'string',
+                                                'description': 'GitHub repository: owner/repo (e.g. "facebook/react")',
+                                            }
+                                        },
+                                        'required': ['repoName'],
+                                        'additionalProperties': False,
+                                        '$schema': 'http://json-schema.org/draft-07/schema#',
                                     },
-                                    'name': 'list_commits',
-                                    'annotations': {'read_only': True},
-                                    'description': 'Get list of commits of a branch in a GitHub repository. Returns at least 30 results per page by default, but can return more if specified using the perPage parameter (up to 100).',
+                                    'name': 'read_wiki_structure',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Get a list of documentation topics for a GitHub repository',
                                 },
                                 {
                                     'input_schema': {
+                                        'type': 'object',
                                         'properties': {
-                                            'minimal_output': {
-                                                'default': True,
-                                                'description': 'Return minimal repository information (default: true). When false, returns full GitHub API repository objects.',
-                                                'type': 'boolean',
-                                            },
-                                            'order': {
-                                                'description': 'Sort order',
-                                                'enum': ['asc', 'desc'],
+                                            'repoName': {
                                                 'type': 'string',
+                                                'description': 'GitHub repository: owner/repo (e.g. "facebook/react")',
                                             },
-                                            'page': {
-                                                'description': 'Page number for pagination (min 1)',
-                                                'minimum': 1,
-                                                'type': 'number',
-                                            },
-                                            'perPage': {
-                                                'description': 'Results per page for pagination (min 1, max 100)',
-                                                'maximum': 100,
-                                                'minimum': 1,
-                                                'type': 'number',
-                                            },
-                                            'query': {
-                                                'description': "Repository search query. Examples: 'machine learning in:name stars:>1000 language:python', 'topic:react', 'user:facebook'. Supports advanced search syntax for precise filtering.",
+                                            'question': {
                                                 'type': 'string',
-                                            },
-                                            'sort': {
-                                                'description': 'Sort repositories by field, defaults to best match',
-                                                'enum': ['stars', 'forks', 'help-wanted-issues', 'updated'],
-                                                'type': 'string',
+                                                'description': 'The question to ask about the repository',
                                             },
                                         },
-                                        'required': ['query'],
-                                        'type': 'object',
+                                        'required': ['repoName', 'question'],
+                                        'additionalProperties': False,
+                                        '$schema': 'http://json-schema.org/draft-07/schema#',
                                     },
-                                    'name': 'search_repositories',
-                                    'annotations': {'read_only': True},
-                                    'description': 'Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
+                                    'name': 'ask_question',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Ask any question about a GitHub repository',
                                 },
                             ],
-                        },
-                        tool_call_id='mcpl_01264dba19113f900068ed20a0664881919b18a9a3989974cf',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'test_server'},
-                    ),
-                    ThinkingPart(
-                        content='',
-                        id='rs_01264dba19113f900068ed20a271948191a97ecce27848f461',
-                        signature='gAAAAABo7SCjE_wICveOw0z6kFvwtVJSAi8SGeS7LooWILhZ1wQTZR3QZHVylNYvEkcAWc9VpOKvCjdyffXyz45penIN9cSr5WCk7vP0DULso01ZudhhFPVypQ68yogEx7xMXwmVJbOqoyOZb3M39dnKkFtjQeMWd4AzGfPC8ufjRt9SEbTlRjq06bRoNBmVYP8rQCftHh9BWIvGKU0Fe5rwB7S0BtFmcowfwFs1lMyKN89BTITrVXrTCmai6mw_JvNj9PCuDiOMfuYbtbmZKb0OZOjiUyErSSFhpdyEqQZbeBF1frZVtPjPJCEIusEIHK5cT65odpRKn2uakRcUcCKGcSB6Sv0OTiSF7nJW79p-eJIfeFXxwJwiCQswp3mUt5U2a0kVsxDv2XUhP3ONOE_-vhNS2EGwRD8IglEw1F0zYqXItUUSjb2vig0SA1sNUVK4oK_EwaxYUYgxtgaC42e7qzo3Hs_18S6FXxaMSygoyk4jVMhIVJb7xbQc7-hWF1ohdXJRTpLNSvZ-z_FTePo_3Bye3HVFpSWOpUAGd1peSVrEiXXaN5kMTJpeZfHbXVTX2FN7ugabl_IgdcVOH-seE1cD5kNbodVbjxnDdxzMx8q10xtzlI7Ze9CPFJb6BZFWKEZri-sJUJAbSRBfH8NIHJQj1UjDx5vg4YRI3TvUR8RIhedC54_25cb_6HD3_0sghACWhL_9uyzPgMw4tjzIQQNtHDduB2BWpKapkSgUkJNAaujU_YOuq-uttzV2nOBXr1H6APbbG_kgNbHs1a4Z_Fvb9Jzg2oKZ1dJOAt81_VK6s2gU50EqTWCQi_k8Hnj4MnUnQIpIyy1jjHDxheKIkOo_7eTSkYsgEapY57S0NGZ6T6Ru-XE8Hql_xa7VhW7VtRyF3LADgK5DD5rjHhzp-dIbhc6Y-4KgTLvaHU-Dohj1t8uZEP8niv3I3JKKgWDWVJ9vPbioeGqOINooUzZcIaJg4BztTcP8CBMsDX5w6MPO3IoBwnhS50YLIFrkDplwqLsnIEwpaxROm0csRrTcUpl4ZiY18R9PXyBp5J8tH0Y7BqaJ6NTAdFT2OLL6TntZ6UtTCaR7U4p_H45DUl0ZKsnjxBjNQWS67DatY2U44S69Qh86ken4gh44cXA4r5NnpRbCuZmo7BhH2wH5yDRhhZc2AQ5WUwpP0eyDnjF8xunNftbwyISfNV7WuHcdaYwiu29WOx6O3c0FLJO-KhV0LvK-VZZWXYTWY55pqv436FtVoq0XS4AiKIN4zwXHx_zuy3Zw_lO41VJUZbBNL4zcAv7GDukWyiFkocpWMBhLhISuuh0T65B3R5W8_HWYJbi-zlORXGZaw3OtJqTFPKBqhRH-chnBoSy8D15C3gahfV9FKjdIuYruJ6laevbUecvydkHG8GrdfKDizmQsRYLPAxApJX4GI8fHMG5vqBgUfdDpZaWhkEzoGwywWparXBx6LVrGVKAa2GUHAhyevUooKzLuPcIeauniU0cTSgHBpGtHLvJJf-XZFQfHMeIwYxDs9exI4EwRTKRst4wq-foobKcYhRGjqv9O7BrdFIiar8iO0yiBfzdA-gCV63WajMhhWfwh7c9svtge-ZdvCvdSCmYAJRHlgBxUZ8bN2sENy3ZuW5lVk_RQBKtcjTi0uAHm6TT66bZ0JIYTp8Mns9PDTQov-p3BDTtxp4_iNFs0RnOHXvJ7nNNvUHJ2lrdO6NzquhE5iodvXsuWa0wikvsJrxVN1J9Azg==',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
-                        args='{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
-                        tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
-                        provider_name='openai',
-                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
-                        content={
-                            'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
-                            'output': None,
-                        },
-                        tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    ),
-                    ThinkingPart(
-                        content='',
-                        id='rs_01264dba19113f900068ed20a490108191823c8351b9c7b1eb',
-                        signature='gAAAAABo7SCllu3A0J5TLhrToCHtBqlJXTNnUiSjyawmoj11hxQvRsn-kRItP0vUjdkSzapSsaiTTCoHAnYP6Uh52eogYu4emHs5I3e40WoGQjQ8Aog8imp25ZxF7OHWfqynluKfum-8kCYE6GHi-1k9zTIrBPZpfdwdJPKng_AjAxgknHgaNx31Xkbyjtrwl13AkGvLNlbQXhLiD21EAwcc2gBEe46BwtRXfLlms1uFIkuUWeNUupnOaHkjOrchPrqWECJA9A8gAlg29JOaDW6THXksjb6PIBvRh0UOaY_WhKEsbqdVLU-hKnACCGY3gk4EksSwT65CHJd1ByKhvi03-n1GD3w0_tlLdAGQhHeVO25kDR_16Y5geFllZHJ26XN6EsQiIE6UCsACa07iXgrrAPH3HsnKz-FNM-fgWaxihbEJShbmg0BjmTcMIGxcmLf9xbt9sDc6Hy0iZQTgVWyDj23jN1hTpIIu382KlbgMDd-c_A8GFQp8ySlh8CmuNaTjq6e8oOknbsDDladBx19FrHGcWVmpZLkaa1WoJ-_JpAo6CzqYQJMIBdm2R4w9O9km7jNgtEVJSWe4zxdYVfNqocishUfZoeD1Ncr9bkQ4AOlw0oTmrb3kEa3mRaG1gy0KHC_EuBfPMmr89XeivxzTak8QZg9meG8n1tKSqjHf8EJEIn0VBnAReR7lFpd0Sr-vuVz7Y0kVJenvSNljm2oYmwaMXctycGh5GkHAh8FfsvvGoiRVomZ4hCIy70X2p4_0nMkwNORPGkBIfEhHuL_VcIulMqhkGdtf-Q7a7D9Q6jmuSplXvKhxZH31ay3zzUc0J-1guIboH0R3GJXmBHRLi_PXao_2GS1Nhjx38PBFejmIvtliITF6YhP7DFa29eMacvRqKEiKdGZKAX1NdluBq7YSYJhOPVnV9LVosBps-ZLIfkK6d4ZRidWPcVf1j0tRBKPTHUITctPdNrk6kzyTeXUy6wA9yhq6jkcpCqJQr0wF_tc-4OkyQ1IJ05WYhrg4fAMgmu2DIWQ7NyQ5H9gbsIHEvu_QxXfNq_wlBOcgyosyxfitEgUrxCQKUbro-7rKZaVjRRPOjfHRr8j9gry-lCh4ixC8KkDdJaJ108B3szuBKMZIuhr3b_mys6XX0UGQi7RNTxwnNgt1sWnyh-F1W0r4DN1dnf7IxnAmRVhIjcG67IHhZDgsyG71tTN-0DqxmSb2Gg7p0cW__HYDFw3uYn_BeFCByY6oJJdwIGC0hqXDxd2p3qmJTxHiLPoICPRQOM2oRC1fW_XFb2VH27swHyvS-8tdkCw4OtAIchwKpALSkpg0AUdWemc0EseGxtIo49M9c7Ed5WzFXzawWKKUxJDhWQHeV7J6xOtQFs4XmwftyzbUBYVcPDcz0nz3BvSHRq5tjdKu5H5X0t_i8L9UAZAqiF58nw==',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
-                        args='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
-                        tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
-                        provider_name='openai',
-                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
-                        content={
-                            'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
-                            'output': None,
-                        },
-                        tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    ),
-                    ThinkingPart(
-                        content='',
-                        id='rs_01264dba19113f900068ed20a62f648191b719c874cfe47a3d',
-                        signature='gAAAAABo7SCorCLOFD5VcIU8sG7u4WVtbDowsj_gwMf8GNhOmqvSk8cxQUpKRgJV3bOa8xuz4f65f_TvG9LXdkHbZZV658XLxJliS-0ugk2jOTNLBTyEJfxsmAO3GRApwRWvb-BihcREuGHlEopM2Pw0wUJtWoVRHDqfAVECPkZrZLbW1gujztl7zCpx8l45WngYy37iUWYepVmNBm-1NiDDyPxM2gbGMkCoszu57RgWzB3dAo8KbPtpfTb5aTvLdqfi1vusRb1l8RTtTFUSYW8fuJmFccA83rej30oSN6YydiSCvO5p3_cIH7AJTQiMyMYOIrZX070frtQmezvaeRZWpIV7f2chaxdilerEmaYstO6MWg8zuolvr3oLThUp8xD89IJf8KF3HUhkXRNrvvsorl_XjGwmbuOZLaADmn5GqhyFm90VTDkgx2G1ms3X8C8OA6kz_iuo6u1TrZA0VzkFGFxZoUog9-w5Bp0oemZMuS5PtcJJK3b7BQ3f0Hz7Ol3Sp0Arm6bfbt18ZOVmy6FU3S5C7ah5uHGQf8H8e9dwOcJhsjwtEmSaYqq5akC-gX0D39QGgO-yQ7jL2glutE1pFtybVQNcREbEyt1E0K6IqW72ksR9ymN8H0T-MIzVC72peLXpVzrZ_DUZevNLLK3hIhpivngZe4ecP1ilbKs1mD4p0j7F3_lgsGObcZTOn3ku-WkLItmFLIUUrVdG5Em7lPM8lgiOWXoCIs7Xa39s8j5Rlbd-odUbWmAuUHfv7MC2c-moo3V_0BJ9eTVRi5_i6r0LbTxaWITZOpTQBCD93PczuQkEgekwJJXVI4BKCfF4xa7x4iAe4G9NRKiwjnrDxC-jFr-lxsEZ2pLR9BPQgG3FQwhS4v1HfD5teTr9YpAsS65UZfHDAdb1KKIJDtnWzrdPlx9ffHPS0hgaZSbwyZdNs7ifWBxOfpNX_Mk2V2lKUEyBKN2o6MTbN4bmODmsjJAdVVhRiIFlHmM37U0lMqZf-e13i4dDYoTZ3bwjACKUIeir-BYQphWtOCl9GT5BvEg6mI_aPoZB4VzIRAXil064UwPoA1GoTNDw0sXptNTmuqoJJVjx0nyRhoZLKvWFddHYIE_F1wHp4GV7pt6vUNeRiahG7NV6Abyoa7wEC9fYb2pHWaH01ER8iwyU_ggY_wwyD0Uf8-UjLDf_GkwXPX8ipA65ssTWSzD8bYPGkAoIGotTMYWxPEvzXXGb1WuDrE8czYTyMKM1Dj6XlBQQf-C-ujcl7BjmJqPbQkgvcOda7PHBQXM2yCYA6cLQH0wvDtuhzRFmrQlDebXYoS0i1yIT1Fl8YxmGVOEDbG5evTPFt14G90AMCLU1FH-N9c8Zo-jUDI8k9RiWKYlys3aXggJyzeZkEeyhetmuxNlJhl9kZ4gut4GCqveajz_0t6YEO_YHqpqPhmXRXFzZOUFXjPdPjMiw4CDzNqTLJBGT5eb2ekNCrROavtAG69a9z0wS4fyV1Bfzy0D1LZA22Bz3YVoIcaXixcyrfFZn2lQD2v8Jitv_OvG5qhc4x7daIWwq0-mJRZc5Ot-q2kQhhi1gnjNzCR-NAH4kqokHtCU30_HBjJdB0Yo2NVoEUu7i5ZdXZ5JsblEnKHutERGzxhf6ow9lC6QsE0iZGBmD88SOT9yth_aL48JFJpunjuzzjnZp7hfTbt2BIcbywEHiWYEO6K57_gIUsfHa_0irOFrzBisqSpBbgacZj8NFIGEw_E9sRgUaZ5I3X-PONHyj36raxv_kd6J9Y2uvNBgeVxnuLpNPRHNP8TR-t1Yks0A7975rNOdOzFYL-uCEmC-sbDB3DtBimJ2bsPkmUpTpgA-ds49DlE0zr_fREMrgQMLNBagtvOvN3OH0oUsWVZcCJYr3ADu4CZfwkDOuWQSjja4u3loG6PTjbIBe1IVL-wGa22nir5Dvi4GGd-G--9xYJVrSKYsxE4NK5M8TJu2gVPPYuGTqOel2RVbNEHR3E2pVXHLwMiwXBLjLFGA7y6ou4cgmSoB95G582Ycq2v_qMuWitdE2DITdtLgCv3bKTsRZiKqXTn6j0g4qpicowle2ob4uBulOgK8thTb3PCCbRzi6atNP1mXVgP6vCtyS72D4BCaT198fl3BtkohoqPVxL2be2fYRg1WFnudFM0jg9iYzeW6N3aE5khoEUZ4Ek5SZFT8Pggmfh1_HAg==',
-                        provider_name='openai',
-                    ),
-                    TextPart(
-                        content='pydantic-ai is an open-source Python library (MIT) that uses large language models to generate Pydantic model classes (and JSON-Schema) from example data. It provides a CLI and Python API, supports multiple LLM backends (OpenAI, Azure, Hugging Face, etc.), and lets you customize prompts. Repo: https://github.com/birbland/pydantic-ai',
-                        id='msg_01264dba19113f900068ed20a8441481918c02d9dfa25a3146',
-                    ),
-                ],
-                usage=RequestUsage(input_tokens=876, output_tokens=571, details={'reasoning_tokens': 384}),
-                model_name='o4-mini-2025-04-16',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_01264dba19113f900068ed20a0538c8191966b895a0e63290c',
-                finish_reason='stop',
-            ),
-        ]
-    )
-
-    assert event_parts == snapshot(
-        [
-            PartStartEvent(
-                index=0,
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:list_tools',
-                    tool_call_id='mcpl_01264dba19113f900068ed20a0664881919b18a9a3989974cf',
-                    provider_name='openai',
-                    tool_call_metadata={'mcp_server_id': 'test_server'},
-                ),
-            ),
-            PartStartEvent(
-                index=1,
-                part=BuiltinToolReturnPart(
-                    tool_name='mcp_server:list_tools',
-                    content={
-                        'error': None,
-                        'tools': [
-                            {
-                                'input_schema': {
-                                    'properties': {
-                                        'author': {
-                                            'description': 'Author username or email address to filter commits by',
-                                            'type': 'string',
-                                        },
-                                        'owner': {'description': 'Repository owner', 'type': 'string'},
-                                        'page': {
-                                            'description': 'Page number for pagination (min 1)',
-                                            'minimum': 1,
-                                            'type': 'number',
-                                        },
-                                        'perPage': {
-                                            'description': 'Results per page for pagination (min 1, max 100)',
-                                            'maximum': 100,
-                                            'minimum': 1,
-                                            'type': 'number',
-                                        },
-                                        'repo': {'description': 'Repository name', 'type': 'string'},
-                                        'sha': {
-                                            'description': 'Commit SHA, branch or tag name to list commits of. If not provided, uses the default branch of the repository. If a commit SHA is provided, will list commits up to that SHA.',
-                                            'type': 'string',
-                                        },
-                                    },
-                                    'required': ['owner', 'repo'],
-                                    'type': 'object',
-                                },
-                                'name': 'list_commits',
-                                'annotations': {'read_only': True},
-                                'description': 'Get list of commits of a branch in a GitHub repository. Returns at least 30 results per page by default, but can return more if specified using the perPage parameter (up to 100).',
-                            },
-                            {
-                                'input_schema': {
-                                    'properties': {
-                                        'minimal_output': {
-                                            'default': True,
-                                            'description': 'Return minimal repository information (default: true). When false, returns full GitHub API repository objects.',
-                                            'type': 'boolean',
-                                        },
-                                        'order': {
-                                            'description': 'Sort order',
-                                            'enum': ['asc', 'desc'],
-                                            'type': 'string',
-                                        },
-                                        'page': {
-                                            'description': 'Page number for pagination (min 1)',
-                                            'minimum': 1,
-                                            'type': 'number',
-                                        },
-                                        'perPage': {
-                                            'description': 'Results per page for pagination (min 1, max 100)',
-                                            'maximum': 100,
-                                            'minimum': 1,
-                                            'type': 'number',
-                                        },
-                                        'query': {
-                                            'description': "Repository search query. Examples: 'machine learning in:name stars:>1000 language:python', 'topic:react', 'user:facebook'. Supports advanced search syntax for precise filtering.",
-                                            'type': 'string',
-                                        },
-                                        'sort': {
-                                            'description': 'Sort repositories by field, defaults to best match',
-                                            'enum': ['stars', 'forks', 'help-wanted-issues', 'updated'],
-                                            'type': 'string',
-                                        },
-                                    },
-                                    'required': ['query'],
-                                    'type': 'object',
-                                },
-                                'name': 'search_repositories',
-                                'annotations': {'read_only': True},
-                                'description': 'Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
-                            },
-                        ],
-                    },
-                    tool_call_id='mcpl_01264dba19113f900068ed20a0664881919b18a9a3989974cf',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    tool_return_metadata={'mcp_server_id': 'test_server'},
-                ),
-            ),
-            PartStartEvent(
-                index=2,
-                part=ThinkingPart(
-                    content='',
-                    id='rs_01264dba19113f900068ed20a271948191a97ecce27848f461',
-                    signature='gAAAAABo7SCjE_wICveOw0z6kFvwtVJSAi8SGeS7LooWILhZ1wQTZR3QZHVylNYvEkcAWc9VpOKvCjdyffXyz45penIN9cSr5WCk7vP0DULso01ZudhhFPVypQ68yogEx7xMXwmVJbOqoyOZb3M39dnKkFtjQeMWd4AzGfPC8ufjRt9SEbTlRjq06bRoNBmVYP8rQCftHh9BWIvGKU0Fe5rwB7S0BtFmcowfwFs1lMyKN89BTITrVXrTCmai6mw_JvNj9PCuDiOMfuYbtbmZKb0OZOjiUyErSSFhpdyEqQZbeBF1frZVtPjPJCEIusEIHK5cT65odpRKn2uakRcUcCKGcSB6Sv0OTiSF7nJW79p-eJIfeFXxwJwiCQswp3mUt5U2a0kVsxDv2XUhP3ONOE_-vhNS2EGwRD8IglEw1F0zYqXItUUSjb2vig0SA1sNUVK4oK_EwaxYUYgxtgaC42e7qzo3Hs_18S6FXxaMSygoyk4jVMhIVJb7xbQc7-hWF1ohdXJRTpLNSvZ-z_FTePo_3Bye3HVFpSWOpUAGd1peSVrEiXXaN5kMTJpeZfHbXVTX2FN7ugabl_IgdcVOH-seE1cD5kNbodVbjxnDdxzMx8q10xtzlI7Ze9CPFJb6BZFWKEZri-sJUJAbSRBfH8NIHJQj1UjDx5vg4YRI3TvUR8RIhedC54_25cb_6HD3_0sghACWhL_9uyzPgMw4tjzIQQNtHDduB2BWpKapkSgUkJNAaujU_YOuq-uttzV2nOBXr1H6APbbG_kgNbHs1a4Z_Fvb9Jzg2oKZ1dJOAt81_VK6s2gU50EqTWCQi_k8Hnj4MnUnQIpIyy1jjHDxheKIkOo_7eTSkYsgEapY57S0NGZ6T6Ru-XE8Hql_xa7VhW7VtRyF3LADgK5DD5rjHhzp-dIbhc6Y-4KgTLvaHU-Dohj1t8uZEP8niv3I3JKKgWDWVJ9vPbioeGqOINooUzZcIaJg4BztTcP8CBMsDX5w6MPO3IoBwnhS50YLIFrkDplwqLsnIEwpaxROm0csRrTcUpl4ZiY18R9PXyBp5J8tH0Y7BqaJ6NTAdFT2OLL6TntZ6UtTCaR7U4p_H45DUl0ZKsnjxBjNQWS67DatY2U44S69Qh86ken4gh44cXA4r5NnpRbCuZmo7BhH2wH5yDRhhZc2AQ5WUwpP0eyDnjF8xunNftbwyISfNV7WuHcdaYwiu29WOx6O3c0FLJO-KhV0LvK-VZZWXYTWY55pqv436FtVoq0XS4AiKIN4zwXHx_zuy3Zw_lO41VJUZbBNL4zcAv7GDukWyiFkocpWMBhLhISuuh0T65B3R5W8_HWYJbi-zlORXGZaw3OtJqTFPKBqhRH-chnBoSy8D15C3gahfV9FKjdIuYruJ6laevbUecvydkHG8GrdfKDizmQsRYLPAxApJX4GI8fHMG5vqBgUfdDpZaWhkEzoGwywWparXBx6LVrGVKAa2GUHAhyevUooKzLuPcIeauniU0cTSgHBpGtHLvJJf-XZFQfHMeIwYxDs9exI4EwRTKRst4wq-foobKcYhRGjqv9O7BrdFIiar8iO0yiBfzdA-gCV63WajMhhWfwh7c9svtge-ZdvCvdSCmYAJRHlgBxUZ8bN2sENy3ZuW5lVk_RQBKtcjTi0uAHm6TT66bZ0JIYTp8Mns9PDTQov-p3BDTtxp4_iNFs0RnOHXvJ7nNNvUHJ2lrdO6NzquhE5iodvXsuWa0wikvsJrxVN1J9Azg==',
-                    provider_name='openai',
-                ),
-            ),
-            PartStartEvent(
-                index=3,
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:call_tool',
-                    args='',
-                    tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
-                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    provider_name='openai',
-                ),
-            ),
-            PartDeltaEvent(
-                index=3,
-                delta=ToolCallPartDelta(
-                    args_delta='{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
-                    tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
-                ),
-            ),
-            PartStartEvent(
-                index=4,
-                part=BuiltinToolReturnPart(
-                    tool_name='mcp_server:call_tool',
-                    content={
-                        'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
-                        'output': None,
-                    },
-                    tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                ),
-            ),
-            PartStartEvent(
-                index=5,
-                part=ThinkingPart(
-                    content='',
-                    id='rs_01264dba19113f900068ed20a490108191823c8351b9c7b1eb',
-                    signature='gAAAAABo7SCllu3A0J5TLhrToCHtBqlJXTNnUiSjyawmoj11hxQvRsn-kRItP0vUjdkSzapSsaiTTCoHAnYP6Uh52eogYu4emHs5I3e40WoGQjQ8Aog8imp25ZxF7OHWfqynluKfum-8kCYE6GHi-1k9zTIrBPZpfdwdJPKng_AjAxgknHgaNx31Xkbyjtrwl13AkGvLNlbQXhLiD21EAwcc2gBEe46BwtRXfLlms1uFIkuUWeNUupnOaHkjOrchPrqWECJA9A8gAlg29JOaDW6THXksjb6PIBvRh0UOaY_WhKEsbqdVLU-hKnACCGY3gk4EksSwT65CHJd1ByKhvi03-n1GD3w0_tlLdAGQhHeVO25kDR_16Y5geFllZHJ26XN6EsQiIE6UCsACa07iXgrrAPH3HsnKz-FNM-fgWaxihbEJShbmg0BjmTcMIGxcmLf9xbt9sDc6Hy0iZQTgVWyDj23jN1hTpIIu382KlbgMDd-c_A8GFQp8ySlh8CmuNaTjq6e8oOknbsDDladBx19FrHGcWVmpZLkaa1WoJ-_JpAo6CzqYQJMIBdm2R4w9O9km7jNgtEVJSWe4zxdYVfNqocishUfZoeD1Ncr9bkQ4AOlw0oTmrb3kEa3mRaG1gy0KHC_EuBfPMmr89XeivxzTak8QZg9meG8n1tKSqjHf8EJEIn0VBnAReR7lFpd0Sr-vuVz7Y0kVJenvSNljm2oYmwaMXctycGh5GkHAh8FfsvvGoiRVomZ4hCIy70X2p4_0nMkwNORPGkBIfEhHuL_VcIulMqhkGdtf-Q7a7D9Q6jmuSplXvKhxZH31ay3zzUc0J-1guIboH0R3GJXmBHRLi_PXao_2GS1Nhjx38PBFejmIvtliITF6YhP7DFa29eMacvRqKEiKdGZKAX1NdluBq7YSYJhOPVnV9LVosBps-ZLIfkK6d4ZRidWPcVf1j0tRBKPTHUITctPdNrk6kzyTeXUy6wA9yhq6jkcpCqJQr0wF_tc-4OkyQ1IJ05WYhrg4fAMgmu2DIWQ7NyQ5H9gbsIHEvu_QxXfNq_wlBOcgyosyxfitEgUrxCQKUbro-7rKZaVjRRPOjfHRr8j9gry-lCh4ixC8KkDdJaJ108B3szuBKMZIuhr3b_mys6XX0UGQi7RNTxwnNgt1sWnyh-F1W0r4DN1dnf7IxnAmRVhIjcG67IHhZDgsyG71tTN-0DqxmSb2Gg7p0cW__HYDFw3uYn_BeFCByY6oJJdwIGC0hqXDxd2p3qmJTxHiLPoICPRQOM2oRC1fW_XFb2VH27swHyvS-8tdkCw4OtAIchwKpALSkpg0AUdWemc0EseGxtIo49M9c7Ed5WzFXzawWKKUxJDhWQHeV7J6xOtQFs4XmwftyzbUBYVcPDcz0nz3BvSHRq5tjdKu5H5X0t_i8L9UAZAqiF58nw==',
-                    provider_name='openai',
-                ),
-            ),
-            PartStartEvent(
-                index=6,
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:call_tool',
-                    args='',
-                    tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
-                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    provider_name='openai',
-                ),
-            ),
-            PartDeltaEvent(
-                index=6,
-                delta=ToolCallPartDelta(
-                    args_delta='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
-                    tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
-                ),
-            ),
-            PartStartEvent(
-                index=7,
-                part=BuiltinToolReturnPart(
-                    tool_name='mcp_server:call_tool',
-                    content={
-                        'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
-                        'output': None,
-                    },
-                    tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                ),
-            ),
-            PartStartEvent(
-                index=8,
-                part=ThinkingPart(
-                    content='',
-                    id='rs_01264dba19113f900068ed20a62f648191b719c874cfe47a3d',
-                    signature='gAAAAABo7SCorCLOFD5VcIU8sG7u4WVtbDowsj_gwMf8GNhOmqvSk8cxQUpKRgJV3bOa8xuz4f65f_TvG9LXdkHbZZV658XLxJliS-0ugk2jOTNLBTyEJfxsmAO3GRApwRWvb-BihcREuGHlEopM2Pw0wUJtWoVRHDqfAVECPkZrZLbW1gujztl7zCpx8l45WngYy37iUWYepVmNBm-1NiDDyPxM2gbGMkCoszu57RgWzB3dAo8KbPtpfTb5aTvLdqfi1vusRb1l8RTtTFUSYW8fuJmFccA83rej30oSN6YydiSCvO5p3_cIH7AJTQiMyMYOIrZX070frtQmezvaeRZWpIV7f2chaxdilerEmaYstO6MWg8zuolvr3oLThUp8xD89IJf8KF3HUhkXRNrvvsorl_XjGwmbuOZLaADmn5GqhyFm90VTDkgx2G1ms3X8C8OA6kz_iuo6u1TrZA0VzkFGFxZoUog9-w5Bp0oemZMuS5PtcJJK3b7BQ3f0Hz7Ol3Sp0Arm6bfbt18ZOVmy6FU3S5C7ah5uHGQf8H8e9dwOcJhsjwtEmSaYqq5akC-gX0D39QGgO-yQ7jL2glutE1pFtybVQNcREbEyt1E0K6IqW72ksR9ymN8H0T-MIzVC72peLXpVzrZ_DUZevNLLK3hIhpivngZe4ecP1ilbKs1mD4p0j7F3_lgsGObcZTOn3ku-WkLItmFLIUUrVdG5Em7lPM8lgiOWXoCIs7Xa39s8j5Rlbd-odUbWmAuUHfv7MC2c-moo3V_0BJ9eTVRi5_i6r0LbTxaWITZOpTQBCD93PczuQkEgekwJJXVI4BKCfF4xa7x4iAe4G9NRKiwjnrDxC-jFr-lxsEZ2pLR9BPQgG3FQwhS4v1HfD5teTr9YpAsS65UZfHDAdb1KKIJDtnWzrdPlx9ffHPS0hgaZSbwyZdNs7ifWBxOfpNX_Mk2V2lKUEyBKN2o6MTbN4bmODmsjJAdVVhRiIFlHmM37U0lMqZf-e13i4dDYoTZ3bwjACKUIeir-BYQphWtOCl9GT5BvEg6mI_aPoZB4VzIRAXil064UwPoA1GoTNDw0sXptNTmuqoJJVjx0nyRhoZLKvWFddHYIE_F1wHp4GV7pt6vUNeRiahG7NV6Abyoa7wEC9fYb2pHWaH01ER8iwyU_ggY_wwyD0Uf8-UjLDf_GkwXPX8ipA65ssTWSzD8bYPGkAoIGotTMYWxPEvzXXGb1WuDrE8czYTyMKM1Dj6XlBQQf-C-ujcl7BjmJqPbQkgvcOda7PHBQXM2yCYA6cLQH0wvDtuhzRFmrQlDebXYoS0i1yIT1Fl8YxmGVOEDbG5evTPFt14G90AMCLU1FH-N9c8Zo-jUDI8k9RiWKYlys3aXggJyzeZkEeyhetmuxNlJhl9kZ4gut4GCqveajz_0t6YEO_YHqpqPhmXRXFzZOUFXjPdPjMiw4CDzNqTLJBGT5eb2ekNCrROavtAG69a9z0wS4fyV1Bfzy0D1LZA22Bz3YVoIcaXixcyrfFZn2lQD2v8Jitv_OvG5qhc4x7daIWwq0-mJRZc5Ot-q2kQhhi1gnjNzCR-NAH4kqokHtCU30_HBjJdB0Yo2NVoEUu7i5ZdXZ5JsblEnKHutERGzxhf6ow9lC6QsE0iZGBmD88SOT9yth_aL48JFJpunjuzzjnZp7hfTbt2BIcbywEHiWYEO6K57_gIUsfHa_0irOFrzBisqSpBbgacZj8NFIGEw_E9sRgUaZ5I3X-PONHyj36raxv_kd6J9Y2uvNBgeVxnuLpNPRHNP8TR-t1Yks0A7975rNOdOzFYL-uCEmC-sbDB3DtBimJ2bsPkmUpTpgA-ds49DlE0zr_fREMrgQMLNBagtvOvN3OH0oUsWVZcCJYr3ADu4CZfwkDOuWQSjja4u3loG6PTjbIBe1IVL-wGa22nir5Dvi4GGd-G--9xYJVrSKYsxE4NK5M8TJu2gVPPYuGTqOel2RVbNEHR3E2pVXHLwMiwXBLjLFGA7y6ou4cgmSoB95G582Ycq2v_qMuWitdE2DITdtLgCv3bKTsRZiKqXTn6j0g4qpicowle2ob4uBulOgK8thTb3PCCbRzi6atNP1mXVgP6vCtyS72D4BCaT198fl3BtkohoqPVxL2be2fYRg1WFnudFM0jg9iYzeW6N3aE5khoEUZ4Ek5SZFT8Pggmfh1_HAg==',
-                    provider_name='openai',
-                ),
-            ),
-            PartStartEvent(
-                index=9, part=TextPart(content='p', id='msg_01264dba19113f900068ed20a8441481918c02d9dfa25a3146')
-            ),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='yd')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='antic')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='-')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='ai')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' an')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' open')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='-')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='source')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' Python')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' library')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' (')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='MIT')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=')')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' that')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' uses')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' large')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' language')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' models')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' to')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' generate')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' P')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='yd')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='antic')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' model')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' classes')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' (')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='and')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' JSON')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='-')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='Schema')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=')')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' from')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' example')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' data')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' It')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' provides')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' CLI')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' Python')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' API')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' supports')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' multiple')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' L')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='LM')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' back')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='ends')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' (')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='Open')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='AI')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' Azure')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' Hug')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='ging')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' Face')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' etc')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='.),')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' lets')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' you')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' customize')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' prompts')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' Repo')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=':')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta=' https')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='://')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='github')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='.com')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='/b')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='ir')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='b')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='land')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='/p')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='yd')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='antic')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='-')),
-            PartDeltaEvent(index=9, delta=TextPartDelta(content_delta='ai')),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:list_tools',
-                    tool_call_id='mcpl_01264dba19113f900068ed20a0664881919b18a9a3989974cf',
-                    provider_name='openai',
-                    tool_call_metadata={'mcp_server_id': 'test_server'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
-                    tool_name='mcp_server:list_tools',
-                    content={
-                        'error': None,
-                        'tools': [
-                            {
-                                'input_schema': {
-                                    'properties': {
-                                        'author': {
-                                            'description': 'Author username or email address to filter commits by',
-                                            'type': 'string',
-                                        },
-                                        'owner': {'description': 'Repository owner', 'type': 'string'},
-                                        'page': {
-                                            'description': 'Page number for pagination (min 1)',
-                                            'minimum': 1,
-                                            'type': 'number',
-                                        },
-                                        'perPage': {
-                                            'description': 'Results per page for pagination (min 1, max 100)',
-                                            'maximum': 100,
-                                            'minimum': 1,
-                                            'type': 'number',
-                                        },
-                                        'repo': {'description': 'Repository name', 'type': 'string'},
-                                        'sha': {
-                                            'description': 'Commit SHA, branch or tag name to list commits of. If not provided, uses the default branch of the repository. If a commit SHA is provided, will list commits up to that SHA.',
-                                            'type': 'string',
-                                        },
-                                    },
-                                    'required': ['owner', 'repo'],
-                                    'type': 'object',
-                                },
-                                'name': 'list_commits',
-                                'annotations': {'read_only': True},
-                                'description': 'Get list of commits of a branch in a GitHub repository. Returns at least 30 results per page by default, but can return more if specified using the perPage parameter (up to 100).',
-                            },
-                            {
-                                'input_schema': {
-                                    'properties': {
-                                        'minimal_output': {
-                                            'default': True,
-                                            'description': 'Return minimal repository information (default: true). When false, returns full GitHub API repository objects.',
-                                            'type': 'boolean',
-                                        },
-                                        'order': {
-                                            'description': 'Sort order',
-                                            'enum': ['asc', 'desc'],
-                                            'type': 'string',
-                                        },
-                                        'page': {
-                                            'description': 'Page number for pagination (min 1)',
-                                            'minimum': 1,
-                                            'type': 'number',
-                                        },
-                                        'perPage': {
-                                            'description': 'Results per page for pagination (min 1, max 100)',
-                                            'maximum': 100,
-                                            'minimum': 1,
-                                            'type': 'number',
-                                        },
-                                        'query': {
-                                            'description': "Repository search query. Examples: 'machine learning in:name stars:>1000 language:python', 'topic:react', 'user:facebook'. Supports advanced search syntax for precise filtering.",
-                                            'type': 'string',
-                                        },
-                                        'sort': {
-                                            'description': 'Sort repositories by field, defaults to best match',
-                                            'enum': ['stars', 'forks', 'help-wanted-issues', 'updated'],
-                                            'type': 'string',
-                                        },
-                                    },
-                                    'required': ['query'],
-                                    'type': 'object',
-                                },
-                                'name': 'search_repositories',
-                                'annotations': {'read_only': True},
-                                'description': 'Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
-                            },
-                        ],
-                    },
-                    tool_call_id='mcpl_01264dba19113f900068ed20a0664881919b18a9a3989974cf',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    tool_return_metadata={'mcp_server_id': 'test_server'},
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:call_tool',
-                    args='{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
-                    tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
-                    provider_name='openai',
-                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
-                    tool_name='mcp_server:call_tool',
-                    content={
-                        'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
-                        'output': None,
-                    },
-                    tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:call_tool',
-                    args='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
-                    tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
-                    provider_name='openai',
-                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
-                    tool_name='mcp_server:call_tool',
-                    content={
-                        'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
-                        'output': None,
-                    },
-                    tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                )
-            ),
-        ]
-    )
-
-    event_parts: list[Any] = []
-
-    async with agent.iter(
-        user_prompt='What is the latest commit hash in that repo?', message_history=messages
-    ) as agent_run:
-        async for node in agent_run:
-            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
-                async with node.stream(agent_run.ctx) as request_stream:
-                    async for event in request_stream:
-                        event_parts.append(event)
-
-    assert agent_run.result is not None
-    messages = agent_run.result.all_messages()
-    assert messages == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Can you tell me more about pydantic-ai repo? Keep your answer short',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                instructions='You are a helpful assistant.',
-            ),
-            ModelResponse(
-                parts=[
-                    BuiltinToolCallPart(
-                        tool_name='mcp_server:list_tools',
-                        tool_call_id='mcpl_01264dba19113f900068ed20a0664881919b18a9a3989974cf',
-                        provider_name='openai',
-                        tool_call_metadata={'mcp_server_id': 'test_server'},
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='mcp_server:list_tools',
-                        content={
                             'error': None,
-                            'tools': [
-                                {
-                                    'input_schema': {
-                                        'properties': {
-                                            'author': {
-                                                'description': 'Author username or email address to filter commits by',
-                                                'type': 'string',
-                                            },
-                                            'owner': {'description': 'Repository owner', 'type': 'string'},
-                                            'page': {
-                                                'description': 'Page number for pagination (min 1)',
-                                                'minimum': 1,
-                                                'type': 'number',
-                                            },
-                                            'perPage': {
-                                                'description': 'Results per page for pagination (min 1, max 100)',
-                                                'maximum': 100,
-                                                'minimum': 1,
-                                                'type': 'number',
-                                            },
-                                            'repo': {'description': 'Repository name', 'type': 'string'},
-                                            'sha': {
-                                                'description': 'Commit SHA, branch or tag name to list commits of. If not provided, uses the default branch of the repository. If a commit SHA is provided, will list commits up to that SHA.',
-                                                'type': 'string',
-                                            },
-                                        },
-                                        'required': ['owner', 'repo'],
-                                        'type': 'object',
-                                    },
-                                    'name': 'list_commits',
-                                    'annotations': {'read_only': True},
-                                    'description': 'Get list of commits of a branch in a GitHub repository. Returns at least 30 results per page by default, but can return more if specified using the perPage parameter (up to 100).',
-                                },
-                                {
-                                    'input_schema': {
-                                        'properties': {
-                                            'minimal_output': {
-                                                'default': True,
-                                                'description': 'Return minimal repository information (default: true). When false, returns full GitHub API repository objects.',
-                                                'type': 'boolean',
-                                            },
-                                            'order': {
-                                                'description': 'Sort order',
-                                                'enum': ['asc', 'desc'],
-                                                'type': 'string',
-                                            },
-                                            'page': {
-                                                'description': 'Page number for pagination (min 1)',
-                                                'minimum': 1,
-                                                'type': 'number',
-                                            },
-                                            'perPage': {
-                                                'description': 'Results per page for pagination (min 1, max 100)',
-                                                'maximum': 100,
-                                                'minimum': 1,
-                                                'type': 'number',
-                                            },
-                                            'query': {
-                                                'description': "Repository search query. Examples: 'machine learning in:name stars:>1000 language:python', 'topic:react', 'user:facebook'. Supports advanced search syntax for precise filtering.",
-                                                'type': 'string',
-                                            },
-                                            'sort': {
-                                                'description': 'Sort repositories by field, defaults to best match',
-                                                'enum': ['stars', 'forks', 'help-wanted-issues', 'updated'],
-                                                'type': 'string',
-                                            },
-                                        },
-                                        'required': ['query'],
-                                        'type': 'object',
-                                    },
-                                    'name': 'search_repositories',
-                                    'annotations': {'read_only': True},
-                                    'description': 'Find GitHub repositories by name, description, readme, topics, or other metadata. Perfect for discovering projects, finding examples, or locating specific repositories across GitHub.',
-                                },
-                            ],
                         },
-                        tool_call_id='mcpl_01264dba19113f900068ed20a0664881919b18a9a3989974cf',
+                        tool_call_id='mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'test_server'},
                     ),
                     ThinkingPart(
                         content='',
-                        id='rs_01264dba19113f900068ed20a271948191a97ecce27848f461',
-                        signature='gAAAAABo7SCjE_wICveOw0z6kFvwtVJSAi8SGeS7LooWILhZ1wQTZR3QZHVylNYvEkcAWc9VpOKvCjdyffXyz45penIN9cSr5WCk7vP0DULso01ZudhhFPVypQ68yogEx7xMXwmVJbOqoyOZb3M39dnKkFtjQeMWd4AzGfPC8ufjRt9SEbTlRjq06bRoNBmVYP8rQCftHh9BWIvGKU0Fe5rwB7S0BtFmcowfwFs1lMyKN89BTITrVXrTCmai6mw_JvNj9PCuDiOMfuYbtbmZKb0OZOjiUyErSSFhpdyEqQZbeBF1frZVtPjPJCEIusEIHK5cT65odpRKn2uakRcUcCKGcSB6Sv0OTiSF7nJW79p-eJIfeFXxwJwiCQswp3mUt5U2a0kVsxDv2XUhP3ONOE_-vhNS2EGwRD8IglEw1F0zYqXItUUSjb2vig0SA1sNUVK4oK_EwaxYUYgxtgaC42e7qzo3Hs_18S6FXxaMSygoyk4jVMhIVJb7xbQc7-hWF1ohdXJRTpLNSvZ-z_FTePo_3Bye3HVFpSWOpUAGd1peSVrEiXXaN5kMTJpeZfHbXVTX2FN7ugabl_IgdcVOH-seE1cD5kNbodVbjxnDdxzMx8q10xtzlI7Ze9CPFJb6BZFWKEZri-sJUJAbSRBfH8NIHJQj1UjDx5vg4YRI3TvUR8RIhedC54_25cb_6HD3_0sghACWhL_9uyzPgMw4tjzIQQNtHDduB2BWpKapkSgUkJNAaujU_YOuq-uttzV2nOBXr1H6APbbG_kgNbHs1a4Z_Fvb9Jzg2oKZ1dJOAt81_VK6s2gU50EqTWCQi_k8Hnj4MnUnQIpIyy1jjHDxheKIkOo_7eTSkYsgEapY57S0NGZ6T6Ru-XE8Hql_xa7VhW7VtRyF3LADgK5DD5rjHhzp-dIbhc6Y-4KgTLvaHU-Dohj1t8uZEP8niv3I3JKKgWDWVJ9vPbioeGqOINooUzZcIaJg4BztTcP8CBMsDX5w6MPO3IoBwnhS50YLIFrkDplwqLsnIEwpaxROm0csRrTcUpl4ZiY18R9PXyBp5J8tH0Y7BqaJ6NTAdFT2OLL6TntZ6UtTCaR7U4p_H45DUl0ZKsnjxBjNQWS67DatY2U44S69Qh86ken4gh44cXA4r5NnpRbCuZmo7BhH2wH5yDRhhZc2AQ5WUwpP0eyDnjF8xunNftbwyISfNV7WuHcdaYwiu29WOx6O3c0FLJO-KhV0LvK-VZZWXYTWY55pqv436FtVoq0XS4AiKIN4zwXHx_zuy3Zw_lO41VJUZbBNL4zcAv7GDukWyiFkocpWMBhLhISuuh0T65B3R5W8_HWYJbi-zlORXGZaw3OtJqTFPKBqhRH-chnBoSy8D15C3gahfV9FKjdIuYruJ6laevbUecvydkHG8GrdfKDizmQsRYLPAxApJX4GI8fHMG5vqBgUfdDpZaWhkEzoGwywWparXBx6LVrGVKAa2GUHAhyevUooKzLuPcIeauniU0cTSgHBpGtHLvJJf-XZFQfHMeIwYxDs9exI4EwRTKRst4wq-foobKcYhRGjqv9O7BrdFIiar8iO0yiBfzdA-gCV63WajMhhWfwh7c9svtge-ZdvCvdSCmYAJRHlgBxUZ8bN2sENy3ZuW5lVk_RQBKtcjTi0uAHm6TT66bZ0JIYTp8Mns9PDTQov-p3BDTtxp4_iNFs0RnOHXvJ7nNNvUHJ2lrdO6NzquhE5iodvXsuWa0wikvsJrxVN1J9Azg==',
+                        id='rs_00b9cc7a23d047270068faa0e4cd5c819f8855c183ff0fe957',
+                        signature='gAAAAABo-qDma-ZMjX6meVDoCLYMqgkbQoEVzx_VFnmBFRLqsq37MiF7LP1HrMpqXqtrZ0R2Knb6lUiGSKhsOjOUAn9IFNUCuJx23cPLObF2CKt86wGLb7vccbCrp8bx-I6-kUtZASjlJx7_eJnvwyr24FLZlaDyGDuqRecGA8H4tXnQSAQTT9fJqy8h8dXvxvYzNj5rgOUWgRGn1NBph164KpiEzVWHADzZ_K0l4fX-DFHgtNFssPDYqOKLs_nU0XO8xaIZOgJ8QTf0XmHYF02GA_KciV6sIlSzVricQkwmu1XfJbjpME8XmRMIzlnLRqC8SAJs2kiaYnA8ObfI-s0RbRd3ztIUrzmAsdeo13ualD3tqC1w1_H6S5F47BB47IufTTbpwe_P6f5dLGpOzcrDPbtfHXv-aAW5YEsGyusXqxk51Wp7EONtADmPmVLJffFbRgnwfvPslbxxpNGfxNkN2pIs3U1FW7g1VvmxUfrF84LJpPKvs3xOaWXGorrPBY5nUyeRckhDFt6hGdS59VICmVy8lT4dL_LNswq7dVRS74HrrkfraXDDm2EhL2rtkwhiMqZtuYFsyIK2ys0lZuhNAkhtfgIoV8IwY6O4Y7iXbODxXUr48oZyvLdgV2J2TCcyqIbWClh3-q8MXMmP5wUJdrqajJ8lMVyhQt0UtMJKyk6EWY1DayGpSEW6t8vkqmuYdhyXQOstluONd31LqnEq58Sh8aHCzrypjcLfjDRo5Om1RlxIa-y8S-6rEIXahcJCX_juSg8uYHzDNJffYdBbcLSVQ5mAVl6OM9hE8gHs7SYqw-k-MCeoYsZwt3MqSV7piAu91SMZqB0gXrRDD67bdhmcLBYKmZYKNmLce60WkLH0eZMPSls-n2yyvmwflJA---IZQZOvYXpNUuS7FgMrh3c7n9oDVp15bUgJ8jDx6Mok4pq9E-MHxboblGUpMlFCJDH3NK_7_iHetcqC6Mp2Vc5KJ0OMpDFhCfT3Bvohsee5dUYZezxAkM67qg0BUFyQykulYLHoayemGxzi1YhiX1Of_PEfijmwV2qkUJodq5-LeBVIv8Nj0WgRO-1Y_QW3AWNfQ80Iy6AVa8j9YfsvQU1vwwE9qiAhzSIEeN1Pm2ub8PaRhVIFRgyMOLPVW7cDoNN8ibcOpX-k9p_SfKA9WSzSXuorAs80CTC9OwJibfcPzFVugnnBjBENExTQRfn4l7nWq-tUQNrT4UNGx-xdNeiSeEFCNZlH50Vr5dMaz5sjQQEw_lcTrvxKAV5Zs1mtDf6Kf29LkqhuUEdlMLEJwnAdz2IHLIy41zWLQctSnzBl9HB3mkw8eHZ1LdaRBQRFH4o7Rumhb3D1HdIqDLWeE3jkA6ZBAh2KadGx1u3AIIh4g3dHUS6UREkmzyRIuImbdTsoin1DrQbuYbaqZwIqU4TTIEmA8VeohMfff0rIL5yyFy7cfgGYurgAyMhARPGAAMAoTrR8ldWwymzPkGOJ_SQlzfNGV8weHOEYUl2BgQe57EDX4n1Uk294GIbvGR7eLRL_TLBUyHQErCaOCi8TkBNlLXIobw4ScN_jqqtURmC0mjRDVZeBi6hfrVShWChpQR8A2HxxHrcuHi2hi_2akgUea3zz6_zbUYVoIRdOa9DvZuN015E8ZSL-v_1_vOzUGvt0MuWPazjiRDWgpgcISYzT8N-Xzu_EbwO1OsaOFIeUqrD8mZ6MKOuBQts68og0DWo8KQaHmCaWi4O-c8-5fbB2q3H6oiIoZtSJIoowAmFGOwyWxn_OPS9svDgEaeFYEYhXZ5wZDphxoHkjJ703opxrWoEfQw==',
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='mcp_server:call_tool',
-                        args='{"query":"pydantic-ai","sort":"best match","order":"desc","page":1,"perPage":10,"minimal_output":true}',
-                        tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
+                        args='{"server_id":"deepwiki","tool_name":"ask_question","tool_args":{"repoName":"pydantic/pydantic-ai","question":"What is the pydantic/pydantic-ai repository about?"}}',
+                        tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
                         provider_name='openai',
-                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
-                        content={
-                            'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
-                            'output': None,
-                        },
-                        tool_call_id='mcp_01264dba19113f900068ed20a3ca908191bdb2dc331e4e8e2c',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    ),
-                    ThinkingPart(
-                        content='',
-                        id='rs_01264dba19113f900068ed20a490108191823c8351b9c7b1eb',
-                        signature='gAAAAABo7SCllu3A0J5TLhrToCHtBqlJXTNnUiSjyawmoj11hxQvRsn-kRItP0vUjdkSzapSsaiTTCoHAnYP6Uh52eogYu4emHs5I3e40WoGQjQ8Aog8imp25ZxF7OHWfqynluKfum-8kCYE6GHi-1k9zTIrBPZpfdwdJPKng_AjAxgknHgaNx31Xkbyjtrwl13AkGvLNlbQXhLiD21EAwcc2gBEe46BwtRXfLlms1uFIkuUWeNUupnOaHkjOrchPrqWECJA9A8gAlg29JOaDW6THXksjb6PIBvRh0UOaY_WhKEsbqdVLU-hKnACCGY3gk4EksSwT65CHJd1ByKhvi03-n1GD3w0_tlLdAGQhHeVO25kDR_16Y5geFllZHJ26XN6EsQiIE6UCsACa07iXgrrAPH3HsnKz-FNM-fgWaxihbEJShbmg0BjmTcMIGxcmLf9xbt9sDc6Hy0iZQTgVWyDj23jN1hTpIIu382KlbgMDd-c_A8GFQp8ySlh8CmuNaTjq6e8oOknbsDDladBx19FrHGcWVmpZLkaa1WoJ-_JpAo6CzqYQJMIBdm2R4w9O9km7jNgtEVJSWe4zxdYVfNqocishUfZoeD1Ncr9bkQ4AOlw0oTmrb3kEa3mRaG1gy0KHC_EuBfPMmr89XeivxzTak8QZg9meG8n1tKSqjHf8EJEIn0VBnAReR7lFpd0Sr-vuVz7Y0kVJenvSNljm2oYmwaMXctycGh5GkHAh8FfsvvGoiRVomZ4hCIy70X2p4_0nMkwNORPGkBIfEhHuL_VcIulMqhkGdtf-Q7a7D9Q6jmuSplXvKhxZH31ay3zzUc0J-1guIboH0R3GJXmBHRLi_PXao_2GS1Nhjx38PBFejmIvtliITF6YhP7DFa29eMacvRqKEiKdGZKAX1NdluBq7YSYJhOPVnV9LVosBps-ZLIfkK6d4ZRidWPcVf1j0tRBKPTHUITctPdNrk6kzyTeXUy6wA9yhq6jkcpCqJQr0wF_tc-4OkyQ1IJ05WYhrg4fAMgmu2DIWQ7NyQ5H9gbsIHEvu_QxXfNq_wlBOcgyosyxfitEgUrxCQKUbro-7rKZaVjRRPOjfHRr8j9gry-lCh4ixC8KkDdJaJ108B3szuBKMZIuhr3b_mys6XX0UGQi7RNTxwnNgt1sWnyh-F1W0r4DN1dnf7IxnAmRVhIjcG67IHhZDgsyG71tTN-0DqxmSb2Gg7p0cW__HYDFw3uYn_BeFCByY6oJJdwIGC0hqXDxd2p3qmJTxHiLPoICPRQOM2oRC1fW_XFb2VH27swHyvS-8tdkCw4OtAIchwKpALSkpg0AUdWemc0EseGxtIo49M9c7Ed5WzFXzawWKKUxJDhWQHeV7J6xOtQFs4XmwftyzbUBYVcPDcz0nz3BvSHRq5tjdKu5H5X0t_i8L9UAZAqiF58nw==',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
-                        args='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
-                        tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
-                        provider_name='openai',
-                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
-                        content={
-                            'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
-                            'output': None,
-                        },
-                        tool_call_id='mcp_01264dba19113f900068ed20a5933c8191a56fe5fa4b8dcd53',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    ),
-                    ThinkingPart(
-                        content='',
-                        id='rs_01264dba19113f900068ed20a62f648191b719c874cfe47a3d',
-                        signature='gAAAAABo7SCorCLOFD5VcIU8sG7u4WVtbDowsj_gwMf8GNhOmqvSk8cxQUpKRgJV3bOa8xuz4f65f_TvG9LXdkHbZZV658XLxJliS-0ugk2jOTNLBTyEJfxsmAO3GRApwRWvb-BihcREuGHlEopM2Pw0wUJtWoVRHDqfAVECPkZrZLbW1gujztl7zCpx8l45WngYy37iUWYepVmNBm-1NiDDyPxM2gbGMkCoszu57RgWzB3dAo8KbPtpfTb5aTvLdqfi1vusRb1l8RTtTFUSYW8fuJmFccA83rej30oSN6YydiSCvO5p3_cIH7AJTQiMyMYOIrZX070frtQmezvaeRZWpIV7f2chaxdilerEmaYstO6MWg8zuolvr3oLThUp8xD89IJf8KF3HUhkXRNrvvsorl_XjGwmbuOZLaADmn5GqhyFm90VTDkgx2G1ms3X8C8OA6kz_iuo6u1TrZA0VzkFGFxZoUog9-w5Bp0oemZMuS5PtcJJK3b7BQ3f0Hz7Ol3Sp0Arm6bfbt18ZOVmy6FU3S5C7ah5uHGQf8H8e9dwOcJhsjwtEmSaYqq5akC-gX0D39QGgO-yQ7jL2glutE1pFtybVQNcREbEyt1E0K6IqW72ksR9ymN8H0T-MIzVC72peLXpVzrZ_DUZevNLLK3hIhpivngZe4ecP1ilbKs1mD4p0j7F3_lgsGObcZTOn3ku-WkLItmFLIUUrVdG5Em7lPM8lgiOWXoCIs7Xa39s8j5Rlbd-odUbWmAuUHfv7MC2c-moo3V_0BJ9eTVRi5_i6r0LbTxaWITZOpTQBCD93PczuQkEgekwJJXVI4BKCfF4xa7x4iAe4G9NRKiwjnrDxC-jFr-lxsEZ2pLR9BPQgG3FQwhS4v1HfD5teTr9YpAsS65UZfHDAdb1KKIJDtnWzrdPlx9ffHPS0hgaZSbwyZdNs7ifWBxOfpNX_Mk2V2lKUEyBKN2o6MTbN4bmODmsjJAdVVhRiIFlHmM37U0lMqZf-e13i4dDYoTZ3bwjACKUIeir-BYQphWtOCl9GT5BvEg6mI_aPoZB4VzIRAXil064UwPoA1GoTNDw0sXptNTmuqoJJVjx0nyRhoZLKvWFddHYIE_F1wHp4GV7pt6vUNeRiahG7NV6Abyoa7wEC9fYb2pHWaH01ER8iwyU_ggY_wwyD0Uf8-UjLDf_GkwXPX8ipA65ssTWSzD8bYPGkAoIGotTMYWxPEvzXXGb1WuDrE8czYTyMKM1Dj6XlBQQf-C-ujcl7BjmJqPbQkgvcOda7PHBQXM2yCYA6cLQH0wvDtuhzRFmrQlDebXYoS0i1yIT1Fl8YxmGVOEDbG5evTPFt14G90AMCLU1FH-N9c8Zo-jUDI8k9RiWKYlys3aXggJyzeZkEeyhetmuxNlJhl9kZ4gut4GCqveajz_0t6YEO_YHqpqPhmXRXFzZOUFXjPdPjMiw4CDzNqTLJBGT5eb2ekNCrROavtAG69a9z0wS4fyV1Bfzy0D1LZA22Bz3YVoIcaXixcyrfFZn2lQD2v8Jitv_OvG5qhc4x7daIWwq0-mJRZc5Ot-q2kQhhi1gnjNzCR-NAH4kqokHtCU30_HBjJdB0Yo2NVoEUu7i5ZdXZ5JsblEnKHutERGzxhf6ow9lC6QsE0iZGBmD88SOT9yth_aL48JFJpunjuzzjnZp7hfTbt2BIcbywEHiWYEO6K57_gIUsfHa_0irOFrzBisqSpBbgacZj8NFIGEw_E9sRgUaZ5I3X-PONHyj36raxv_kd6J9Y2uvNBgeVxnuLpNPRHNP8TR-t1Yks0A7975rNOdOzFYL-uCEmC-sbDB3DtBimJ2bsPkmUpTpgA-ds49DlE0zr_fREMrgQMLNBagtvOvN3OH0oUsWVZcCJYr3ADu4CZfwkDOuWQSjja4u3loG6PTjbIBe1IVL-wGa22nir5Dvi4GGd-G--9xYJVrSKYsxE4NK5M8TJu2gVPPYuGTqOel2RVbNEHR3E2pVXHLwMiwXBLjLFGA7y6ou4cgmSoB95G582Ycq2v_qMuWitdE2DITdtLgCv3bKTsRZiKqXTn6j0g4qpicowle2ob4uBulOgK8thTb3PCCbRzi6atNP1mXVgP6vCtyS72D4BCaT198fl3BtkohoqPVxL2be2fYRg1WFnudFM0jg9iYzeW6N3aE5khoEUZ4Ek5SZFT8Pggmfh1_HAg==',
-                        provider_name='openai',
-                    ),
-                    TextPart(
-                        content='pydantic-ai is an open-source Python library (MIT) that uses large language models to generate Pydantic model classes (and JSON-Schema) from example data. It provides a CLI and Python API, supports multiple LLM backends (OpenAI, Azure, Hugging Face, etc.), and lets you customize prompts. Repo: https://github.com/birbland/pydantic-ai',
-                        id='msg_01264dba19113f900068ed20a8441481918c02d9dfa25a3146',
-                    ),
-                ],
-                usage=RequestUsage(input_tokens=876, output_tokens=571, details={'reasoning_tokens': 384}),
-                model_name='o4-mini-2025-04-16',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_01264dba19113f900068ed20a0538c8191966b895a0e63290c',
-                finish_reason='stop',
-            ),
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='What is the latest commit hash in that repo?',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                instructions='You are a helpful assistant.',
-            ),
-            ModelResponse(
-                parts=[
-                    ThinkingPart(
-                        content='',
-                        id='rs_01264dba19113f900068ed20aa125c8191a162cf51e4f7abb3',
-                        signature='gAAAAABo7SCtck8m9kX4XRUPQ8v6VHc-AjqlsN8f1X4ztYz_bg4UXXr8H2Ns984NfGj7c5DHDN6obl-kF0rGX_tvCO3ga2RUmcZkqu5j677MV1LkY7rB6hvsSC4CB8Mb_yCmZeq1iwP7NJkhqHGqcZueoGiJlWvFx_2QJTODOrDLbDm4zLte41ZR1WUdWtaqq9ZBFIO_EzJxLiuKvmGKuwpNG2-qAGz86IQjhXot2pnRQTszEeM4GRJEiwW4WdfLYChV1nCvhEyeRppMOULpQyrxE2rDSiky3g0sRZ3_AR7t9vl8VDwbmopXix9K5PtddpGBw6jNMfWSFsdmI4Ivleewopb3O5_NuNJjJP2sfOzQ4BmrhLi9izfkFELnRHxhTl6zjl050TGirouasJpcwVHr9KjB-IcsaNMGnpI-M2EKAV2j1Dk8QLAwiJQYxopECGcBXOTlhQ5OxOFxNJuHvZGsMIruHNS0uAgal-YunJ6wCUpIxt8X4UbILki27Tb4-FoR-7V-RQJdSQ_t_kKWts0mltzNLO8gM3178qPRMb-XhseFvclI9KxSZvqiibvagk39gkWpPATm9z0qKgbUSNr7jhipcrm77qMiXhaL5CYkml0HbYpLukVGBgtYYvNXJmDl86gBHAUOKlfbWxHYmU_BLKQh1am5R_sqqVZ61iIbuqJagvxCxgyCRJSf6YeugU3TmbqHy4GMu134tISGXsSgD5GKj1dDfHuBBDY_a7wHg7Rh7h_TS0YmdAUXrAuzuvRAd7s2WB99BYaVVi-PHpC8QOdm41a4N7wIMdBuMAiTrhcIPfLVTqApnWMvRNnpSGtScFcd1jGJpHDmCNT2Zy0eIxOgcnguDgfWIb8jjAk_l833WileKpCEnwaNQvhqd1cbGKTv-o2JZVpTIXQJTpXrUHE7lEbs6sV9A6PAnphz3Yjs-WPBwpkgYEhz1dDeF_wDiBmSnM8Bk3V8d--qGvjT2ls8Sigleu2f9QTPwYqiZNV6_LoXMwK7vBGMR3TB_NQJq2B08Gjjv8GNnlP9z83PcWSLMyeJKBNJaAGiI-pOwI9f1GO36prPmJrVlxXFxRAHmZaDJqfXm_FxSsN_TZZZsAlPENgja_YZkYrcD10oo0W0mZY_lwXUrMXNOFmyGcDUtWkc-YK10vl-L5kAGb7GzPuApE5VaBjh7_E9Fj8likVB5cqBGFNDhhOe431WpX7dgt5whhii4hfL6HAv9G985aFuu92p_Rj_7fyFofRkamPYCIzTfm3GJM0tVb-OfLfKY36qncG2DADLJIOAbHyTU3OUxdKbV842YeLiyn-dlWfotN_0z1iNl4iJBgpv7aTjBqaemZRyACTS6DOBS9HYkiYc9GPwEQmc7U_C229xTN2_KLej0n-b3AkVrflOh0R1BvppVH5Fuvv8iEmcNIPk-I8w0ozVNCl9sntU7KRoPgD0vN0ul_pC9HHyQqAs__ZgvJCLmpP2WsDmM9BnCK9mx15fnumj8pjay1EtjGBbYXix908P_0TeGAGpjGyeaWuLtWJ2Ee5-ChHbJ4fhrl36kErGL8QTl5Y8D_HAZ7TuVz_NpppkIGvxCOZ7mVDB7W20_FzxTzTgrD1nW_h04m2Zvga1Lj6UNKlnTP8WxtXmBPYtJ73oY3AJBcKgqUeUXr4SjrfubDTgUe_j70DviFd7iBnBPyVfqRYZVTTSOIb4QFUsNlUwRWWlwsNfojVthzdmxZ2IKPtaoWDyN81C4syC8Q32ujNxVw3rh3rhvRTLpUfoXHQ5yoNuZOBES9nsPxmfEPiNCR2XPWNfdp-WdQlxdpAnBc4RUV4NgwZpTJ2JnXakldJp2YemewKtbU__Bh5Q9hsDRADdm85oe1evICe8nWK7z9rPEMqK-lrIQ7g7fFc6NA3XSwquEPumcIjRbBQyyd6hamT-8mXHnVQBsA4CJDrvAxvmDxaCiG7J4BK4KjmM05iSt8RlpSoArH6kEYjBWWfdMzUJapaRQRej4VstvNbInK7bq3IGkJpfZeNCQ8laFS4SkcfkInlDn8Pk5OXgwQlSdsKTTBrRmllOgLeU2A8Lyu8tfLFpVeNTZJJug5pj1rrFwQcyLWyr6HuTBIqBa-63Ied8rMU5l-KD6OqAqOLZyQWUcwhteCLW14yBKkJJe44Ml6Ox44FJ7nPj5N-Q3r7B_VAkJSZLayG8LcjusQA1LLFZfsT2xtXbw-pke5LWxfbfhH8P-Kw4nBYZCof3BKVhr3kfgAsghO03KFtKDsBuyN6nuhUJlfnKo3RSZl0pJDRLOW698JsGtaLW42cS0ZcbNlurJJAsWf2QVfaXsKr3-aRSr399ugKkVpAlMwVLeB_wocSlsF10SM4eNF2UkZnWpSP_Hgarh6aTl0mmnxbvEhcNR1nT5kF3bLozqh9ET-4MdUvq221XPX3-GDqjAIzktzBXlfKNtKTYYzLL97YnLVBXML0rSCmv7ajkBT6rkHw42bszEed_DWvXuqXxOXUbLQ_rH6WYRZGWUFnU-084_kIL1j3f5EHsAufb5TycdF7d_ypVOJ2MMFtemdOxDiwt18spnWwMjyefVzMsHc9u8ia_2g53xuMF0XiB2THv2iWK6M0rGYAEu6XS5nlOeWt0mXINsKeNGtQDCUxL_ihmnEFds2dSymYfdccw834G882bStP40V8P3RKlMgwMB6mrt4P0LhLPmAbdFW5EbPjJEr8fGCjyg1L8tEzq_VNhtK-CK2u22mvU0lIwyp0HKFouGGf2fr49ON5-bjajNuh1H3U5VJXqThAXVmc9BYjCYGgXJrY=',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
-                        args='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":""}',
-                        tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
-                        provider_name='openai',
-                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
-                        content={
-                            'error': {
-                                'type': 'mcp_tool_execution_error',
-                                'content': [
-                                    {
-                                        'type': 'text',
-                                        'text': 'failed to list commits: : GET https://api.github.com/repos/birbland/pydantic-ai/commits?page=1&per_page=1: 404 Not Found []',
-                                        'annotations': None,
-                                        'meta': None,
-                                    }
-                                ],
-                            },
-                            'output': None,
-                        },
-                        tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
-                    ),
-                    ThinkingPart(
-                        content='',
-                        id='rs_01264dba19113f900068ed20aedd88819191ce657ba3901f3b',
-                        signature='gAAAAABo7SCvJu7D1daOEGJtJo9OqWIpUvDM8SBE622ikyy5fTFiTmgeinJJuROJ4VABk-A1ieBbPw0TY8DRAWcBZIYLdS47qRJxEg3_cgbtiJK9fsAAcKIi4loo5CPHxbd04C0uHhMOKASrThksMiH4Fa__M2O01-1JpgoO0OZ3Ll5ZXRXocxkVsEmHIxXezk0uz7A7kkoxUfo8GKjcr_BQojtku0fSQj5iQIVy7M_eGo9e7deZMFb61OPZ4xnsLjwn3ljuXi1IN8R0awjUPm27U52hKFhCFyLWKdpsmsg6IkqlKxVyhl1pfrZ81DJJUpRjCkrh-L_2ccl13fCM25EVi8gB6uIm0ts9Hk9oCliLLjwTAe45T_6SMX5ZPEK7AE0zjyFoGJ1mtlj61_1a0Eo5S0xBpHg7dJDiNMzPQ84N6sDoF_KUnv49CxZnAHZ8JNjsyUOrXcUSE9xTAnGsQ0dg_Fxmi7ZBUMuq0Ngg9gJh8ovdZ8i0Ij_Ln4iCulrFA0gB9CuXhTEn-9He-pSjoAQjoMlr8_NlRC4Jq7Y8ZMQ-xbBZVHXUps5PFW_Hqo3cospgPJiP97ybsSNO2U3430BPAQztF4C5DU_ak62FQMh5Xb27ZrNflVEIiYcaY7pluBBNNfo9r4hf3NIECd6sv5NVZnUQVSBqpWREKy1RlRTw_dMJxwPlLpsuVRWfYTUOc3WImHMy5Of1fQO4lGMZeX3iTWa0RJ-B1pNG8xSUNMGPhAi6Z5xtriRqq8KM-H8wSutQ_4I57mnZU9G2x4zNjxUk6CFJAgSTcV-wHlK_971UN1uQ_iuegWCtVdUAblJIcmWGtLx-WbR4S3OVahNExJacXRPn68DEfO2gbqyKZL6obqEZP68nhSAzbf940UqIOAQbzRiM0tpJc3KiSObI6TKNw8xHae2I0IJToXt-F0m_5fRdYWZ0wCDB5M_y71rMNQWT8gLhxi9VmFX1MCU5yjCkfA8hterEsoBHx-HtpFsKMdb4erJknsa9YCw2rqmzFqit9zLeLp_NZCpTLCuB3I0U8HBEfNBr-WVtoccJfHbX2fnt-7O99mUgeDIUd5LyHGnAf4-UZO3aVFcN2hlHIYvehz4fxhVRKtl0lyhe6nI4glXvixkv1GiAvp0nuTeLbRxKgsXV1eukObeau9Xrxy_Qu7aEb3FpJZtqlRR7r6CORSA94OCwcm0=',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
-                        args='{"query":"birbland/pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
-                        tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
-                        provider_name='openai',
-                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:call_tool',
                         content={
                             'error': None,
-                            'output': '{"total_count": 0, "incomplete_results": false, "items": []}',
-                        },
-                        tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    ),
-                    ThinkingPart(
-                        content='',
-                        id='rs_01264dba19113f900068ed20b24d448191aca08726d96a1b9b',
-                        signature='gAAAAABo7SC0SAPup3riyM8IB9BUJlA-gEqj0SdQB-vhZJiegBCPxBWfP7RYhsDhk4ZRmfX9Ea-OGfwIDP6b02QshqVwNBlV_9y5kdAWwU44csAB2i1r6tXAU95K35KbdWPF5rIlxUVunc8b8G5mEIpjrBm4o1Ja_0VPfLddFHQ3jHUGk57qp-U93EG7Owq7Mr5_0AKsa1yuiy_SnCRRujwP7KBIyzoquZd2hGgSCO5vFI31zFTo8Uq8zDbRvTjdCVvf4wXdk8NhWj9bUHtp9Udng6Up5Yk0y_4jA4Qp_sWa_auRXBYYGMg6pWHtjqfnrjzPmtJfbZI9uWW5K7-KZ7rAjj5EO2CYgAAghrtSLth80bNRvo9X3aL0Nr_33krq8ebPwMu6rYwEY0AbSJilgSqZ5RGaOO5AzGJDDzjo0SEwKxITsJnLSIGOguYf5Xq8U2DTFTuSbkUvdTBtNQErPjHouZr-jCjXska6T2M2Y_C7igyD6mlf1-y92kRmkr5HdMaqoD99soOzJIg0gvTAvxlt9HD4focgtkNGwt1qnHXCwch82lpiurr5G5uOGaql-m6GM40Fa0clmnc8sfSYemjVhfLZ8O_rzUY_-bzoUj9BbrPRd8WW01_1AJ38f5976eA7xUJ6vMgHABvsojmhHTMaRGnXNBeFz1gQDxr_ZJJ8i_O9Tursq4CfaMzSloI66W8V39OIVlM4mDwh4P8LSq2nTr9XgIo2AEenFH-m8030QyN8r6HEfbCUR-lINvXMZlfDsPYvmD9Os4g34kGIKD-LP4cnka4NWMLlO8E0k02cEzCzagOXFWjF81At11rAAECCilAOBvFFUcH8h8Vfu9vdY2zLcvrF4Vo16eA3yiykdduV2yqamhh8JqdPEcDKyCO0hgwwrBbGm6U8sXDkCb7WguIQkW9C1kKvTBjt8R6halFwwOPaTJZw1GFay5q1HwCWVYPGvBHZ8ftaOf4PvDfMPsM5DmkKWkx9JnF231k7KuaRrnBnUAfQr_OjIX6Qzx_qQlDr6d7pM91iENR4tNqECPsmLysyezf2NWFnRPGrHJCYptIIAtPryCe26yGs06h6xMH16ilOUmOqMcaR0sMWgvh7cnVzTn9Ld_GxDo7eSpuUE5fWfULn8b60ATxPxfaOWPXNah-FXBVstHjoPnjcr1UwTxZaHniIOM6x65GdV-hGq3I0GE05NoHyDmxqrrrH0e5BMDMfLSkxxioHVJH76fMr1sWM0RatfA8bp5m5SdVkqZqwNc4ISDUepOdHXMQ-L6AeOD0fTjZLgLQTiVpFiOdd1xTbOzEKoVyUC3B8BLzOgCkIXOe0Y9LWbPLBiVDQ_fTw4zA1Dg5sbTlMEo18P7gRuHCguwnwWdV1BapFKlGB4siS3_gzzANfhIrBd0DAEi58huQ7BQYyiM687bB-fdbVXDDkONkEHAHp-9NYI1uNtE2Y2dFWBrCcI_Lx3rTL160o9wPk4yWgXBV0OG7MzUi_PBvQufC8H_ZSQRr56sm3O1TvqKrxQRb-3W3SjjXTUppCJcC4GrwYt3EQGDoP4BTibpjxNOApCztBEF7Gp0cQx8-EqowPnG-Um1JPvQ_muOU3CtfH',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
-                        args='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":false}',
-                        tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
-                        provider_name='openai',
-                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
-                        content={
-                            'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
-                            'output': None,
-                        },
-                        tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    ),
-                    ThinkingPart(
-                        content='',
-                        id='rs_01264dba19113f900068ed20b553248191aac5726e644bee06',
-                        signature='gAAAAABo7SC5jcGJ6jMXEXn_eUzCBYYoiNwyUku-6dq3nXHcddbsNLrIzQZ4th-nONpHrIsACXKgm0017UgYttCex_bBeeLi10biUtJBtg7nFPrCTqAxX8u5nRFb5RQy-CXZGkUFk2o0C4Pjwn_KcsTwnI2LtX_rLu8jN2B1JjHDJpfzRi9wOez8E_F3MTwXdAFWQ_ccIcNegA7v_7GcuwnsNdhTFgDsZwPrMloQ98bOWQQhmrk_gHEM8tzQKVJBNn6yzLUn_3b8nkhX6W0cN465J-xCtxWP7_KT5EurorkH2fsHNa9r1MUDEr0HH8Ls4wEAe4mVEAC9H_Bsb6BFTrIt0sM-2gM1w4KSpdSQwoe01bR71G3foU6bRqtIoG1Rdpv5XXMdkS0AR1rNUehSltCnXuHevoelk3EWEDRO9u6yzVa5oZAuvAyWv5xt_sZ-7OZCacnOYuIXyWZ5iGxSYcZ4UYFmIkaguixXRrVnZ-HhyUN_wwFB-6hqVG197Bjx0Jt9mL_7-FkOiahCYXVzQ4nMbBre0gXwA0kbxa_sl_qL6a8lIM90XRoJzTA2KiUZikYZJy8vS4AxVt3wC64qqWqDwFbveM4t2P_ymbOrUN07o_AvU1pbApdwPVQkxl_RCZ_bINVn8c2gXzXFmBSPWxBtKmAQuM6EjeqUenaHmBqNyiEs8Yg5tghy1_ORynFDdaXn4I5iKLCt4gatlnbJMyUKmUVw54zcNr4hQaetIkGnjl_pkQJ6T9G1IkhcLOljN1dfBEYjjTw1DEGLEHbJl4B1-ovhMd2igGHkW10R9AaKPwCW1ZsiGQ6R7jRedm5yIcmSZSHf_KNGafAcls73P9hPJSn6g7CDfmQyjfTC-Xv-IxTxNOGdh0Vh8aIbPhMNTrRqaGrCMoPhad1lmZ8y-OyJ68awMbt8gl3n8TRP-im2g26ZwyTIQTJG9hvEO3O4_DB9lKrZB79POCi3BGA9aKyeX2sOb3PXjurDm4agb0rvpllcVCGILWE2yal4eHW4gb3V0z54YNe4EHyfo6sO3gcUQ-fKSnfzAnD8rEpFzEzQnCZuOSiELn14pQSHllyX_3C0imhkycZI65HxsBRGqxwHdoRH361M4Cv0T5jhAL0eE3lnh3TUGQM35kwI6HKcqfl3SdPBjKcNE4-Il5uuX7jayYoQc4pDbTD07qhPUlc2alHpnxs4hCW_vtjvDeQIK-N6icdR0_hIZtXvHHcTHH7vzYX1d9WYv1vpanKVZI_bZ8wja5r_iupH2UCI6kN0GaeDpX4y2pD3znGXE9zGN0dQzZibBWuGZAYzR8KcWUmEwcDfkrtIREyFsoC4cwxJFGqP5__Ix8hXubDVT_4sAjsxhRyi6TlT8ovfcS7z2-4vt0BE3Y6snLa73eXXnOpAzoZyPn5-XHlxS1cAwE_-_H_HVPQ724LzpE5f45z4YIl7Qs4R3UdG_Qqq_7CS2uYn91YMVFk5GA5iU06DJ0TULOKFDBzOq968U6IxuzEKAVVVUfWqtrLjxGIYsS99gvaVO-UvCCIS05m3IbikU1Opq35V23jIjmj-ABf4Hb8n8xXTEbcjboJMnWNDlVa5EzlNTbHyNkTybcxn9Ms4tqH33CJo8ckkwPJjvJ-FH7yzqd_-07K3tNjiKjKC8QfuoDkDhLao8oUCvOsO17tP97Re2L7-eiayI65zbVJx6VWbLOo3uOj3m-uiSNFz0D9_PobhxtxzCO8uLdkFNgewmlvARca9b1X1cKjSyU4EQlGI70gSBMRVL8ivCmFMWqNshU6dg8JglA663OGBqn06Z6evKJ42i6Wfg_qStbKN6Q_UEb7ui3v50TYtAl85-ClCwSivnQaFp1Gmg3ZzovETulR5B7wKfEO1PkFk9qZu0YBbXw_yYgo9cDsSEg5SQWeOrvxBBevbwyTC3EOSKx-vqdMRDeKs0szu7XtTVWFwl3r4fOrVVFU_m9o7JO0=',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
-                        args='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":"main"}',
-                        tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
-                        provider_name='openai',
-                        tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
-                        content={
-                            'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
-                            'output': None,
-                        },
-                        tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
-                    ),
-                    ThinkingPart(
-                        content='',
-                        id='rs_01264dba19113f900068ed20ba6fb4819187a758a692c32ef9',
-                        signature='gAAAAABo7SDATu0aE5uxw8bwMrwhIUB1-fWUgek4WHxbR1pj9nvaUA7AvsFOw6pabaCzNqQGptzS1z53ls3i3FNrt9EYD8HYG8r7TmA71ydccAQrxdihl6hV8-jtAkK1btiU6Ur3X2aNR8iBf3hBugsqfevuEpKsGgqw2ASPWY_6d21ojaqdIGVxwDXc1W466Y6i_r66LsJWqeNmm55uoPG7IQqo2JAp5sSNRxAP_QE4x4-9XqN34fWXfJURvYuMDyZYTe2x7KCcKrGLc7X2Wou6DNXQeKWhO-zFQLPdaVbeT2pazb90DBb2jhTkLBmYEJmy88fDjmaHe5c4LFS4mBDaRPTnETPqRBxSdpGwIVUZ3DiskGHEgqK_GxfOE0UBzQonHIbTQYoho-52GVIpmaiPIPDaV9efC_OGnitYZrtVPndyA7XWyvtjftqReTGL5Xx331iswkKVJtwCYBj-nN-BA-Au_xSy_iy5YjD7314WhSA0bR9ZtxSjF50NmEX4CO6lOeXS83ODAYkOdi0MKbshs-AjeXWQmFZucEyNxucIRyWyoRnvxOqtgXQ37o-HpgrD35AJpDcAWXnrh4l-BTC63i8ZwWTnIiDkeXkOmUxjqiaIBLUoC852q9AbLzS_Ly9FEM1IlHG-12KhO3D1oU0S1tx-0nt6lj40qVN00IyrXQKc1UnGSttg1xIwuhUuG8vE83WZrs7DBJzVpZEobzqxBcOWfLDciLPLgxDHfZ7KhOKpoAa8OX76CuphrXrk_kd_7QHmka7H3wJ3vq6XrUAhKguJtmXZp4xJqxcqDrDS9c98dcp-UsnScnlIEOA3jf-j-VnCVk_lp2PH3iLpEIK6Ujr5m5K2b-5frZ0p-Vqc7s_5jRLsgZWEyI-jre-BQLvPt1_GBTqUrkQ9LVPsNjcp-mhT07Rr0FYuN-ix32gGpoTAvZtbLVLdqveSspVtrikuEKDv4tCSRT0WKawDujMcLpjepUKuSXkJfwGI9gXBuMY037L4a_9ucXRjqjj068kwF_TdlLe7utXSdqGJwui6XkJUgI1BWxGI84pWzieXbo0eRhhe_zK_UaB4-Nq1XZIuJZ3Nz2qTfEMhX-9-WDlHl8VxCi6_UcqP26TmVulBlyvz38P3zgHDM-5kJ6DBia_UDi-7asHKLG3GJ-VKQHiJGzOgkkvNny9UY-H0pJpsLuxIVunsrGL5fbqsDfsdQd7lYUZ3nz291JBnd7gmjzBGRe3rwCk_IbTThl11aP4373F0Q5XHAoJcCAaYeEYGoehT6CdRknek3A9b3BwKGdIqIG6wOglNPg8-znat4ynbF13asaW1oWMnje9O6qYLNg8Fl6Bztz9Ufy1Kh01UFcnm_pS8sW9mP6rRQYffhyGlAXPighlr0xRG0QAbdBUC_wLyIL7EWg5Nb5LQ8W_hvzAy76OboCB5rO4Gg6HOIt7KucpJDSP9UecUxLZN-5ir0PU6V7AS57awYUdAbxXkLJmWXcHL3y2Svsf56lHIzrwoPhmMMM59OaTGgCOYazMSWg3zmRdFlUWGdzzx-hrwNMb3q6LYdplA_648UErNWdOO3A90AiSdNCKo9Q4sRXkqPC15fBNaO5d9iLuGHysj0BrMzx7Q0CMtDRcXQBC7CcihKeTMXwsuVqi1OLrzk7d6JjiYu8-s0JBRaDJfyD6MEyKZo49TkfOrLx2OX_ArJRD4xtbjFabRCZVKXKLhSlRP67xPIuhLbNasNsKL0BjZlnFXgcSSrmMABpZY1wuyCPFl84uUwHR1dxnN3IJJsAzWBAicDhvcwhpvK8uGPKPtIRM1G5hFpFCT9dCfCkFPJ1y1h9np9N6-Hf4Q5BZ0oT3i95mIIrsbFcQrPorrJA93oOiziN3elBen36XwEiKpTv3RU2Co-za0PPq5FdMaBf5_wkcheEiP6UsRV8dLtMFYS71l2nLFPAMIyOu9U0YRKcPQgIDIO3kbc8FwDOTX4yxdX8gwSkAsmD6zSADYL_l8IJWMtIOB3QAsE9WwAlwqvqkiuGEHonQDEZTkcH_5PhVmpavFxVkLaAMTbuqabIYFGzf6w-ucfHIrwLRHL9a-WHVMuPosaN9e9gmplDgdouL3Eqte-Br6sgT7NXntO5QZhR1USjGymuwtk4R-g9ueK4ThV7epWrolWfKycq9MqLV_4-ZGpCqqIorz5Bz17GqkAVFII8J_TVeMHJq-XekQFRxuNC61w3FKbT-v8QMHhQceZFALvpTKlyzrTG17X_RNO5y5NmAlRFmH0vmh7duqYHeBjvggPdWAa_XaCDnZmMSKApPVzNojg_63y7rpKLSTqzHIcJExh3NNjmtEV4YdL3qS8OUYuDiv1gxWjV23rsqc102Q6R2jxzwOz0pmuNd2Bmk3JkEbn6bspn38OLcvPzDM7iW9oSOlXFd4zgfbGd8pHJN0u1gi1S0FKFgOeqIAXQyfHDZvk7dwlsYfU8GuxHwD4g9xNxrSSuPlDRsMUWaUtf78AwiZOQi87lalgI0Nq35RUgnvUHveLItLPXfU54qmYezaDHxYbHvtbJ4wgmxzuVTew2pHX-2mKZZ2iFAe4Qoi3dcQSMpwNpEYP9n_Ve_tGw9jwqiQ0-kMr7PdNYo9Hcf42GvbAPgsMU2tXJNPy3oeH_03v962BT892d8fZjr2xEmOkpwkxxQ2vtAZpN_xpX_4_9XMXYiE4mcCLIXGzt1oFEkSGyP1TfOo7SMObDHzxeCUlNWfLrip2eRx_V3JTxaqnX4NvLfUNDazoubnJICvyqnqBevH1_9Wls_h9NrAd5an83e32jCUkY7CWlb5rmxs3KzcrbKgLd1LODuS_VTqxHSchM5Aga7qi2zCVtEdHdmRBqoze5NRYjUm_btgOs7hQ2bNSU4QJf8AwrMNr4ib96e8JePKUo5jmiOxOEHGXmb1JsEU2940XAXFVrgAcKdzDCTOPZoErotW8GQ52aQJPR3TeUUiZ-z0st-ISIpSx8Zu4cjPmJnhbC_TxtJ1FlAk-97Xc5IncABu3wP3SJM28wNZO44qvzZZNxrzX2PGvP6cWjurJZB5o9dgU9DBDFDpBZf2V9KZy2hV4sz2QTmoJQam5J5I3SBmciHvlJLRK0r115W62bhxFG5YJfZ11vPTBc_pKqwnoam0xlV9kRNbfW5LFs8AMCUtbjAZck0ca1o8GW2mcStfqyyxsvmOLcZG6NiLrcu_aAnQ9hIToJ5J9jqvxzpyF9THyMS9qbMYvw2lvFX3lPkH3RzETV7OkCthyFMDicaDTB6kocsdfhKepXxOviDU8LFlUueGA6kLWVLI8S6YrYNT9EU4xFqRdyRv5T8ARZEjiCbu-zoHovo2ysdjuvOKH3XO6kHL58FIGfOq_z95vwtcqfGtC_BFcWRYaSSNFugWeNa59zsqfFxgyTbDeJhldtd2AYPHApJi_eHfvX4HcA6_IQRsTFEgBhnd-Pjyoq17bh7fYj8gQsFJl3htEwZ3ecIoe20cEsPVqi26HJJSkWeYWz25-0fMAh1R_SY_kCjvxiUHx2LsmR7CF11sN1YfCys3AIxIi4cjLoUii_ygvPG9dcm2hXHdNoKmlUSQHZLK-f0z6za1igsKmZxrCBMrvR682el2hk7L9lEyp0JjSqSpA2Do5ErXrDi4VlNdBgyOW5rMrWwkfaSN0P2FJRDP5GEvMMEcUYVtaDQkwEx36L8fOqNaNcgfp3Fnt-OCMxK6C-B6rYdzSSbT_QosaHmf2HJ5dOjjvJroXwJB0XR6q5ShA7eepBWFLmhM6fXZRI-3gMkHt_O5OwuOENTHjzQb9EyZ3ADcFTs4vcl__fFlqWFlJenmj3f2g8ect1HAXzD2-rJD9SITWzkFCuJK9yRLvqIH4rBT08JUZm85a5BPN1kXJDVPdfGQjOmBsfIQz6m-hR8Z_cGMNi5MkZNYkBL1zHRA4s5KO0UoS-kR03_nTwwWzk8N_DymgyR49Pgf_gmWDSSVN9E2GmcAUaNjKASecJzJ0UJmz75WzmK4eTR02BRviebcr7-ykLLpuf-7EDzx',
-                        provider_name='openai',
-                    ),
-                    TextPart(
-                        content="""\
-I was not able to fetch it automatically (GitHub returned a 404), but you can see the latest commit hash here:  \n\
-https://github.com/birbland/pydantic-ai/commits/main\
+                            'output': """\
+The `pydantic/pydantic-ai` repository is a Python agent framework designed to simplify the development of production-grade applications using Generative AI . It aims to bring the ergonomic developer experience and type-safety philosophy of Pydantic and FastAPI to AI agent development .
+
+## Core Purpose and Features
+
+The framework focuses on providing a robust and type-safe environment for building AI agents . Key features include:
+
+*   **Type-safe Agents**: Agents are generic `Agent[Deps, Output]` for compile-time validation, leveraging Pydantic for output validation and dependency injection .
+*   **Model-agnostic Design**: It supports over 15 LLM providers through a unified `Model` interface, allowing for easy switching between different models and providers  .
+*   **Structured Outputs**: Automatic Pydantic validation and reflection/self-correction ensure structured and reliable outputs from LLMs .
+*   **Comprehensive Observability**: Integration with OpenTelemetry and native Logfire provides real-time debugging, performance monitoring, and cost tracking  .
+*   **Production-ready Tooling**: This includes an evaluation framework (`pydantic-evals`), durable execution capabilities, and various protocol integrations like MCP, A2A, and AG-UI  .
+*   **Graph Support**: It provides a way to define graphs using type hints for complex applications .
+
+## Framework Architecture
+
+The framework is structured as a UV workspace monorepo, containing several packages .
+
+### Core Packages
+
+*   `pydantic-ai-slim`: Contains the core framework components such as `Agent`, `Model`, and tools .
+*   `pydantic-ai`: A meta-package that includes all optional extras .
+
+### Supporting Packages
+
+*   `pydantic-graph`: Provides the graph execution engine with `Graph` and `BaseNode` .
+*   `pydantic-evals`: An evaluation framework for datasets and evaluators .
+*   `examples`: Contains example applications .
+*   `clai`: Provides a CLI interface .
+
+## Agent Execution Flow
+
+The `Agent` class serves as the primary orchestrator . Agent execution is graph-based, utilizing a state machine from `pydantic_graph.Graph` . The execution involves three core node types:
+
+*   `UserPromptNode`: Processes user input and creates initial `ModelRequest` .
+*   `ModelRequestNode`: Calls `model.request()` or `model.request_stream()` and handles retries .
+*   `CallToolsNode`: Executes tool functions via `RunContext[Deps]` .
+
+The `Agent` provides methods like `run()`, `run_sync()`, and `run_stream()` for different execution scenarios .
+
+## Model Provider Support
+
+The framework offers a unified `Model` abstract base class for various LLM providers . This includes native support for providers like OpenAI, Anthropic, Google, Groq, Mistral, Cohere, and Bedrock . Additionally, many OpenAI-compatible providers can be used with `OpenAIChatModel` .
+
+## Tool System
+
+Tools are registered using the `@agent.tool` decorator . The system automatically generates JSON schemas from function signatures and docstrings, validates tool call arguments, and provides context injection via `RunContext[Deps]` .
+
+## Observability Integration
+
+Pydantic AI integrates with OpenTelemetry, allowing for instrumentation of agent runs, model requests, and tool executions . It has native integration with Pydantic Logfire for enhanced monitoring and visualization .
+
+## Evaluation Framework
+
+The `pydantic-evals` package provides a framework for systematically testing and evaluating AI systems . It supports defining datasets with `Case` objects and using various evaluators, including built-in and custom ones .
+
+## Integration Ecosystem
+
+Pydantic AI supports various integrations for development and production:
+
+*   **Model Context Protocol (MCP)**: For external tool server access .
+*   **AG-UI Protocol**: For interactive application frontends .
+*   **Agent2Agent (A2A)**: For multi-agent communication and workflows .
+*   **Temporal**: For durable workflow execution .
+*   **DBOS**: For database-backed execution and state persistence .
+
+## Notes
+
+The `CLAUDE.md` file provides guidance for Claude Code when working with the repository, including development commands and an overview of core components and design patterns . The `mkdocs.yml` file defines the structure and content of the project's documentation, including navigation, plugins, and watch directories for various packages  . The `docs/install.md` file details how to install the `pydantic-ai` package and its optional components, including a "slim" installation option for specific model dependencies .
+
+Wiki pages you might want to explore:
+- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)
+
+View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpydanticai_e234e9cf-d4aa-4c67-a257-56034816dd56
 """,
-                        id='msg_01264dba19113f900068ed20c0edd4819191da764a7494bab3',
+                        },
+                        tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='rs_00b9cc7a23d047270068faa0f4ff54819f9fb9ff25bebe7f5f',
+                        signature='gAAAAABo-qD2WTMmhASwWVtFPlo7ILZP_OxHfRvHhda5gZeKL20cUyt0Np6wAHsJ6pyAsXCkLlKBVz3Vwm52JrJuUbqmw-zlXL19rbpvTPRMkiv_GdSfvmxKKNJvSm417OznBDVjsIAqmes2bMq03nRf6Pq2C0oUJnIbpbMwtWzs3jMQqUb0IwyopqXGhn3MWKctLPKZS89nyL4E9kJAx_TyWTQvME8bf8UrV8y2yrNz9odjSQQyZq5YXrlHzpOJjDTfLofVFjsEzM8J29SdLcWnqlv4djJ8xeMpP2ByXuHRnTEyNNuxpYJB7uQbYT0T_eLhwcLv2ZzDZ_hf2Msv7ZdyuPc7Yxc5YWlChB0iaHqQ_8UuMjIVurfgSIjSq2lTvJwdaA365-ZoBMpo4mG04jQDP3XM-0xEM6JTFWc4jZ1OjIXVpkjaXxdOOkYq3t3j8cqBQH69shFCEQr5tnM8jOEl3WHnkvaBg4xEMcd61hiLOKnWbQiYisbFucA8z5ZNbdohUZd-4ww0R8kSjIE5veiyT66gpIte0ItUnTyhIWy8SZYF9bnZGeS-2InDhv5UgjF2iXzgl6dmUrS-_ITgJkwu4Rdf9SBDJhji3_GUO9Za0sBKW8WohP142qY0Tbq4I6-7W1wJ3_gHJqiXVwDLcY90ODSyyC5_I3MgaALRC1wt55sHSeSsDjmNGmiH-m0snaqsI0JnAZwycnWCK17NamjQ9SxVM5tTqJgemkGFQNH1XhZPWvVj56mlj74KKbCJALQpdXD27C8LfdrlBd0v_zEmF1dh7e12I95fYeAlO51xOglBaMCgcMWSDHMGHsJBbJ04eVQSwYTl72rmkASTMaybD-aAm1m8qZnKU-f3xQradhs9l1x9eOfQDIsfWMr1aVMiZi59--VsrgYCbqBj7AGf8n6VNbQWkhO2etozwYZcdGIyiu4TaULX1Xp89Gb28M-tVkIrkQoHO_Z7wzKU1HRBViES1wRKUJ-Sa6wc8UP5orDxeOTFPUr7JL-qaj49cpKzvdlfuoIdbYwpsNvAg69sNbFI3w4jLxOT4yxS6thra1Bit6SY5wAEfrrjtzofLeg49aFqFVGIHeJ8kE3spc1rctpETkdHNyP9fEjZaM3mxR4yz0tPmEgUsd-sdw5BbOKDAVzwconmbeGBmf9KLXMEpRRH7-qSIWUscCi5qIdHXGYoQkStsNGrnhucn_hwqZCSti3Kbzfosud3zQPjW6NyuJCdeTxbDbsnrV7Lkge5j92pyxCHw9j0iuzofRW55_KToBtIvRoPr_37G_6d6TxK42mKqdbgk9GHrcXf27mXszCEzX-VfRVTxyc6JLfEy1iikdo-J2AzXPd4m3zE-zazBU3Z5ey596g8gxwXMkHakLrvwp4_-fQfcvs7sIH34xkEhz7BRdNok3Aqbu_zCt2np69jjHqfPQWZzAy1C-bmMuhAaItPYkkw-LgSu-YP6L89zNofK9Q_S3JwVsLN-fq-9OwhSjy_rQu22Gn4KD6saAu61QMXBPa6z0QJSFUZHJQ_megq1tENfB6wRVtQ0DdAvUwhUsMwx6yE9CT20bma4CloGW__aZuD9gikdQrQ1DCHOvTrfEpvHkl6-wuCImeNjsCvbRFAkx6Xgpc6fdbq4j6WyEVW_4VePNknFWYZ1cw795ka5uJMLc3hVughVlGwDbw60Q3utsjHPbu03pxPle5pdcVEYSQWa0WbFDCrF4ysK0lpmlF7',
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=1822, output_tokens=1459, details={'reasoning_tokens': 1216}),
+                usage=RequestUsage(input_tokens=1401, output_tokens=480, details={'reasoning_tokens': 256}),
                 model_name='o4-mini-2025-04-16',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_01264dba19113f900068ed20a99ddc81918b9dc04ed1537d30',
+                provider_response_id='resp_00b9cc7a23d047270068faa0e25934819f9c3bfdec80065bc4',
                 finish_reason='stop',
             ),
         ]
@@ -7633,327 +6825,179 @@ https://github.com/birbland/pydantic-ai/commits/main\
         [
             PartStartEvent(
                 index=0,
-                part=ThinkingPart(
-                    content='',
-                    id='rs_01264dba19113f900068ed20aa125c8191a162cf51e4f7abb3',
-                    signature='gAAAAABo7SCtck8m9kX4XRUPQ8v6VHc-AjqlsN8f1X4ztYz_bg4UXXr8H2Ns984NfGj7c5DHDN6obl-kF0rGX_tvCO3ga2RUmcZkqu5j677MV1LkY7rB6hvsSC4CB8Mb_yCmZeq1iwP7NJkhqHGqcZueoGiJlWvFx_2QJTODOrDLbDm4zLte41ZR1WUdWtaqq9ZBFIO_EzJxLiuKvmGKuwpNG2-qAGz86IQjhXot2pnRQTszEeM4GRJEiwW4WdfLYChV1nCvhEyeRppMOULpQyrxE2rDSiky3g0sRZ3_AR7t9vl8VDwbmopXix9K5PtddpGBw6jNMfWSFsdmI4Ivleewopb3O5_NuNJjJP2sfOzQ4BmrhLi9izfkFELnRHxhTl6zjl050TGirouasJpcwVHr9KjB-IcsaNMGnpI-M2EKAV2j1Dk8QLAwiJQYxopECGcBXOTlhQ5OxOFxNJuHvZGsMIruHNS0uAgal-YunJ6wCUpIxt8X4UbILki27Tb4-FoR-7V-RQJdSQ_t_kKWts0mltzNLO8gM3178qPRMb-XhseFvclI9KxSZvqiibvagk39gkWpPATm9z0qKgbUSNr7jhipcrm77qMiXhaL5CYkml0HbYpLukVGBgtYYvNXJmDl86gBHAUOKlfbWxHYmU_BLKQh1am5R_sqqVZ61iIbuqJagvxCxgyCRJSf6YeugU3TmbqHy4GMu134tISGXsSgD5GKj1dDfHuBBDY_a7wHg7Rh7h_TS0YmdAUXrAuzuvRAd7s2WB99BYaVVi-PHpC8QOdm41a4N7wIMdBuMAiTrhcIPfLVTqApnWMvRNnpSGtScFcd1jGJpHDmCNT2Zy0eIxOgcnguDgfWIb8jjAk_l833WileKpCEnwaNQvhqd1cbGKTv-o2JZVpTIXQJTpXrUHE7lEbs6sV9A6PAnphz3Yjs-WPBwpkgYEhz1dDeF_wDiBmSnM8Bk3V8d--qGvjT2ls8Sigleu2f9QTPwYqiZNV6_LoXMwK7vBGMR3TB_NQJq2B08Gjjv8GNnlP9z83PcWSLMyeJKBNJaAGiI-pOwI9f1GO36prPmJrVlxXFxRAHmZaDJqfXm_FxSsN_TZZZsAlPENgja_YZkYrcD10oo0W0mZY_lwXUrMXNOFmyGcDUtWkc-YK10vl-L5kAGb7GzPuApE5VaBjh7_E9Fj8likVB5cqBGFNDhhOe431WpX7dgt5whhii4hfL6HAv9G985aFuu92p_Rj_7fyFofRkamPYCIzTfm3GJM0tVb-OfLfKY36qncG2DADLJIOAbHyTU3OUxdKbV842YeLiyn-dlWfotN_0z1iNl4iJBgpv7aTjBqaemZRyACTS6DOBS9HYkiYc9GPwEQmc7U_C229xTN2_KLej0n-b3AkVrflOh0R1BvppVH5Fuvv8iEmcNIPk-I8w0ozVNCl9sntU7KRoPgD0vN0ul_pC9HHyQqAs__ZgvJCLmpP2WsDmM9BnCK9mx15fnumj8pjay1EtjGBbYXix908P_0TeGAGpjGyeaWuLtWJ2Ee5-ChHbJ4fhrl36kErGL8QTl5Y8D_HAZ7TuVz_NpppkIGvxCOZ7mVDB7W20_FzxTzTgrD1nW_h04m2Zvga1Lj6UNKlnTP8WxtXmBPYtJ73oY3AJBcKgqUeUXr4SjrfubDTgUe_j70DviFd7iBnBPyVfqRYZVTTSOIb4QFUsNlUwRWWlwsNfojVthzdmxZ2IKPtaoWDyN81C4syC8Q32ujNxVw3rh3rhvRTLpUfoXHQ5yoNuZOBES9nsPxmfEPiNCR2XPWNfdp-WdQlxdpAnBc4RUV4NgwZpTJ2JnXakldJp2YemewKtbU__Bh5Q9hsDRADdm85oe1evICe8nWK7z9rPEMqK-lrIQ7g7fFc6NA3XSwquEPumcIjRbBQyyd6hamT-8mXHnVQBsA4CJDrvAxvmDxaCiG7J4BK4KjmM05iSt8RlpSoArH6kEYjBWWfdMzUJapaRQRej4VstvNbInK7bq3IGkJpfZeNCQ8laFS4SkcfkInlDn8Pk5OXgwQlSdsKTTBrRmllOgLeU2A8Lyu8tfLFpVeNTZJJug5pj1rrFwQcyLWyr6HuTBIqBa-63Ied8rMU5l-KD6OqAqOLZyQWUcwhteCLW14yBKkJJe44Ml6Ox44FJ7nPj5N-Q3r7B_VAkJSZLayG8LcjusQA1LLFZfsT2xtXbw-pke5LWxfbfhH8P-Kw4nBYZCof3BKVhr3kfgAsghO03KFtKDsBuyN6nuhUJlfnKo3RSZl0pJDRLOW698JsGtaLW42cS0ZcbNlurJJAsWf2QVfaXsKr3-aRSr399ugKkVpAlMwVLeB_wocSlsF10SM4eNF2UkZnWpSP_Hgarh6aTl0mmnxbvEhcNR1nT5kF3bLozqh9ET-4MdUvq221XPX3-GDqjAIzktzBXlfKNtKTYYzLL97YnLVBXML0rSCmv7ajkBT6rkHw42bszEed_DWvXuqXxOXUbLQ_rH6WYRZGWUFnU-084_kIL1j3f5EHsAufb5TycdF7d_ypVOJ2MMFtemdOxDiwt18spnWwMjyefVzMsHc9u8ia_2g53xuMF0XiB2THv2iWK6M0rGYAEu6XS5nlOeWt0mXINsKeNGtQDCUxL_ihmnEFds2dSymYfdccw834G882bStP40V8P3RKlMgwMB6mrt4P0LhLPmAbdFW5EbPjJEr8fGCjyg1L8tEzq_VNhtK-CK2u22mvU0lIwyp0HKFouGGf2fr49ON5-bjajNuh1H3U5VJXqThAXVmc9BYjCYGgXJrY=',
-                    provider_name='openai',
-                ),
-            ),
-            PartStartEvent(
-                index=1,
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:call_tool',
-                    args='',
-                    tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
-                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
+                    tool_name='mcp_server:list_tools',
+                    args={'server_id': 'deepwiki'},
+                    tool_call_id='mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd',
                     provider_name='openai',
                 ),
             ),
-            PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(
-                    args_delta='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":""}',
-                    tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
-                ),
-            ),
             PartStartEvent(
-                index=2,
+                index=1,
                 part=BuiltinToolReturnPart(
-                    tool_name='mcp_server:call_tool',
+                    tool_name='mcp_server:list_tools',
                     content={
-                        'error': {
-                            'type': 'mcp_tool_execution_error',
-                            'content': [
-                                {
-                                    'type': 'text',
-                                    'text': 'failed to list commits: : GET https://api.github.com/repos/birbland/pydantic-ai/commits?page=1&per_page=1: 404 Not Found []',
-                                    'annotations': None,
-                                    'meta': None,
-                                }
-                            ],
-                        },
-                        'output': None,
+                        'tools': [
+                            {
+                                'input_schema': {
+                                    'type': 'object',
+                                    'properties': {
+                                        'repoName': {
+                                            'type': 'string',
+                                            'description': 'GitHub repository: owner/repo (e.g. "facebook/react")',
+                                        }
+                                    },
+                                    'required': ['repoName'],
+                                    'additionalProperties': False,
+                                    '$schema': 'http://json-schema.org/draft-07/schema#',
+                                },
+                                'name': 'read_wiki_structure',
+                                'annotations': {'read_only': False},
+                                'description': 'Get a list of documentation topics for a GitHub repository',
+                            },
+                            {
+                                'input_schema': {
+                                    'type': 'object',
+                                    'properties': {
+                                        'repoName': {
+                                            'type': 'string',
+                                            'description': 'GitHub repository: owner/repo (e.g. "facebook/react")',
+                                        },
+                                        'question': {
+                                            'type': 'string',
+                                            'description': 'The question to ask about the repository',
+                                        },
+                                    },
+                                    'required': ['repoName', 'question'],
+                                    'additionalProperties': False,
+                                    '$schema': 'http://json-schema.org/draft-07/schema#',
+                                },
+                                'name': 'ask_question',
+                                'annotations': {'read_only': False},
+                                'description': 'Ask any question about a GitHub repository',
+                            },
+                        ],
+                        'error': None,
                     },
-                    tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
+                    tool_call_id='mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
                 ),
             ),
             PartStartEvent(
                 index=3,
-                part=ThinkingPart(
-                    content='',
-                    id='rs_01264dba19113f900068ed20aedd88819191ce657ba3901f3b',
-                    signature='gAAAAABo7SCvJu7D1daOEGJtJo9OqWIpUvDM8SBE622ikyy5fTFiTmgeinJJuROJ4VABk-A1ieBbPw0TY8DRAWcBZIYLdS47qRJxEg3_cgbtiJK9fsAAcKIi4loo5CPHxbd04C0uHhMOKASrThksMiH4Fa__M2O01-1JpgoO0OZ3Ll5ZXRXocxkVsEmHIxXezk0uz7A7kkoxUfo8GKjcr_BQojtku0fSQj5iQIVy7M_eGo9e7deZMFb61OPZ4xnsLjwn3ljuXi1IN8R0awjUPm27U52hKFhCFyLWKdpsmsg6IkqlKxVyhl1pfrZ81DJJUpRjCkrh-L_2ccl13fCM25EVi8gB6uIm0ts9Hk9oCliLLjwTAe45T_6SMX5ZPEK7AE0zjyFoGJ1mtlj61_1a0Eo5S0xBpHg7dJDiNMzPQ84N6sDoF_KUnv49CxZnAHZ8JNjsyUOrXcUSE9xTAnGsQ0dg_Fxmi7ZBUMuq0Ngg9gJh8ovdZ8i0Ij_Ln4iCulrFA0gB9CuXhTEn-9He-pSjoAQjoMlr8_NlRC4Jq7Y8ZMQ-xbBZVHXUps5PFW_Hqo3cospgPJiP97ybsSNO2U3430BPAQztF4C5DU_ak62FQMh5Xb27ZrNflVEIiYcaY7pluBBNNfo9r4hf3NIECd6sv5NVZnUQVSBqpWREKy1RlRTw_dMJxwPlLpsuVRWfYTUOc3WImHMy5Of1fQO4lGMZeX3iTWa0RJ-B1pNG8xSUNMGPhAi6Z5xtriRqq8KM-H8wSutQ_4I57mnZU9G2x4zNjxUk6CFJAgSTcV-wHlK_971UN1uQ_iuegWCtVdUAblJIcmWGtLx-WbR4S3OVahNExJacXRPn68DEfO2gbqyKZL6obqEZP68nhSAzbf940UqIOAQbzRiM0tpJc3KiSObI6TKNw8xHae2I0IJToXt-F0m_5fRdYWZ0wCDB5M_y71rMNQWT8gLhxi9VmFX1MCU5yjCkfA8hterEsoBHx-HtpFsKMdb4erJknsa9YCw2rqmzFqit9zLeLp_NZCpTLCuB3I0U8HBEfNBr-WVtoccJfHbX2fnt-7O99mUgeDIUd5LyHGnAf4-UZO3aVFcN2hlHIYvehz4fxhVRKtl0lyhe6nI4glXvixkv1GiAvp0nuTeLbRxKgsXV1eukObeau9Xrxy_Qu7aEb3FpJZtqlRR7r6CORSA94OCwcm0=',
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:call_tool',
+                    tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
                     provider_name='openai',
+                ),
+            ),
+            PartDeltaEvent(
+                index=3,
+                delta=ToolCallPartDelta(
+                    args_delta='{"server_id":"deepwiki","tool_name":"ask_question","tool_args":',
+                    tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
+                ),
+            ),
+            PartDeltaEvent(
+                index=3,
+                delta=ToolCallPartDelta(
+                    args_delta='{"repoName":"pydantic/pydantic-ai","question":"What is the pydantic/pydantic-ai repository about?"}',
+                    tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
+                ),
+            ),
+            PartDeltaEvent(
+                index=3,
+                delta=ToolCallPartDelta(
+                    args_delta='}', tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac'
                 ),
             ),
             PartStartEvent(
                 index=4,
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:call_tool',
-                    args='',
-                    tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
-                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    provider_name='openai',
-                ),
-            ),
-            PartDeltaEvent(
-                index=4,
-                delta=ToolCallPartDelta(
-                    args_delta='{"query":"birbland/pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
-                    tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
-                ),
-            ),
-            PartStartEvent(
-                index=5,
                 part=BuiltinToolReturnPart(
                     tool_name='mcp_server:call_tool',
                     content={
                         'error': None,
-                        'output': '{"total_count": 0, "incomplete_results": false, "items": []}',
+                        'output': """\
+The `pydantic/pydantic-ai` repository is a Python agent framework designed to simplify the development of production-grade applications using Generative AI . It aims to bring the ergonomic developer experience and type-safety philosophy of Pydantic and FastAPI to AI agent development .
+
+## Core Purpose and Features
+
+The framework focuses on providing a robust and type-safe environment for building AI agents . Key features include:
+
+*   **Type-safe Agents**: Agents are generic `Agent[Deps, Output]` for compile-time validation, leveraging Pydantic for output validation and dependency injection .
+*   **Model-agnostic Design**: It supports over 15 LLM providers through a unified `Model` interface, allowing for easy switching between different models and providers  .
+*   **Structured Outputs**: Automatic Pydantic validation and reflection/self-correction ensure structured and reliable outputs from LLMs .
+*   **Comprehensive Observability**: Integration with OpenTelemetry and native Logfire provides real-time debugging, performance monitoring, and cost tracking  .
+*   **Production-ready Tooling**: This includes an evaluation framework (`pydantic-evals`), durable execution capabilities, and various protocol integrations like MCP, A2A, and AG-UI  .
+*   **Graph Support**: It provides a way to define graphs using type hints for complex applications .
+
+## Framework Architecture
+
+The framework is structured as a UV workspace monorepo, containing several packages .
+
+### Core Packages
+
+*   `pydantic-ai-slim`: Contains the core framework components such as `Agent`, `Model`, and tools .
+*   `pydantic-ai`: A meta-package that includes all optional extras .
+
+### Supporting Packages
+
+*   `pydantic-graph`: Provides the graph execution engine with `Graph` and `BaseNode` .
+*   `pydantic-evals`: An evaluation framework for datasets and evaluators .
+*   `examples`: Contains example applications .
+*   `clai`: Provides a CLI interface .
+
+## Agent Execution Flow
+
+The `Agent` class serves as the primary orchestrator . Agent execution is graph-based, utilizing a state machine from `pydantic_graph.Graph` . The execution involves three core node types:
+
+*   `UserPromptNode`: Processes user input and creates initial `ModelRequest` .
+*   `ModelRequestNode`: Calls `model.request()` or `model.request_stream()` and handles retries .
+*   `CallToolsNode`: Executes tool functions via `RunContext[Deps]` .
+
+The `Agent` provides methods like `run()`, `run_sync()`, and `run_stream()` for different execution scenarios .
+
+## Model Provider Support
+
+The framework offers a unified `Model` abstract base class for various LLM providers . This includes native support for providers like OpenAI, Anthropic, Google, Groq, Mistral, Cohere, and Bedrock . Additionally, many OpenAI-compatible providers can be used with `OpenAIChatModel` .
+
+## Tool System
+
+Tools are registered using the `@agent.tool` decorator . The system automatically generates JSON schemas from function signatures and docstrings, validates tool call arguments, and provides context injection via `RunContext[Deps]` .
+
+## Observability Integration
+
+Pydantic AI integrates with OpenTelemetry, allowing for instrumentation of agent runs, model requests, and tool executions . It has native integration with Pydantic Logfire for enhanced monitoring and visualization .
+
+## Evaluation Framework
+
+The `pydantic-evals` package provides a framework for systematically testing and evaluating AI systems . It supports defining datasets with `Case` objects and using various evaluators, including built-in and custom ones .
+
+## Integration Ecosystem
+
+Pydantic AI supports various integrations for development and production:
+
+*   **Model Context Protocol (MCP)**: For external tool server access .
+*   **AG-UI Protocol**: For interactive application frontends .
+*   **Agent2Agent (A2A)**: For multi-agent communication and workflows .
+*   **Temporal**: For durable workflow execution .
+*   **DBOS**: For database-backed execution and state persistence .
+
+## Notes
+
+The `CLAUDE.md` file provides guidance for Claude Code when working with the repository, including development commands and an overview of core components and design patterns . The `mkdocs.yml` file defines the structure and content of the project's documentation, including navigation, plugins, and watch directories for various packages  . The `docs/install.md` file details how to install the `pydantic-ai` package and its optional components, including a "slim" installation option for specific model dependencies .
+
+Wiki pages you might want to explore:
+- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)
+
+View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpydanticai_e234e9cf-d4aa-4c67-a257-56034816dd56
+""",
                     },
-                    tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
+                    tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
                 ),
-            ),
-            PartStartEvent(
-                index=6,
-                part=ThinkingPart(
-                    content='',
-                    id='rs_01264dba19113f900068ed20b24d448191aca08726d96a1b9b',
-                    signature='gAAAAABo7SC0SAPup3riyM8IB9BUJlA-gEqj0SdQB-vhZJiegBCPxBWfP7RYhsDhk4ZRmfX9Ea-OGfwIDP6b02QshqVwNBlV_9y5kdAWwU44csAB2i1r6tXAU95K35KbdWPF5rIlxUVunc8b8G5mEIpjrBm4o1Ja_0VPfLddFHQ3jHUGk57qp-U93EG7Owq7Mr5_0AKsa1yuiy_SnCRRujwP7KBIyzoquZd2hGgSCO5vFI31zFTo8Uq8zDbRvTjdCVvf4wXdk8NhWj9bUHtp9Udng6Up5Yk0y_4jA4Qp_sWa_auRXBYYGMg6pWHtjqfnrjzPmtJfbZI9uWW5K7-KZ7rAjj5EO2CYgAAghrtSLth80bNRvo9X3aL0Nr_33krq8ebPwMu6rYwEY0AbSJilgSqZ5RGaOO5AzGJDDzjo0SEwKxITsJnLSIGOguYf5Xq8U2DTFTuSbkUvdTBtNQErPjHouZr-jCjXska6T2M2Y_C7igyD6mlf1-y92kRmkr5HdMaqoD99soOzJIg0gvTAvxlt9HD4focgtkNGwt1qnHXCwch82lpiurr5G5uOGaql-m6GM40Fa0clmnc8sfSYemjVhfLZ8O_rzUY_-bzoUj9BbrPRd8WW01_1AJ38f5976eA7xUJ6vMgHABvsojmhHTMaRGnXNBeFz1gQDxr_ZJJ8i_O9Tursq4CfaMzSloI66W8V39OIVlM4mDwh4P8LSq2nTr9XgIo2AEenFH-m8030QyN8r6HEfbCUR-lINvXMZlfDsPYvmD9Os4g34kGIKD-LP4cnka4NWMLlO8E0k02cEzCzagOXFWjF81At11rAAECCilAOBvFFUcH8h8Vfu9vdY2zLcvrF4Vo16eA3yiykdduV2yqamhh8JqdPEcDKyCO0hgwwrBbGm6U8sXDkCb7WguIQkW9C1kKvTBjt8R6halFwwOPaTJZw1GFay5q1HwCWVYPGvBHZ8ftaOf4PvDfMPsM5DmkKWkx9JnF231k7KuaRrnBnUAfQr_OjIX6Qzx_qQlDr6d7pM91iENR4tNqECPsmLysyezf2NWFnRPGrHJCYptIIAtPryCe26yGs06h6xMH16ilOUmOqMcaR0sMWgvh7cnVzTn9Ld_GxDo7eSpuUE5fWfULn8b60ATxPxfaOWPXNah-FXBVstHjoPnjcr1UwTxZaHniIOM6x65GdV-hGq3I0GE05NoHyDmxqrrrH0e5BMDMfLSkxxioHVJH76fMr1sWM0RatfA8bp5m5SdVkqZqwNc4ISDUepOdHXMQ-L6AeOD0fTjZLgLQTiVpFiOdd1xTbOzEKoVyUC3B8BLzOgCkIXOe0Y9LWbPLBiVDQ_fTw4zA1Dg5sbTlMEo18P7gRuHCguwnwWdV1BapFKlGB4siS3_gzzANfhIrBd0DAEi58huQ7BQYyiM687bB-fdbVXDDkONkEHAHp-9NYI1uNtE2Y2dFWBrCcI_Lx3rTL160o9wPk4yWgXBV0OG7MzUi_PBvQufC8H_ZSQRr56sm3O1TvqKrxQRb-3W3SjjXTUppCJcC4GrwYt3EQGDoP4BTibpjxNOApCztBEF7Gp0cQx8-EqowPnG-Um1JPvQ_muOU3CtfH',
-                    provider_name='openai',
-                ),
-            ),
-            PartStartEvent(
-                index=7,
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:call_tool',
-                    args='',
-                    tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
-                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                    provider_name='openai',
-                ),
-            ),
-            PartDeltaEvent(
-                index=7,
-                delta=ToolCallPartDelta(
-                    args_delta='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":false}',
-                    tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
-                ),
-            ),
-            PartStartEvent(
-                index=8,
-                part=BuiltinToolReturnPart(
-                    tool_name='mcp_server:call_tool',
-                    content={
-                        'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
-                        'output': None,
-                    },
-                    tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                ),
-            ),
-            PartStartEvent(
-                index=9,
-                part=ThinkingPart(
-                    content='',
-                    id='rs_01264dba19113f900068ed20b553248191aac5726e644bee06',
-                    signature='gAAAAABo7SC5jcGJ6jMXEXn_eUzCBYYoiNwyUku-6dq3nXHcddbsNLrIzQZ4th-nONpHrIsACXKgm0017UgYttCex_bBeeLi10biUtJBtg7nFPrCTqAxX8u5nRFb5RQy-CXZGkUFk2o0C4Pjwn_KcsTwnI2LtX_rLu8jN2B1JjHDJpfzRi9wOez8E_F3MTwXdAFWQ_ccIcNegA7v_7GcuwnsNdhTFgDsZwPrMloQ98bOWQQhmrk_gHEM8tzQKVJBNn6yzLUn_3b8nkhX6W0cN465J-xCtxWP7_KT5EurorkH2fsHNa9r1MUDEr0HH8Ls4wEAe4mVEAC9H_Bsb6BFTrIt0sM-2gM1w4KSpdSQwoe01bR71G3foU6bRqtIoG1Rdpv5XXMdkS0AR1rNUehSltCnXuHevoelk3EWEDRO9u6yzVa5oZAuvAyWv5xt_sZ-7OZCacnOYuIXyWZ5iGxSYcZ4UYFmIkaguixXRrVnZ-HhyUN_wwFB-6hqVG197Bjx0Jt9mL_7-FkOiahCYXVzQ4nMbBre0gXwA0kbxa_sl_qL6a8lIM90XRoJzTA2KiUZikYZJy8vS4AxVt3wC64qqWqDwFbveM4t2P_ymbOrUN07o_AvU1pbApdwPVQkxl_RCZ_bINVn8c2gXzXFmBSPWxBtKmAQuM6EjeqUenaHmBqNyiEs8Yg5tghy1_ORynFDdaXn4I5iKLCt4gatlnbJMyUKmUVw54zcNr4hQaetIkGnjl_pkQJ6T9G1IkhcLOljN1dfBEYjjTw1DEGLEHbJl4B1-ovhMd2igGHkW10R9AaKPwCW1ZsiGQ6R7jRedm5yIcmSZSHf_KNGafAcls73P9hPJSn6g7CDfmQyjfTC-Xv-IxTxNOGdh0Vh8aIbPhMNTrRqaGrCMoPhad1lmZ8y-OyJ68awMbt8gl3n8TRP-im2g26ZwyTIQTJG9hvEO3O4_DB9lKrZB79POCi3BGA9aKyeX2sOb3PXjurDm4agb0rvpllcVCGILWE2yal4eHW4gb3V0z54YNe4EHyfo6sO3gcUQ-fKSnfzAnD8rEpFzEzQnCZuOSiELn14pQSHllyX_3C0imhkycZI65HxsBRGqxwHdoRH361M4Cv0T5jhAL0eE3lnh3TUGQM35kwI6HKcqfl3SdPBjKcNE4-Il5uuX7jayYoQc4pDbTD07qhPUlc2alHpnxs4hCW_vtjvDeQIK-N6icdR0_hIZtXvHHcTHH7vzYX1d9WYv1vpanKVZI_bZ8wja5r_iupH2UCI6kN0GaeDpX4y2pD3znGXE9zGN0dQzZibBWuGZAYzR8KcWUmEwcDfkrtIREyFsoC4cwxJFGqP5__Ix8hXubDVT_4sAjsxhRyi6TlT8ovfcS7z2-4vt0BE3Y6snLa73eXXnOpAzoZyPn5-XHlxS1cAwE_-_H_HVPQ724LzpE5f45z4YIl7Qs4R3UdG_Qqq_7CS2uYn91YMVFk5GA5iU06DJ0TULOKFDBzOq968U6IxuzEKAVVVUfWqtrLjxGIYsS99gvaVO-UvCCIS05m3IbikU1Opq35V23jIjmj-ABf4Hb8n8xXTEbcjboJMnWNDlVa5EzlNTbHyNkTybcxn9Ms4tqH33CJo8ckkwPJjvJ-FH7yzqd_-07K3tNjiKjKC8QfuoDkDhLao8oUCvOsO17tP97Re2L7-eiayI65zbVJx6VWbLOo3uOj3m-uiSNFz0D9_PobhxtxzCO8uLdkFNgewmlvARca9b1X1cKjSyU4EQlGI70gSBMRVL8ivCmFMWqNshU6dg8JglA663OGBqn06Z6evKJ42i6Wfg_qStbKN6Q_UEb7ui3v50TYtAl85-ClCwSivnQaFp1Gmg3ZzovETulR5B7wKfEO1PkFk9qZu0YBbXw_yYgo9cDsSEg5SQWeOrvxBBevbwyTC3EOSKx-vqdMRDeKs0szu7XtTVWFwl3r4fOrVVFU_m9o7JO0=',
-                    provider_name='openai',
-                ),
-            ),
-            PartStartEvent(
-                index=10,
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:call_tool',
-                    args='',
-                    tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
-                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
-                    provider_name='openai',
-                ),
-            ),
-            PartDeltaEvent(
-                index=10,
-                delta=ToolCallPartDelta(
-                    args_delta='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":"main"}',
-                    tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
-                ),
-            ),
-            PartStartEvent(
-                index=11,
-                part=BuiltinToolReturnPart(
-                    tool_name='mcp_server:call_tool',
-                    content={
-                        'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
-                        'output': None,
-                    },
-                    tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
-                ),
-            ),
-            PartStartEvent(
-                index=12,
-                part=ThinkingPart(
-                    content='',
-                    id='rs_01264dba19113f900068ed20ba6fb4819187a758a692c32ef9',
-                    signature='gAAAAABo7SDATu0aE5uxw8bwMrwhIUB1-fWUgek4WHxbR1pj9nvaUA7AvsFOw6pabaCzNqQGptzS1z53ls3i3FNrt9EYD8HYG8r7TmA71ydccAQrxdihl6hV8-jtAkK1btiU6Ur3X2aNR8iBf3hBugsqfevuEpKsGgqw2ASPWY_6d21ojaqdIGVxwDXc1W466Y6i_r66LsJWqeNmm55uoPG7IQqo2JAp5sSNRxAP_QE4x4-9XqN34fWXfJURvYuMDyZYTe2x7KCcKrGLc7X2Wou6DNXQeKWhO-zFQLPdaVbeT2pazb90DBb2jhTkLBmYEJmy88fDjmaHe5c4LFS4mBDaRPTnETPqRBxSdpGwIVUZ3DiskGHEgqK_GxfOE0UBzQonHIbTQYoho-52GVIpmaiPIPDaV9efC_OGnitYZrtVPndyA7XWyvtjftqReTGL5Xx331iswkKVJtwCYBj-nN-BA-Au_xSy_iy5YjD7314WhSA0bR9ZtxSjF50NmEX4CO6lOeXS83ODAYkOdi0MKbshs-AjeXWQmFZucEyNxucIRyWyoRnvxOqtgXQ37o-HpgrD35AJpDcAWXnrh4l-BTC63i8ZwWTnIiDkeXkOmUxjqiaIBLUoC852q9AbLzS_Ly9FEM1IlHG-12KhO3D1oU0S1tx-0nt6lj40qVN00IyrXQKc1UnGSttg1xIwuhUuG8vE83WZrs7DBJzVpZEobzqxBcOWfLDciLPLgxDHfZ7KhOKpoAa8OX76CuphrXrk_kd_7QHmka7H3wJ3vq6XrUAhKguJtmXZp4xJqxcqDrDS9c98dcp-UsnScnlIEOA3jf-j-VnCVk_lp2PH3iLpEIK6Ujr5m5K2b-5frZ0p-Vqc7s_5jRLsgZWEyI-jre-BQLvPt1_GBTqUrkQ9LVPsNjcp-mhT07Rr0FYuN-ix32gGpoTAvZtbLVLdqveSspVtrikuEKDv4tCSRT0WKawDujMcLpjepUKuSXkJfwGI9gXBuMY037L4a_9ucXRjqjj068kwF_TdlLe7utXSdqGJwui6XkJUgI1BWxGI84pWzieXbo0eRhhe_zK_UaB4-Nq1XZIuJZ3Nz2qTfEMhX-9-WDlHl8VxCi6_UcqP26TmVulBlyvz38P3zgHDM-5kJ6DBia_UDi-7asHKLG3GJ-VKQHiJGzOgkkvNny9UY-H0pJpsLuxIVunsrGL5fbqsDfsdQd7lYUZ3nz291JBnd7gmjzBGRe3rwCk_IbTThl11aP4373F0Q5XHAoJcCAaYeEYGoehT6CdRknek3A9b3BwKGdIqIG6wOglNPg8-znat4ynbF13asaW1oWMnje9O6qYLNg8Fl6Bztz9Ufy1Kh01UFcnm_pS8sW9mP6rRQYffhyGlAXPighlr0xRG0QAbdBUC_wLyIL7EWg5Nb5LQ8W_hvzAy76OboCB5rO4Gg6HOIt7KucpJDSP9UecUxLZN-5ir0PU6V7AS57awYUdAbxXkLJmWXcHL3y2Svsf56lHIzrwoPhmMMM59OaTGgCOYazMSWg3zmRdFlUWGdzzx-hrwNMb3q6LYdplA_648UErNWdOO3A90AiSdNCKo9Q4sRXkqPC15fBNaO5d9iLuGHysj0BrMzx7Q0CMtDRcXQBC7CcihKeTMXwsuVqi1OLrzk7d6JjiYu8-s0JBRaDJfyD6MEyKZo49TkfOrLx2OX_ArJRD4xtbjFabRCZVKXKLhSlRP67xPIuhLbNasNsKL0BjZlnFXgcSSrmMABpZY1wuyCPFl84uUwHR1dxnN3IJJsAzWBAicDhvcwhpvK8uGPKPtIRM1G5hFpFCT9dCfCkFPJ1y1h9np9N6-Hf4Q5BZ0oT3i95mIIrsbFcQrPorrJA93oOiziN3elBen36XwEiKpTv3RU2Co-za0PPq5FdMaBf5_wkcheEiP6UsRV8dLtMFYS71l2nLFPAMIyOu9U0YRKcPQgIDIO3kbc8FwDOTX4yxdX8gwSkAsmD6zSADYL_l8IJWMtIOB3QAsE9WwAlwqvqkiuGEHonQDEZTkcH_5PhVmpavFxVkLaAMTbuqabIYFGzf6w-ucfHIrwLRHL9a-WHVMuPosaN9e9gmplDgdouL3Eqte-Br6sgT7NXntO5QZhR1USjGymuwtk4R-g9ueK4ThV7epWrolWfKycq9MqLV_4-ZGpCqqIorz5Bz17GqkAVFII8J_TVeMHJq-XekQFRxuNC61w3FKbT-v8QMHhQceZFALvpTKlyzrTG17X_RNO5y5NmAlRFmH0vmh7duqYHeBjvggPdWAa_XaCDnZmMSKApPVzNojg_63y7rpKLSTqzHIcJExh3NNjmtEV4YdL3qS8OUYuDiv1gxWjV23rsqc102Q6R2jxzwOz0pmuNd2Bmk3JkEbn6bspn38OLcvPzDM7iW9oSOlXFd4zgfbGd8pHJN0u1gi1S0FKFgOeqIAXQyfHDZvk7dwlsYfU8GuxHwD4g9xNxrSSuPlDRsMUWaUtf78AwiZOQi87lalgI0Nq35RUgnvUHveLItLPXfU54qmYezaDHxYbHvtbJ4wgmxzuVTew2pHX-2mKZZ2iFAe4Qoi3dcQSMpwNpEYP9n_Ve_tGw9jwqiQ0-kMr7PdNYo9Hcf42GvbAPgsMU2tXJNPy3oeH_03v962BT892d8fZjr2xEmOkpwkxxQ2vtAZpN_xpX_4_9XMXYiE4mcCLIXGzt1oFEkSGyP1TfOo7SMObDHzxeCUlNWfLrip2eRx_V3JTxaqnX4NvLfUNDazoubnJICvyqnqBevH1_9Wls_h9NrAd5an83e32jCUkY7CWlb5rmxs3KzcrbKgLd1LODuS_VTqxHSchM5Aga7qi2zCVtEdHdmRBqoze5NRYjUm_btgOs7hQ2bNSU4QJf8AwrMNr4ib96e8JePKUo5jmiOxOEHGXmb1JsEU2940XAXFVrgAcKdzDCTOPZoErotW8GQ52aQJPR3TeUUiZ-z0st-ISIpSx8Zu4cjPmJnhbC_TxtJ1FlAk-97Xc5IncABu3wP3SJM28wNZO44qvzZZNxrzX2PGvP6cWjurJZB5o9dgU9DBDFDpBZf2V9KZy2hV4sz2QTmoJQam5J5I3SBmciHvlJLRK0r115W62bhxFG5YJfZ11vPTBc_pKqwnoam0xlV9kRNbfW5LFs8AMCUtbjAZck0ca1o8GW2mcStfqyyxsvmOLcZG6NiLrcu_aAnQ9hIToJ5J9jqvxzpyF9THyMS9qbMYvw2lvFX3lPkH3RzETV7OkCthyFMDicaDTB6kocsdfhKepXxOviDU8LFlUueGA6kLWVLI8S6YrYNT9EU4xFqRdyRv5T8ARZEjiCbu-zoHovo2ysdjuvOKH3XO6kHL58FIGfOq_z95vwtcqfGtC_BFcWRYaSSNFugWeNa59zsqfFxgyTbDeJhldtd2AYPHApJi_eHfvX4HcA6_IQRsTFEgBhnd-Pjyoq17bh7fYj8gQsFJl3htEwZ3ecIoe20cEsPVqi26HJJSkWeYWz25-0fMAh1R_SY_kCjvxiUHx2LsmR7CF11sN1YfCys3AIxIi4cjLoUii_ygvPG9dcm2hXHdNoKmlUSQHZLK-f0z6za1igsKmZxrCBMrvR682el2hk7L9lEyp0JjSqSpA2Do5ErXrDi4VlNdBgyOW5rMrWwkfaSN0P2FJRDP5GEvMMEcUYVtaDQkwEx36L8fOqNaNcgfp3Fnt-OCMxK6C-B6rYdzSSbT_QosaHmf2HJ5dOjjvJroXwJB0XR6q5ShA7eepBWFLmhM6fXZRI-3gMkHt_O5OwuOENTHjzQb9EyZ3ADcFTs4vcl__fFlqWFlJenmj3f2g8ect1HAXzD2-rJD9SITWzkFCuJK9yRLvqIH4rBT08JUZm85a5BPN1kXJDVPdfGQjOmBsfIQz6m-hR8Z_cGMNi5MkZNYkBL1zHRA4s5KO0UoS-kR03_nTwwWzk8N_DymgyR49Pgf_gmWDSSVN9E2GmcAUaNjKASecJzJ0UJmz75WzmK4eTR02BRviebcr7-ykLLpuf-7EDzx',
-                    provider_name='openai',
-                ),
-            ),
-            PartStartEvent(
-                index=13, part=TextPart(content='I', id='msg_01264dba19113f900068ed20c0edd4819191da764a7494bab3')
-            ),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' was')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' not')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' able')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' to')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' fetch')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' it')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' automatically')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' (')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='Git')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='Hub')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' returned')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='404')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='),')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' but')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' you')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' can')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' see')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' the')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' latest')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' commit')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' hash')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' here')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=':')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='  \n')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='https')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='://')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='github')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='.com')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='/b')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='ir')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='bl')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='and')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='/p')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='yd')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='antic')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='-')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='ai')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='/')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='comm')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='its')),
-            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='/main')),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:call_tool',
-                    args='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":""}',
-                    tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
-                    provider_name='openai',
-                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
-                    tool_name='mcp_server:call_tool',
-                    content={
-                        'error': {
-                            'type': 'mcp_tool_execution_error',
-                            'content': [
-                                {
-                                    'type': 'text',
-                                    'text': 'failed to list commits: : GET https://api.github.com/repos/birbland/pydantic-ai/commits?page=1&per_page=1: 404 Not Found []',
-                                    'annotations': None,
-                                    'meta': None,
-                                }
-                            ],
-                        },
-                        'output': None,
-                    },
-                    tool_call_id='mcp_01264dba19113f900068ed20adcffc81918442f79ec52db795',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:call_tool',
-                    args='{"query":"birbland/pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":true}',
-                    tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
-                    provider_name='openai',
-                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
-                    tool_name='mcp_server:call_tool',
-                    content={
-                        'error': None,
-                        'output': '{"total_count": 0, "incomplete_results": false, "items": []}',
-                    },
-                    tool_call_id='mcp_01264dba19113f900068ed20afc8c08191869efa4466533a77',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:call_tool',
-                    args='{"query":"pydantic-ai","sort":"stars","order":"desc","page":1,"perPage":10,"minimal_output":false}',
-                    tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
-                    provider_name='openai',
-                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
-                    tool_name='mcp_server:call_tool',
-                    content={
-                        'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
-                        'output': None,
-                    },
-                    tool_call_id='mcp_01264dba19113f900068ed20b48aa48191b1e033546ad0a24f',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'search_repositories'},
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:call_tool',
-                    args='{"owner":"birbland","repo":"pydantic-ai","author":"","page":1,"perPage":1,"sha":"main"}',
-                    tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
-                    provider_name='openai',
-                    tool_call_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
-                    tool_name='mcp_server:call_tool',
-                    content={
-                        'error': {'type': 'mcp_protocol_error', 'code': 32600, 'message': 'Session terminated'},
-                        'output': None,
-                    },
-                    tool_call_id='mcp_01264dba19113f900068ed20b913888191a4cb41e5a5870789',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    tool_return_metadata={'mcp_server_id': 'test_server', 'mcp_tool_name': 'list_commits'},
-                )
             ),
         ]
     )
@@ -7971,8 +7015,8 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
             MCPServerTool(
                 id='google_calendar',
                 url='x-openai-connector:connector_googlecalendar',
+                authorization_token='fake',
                 description='Google Calendar',
-                authorization_token=os.getenv('GOOGLE_ACCESS_TOKEN', 'mock-access-token'),
                 allowed_tools=['search_events'],
             ),
         ],
@@ -7991,14 +7035,13 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='mcp_server:list_tools',
-                        tool_call_id='mcpl_0a104500b823a8250068f0b88f3c4c8197b959bbcac973ab08',
+                        args={'server_id': 'google_calendar'},
+                        tool_call_id='mcpl_0558010cf1416a490068faa0f9679481a082dc4ac08889f104',
                         provider_name='openai',
-                        tool_call_metadata={'mcp_server_id': 'google_calendar'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:list_tools',
                         content={
-                            'error': None,
                             'tools': [
                                 {
                                     'input_schema': {
@@ -8047,53 +7090,105 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                                     'description': 'Look up Google Calendar events using various filters.',
                                 }
                             ],
+                            'error': None,
                         },
-                        tool_call_id='mcpl_0a104500b823a8250068f0b88f3c4c8197b959bbcac973ab08',
+                        tool_call_id='mcpl_0558010cf1416a490068faa0f9679481a082dc4ac08889f104',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'google_calendar'},
                     ),
                     ThinkingPart(
                         content='',
-                        id='rs_0a104500b823a8250068f0b89044a881978fb6f106bc4af1db',
-                        signature='gAAAAABo8LiXEDl-avpofFl6NyGQZPMHT6ol5p_rqklDuQ-2E65wpopMUQjL1dkU_DysMx-yn8M99YxlcxqKeED-RCjaETNeiIZmE6YIwbDCOyU31ueSMF9gkWKyB58d6NjjQGWXO7QMYHTj9m2pqG2fUlUTgIm8m6Rhw2mHk-Eg-23Zz90ORXfUCJK484rgLcKSiCt1mgi0op2Ldv7eS6bsDnuGdDwVLrZixZEFosgpPdvr7ZkaGaV5lQizGxBy4dABIpNmavwZBLIEc8aj1ELr8wq6QxLYd5pqnURkxL3qNXo6ZiL0V8E-OR6Jy8X2lPFS83GTib0Il0x5MG57zFONLd8IvLScomF-5IpyMVPvJDFfzyQM9R1H0FFyfUDE15C5aQ2RlBmyCI1Rc2lmCmRVAq9phZApkIUtXgvJvx5AzzfUtpws3PnBDUhYIHBH24lGZ9ip5UhdkeZ1bOdtxEskg8wLZ_yvgSeKadgJBdv42TxKXGKDePzUPaWb_TMSgjmOkbB6cTF5pNABgNVGH_AbAdArv1lo1HWXS5eYhJS54Ntq7LVcLPQG6Jan1Owm5_zGCZuGK1erdwFGp5JCVvGjwu1KYUnp9Xns4XWugjLTnO7C4kDvIeEGTlW5WSkLvXBmQ8E6FvLaijW2KXiTq7kt4ZHMeMYOJurrKV2EbCGmZ8G30QlUUwiyMegaWWKmgsk2JtIV9IerPEMfHhLUaCHhzfCeSDc7lb25o4Jj3nZbL_xaG17aB-VLNK9rglr1xWyb1z8xCFvm-mzmPITiuuL5QYR0E4S-RQ52kvWHrYku-h-k9mEM0bmdCypG3RiQNInRE8x6aGkhIgrtGSKrReXr7h5XgBe26IGlFXMZxye8ps1yEleMB-Q-ZQ3GdlKI3XeeTnSv_9fLtfOKdzQ60CMgaBP-KHpqY2R6w8mheLKq_R1GxDGHoydBA5MC5VXz4ep-uCyecmXmCphyvpfQ1eys1vSf5Sn5-AhkFSma1-sAFHOJSvut-FNxpbOZZPzbMXbOK7NkQR5ONxPbolj1iGKNDH58RPt7hICX9zGvs0mctrPybyt9VmYspfOEDm8iS59uyb_l9g17crNqedD4wvrtWj5DmXzma7F94n8qp9QHIwWIVeCzPrlkm4NUUEgeUaZrPtAIBoGl6tbGaFHoTpvfpr4PVDsgVJ7dqrllba11tlaiheURacLnYeTgKo5mgnv87xHZPAVEk-GljCJdCE-BqO5eq2cs4JwKha5201dJ_-TbAzY5Ff5YWw3nyWWkVAL4LJDJbtcaQeDrm_rQfWLL0kuwLjtbhZqQbBfveNPeIWGn324nB3wIOYK6hk_XZyhB-v_Ivv9mLs8TQYWoOmuvd08NLeBJuwyJjOmUe8TPBbQUwHyyoustLAtPqY1SothUW9rCTaMcdTE_Cgx8Ma2J7skJXJn63eDRWCIqlJTybzcrYOTYHZSWuuI4ugUH5HheDyLJ1cQQjDDz6-rwEyu9JPSM5gV5IN_nd-RYa9jy1X41c9qKXRfY_dHqtMdH1_SGoVOcCAhQjImsYJeJ6NZwCKztM6YJWw_MsFIjB_dcOk2TnGgGjUy7WqasuPU7DqEQGqyqn_p7-PxK3uBBgIchye2m34M550s7Gb_tUuDgTerfYrNAZ6VSupgAovq0ZQsKhVnDV4C6Hna7FCVx85agb-6ZxvuC66WWAj5BZ68PrySPX1i6jRFkcUSgnreLS3qqnDSLNixN69puKU2JXv7GnA7XROPs3YLjfIX6F9OmdFqfdmO_7PfCPEVnDZb7WUioqUUEzBcfX3G5193t6cxnqScnqv19rCjVj_1RJ1OgkSMQpB19c8G7vK9XsJbpj4aUO69-l4UnQ2L-8cy-jAAU7GpknI52WES8pnrsRcxTAUHalqMMB4mnqzsDp1CHzgDeMGJjg6zaqIew677MBslvMDuoqeD7hcrKPp4cvA4ept4p_4Did3k8pXXqt7srHpfFPzGoEs9gNgYWxys4RMOFebIozbXZfdP4VNgmbDZy-H3pX5KKDtPsven6EKgYdVLfp_j3Og5P1YBfPIrUkq84TRaS9wCpV6A40G1oxHzgIlBTbnXr9qTgU98pAvM-fX6rwr-CewBOsAh83m4BkgG7s92dNS8LbTCvCFdyhyOo_IfbiXZpRZ2LmTB2MtqYSC1ncOWXdX8kD1T2UyfwxDiqJXH5jm8tWAlc8nCp_ohNYVTybU7eXM0_DJzfwfQTAuuYwse36tD-g3DFOqdUAgeHU7iaX5C5pV3DLVjirVmfelz3FBwlC-414AhsFFW28V2xEvANtBv0h2EeZJFDjwkPljSImwSlDtAlxdFXaRCziW5eM5tCkurYATgeW9D9YWuyJQl5utPxWAscUFaQ-FnxsrfX6ue2NhxQ_WTto32seLvGYXK65dPfuGDFLAdepa0osM9igRwghSuiNDBCP5Hk9qOEM7sWMu-R4Ctc1XWBHQ9VBGIn7EM4zjcl0YloAr6Nn6ewATJB4dtyU7Wv_ALEzx59ArH0B9lPSet9RBq-KpAXbISoIjf-p6A58TqbR7zyvmmIXIyx',
+                        id='rs_0558010cf1416a490068faa0fb684081a0a0b70f55d8194bb5',
+                        signature='gAAAAABo-qEE669V-_c3vkQAeRtSj9pi72OLJweRJe4IRZkLcFfnuwdxSeJM5DVDLzb3LbfzU0ee6a4KAae0XsETU3hELT1hn3LZPwfFku5zl7CVgsc1DmYBf41Qki1EPHFyIlMj937K8TbppAAqMknfLHHwV1FLb8TapccSEhJbzGutqD3c2519P9f6XHKcuDa8d-sjyUejF0QuSjINFcjifJ8DiU40cL_-K6OJotlx6e0FqOivz6Nlj13QZxQ0I3FiiSi03mYKy240jYMpOpjXr7yPmEXLdCJdP5ycmTiJLxf4Bugww6u4F2uxy22978ACyFGSLHBiQyjczj_can7qKXAkMwYJKcGNjaNi8jG5iTIwsGswRjD1hvY-AGUotMFbPCszX3HW1M_ar-livaheiZauCfKV-Uc1ZeI3gijWEwtWQ0jye29FyQPCCpOBvT6RbUvFEpfqpwcMQuUhOyEfgzli2dpuOAgkSjCPE6ctoxjbYa62YzE-yrXAGc5_ptQy_2vw7t0k3jUzSo2Tv0aKnqvvKcj9SIilkZV4Nf-TL_d2E7d48bBJDlqbAv7fkhhd2YlkLqwdR1MqZtygcR1Jh8p2Y1pFAa4mSj7hh4M-zfSu--6dij2iKIbnKQ4DbXyGpMZXBAqTHMe9PPOwGxWKShlN5a5T89B04d_GwJYBDJx2ctecqZxDMjkTn3wVGl_5wuDnrEgd0I91vmAoYuWldR_h8M_FjDFiHefdbZjw1TxVKjkp6wk6zQiXCvvCZYJa9XkhytcllWvUI4C0gbxHrEzZRy9Vii3buqnbiIM9Qj0VPx-Q-FKM_usZBBmlvmk9PMQ8rH9vVT8dRFNQEj-aqudB5yUcTx8XaUFwYAts04OObGBqXoazYtxh6WvHwrf09pb_g0dwzE_rlcQdYxcFLOpYD-AentRAjOuIr4bLRM9BMERBxPvvPCxZ2Mva8YqV2TIOtxzMY08freim6du1IuYprO6CoejPaBdULhct-nsPubOdjLBikZt_bwumvmqGXnxI_uu51b9HtzPeDpWIjF6pi88bcsOk0qglA9GAu3wwX-iIdaV19VdVCO4KJjxiVrbTY1IVgWSdz98Alb_HzpXsoS6i2PRAjjsYOe4RBX3etxjsY07XXLlmXAM_vuYXc8Y6STxvBk4ST4OkaCvUk9DoZbVL5KmVcT6TaFpbVCOB_eHkHIvMjXc35kzxCdqEMG3FpRzL_UkY8pPridvq2z1Xw0al2KEBvdKPlInB8-zX5ANGeRkMGZ6ZfyX1zCIdYLe3wrC8xqr5nUZ-ueWmtqYLavSg8mQKphp4QyVaiwtbxEt5GEiVG7_LR754mGQYPdr9Shh3ECAp8wmSfDVO8MHaLmzgo3RXeqlqFldRjQzDHtCaGhjD9bHKF3yWF2LtH4gUN-Sf--86lcq7iwHDSDm656P_FBfYmE7rA0svH-m3hQoBhza4CKJ7s7f7ZymEhcHAfH7SPImZ3Y-kT_Sy1mbCCf3Yg8uitrpX7ukO6_bIANS_R4oiOPcuLixbWY0ZSyq8ERB5fa5EsIUm7PpGxbO96nmk5rPkewyB4gCtslwJI0Ye7zHtqrDBz1j1nsjIKsRCfFWlUdRF8J1JPiiBSvP8SraQ_94cnKBCsl34BGsVm-R1_ULbuyahBzSHq2Kwr0XQuNLdGChyLKS_FZVT58kbRFsvjZnbalAZ-k9alMeZ-pdWX5f9nSn3w7fz675zOxnBaqiZmoWHXFNOBVGH7gkz05ynJ2B8j_RpdRNJKXUN8pAvf595HGl2IPdaDhqoeS2_3jixO5mmxZuPEdzopoBFRarWud99mxH-mYxWJzKiA1pLNqj7SO93p2-jB-jtsCfZfk6bVEWpRRkIEz0XvxffFTVuGUCqpGS7FiFZc4pQU24pCrdpg2w3xeDSrmfHDAx2vUvv0iRBnQxTTWx2-de2TQQTpR5tjFNyOhYGVn1OXqkbkNtIUHdnNGA1QBCU0Qs0471Ss1CrxXIeeNVSTd00jiu4_ELk6nJYgSpmS8G_crrDza8mRLV5Yk0ItRrZj6pwKUOEaYeyM-RHyhrjf09yaf7Qc3sAozQF0aXFCQjSYiVb98DuGH28HLUxW9ulmSKKR4pYKlCOLNGm0h_gWCpSa0H1HXCgEoPn68HyaJogv_xH3k4ERYyJnxu8zVbVPMGoa9q9nNRQQ9Ks2AvxYRQeGFSCTACBmuookvHsO1zjYfHNuSCD7pCLRFE76KlmSiAX6l9LNOq_xe9Oos-1AvcZHkmVsuh-mjTVkBOjG6zmnHiNJirBpORs_UWL5lmlQBeaXgdHxcb4tHIn8XYXFkQiC4b4pw==',
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='mcp_server:call_tool',
-                        args='{"time_min":"2025-10-16T00:00:00","time_max":"2025-10-16T23:59:59","timezone_str":"America/Los_Angeles","max_results":50,"query":null,"calendar_id":"primary","next_page_token":null}',
-                        tool_call_id='mcp_0a104500b823a8250068f0b893a6c081978dafa14bc9767711',
-                        tool_call_metadata={'mcp_server_id': 'google_calendar', 'mcp_tool_name': 'search_events'},
+                        args={
+                            'server_id': 'google_calendar',
+                            'tool_name': 'search_events',
+                            'tool_args': {
+                                'time_min': '2025-10-23T00:00:00',
+                                'time_max': '2025-10-23T23:59:59',
+                                'timezone_str': 'America/Los_Angeles',
+                                'max_results': 50,
+                                'query': None,
+                                'calendar_id': 'primary',
+                                'next_page_token': None,
+                            },
+                        },
+                        tool_call_id='mcp_0558010cf1416a490068faa0fdf64481a085a3e5b8f7d6559a',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:call_tool',
                         content={
-                            'error': None,
-                            'output': '{"events": [], "next_page_token": null}',
+                            'output': None,
+                            'error': {
+                                'code': 500,
+                                'message': 'An unknown error occurred while executing the tool.',
+                                'type': 'http_error',
+                            },
                         },
-                        tool_call_id='mcp_0a104500b823a8250068f0b893a6c081978dafa14bc9767711',
+                        tool_call_id='mcp_0558010cf1416a490068faa0fdf64481a085a3e5b8f7d6559a',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        tool_return_metadata={'mcp_server_id': 'google_calendar', 'mcp_tool_name': 'search_events'},
                     ),
                     ThinkingPart(
                         content='',
-                        id='rs_0a104500b823a8250068f0b894af0c8197806bf2b7f7059bc1',
-                        signature='gAAAAABo8LiXxUYdty7An6iFIGA2GCFwwAjdWTsaRPVi1ec6N4WJQa09Gfg10q1fxIWyXMBLwWub5S3YBc4vmAs4kpcQapd9sgOEgglEhEucIIRdODyDwqKz5oUN5xLVk3fTLcvDhEh0nW3wh46VAoLsFpEhlMuDNooT53w2Z5CZg0FbWzNigWDEURRPzwoQKVBVpp8Ia2jKjkbkD0JHHiBQ17ej4XH_4VNFAu1IIdu0bMyWghFKofvJuCqeEvrJRKBmc8gqlOcqiYHI5PBI_lI7vpQqbK9RVk9k5hLe22ENT4mdeQRSm00P57imbrnDVVN_IeLf3cvl4KX85Bd8WlzUU8ZzcA9C6iOmJkUOi2ZZqDG_l7-yg1jg49SI8TZ4PJ5wiX4ZJ2kbOlH9gd2I2JIlGL3G2fI5uuOARbzOpEo8ZGQAQX1dIVfvxj6aE3xf42tfbmRK8_mjSwngoSGUkLbkkJ3SRJr1SKENHH8Yl2E2yYdNEFPu3JBHki9fW7LOKwpwPoxfFR_XqQrd8dJG8BggJBcdsyR-DIanekgmINkKZyj7YnxEE2J1PEvOOqzCzWRWrBQYKaBRAYKvmvgkjSzuCXcWZyk0yBz7lgtECcTyuKFPiFa0-sw1ke8KxKvtS6Uq4GCwNudcgzYoP4kXyuO_-GbQCWfLOShpoJcBkpe8SFXFPKxeIllOd1c6wnoWFwgVVdbXul1vOhH7nCxyJ7lpYqd8xA0IlKdOBnbyGG7BZJL0q3mjIR2FrpXFcgMq8MUYbn51DlHiYDCRkULOAgNktwKFErgsZckcolHXhiRA5CSCaNHu35AfwCiQQw8AUQgMdIslv01kWE74HcmgPrapM5i38RYq6wowYkGxbpW76z3bhPBWG8P1w9TK6GjqvAgqEGqUN-v8_uKV9vkrGdDq38g6CeLwxTbOERZCyD178LROuDLvYssq3lzJXc4zzYnXEZjk4MegwG_HyUwg7Nbt0QI5aCSKbnaBuB_m1cWvHDWJqvnYLtzo4w1SrKD0MxF-wxQ3XUZytmqmhbsoQ7yf_LO8eJ1l5qW0t1b0--3OFLDlDupYCNMX2ePNHSIakPnr-i24X1BBkYdSdPdtTgT6ubrpPDMGZAIvVq5RE5ExsNVYRBvOEYCgM__z6q9oDDcblkPdNMuLcP_TvYM-zKEGtG6evm46IA==',
+                        id='rs_0558010cf1416a490068faa0ff5c9081a0b156a84d46e5d787',
+                        signature='gAAAAABo-qEE72KCH4RlulMdH6cOTaOQwFy4of4dPd8YlZ-zF9MIsPbumWO2qYlZdGjIIXDJTrlRh_5FJv2LtTmMbdbbECA20AzFMwE4pfNd2aNLC5RhcHKa4M9acC1wYKAddqEOPP7ETVNBj-GMx-tMT_CY8XnBLWvSwPpcfde9E--kSrfsgvRn1umqDsao4sLlAtV-9Gc6hmW1P9CSJDQbHWkdTKMV-cjQ-wZHFCly5kSdIW4OKluFuFRPkrXs7kVmlGnMr8-Q5Zuu1ZOFR9mPvpu2JdxAFohjioM-ftjeBuBWVJvOrIF4nV-yIVHVT-_psAZaPUUB5cyPAtqpoxxIV3iPKPU8DHctP03g_0R6pSWWHhggvO5PBw3zyPwtBwOrHBipc4nQEWEMxZxLH5SYJauTKwHNOx9NyCq8JUjZXM_v4xsGxNa4cAp7GuXqR2YyW2sx7syRUiDwtebh0xk_YOQtkv8tAjzCofmaz3n8FJ2nGSXkilaV5Q8LUNO-9-D2tsAaScDVMuLMMAHFNp_GPplWrmGES4mTCNtTXWyF1GLcQBw8dYYctV66Ocy2_zxyDoB7SsR5htlV77nJ6u1Hbp3tk26LutDrhAhe55xcki8iblHbXNY9MRzR1SS5Zk3-dv0ex4QOzC663NvS9aK3olQbKYko5TvM7Pq4MFYfaxwFTVFVEdaskoDJieVyikz0ZzBjTsItIwL-Q2BVN2F_P_wgCV5hyDclNMPEGTMxajxfIFv-oEunmHY1_RJavl47iXWS8H3JWAvp-9YYQdTS4Aa6m5zPndvHOvEV355UawLHRPctHFUS7rE7rYmcU6KQaqC96JRM0KRfXNIgYtNfw6cxgnyqGxzTF7qeeVzObOqoQmz59Rh0U9ti37vqHb8Ca43-q2Gx2KaVZFj7MBQK8UodfaDRIEuyMB3XNfckxCefwHs7FeAj5NuNDBrm0uDcwJjs2JfY2i54gAES8kAPLGJgRpq_qdjVXqpO6W0H9E1vBdRem7zLPYbA8OOo-KCkRW4AFCVbgCpgIvo4GDNvFOMksl-d8zgQU2qroUWJRu58j1bdaar7Zlfxk0UR33nROmJpXGb_R-RCNAN1ZxJTdEU_dVfyLCeuIXPsnO-FlfO8J6Un3WWPNLuN_bDS5RocniI_ms71qLsisJQiPTs-JDFl-eMM2Hk3QqSCC6OT0CLG9XMmI_zva9yp2joQ8HdGMddE3FDCbLejRrx8fV-9Nd0tZ7SYjFG78_fre8IfL0L67CK1JIPYzhgRZgCb-FFwUy-stR_BstIn0sRr_tDCoHdxuoVCh0dZfTY1p27xbKQ50svHxp1caNp3uze0wLXP9STNouFjFpdIHMsDRaGfO9R9mMmUsFcmBMK3aikuHTpebyL1CeZsIzH2cbZLPRx3pN2IqJ-5h6-cORHuMqf3ysEEFCjXnqmzvWPuBjYDsxnxA1awaGkYKsKhqchgakrfplOjdG5tSkklggBJA93iRaUWIR-4oV6HkkrnpdK1w7BL_VT8upqZmkpHZtZCDSgINk5S5hoYPLBTtS3dcCmQIbLvPXPuGzdAZxl0bhD4Rm3GPDFszaDoFK0Jszcjlaf4SJqyZABKEf71dDbi1as-2Qwr4fxBiQIOsF8ChbYo6Z2iFtUpBnbruFUIwB5QyKfWnwEZbOgf4UbIvIqNMkTzMc8tJgz6Ddqfih8VeNH3v8_84J6vHU0SVm_gvkgQ6P6N_6r5LwNdlAEff0hFwn-aTHWZ3s8MICckUZj97lKoZxAl91WlsKa0yrLw24dxvJ6bhZf0FsOitUJGd7vFPx0TxSobUkzE2RrbQ3hziPxw2Gins4aI6YG3M1gfumd3MgdH-fYBvZulJ9vmw0ZC1Dqh6BkCWHOFKsnpQvHmYuyTzUmnYuJf8N5j_b9XNw0krmxouOCPQClFmIOBLw8XPbe3xf0F5JP7BC0PpjlPT33A5Z6Za5zlA5O-DE_Wp0WG885-GaKtZI-zBZW3R0lc9A4s0HbxqA3lqH8leXOCe6WO46Z_iTQlALpTR-7oaHqzTegq0KSmEjCFO-jLSrVZnBOQ4ddTvLj4ASsQbj-o6TFUFVZAKSLI3FtWovHw02Gc_D0luFz9TbfaXM-EapEQYajkG0_b_nSCoPq0T9HSyvU4oCxXyQvhwIgzbijR-BheN6a_l6hiqZCw9L1c8MdPRtjpbHtEwWkpQ62s8XdydeJnV5vJYp9ezBbS_vWQ7Nz1siai6epJTdzDkRm-dudVhKzdohwg-FOQ-5gSrvoPS_MF4lZvah3iXY1g4uePO4eNDWGJ74YPybiy',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
+                        args={
+                            'server_id': 'google_calendar',
+                            'tool_name': 'search_events',
+                            'tool_args': {
+                                'time_min': '2025-10-23T00:00:00Z',
+                                'time_max': '2025-10-23T23:59:59Z',
+                                'timezone_str': None,
+                                'max_results': 50,
+                                'query': None,
+                                'calendar_id': 'primary',
+                                'next_page_token': None,
+                            },
+                        },
+                        tool_call_id='mcp_0558010cf1416a490068faa102400481a09fa35e84bc26c170',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
+                        content={
+                            'output': None,
+                            'error': {
+                                'code': 500,
+                                'message': 'An unknown error occurred while executing the tool.',
+                                'type': 'http_error',
+                            },
+                        },
+                        tool_call_id='mcp_0558010cf1416a490068faa102400481a09fa35e84bc26c170',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='rs_0558010cf1416a490068faa102d89481a0b74cca04bcb8f127',
+                        signature='gAAAAABo-qEECuiSxfvrR92v1hkqyCTCWyfmpHSaW-vVouk5mOTIFDvaBZdVTFH8-dJfpwEG3MCejRKh9V-I8mrYAjhudVr1ayHo8UYOOU1cfVc6w3wsrkL8hXljjE-amiJhBSjvRc2nwwGtgYpDxOfWTqJkaUvFnMD6MrS4CwMrCBbDOLYZgM1cQbidtrrtpP7D5u42tR6coC_PCOqwPzDN4f0RggrxVxh0038p81VUmlkUeA2jWzRyFpeDGRjXFk84Og73rXAp7EWQv7TmzgVXBjCVwwzJNU8HCZ_gkwh5dvL94QxBx32lEmfOOKcqA3hN3FLwDqXlZ8f7jEqYInnpILQgX5XMdM9OrCyXmDCr_eIy00cjvxnTcXhCnZBOaKCKmTP74yUpGNdLbQcr4BalTiviNYEeCAhJyRo4KnhUZbBoT7MB5NULf-kqhRo1gEGKjWiLdV47PhR7Z8i4BK7zBceganMKpLtzIMW5a6JAujC4Z9FYxcpJZI_CD9NHsPr4SjKgIwv89d6BYo89-xfflF6ZUZBkuDUnL2-Nc9CKgGuKlcDunvYLr38pzA278OFYzh9T42u4SbS8KkSXKjGU3H8LfpMnBEZigriixLt5vj7qnWmZvCFarzxT4U4qqR1ITp5rkO6G9kYvBEfS7wu768mteDBgAajUaeOMQEfjJRErC4wfzbB89YCsXPJz0JE90QZ5LeiP5ZlVezTTaddG9JmiGsBCPckqUb1LWdpvekCfPkePF_uDMVWyJpQ4ZBzQsZx8sHf5spygsiQjlzTiriqwhoTcPuXoONoCr9HeFX1Qy8SGOm87siRPAD7FHJdDxbJwq8tOlMpx8MH1dqEY07lwoxZB0GQ9XbB7QJXfQR_27nkpqBYFkrbqChNJLO2x8gNFClbB0mgYQE1CRy64y6yOrG3CtS53RK5VGrF1GnqwuWdZ452VgShT5nAmPFRlRk1S9px4eMUTAozT0QAYrlHQC7b6I6K3m_Qe3kXGpnn_87i2eGG8mHmXG2FvFChkgf2OU7-LRy_Wl_u-ataICeoBwfngBFMppvUW6tJP009HK7mUE8P1KJntN3ExKLIBhmKhV6ziBpIi1bSTmd8leYqfSaf648c7-sVuDRx7DzxTp19l3fwVFa67GdiagZFs7xaU1HxMnMc3uy5VKWAH_qcv-Mga3VCTtTPpMTjvB95nsLeOFjS2FtpPvaP0N6o5kkkzW7cteWpOHhSX0z7AQA7CqgOCQLfLUc7ltVxnOH4WdHoeZFah_q_Ue6caf0kNo4YsTfbRDdzsW70o8P5Agr-Pgttg19vTDA_eBFur9GDKIRT0vYMWPpykwJBDTgJKOFW6uyNkqNWk_RAAvleE9pAyOoSmgomyrMcnnpdeYHNxeNxvTWFC3mcKSjJIB316wypPvaGTJyaK_pxJScD7CtLrIPkgwPpOsJnDySF6wGe-fGsUMt3zxJrc-S6fp24mYVfTRZbjUsP0fJgLmCohJiAtEg_xvlQ8sPyuLoLdOdossTQ7ufl0CwVn4f_ol4q__gpTvYVaoGsWl3QmHul5zj7OUAn7of6iBfCSlXbrauJvMyNYt4x_dLM8SXTRNPe-ZMDmER9DOw0KJXcUrpl6uw4TphKmUOK6KrxqshujXdN9VDgOwD7eKqIHpvC_6a2R6sS6ZHcebmh2o3bic-Hctomrbv03OQ==',
                         provider_name='openai',
                     ),
                     TextPart(
-                        content='You do not have any events scheduled for today. Enjoy your free time!',
-                        id='msg_0a104500b823a8250068f0b89576648197ba0a5fd08070a1a7',
+                        content=IsStr(),
+                        id='msg_0558010cf1416a490068faa103e6c481a0930eda4f04bb3f2a',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=655, output_tokens=420, details={'reasoning_tokens': 320}),
+                usage=RequestUsage(input_tokens=1065, output_tokens=760, details={'reasoning_tokens': 576}),
                 model_name='o4-mini-2025-04-16',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_0a104500b823a8250068f0b88f03848197990038841e1bebdf',
+                provider_response_id='resp_0558010cf1416a490068faa0f945bc81a0b6a6dfb7391030d5',
                 finish_reason='stop',
             ),
         ]

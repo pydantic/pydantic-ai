@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '538'
+      - '346'
       content-type:
       - application/json
       host:
@@ -17,17 +17,12 @@ interactions:
     parsed_body:
       max_tokens: 4096
       mcp_servers:
-      - authorization_token: <redacted>
-        name: test-server
-        tool_configuration:
-          allowed_tools:
-          - search_repositories
-          enabled: true
+      - name: deepwiki
         type: url
-        url: https://api.githubcopilot.com/mcp/
+        url: https://mcp.deepwiki.com/mcp
       messages:
       - content:
-        - text: Can you tell me more about pydantic-ai repo? Keep your answer short
+        - text: Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short
           type: text
         role: user
       model: claude-sonnet-4-0
@@ -41,7 +36,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '18090'
+      - '6664'
       content-type:
       - application/json
       strict-transport-security:
@@ -50,60 +45,98 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - signature: EvECCkYICBgCKkCeuCUVeVlbOhA+gHNZZaHFOixlAHnq2exLDYxPuBbJXDgZ62IURpi4CC0YZ4f4nlrBm8jxa/K3FLQC3jIaQSsSEgy63wA3a52a9RyMdYYaDMw8qf3i8C22GDqdRiIwtYWltueQx95iIdHf/eIZ7Dm28zBHJU0o+07IEcf53+K046o3qjO14WjzZwkMgeJXKtgBV08pozWl5NIRRT/yvkq7du+dTSJbQ4XUsSPsjqOrclIvYcJvze/XswFlG0P9XdE8l60ABX7/iHxWOtbQxqCBN6fahkyd7QfEu51vlHjdrxkWwvqKbh3ZEKpZ/IlSHVt9bkYAFVaCg5tWua/8ytCW+m4FMqmROl34z/VjWN27HKHTYdiN0S75QWnaFny2j9cx9yqP0hqjDVn0MHIumxrnkkn59dTxLn0I8nS6t2jDOuCX6GZSomkVfpgEHEKfdt6UacvBLuLleSf1JT8ATMeUGZVZ9KOG6aOYGAE=
-        thinking: The user is asking about the "pydantic-ai" repository. I need to search for this specific repository using
-          the search function. I'll search for "pydantic-ai" to find information about this repository.
+      - signature: EqUDCkYICBgCKkCTiLjx5Rzw9zXo4pFDhFAc9Ci1R+d2fpkiqw7IPt1PgxBankr7bhRfh2iQOFEUy7sYVtsBxvnHW8zfBRxH1j6lEgySvdOyObrcFdJX3qkaDMAMCdLHIevZ/mSx/SIwi917U34N5jLQH1yMoCx/k72klLG5v42vcwUTG4ngKDI69Ddaf0eeDpgg3tL5FHfvKowCnslWg3Pd3ITe+TLlzu+OVZhRKU9SEwDJbjV7ZF954Ls6XExAfjdXhrhvXDB+hz6fZFPGFEfXV7jwElFT5HcGPWy84xvlwzbklZ2zH3XViik0B5dMErMAKs6IVwqXo3s+0p9xtX5gCBuvLkalET2upNsmdKGJv7WQWoaLch5N07uvSgWkO8AkGuVtBgqZH+uRGlPfYlnAgifNHu00GSAVK3beeyZfpnSQ6LQKcH+wVmrOi/3UvzA5f1LvsXG32gQKUCxztATnlBaI+7GMs1IAloaRHBndyRoe8Lwv79zZe9u9gnF9WCgK3yQsAR5hGZXlBKiIWfnRrXQ7QmA2hVO+mhEOCnz7OQkMIEUlfxgB
+        thinking: The user is asking about the pydantic/pydantic-ai repository and wants me to keep the answer short. I should
+          use the deepwiki tools to get information about this repository. Let me start by asking a general question about
+          what this repository is about.
         type: thinking
-      - id: mcptoolu_01AmgVfcYg7HkjXerTSn1F93
+      - id: mcptoolu_01SAss3KEwASziHZoMR6HcZU
         input:
-          query: pydantic-ai in:name
-        name: search_repositories
-        server_name: test-server
+          question: What is pydantic-ai and what does this repository do?
+          repoName: pydantic/pydantic-ai
+        name: ask_question
+        server_name: deepwiki
         type: mcp_tool_use
       - content:
-        - text: '{"total_count":461,"incomplete_results":false,"items":[{"id":818331198,"name":"pydantic-ai","full_name":"pydantic/pydantic-ai","description":"GenAI
-            Agent Framework, the Pydantic way","html_url":"https://github.com/pydantic/pydantic-ai","language":"Python","stargazers_count":12891,"forks_count":1298,"open_issues_count":323,"updated_at":"2025-10-13T17:06:15Z","created_at":"2024-06-21T15:55:04Z","topics":["agent-framework","genai","llm","pydantic","python"],"private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":898853046,"name":"pydantic-ai-tutorial","full_name":"daveebbelaar/pydantic-ai-tutorial","description":"Learn
-            how to build AI agents with PydanticAI","html_url":"https://github.com/daveebbelaar/pydantic-ai-tutorial","language":"Python","stargazers_count":120,"forks_count":55,"open_issues_count":1,"updated_at":"2025-09-30T22:41:44Z","created_at":"2024-12-05T06:50:32Z","topics":["agents","ai","python"],"private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":1023752870,"name":"PydanticAI-Research-Agent","full_name":"coleam00/PydanticAI-Research-Agent","description":"Pydantic
-            AI Research Agent Built with the PRP Framework Template","html_url":"https://github.com/coleam00/PydanticAI-Research-Agent","language":"Python","stargazers_count":55,"forks_count":21,"open_issues_count":1,"updated_at":"2025-10-03T16:48:50Z","created_at":"2025-07-21T16:31:48Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":301101135,"name":"aiohttp-pydantic","full_name":"Maillol/aiohttp-pydantic","description":"Aiohttp
-            View that validates request body and query sting regarding the annotations declared in the View method","html_url":"https://github.com/Maillol/aiohttp-pydantic","language":"Python","stargazers_count":69,"forks_count":20,"open_issues_count":5,"updated_at":"2025-09-08T02:36:02Z","created_at":"2020-10-04T10:32:00Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":910865205,"name":"pydantic-ai-agents-tutorial","full_name":"abdallah-ali-abdallah/pydantic-ai-agents-tutorial","description":"Learn
-            Pydantic AI agents, step by step, using local models and ollama","html_url":"https://github.com/abdallah-ali-abdallah/pydantic-ai-agents-tutorial","language":"Python","stargazers_count":130,"forks_count":17,"open_issues_count":0,"updated_at":"2025-10-01T15:52:57Z","created_at":"2025-01-01T17:07:23Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":724276928,"name":"AI-Tools-Pydantic-Instructor","full_name":"hassancs91/AI-Tools-Pydantic-Instructor","html_url":"https://github.com/hassancs91/AI-Tools-Pydantic-Instructor","language":"Python","stargazers_count":25,"forks_count":36,"open_issues_count":0,"updated_at":"2025-03-17T10:58:09Z","created_at":"2023-11-27T18:53:46Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":923007479,"name":"pydantic-ai-github-agent","full_name":"coleam00/pydantic-ai-github-agent","description":"The
-            agent I built for my AI Agents series on YouTube - breaking down my entire process of building AI agents from
-            idea to production!","html_url":"https://github.com/coleam00/pydantic-ai-github-agent","language":"Python","stargazers_count":53,"forks_count":20,"open_issues_count":0,"updated_at":"2025-10-08T05:58:32Z","created_at":"2025-01-27T13:40:26Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":988864035,"name":"pydantic-ai-scaffolding","full_name":"madviking/pydantic-ai-scaffolding","description":"PydanticAI
-            helper which includes cost tracking. Also serves as a test benchmark for LLM dev tools in context of a slightly
-            bigger project.","html_url":"https://github.com/madviking/pydantic-ai-scaffolding","language":"Python","stargazers_count":37,"forks_count":9,"open_issues_count":0,"updated_at":"2025-10-09T05:10:05Z","created_at":"2025-05-23T07:33:23Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":906424940,"name":"building-effective-agents-with-pydantic-ai","full_name":"intellectronica/building-effective-agents-with-pydantic-ai","description":"Code
-            examples for Building Effective Agents ported and adapted to use Pydantic AI","html_url":"https://github.com/intellectronica/building-effective-agents-with-pydantic-ai","language":"Jupyter
-            Notebook","stargazers_count":90,"forks_count":9,"open_issues_count":0,"updated_at":"2025-10-04T02:03:23Z","created_at":"2024-12-20T22:06:59Z","topics":["agents","ai","llm","pydantic-ai"],"private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":943545622,"name":"Pydantic-AI-Pinescript-Expert","full_name":"FaustoS88/Pydantic-AI-Pinescript-Expert","description":"PineScript
-            Expert: A Retrieval-Augmented Generation (RAG) agent using Pydantic AI that provides accurate Pine Script v6 guidance.
-            It answers questions, offers code examples, and generates custom indicators/strategies for TradingView. Combines
-            vector search with LLM capabilities for precise Pine Script programming assistance.","html_url":"https://github.com/FaustoS88/Pydantic-AI-Pinescript-Expert","language":"Python","stargazers_count":22,"forks_count":10,"open_issues_count":0,"updated_at":"2025-10-12T14:52:38Z","created_at":"2025-03-05T22:04:19Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":907442634,"name":"pydantic-airflow-agent","full_name":"vojay-dev/pydantic-airflow-agent","html_url":"https://github.com/vojay-dev/pydantic-airflow-agent","language":"Python","stargazers_count":15,"forks_count":9,"open_issues_count":0,"updated_at":"2025-04-12T11:40:54Z","created_at":"2024-12-23T15:36:16Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":906326792,"name":"PydanticAi-MultiModal","full_name":"rawheel/PydanticAi-MultiModal","description":"An
-            example to use MultiModal capabilities with Pydantic-AI to process and analyze images","html_url":"https://github.com/rawheel/PydanticAi-MultiModal","language":"Python","stargazers_count":34,"forks_count":4,"open_issues_count":0,"updated_at":"2025-09-19T20:52:26Z","created_at":"2024-12-20T16:43:34Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":908107111,"name":"PydanticAITest","full_name":"NanGePlus/PydanticAITest","description":"PydanticAI开源框架，搭建基于PostgreSQL、MySQL的Text2SQL应用进行SQL语句生成，支持GPT大模型、国产大模型、开源本地大模型","html_url":"https://github.com/NanGePlus/PydanticAITest","language":"Python","stargazers_count":12,"forks_count":4,"open_issues_count":0,"updated_at":"2025-02-20T09:36:40Z","created_at":"2024-12-25T06:36:08Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":917327273,"name":"PydanticAI","full_name":"mumunha/PydanticAI","html_url":"https://github.com/mumunha/PydanticAI","language":"Python","stargazers_count":7,"forks_count":4,"open_issues_count":0,"updated_at":"2025-06-26T23:31:34Z","created_at":"2025-01-15T19:20:21Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":915174053,"name":"pydantic-ai-RAG","full_name":"skolo-online/pydantic-ai-RAG","description":"Create
-            a RAG AI Agent with PydanticAI and OpenAI","html_url":"https://github.com/skolo-online/pydantic-ai-RAG","stargazers_count":14,"forks_count":5,"open_issues_count":0,"updated_at":"2025-05-04T09:30:51Z","created_at":"2025-01-11T06:44:27Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":934547575,"name":"pydantic-ai-deepagent","full_name":"ai-zerolab/pydantic-ai-deepagent","description":"Reasoning
-            model integration for pydantic-ai''s agent","html_url":"https://github.com/ai-zerolab/pydantic-ai-deepagent","language":"Python","stargazers_count":14,"forks_count":4,"open_issues_count":0,"updated_at":"2025-10-07T08:44:00Z","created_at":"2025-02-18T02:39:38Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":1052844101,"name":"pydantic-ai-chat","full_name":"pydantic/pydantic-ai-chat","html_url":"https://github.com/pydantic/pydantic-ai-chat","language":"TypeScript","stargazers_count":16,"forks_count":3,"open_issues_count":0,"updated_at":"2025-10-08T15:17:58Z","created_at":"2025-09-08T16:16:54Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":1039408955,"name":"pydantic-ai-tutorial","full_name":"twtrubiks/pydantic-ai-tutorial","description":"pydantic-ai
-            介紹教學","html_url":"https://github.com/twtrubiks/pydantic-ai-tutorial","language":"Python","stargazers_count":12,"forks_count":3,"open_issues_count":0,"updated_at":"2025-09-19T07:39:52Z","created_at":"2025-08-17T06:48:34Z","topics":["agent","ai","llm","pydantic","python"],"private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":903901199,"name":"example-pydantic-ai-multi-modal","full_name":"stephenc222/example-pydantic-ai-multi-modal","description":"Example
-            project demonstrating how to use multimodal LLMs as a tool for PydanticAI applications","html_url":"https://github.com/stephenc222/example-pydantic-ai-multi-modal","language":"Python","stargazers_count":16,"forks_count":3,"open_issues_count":0,"updated_at":"2025-04-12T07:59:49Z","created_at":"2024-12-15T21:00:20Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":969265592,"name":"article-generator-with-pydantic-ai","full_name":"smkalami/article-generator-with-pydantic-ai","description":"A
-            Python tool that uses AI to generate well-structured technical and educational articles from any topic. Features
-            transparent reasoning, customizable word counts, and professional Markdown formatting. Perfect for quickly creating
-            high-quality content for tutorials, guides, and educational materials with consistent structure and organization.","html_url":"https://github.com/smkalami/article-generator-with-pydantic-ai","language":"Python","stargazers_count":14,"forks_count":3,"open_issues_count":0,"updated_at":"2025-08-27T15:51:55Z","created_at":"2025-04-19T19:00:07Z","topics":["ai","content","content-generation","llm","pydantic-ai","writing"],"private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":633641528,"name":"pydantic-chatcompletion","full_name":"jiggy-ai/pydantic-chatcompletion","description":"Wraps
-            openai.ChatCompletion to produce pydantic model output via schema prompt and error feedback.","html_url":"https://github.com/jiggy-ai/pydantic-chatcompletion","language":"Python","stargazers_count":54,"forks_count":3,"open_issues_count":1,"updated_at":"2025-07-05T02:24:49Z","created_at":"2023-04-28T00:49:27Z","private":false,"fork":false,"archived":false,"default_branch":"master"},{"id":1023754372,"name":"with-pydantic-ai","full_name":"CopilotKit/with-pydantic-ai","html_url":"https://github.com/CopilotKit/with-pydantic-ai","language":"TypeScript","stargazers_count":5,"forks_count":3,"open_issues_count":0,"updated_at":"2025-10-09T23:34:43Z","created_at":"2025-07-21T16:34:35Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":1040842163,"name":"pydantic-ai-gateway","full_name":"pydantic/pydantic-ai-gateway","html_url":"https://github.com/pydantic/pydantic-ai-gateway","language":"TypeScript","stargazers_count":52,"forks_count":1,"open_issues_count":7,"updated_at":"2025-10-13T12:46:47Z","created_at":"2025-08-19T15:29:12Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":935708208,"name":"Permit-PydanticAI","full_name":"permitio/Permit-PydanticAI","description":"A
-            demonstration of implementing secure AI agents using PydanticAI and Permit.io''s fine-grained authorization framework.
-            ","html_url":"https://github.com/permitio/Permit-PydanticAI","language":"Python","stargazers_count":6,"forks_count":2,"open_issues_count":2,"updated_at":"2025-09-17T16:41:20Z","created_at":"2025-02-19T22:15:22Z","topics":["example"],"private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":916658589,"name":"pydanticAI-Multi-Agent-System","full_name":"achimstruve/pydanticAI-Multi-Agent-System","description":"A
-            minimalistic application, where we use pydantic AI agents in multi-agent delegation structure that depends on
-            the agents decisions. ","html_url":"https://github.com/achimstruve/pydanticAI-Multi-Agent-System","language":"Python","stargazers_count":7,"forks_count":2,"open_issues_count":0,"updated_at":"2025-05-18T00:45:48Z","created_at":"2025-01-14T14:28:11Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":960286039,"name":"pydantic-ai-mcp-agent","full_name":"TechNavii/pydantic-ai-mcp-agent","description":"Chat
-            application with Pydantic AI MCP tool integration","html_url":"https://github.com/TechNavii/pydantic-ai-mcp-agent","language":"Python","stargazers_count":5,"forks_count":3,"open_issues_count":2,"updated_at":"2025-07-02T05:19:21Z","created_at":"2025-04-04T07:07:06Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":922767030,"name":"PydanticAIAgent","full_name":"DhunganaKB/PydanticAIAgent","html_url":"https://github.com/DhunganaKB/PydanticAIAgent","language":"Jupyter
-            Notebook","stargazers_count":4,"forks_count":2,"open_issues_count":0,"updated_at":"2025-08-17T00:45:50Z","created_at":"2025-01-27T02:48:36Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":1010654032,"name":"PydanticAI-A2A-Poc","full_name":"Coding-Crashkurse/PydanticAI-A2A-Poc","html_url":"https://github.com/Coding-Crashkurse/PydanticAI-A2A-Poc","language":"Python","stargazers_count":5,"forks_count":2,"open_issues_count":0,"updated_at":"2025-09-02T00:48:51Z","created_at":"2025-06-29T14:33:18Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":485369551,"name":"pydantic_aiohttp","full_name":"pylakey/pydantic_aiohttp","description":"This
-            repository provides simple HTTP Client based on aiohttp with integration of pydantic","html_url":"https://github.com/pylakey/pydantic_aiohttp","language":"Python","stargazers_count":5,"forks_count":2,"open_issues_count":5,"updated_at":"2024-12-30T22:26:54Z","created_at":"2022-04-25T12:49:29Z","topics":["aiohttp","asyncio","pydantic","python"],"private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":913054216,"name":"mcpx-pydantic-ai","full_name":"dylibso/mcpx-pydantic-ai","html_url":"https://github.com/dylibso/mcpx-pydantic-ai","language":"Python","stargazers_count":5,"forks_count":2,"open_issues_count":0,"updated_at":"2025-06-05T00:39:17Z","created_at":"2025-01-07T00:04:04Z","private":false,"fork":false,"archived":false,"default_branch":"main"}]}'
+        - text: |
+            Pydantic AI is a Python agent framework designed to simplify the development of production-grade applications using Generative AI . The repository contains this framework, which emphasizes an ergonomic developer experience and type-safety, similar to Pydantic and FastAPI .
+
+            ## Core Functionality
+
+            The `pydantic-ai` repository provides a comprehensive set of tools and abstractions for building AI agents . Its core components include:
+
+            *   **Type-safe agents**: Agents are defined using `Agent[Deps, Output]` for compile-time validation .
+            *   **Model-agnostic design**: It supports over 15 LLM providers through a unified `Model` interface .
+            *   **Structured outputs**: Automatic Pydantic validation and self-correction ensure structured outputs .
+            *   **Observability**: Integration with OpenTelemetry and Logfire provides comprehensive observability .
+            *   **Production-ready tooling**: This includes an evaluation framework, durable execution, and protocol integrations .
+
+            ## Repository Structure
+
+            The `pydantic-ai` repository is organized as a UV workspace monorepo, containing several packages :
+
+            *   `pydantic-ai-slim`: This is the core framework, containing modules for `Agent`, `Model`, and tools .
+            *   `pydantic-graph`: Provides the graph execution engine .
+            *   `pydantic-evals`: Offers an evaluation framework for datasets and evaluators .
+            *   `examples`: Contains example applications .
+            *   `clai`: A CLI interface for the framework .
+            *   `pydantic-ai`: A meta-package that includes all optional extras .
+
+            ## Agent Execution
+
+            The `Agent` class is the primary interface for orchestrating AI tasks . It coordinates the model abstraction, message protocol, tool system, and graph execution . Agent execution uses a graph-based state machine from `pydantic_graph.Graph` . The execution flow involves three core node types :
+
+            *   `UserPromptNode`: Processes user input and creates initial `ModelRequest` .
+            *   `ModelRequestNode`: Calls `model.request()` or `model.request_stream()` and handles retries .
+            *   `CallToolsNode`: Executes tool functions via `RunContext[Deps]` .
+
+            The `Agent` class provides methods like `run()`, `run_sync()`, and `run_stream()` for different execution needs .
+
+            ## Key Features
+
+            ### Model Provider Support
+            Pydantic AI offers a unified `Model` abstract base class for various LLM providers, including OpenAI, Anthropic, Google, and more . All models implement `request(messages)` and `request_stream(messages)` methods .
+
+            ### Tool System
+            The framework includes a tool system for registering and executing functions via decorators like `@agent.tool` . It automatically generates JSON schemas from function signatures and docstrings, validates tool call arguments, and injects `RunContext[Deps]` for dependencies .
+
+            ### Observability
+            Pydantic AI integrates with OpenTelemetry, providing instrumentation for agent runs, model requests, and tool executions . It also has native integration with Pydantic Logfire for real-time debugging and performance monitoring .
+
+            ### Evaluation Framework
+            The `pydantic-evals` package provides a framework for systematically testing and evaluating agent performance . It supports datasets with `Case` objects, various evaluators, and generates `EvaluationReport` with aggregated metrics .
+
+            ## Integrations
+            Pydantic AI supports various integrations for development and production, including :
+            *   **Model Context Protocol (MCP)**: For external tool server access .
+            *   **AG-UI Protocol**: For interactive application frontends .
+            *   **Agent2Agent (A2A)**: For multi-agent communication .
+            *   **Temporal**: For durable workflow execution .
+            *   **DBOS**: For database-backed execution .
+
+            Notes:
+            The `pydantic-ai-slim` package  is a core version of the framework, allowing users to install only necessary dependencies for specific models or features . The `pydantic-ai` package  is a meta-package that includes all optional extras .
+
+            Wiki pages you might want to explore:
+            - [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)
+
+            View this search on DeepWiki: https://deepwiki.com/search/what-is-pydanticai-and-what-do_2dc46d92-288e-470b-b52e-24bb13f839c7
           type: text
         is_error: false
-        tool_use_id: mcptoolu_01AmgVfcYg7HkjXerTSn1F93
+        tool_use_id: mcptoolu_01SAss3KEwASziHZoMR6HcZU
         type: mcp_tool_result
-      - text: "**Pydantic AI** is a GenAI Agent Framework by the Pydantic team. It's a Python library for building AI agents
-          using the familiar Pydantic approach with type safety and validation.\n\nKey details:\n- **12.9K stars** on GitHub
-          \n- Created in June 2024, actively maintained\n- Focuses on **agent frameworks, GenAI, and LLM integration**\n-
-          Built by the creators of Pydantic for type-safe AI agent development\n- Has spawned numerous tutorials and example
-          projects in the community\n\nThe framework emphasizes the \"Pydantic way\" of building AI agents with structured
-          data validation and type hints."
+      - text: |-
+          **Pydantic AI** is a Python agent framework for building production-grade applications with Generative AI. It provides:
+
+          - **Type-safe agents** with compile-time validation using `Agent[Deps, Output]`
+          - **Model-agnostic design** supporting 15+ LLM providers (OpenAI, Anthropic, Google, etc.)
+          - **Structured outputs** with automatic Pydantic validation and self-correction
+          - **Built-in observability** via OpenTelemetry and Logfire integration
+          - **Production tooling** including evaluation framework, durable execution, and tool system
+
+          The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (core framework), `pydantic-graph` (execution engine), and `pydantic-evals` (evaluation tools). It emphasizes developer ergonomics and type safety, similar to Pydantic and FastAPI.
         type: text
-      id: msg_018AXFcpDGpwqaT6LrN7cZVF
+      id: msg_01MYDjkvBDRaKsY6PDwQz3n6
       model: claude-sonnet-4-20250514
       role: assistant
       stop_reason: end_turn
@@ -115,10 +148,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 6529
-        output_tokens: 269
+        input_tokens: 2674
+        output_tokens: 373
         server_tool_use:
-          web_fetch_requests: 0
           web_search_requests: 0
         service_tier: standard
     status:
@@ -133,7 +165,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '18316'
+      - '6733'
       content-type:
       - application/json
       host:
@@ -142,77 +174,110 @@ interactions:
     parsed_body:
       max_tokens: 4096
       mcp_servers:
-      - authorization_token: <redacted>
-        name: test-server
-        tool_configuration:
-          allowed_tools:
-          - search_repositories
-          enabled: true
+      - name: deepwiki
         type: url
-        url: https://api.githubcopilot.com/mcp/
+        url: https://mcp.deepwiki.com/mcp
       messages:
       - content:
-        - text: Can you tell me more about pydantic-ai repo? Keep your answer short
+        - text: Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short
           type: text
         role: user
       - content:
-        - signature: EvECCkYICBgCKkCeuCUVeVlbOhA+gHNZZaHFOixlAHnq2exLDYxPuBbJXDgZ62IURpi4CC0YZ4f4nlrBm8jxa/K3FLQC3jIaQSsSEgy63wA3a52a9RyMdYYaDMw8qf3i8C22GDqdRiIwtYWltueQx95iIdHf/eIZ7Dm28zBHJU0o+07IEcf53+K046o3qjO14WjzZwkMgeJXKtgBV08pozWl5NIRRT/yvkq7du+dTSJbQ4XUsSPsjqOrclIvYcJvze/XswFlG0P9XdE8l60ABX7/iHxWOtbQxqCBN6fahkyd7QfEu51vlHjdrxkWwvqKbh3ZEKpZ/IlSHVt9bkYAFVaCg5tWua/8ytCW+m4FMqmROl34z/VjWN27HKHTYdiN0S75QWnaFny2j9cx9yqP0hqjDVn0MHIumxrnkkn59dTxLn0I8nS6t2jDOuCX6GZSomkVfpgEHEKfdt6UacvBLuLleSf1JT8ATMeUGZVZ9KOG6aOYGAE=
-          thinking: The user is asking about the "pydantic-ai" repository. I need to search for this specific repository using
-            the search function. I'll search for "pydantic-ai" to find information about this repository.
+        - signature: EqUDCkYICBgCKkCTiLjx5Rzw9zXo4pFDhFAc9Ci1R+d2fpkiqw7IPt1PgxBankr7bhRfh2iQOFEUy7sYVtsBxvnHW8zfBRxH1j6lEgySvdOyObrcFdJX3qkaDMAMCdLHIevZ/mSx/SIwi917U34N5jLQH1yMoCx/k72klLG5v42vcwUTG4ngKDI69Ddaf0eeDpgg3tL5FHfvKowCnslWg3Pd3ITe+TLlzu+OVZhRKU9SEwDJbjV7ZF954Ls6XExAfjdXhrhvXDB+hz6fZFPGFEfXV7jwElFT5HcGPWy84xvlwzbklZ2zH3XViik0B5dMErMAKs6IVwqXo3s+0p9xtX5gCBuvLkalET2upNsmdKGJv7WQWoaLch5N07uvSgWkO8AkGuVtBgqZH+uRGlPfYlnAgifNHu00GSAVK3beeyZfpnSQ6LQKcH+wVmrOi/3UvzA5f1LvsXG32gQKUCxztATnlBaI+7GMs1IAloaRHBndyRoe8Lwv79zZe9u9gnF9WCgK3yQsAR5hGZXlBKiIWfnRrXQ7QmA2hVO+mhEOCnz7OQkMIEUlfxgB
+          thinking: The user is asking about the pydantic/pydantic-ai repository and wants me to keep the answer short. I
+            should use the deepwiki tools to get information about this repository. Let me start by asking a general question
+            about what this repository is about.
           type: thinking
-        - id: mcptoolu_01AmgVfcYg7HkjXerTSn1F93
+        - id: mcptoolu_01SAss3KEwASziHZoMR6HcZU
           input:
-            query: pydantic-ai in:name
-          name: mcp_server
-          server_name: mcp_call
+            question: What is pydantic-ai and what does this repository do?
+            repoName: pydantic/pydantic-ai
+          name: ask_question
+          server_name: deepwiki
           type: mcp_tool_use
         - content:
           - citations: null
-            text: '{"total_count":461,"incomplete_results":false,"items":[{"id":818331198,"name":"pydantic-ai","full_name":"pydantic/pydantic-ai","description":"GenAI
-              Agent Framework, the Pydantic way","html_url":"https://github.com/pydantic/pydantic-ai","language":"Python","stargazers_count":12891,"forks_count":1298,"open_issues_count":323,"updated_at":"2025-10-13T17:06:15Z","created_at":"2024-06-21T15:55:04Z","topics":["agent-framework","genai","llm","pydantic","python"],"private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":898853046,"name":"pydantic-ai-tutorial","full_name":"daveebbelaar/pydantic-ai-tutorial","description":"Learn
-              how to build AI agents with PydanticAI","html_url":"https://github.com/daveebbelaar/pydantic-ai-tutorial","language":"Python","stargazers_count":120,"forks_count":55,"open_issues_count":1,"updated_at":"2025-09-30T22:41:44Z","created_at":"2024-12-05T06:50:32Z","topics":["agents","ai","python"],"private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":1023752870,"name":"PydanticAI-Research-Agent","full_name":"coleam00/PydanticAI-Research-Agent","description":"Pydantic
-              AI Research Agent Built with the PRP Framework Template","html_url":"https://github.com/coleam00/PydanticAI-Research-Agent","language":"Python","stargazers_count":55,"forks_count":21,"open_issues_count":1,"updated_at":"2025-10-03T16:48:50Z","created_at":"2025-07-21T16:31:48Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":301101135,"name":"aiohttp-pydantic","full_name":"Maillol/aiohttp-pydantic","description":"Aiohttp
-              View that validates request body and query sting regarding the annotations declared in the View method","html_url":"https://github.com/Maillol/aiohttp-pydantic","language":"Python","stargazers_count":69,"forks_count":20,"open_issues_count":5,"updated_at":"2025-09-08T02:36:02Z","created_at":"2020-10-04T10:32:00Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":910865205,"name":"pydantic-ai-agents-tutorial","full_name":"abdallah-ali-abdallah/pydantic-ai-agents-tutorial","description":"Learn
-              Pydantic AI agents, step by step, using local models and ollama","html_url":"https://github.com/abdallah-ali-abdallah/pydantic-ai-agents-tutorial","language":"Python","stargazers_count":130,"forks_count":17,"open_issues_count":0,"updated_at":"2025-10-01T15:52:57Z","created_at":"2025-01-01T17:07:23Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":724276928,"name":"AI-Tools-Pydantic-Instructor","full_name":"hassancs91/AI-Tools-Pydantic-Instructor","html_url":"https://github.com/hassancs91/AI-Tools-Pydantic-Instructor","language":"Python","stargazers_count":25,"forks_count":36,"open_issues_count":0,"updated_at":"2025-03-17T10:58:09Z","created_at":"2023-11-27T18:53:46Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":923007479,"name":"pydantic-ai-github-agent","full_name":"coleam00/pydantic-ai-github-agent","description":"The
-              agent I built for my AI Agents series on YouTube - breaking down my entire process of building AI agents from
-              idea to production!","html_url":"https://github.com/coleam00/pydantic-ai-github-agent","language":"Python","stargazers_count":53,"forks_count":20,"open_issues_count":0,"updated_at":"2025-10-08T05:58:32Z","created_at":"2025-01-27T13:40:26Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":988864035,"name":"pydantic-ai-scaffolding","full_name":"madviking/pydantic-ai-scaffolding","description":"PydanticAI
-              helper which includes cost tracking. Also serves as a test benchmark for LLM dev tools in context of a slightly
-              bigger project.","html_url":"https://github.com/madviking/pydantic-ai-scaffolding","language":"Python","stargazers_count":37,"forks_count":9,"open_issues_count":0,"updated_at":"2025-10-09T05:10:05Z","created_at":"2025-05-23T07:33:23Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":906424940,"name":"building-effective-agents-with-pydantic-ai","full_name":"intellectronica/building-effective-agents-with-pydantic-ai","description":"Code
-              examples for Building Effective Agents ported and adapted to use Pydantic AI","html_url":"https://github.com/intellectronica/building-effective-agents-with-pydantic-ai","language":"Jupyter
-              Notebook","stargazers_count":90,"forks_count":9,"open_issues_count":0,"updated_at":"2025-10-04T02:03:23Z","created_at":"2024-12-20T22:06:59Z","topics":["agents","ai","llm","pydantic-ai"],"private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":943545622,"name":"Pydantic-AI-Pinescript-Expert","full_name":"FaustoS88/Pydantic-AI-Pinescript-Expert","description":"PineScript
-              Expert: A Retrieval-Augmented Generation (RAG) agent using Pydantic AI that provides accurate Pine Script v6
-              guidance. It answers questions, offers code examples, and generates custom indicators/strategies for TradingView.
-              Combines vector search with LLM capabilities for precise Pine Script programming assistance.","html_url":"https://github.com/FaustoS88/Pydantic-AI-Pinescript-Expert","language":"Python","stargazers_count":22,"forks_count":10,"open_issues_count":0,"updated_at":"2025-10-12T14:52:38Z","created_at":"2025-03-05T22:04:19Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":907442634,"name":"pydantic-airflow-agent","full_name":"vojay-dev/pydantic-airflow-agent","html_url":"https://github.com/vojay-dev/pydantic-airflow-agent","language":"Python","stargazers_count":15,"forks_count":9,"open_issues_count":0,"updated_at":"2025-04-12T11:40:54Z","created_at":"2024-12-23T15:36:16Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":906326792,"name":"PydanticAi-MultiModal","full_name":"rawheel/PydanticAi-MultiModal","description":"An
-              example to use MultiModal capabilities with Pydantic-AI to process and analyze images","html_url":"https://github.com/rawheel/PydanticAi-MultiModal","language":"Python","stargazers_count":34,"forks_count":4,"open_issues_count":0,"updated_at":"2025-09-19T20:52:26Z","created_at":"2024-12-20T16:43:34Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":908107111,"name":"PydanticAITest","full_name":"NanGePlus/PydanticAITest","description":"PydanticAI开源框架，搭建基于PostgreSQL、MySQL的Text2SQL应用进行SQL语句生成，支持GPT大模型、国产大模型、开源本地大模型","html_url":"https://github.com/NanGePlus/PydanticAITest","language":"Python","stargazers_count":12,"forks_count":4,"open_issues_count":0,"updated_at":"2025-02-20T09:36:40Z","created_at":"2024-12-25T06:36:08Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":917327273,"name":"PydanticAI","full_name":"mumunha/PydanticAI","html_url":"https://github.com/mumunha/PydanticAI","language":"Python","stargazers_count":7,"forks_count":4,"open_issues_count":0,"updated_at":"2025-06-26T23:31:34Z","created_at":"2025-01-15T19:20:21Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":915174053,"name":"pydantic-ai-RAG","full_name":"skolo-online/pydantic-ai-RAG","description":"Create
-              a RAG AI Agent with PydanticAI and OpenAI","html_url":"https://github.com/skolo-online/pydantic-ai-RAG","stargazers_count":14,"forks_count":5,"open_issues_count":0,"updated_at":"2025-05-04T09:30:51Z","created_at":"2025-01-11T06:44:27Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":934547575,"name":"pydantic-ai-deepagent","full_name":"ai-zerolab/pydantic-ai-deepagent","description":"Reasoning
-              model integration for pydantic-ai''s agent","html_url":"https://github.com/ai-zerolab/pydantic-ai-deepagent","language":"Python","stargazers_count":14,"forks_count":4,"open_issues_count":0,"updated_at":"2025-10-07T08:44:00Z","created_at":"2025-02-18T02:39:38Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":1052844101,"name":"pydantic-ai-chat","full_name":"pydantic/pydantic-ai-chat","html_url":"https://github.com/pydantic/pydantic-ai-chat","language":"TypeScript","stargazers_count":16,"forks_count":3,"open_issues_count":0,"updated_at":"2025-10-08T15:17:58Z","created_at":"2025-09-08T16:16:54Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":1039408955,"name":"pydantic-ai-tutorial","full_name":"twtrubiks/pydantic-ai-tutorial","description":"pydantic-ai
-              介紹教學","html_url":"https://github.com/twtrubiks/pydantic-ai-tutorial","language":"Python","stargazers_count":12,"forks_count":3,"open_issues_count":0,"updated_at":"2025-09-19T07:39:52Z","created_at":"2025-08-17T06:48:34Z","topics":["agent","ai","llm","pydantic","python"],"private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":903901199,"name":"example-pydantic-ai-multi-modal","full_name":"stephenc222/example-pydantic-ai-multi-modal","description":"Example
-              project demonstrating how to use multimodal LLMs as a tool for PydanticAI applications","html_url":"https://github.com/stephenc222/example-pydantic-ai-multi-modal","language":"Python","stargazers_count":16,"forks_count":3,"open_issues_count":0,"updated_at":"2025-04-12T07:59:49Z","created_at":"2024-12-15T21:00:20Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":969265592,"name":"article-generator-with-pydantic-ai","full_name":"smkalami/article-generator-with-pydantic-ai","description":"A
-              Python tool that uses AI to generate well-structured technical and educational articles from any topic. Features
-              transparent reasoning, customizable word counts, and professional Markdown formatting. Perfect for quickly creating
-              high-quality content for tutorials, guides, and educational materials with consistent structure and organization.","html_url":"https://github.com/smkalami/article-generator-with-pydantic-ai","language":"Python","stargazers_count":14,"forks_count":3,"open_issues_count":0,"updated_at":"2025-08-27T15:51:55Z","created_at":"2025-04-19T19:00:07Z","topics":["ai","content","content-generation","llm","pydantic-ai","writing"],"private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":633641528,"name":"pydantic-chatcompletion","full_name":"jiggy-ai/pydantic-chatcompletion","description":"Wraps
-              openai.ChatCompletion to produce pydantic model output via schema prompt and error feedback.","html_url":"https://github.com/jiggy-ai/pydantic-chatcompletion","language":"Python","stargazers_count":54,"forks_count":3,"open_issues_count":1,"updated_at":"2025-07-05T02:24:49Z","created_at":"2023-04-28T00:49:27Z","private":false,"fork":false,"archived":false,"default_branch":"master"},{"id":1023754372,"name":"with-pydantic-ai","full_name":"CopilotKit/with-pydantic-ai","html_url":"https://github.com/CopilotKit/with-pydantic-ai","language":"TypeScript","stargazers_count":5,"forks_count":3,"open_issues_count":0,"updated_at":"2025-10-09T23:34:43Z","created_at":"2025-07-21T16:34:35Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":1040842163,"name":"pydantic-ai-gateway","full_name":"pydantic/pydantic-ai-gateway","html_url":"https://github.com/pydantic/pydantic-ai-gateway","language":"TypeScript","stargazers_count":52,"forks_count":1,"open_issues_count":7,"updated_at":"2025-10-13T12:46:47Z","created_at":"2025-08-19T15:29:12Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":935708208,"name":"Permit-PydanticAI","full_name":"permitio/Permit-PydanticAI","description":"A
-              demonstration of implementing secure AI agents using PydanticAI and Permit.io''s fine-grained authorization
-              framework. ","html_url":"https://github.com/permitio/Permit-PydanticAI","language":"Python","stargazers_count":6,"forks_count":2,"open_issues_count":2,"updated_at":"2025-09-17T16:41:20Z","created_at":"2025-02-19T22:15:22Z","topics":["example"],"private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":916658589,"name":"pydanticAI-Multi-Agent-System","full_name":"achimstruve/pydanticAI-Multi-Agent-System","description":"A
-              minimalistic application, where we use pydantic AI agents in multi-agent delegation structure that depends on
-              the agents decisions. ","html_url":"https://github.com/achimstruve/pydanticAI-Multi-Agent-System","language":"Python","stargazers_count":7,"forks_count":2,"open_issues_count":0,"updated_at":"2025-05-18T00:45:48Z","created_at":"2025-01-14T14:28:11Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":960286039,"name":"pydantic-ai-mcp-agent","full_name":"TechNavii/pydantic-ai-mcp-agent","description":"Chat
-              application with Pydantic AI MCP tool integration","html_url":"https://github.com/TechNavii/pydantic-ai-mcp-agent","language":"Python","stargazers_count":5,"forks_count":3,"open_issues_count":2,"updated_at":"2025-07-02T05:19:21Z","created_at":"2025-04-04T07:07:06Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":922767030,"name":"PydanticAIAgent","full_name":"DhunganaKB/PydanticAIAgent","html_url":"https://github.com/DhunganaKB/PydanticAIAgent","language":"Jupyter
-              Notebook","stargazers_count":4,"forks_count":2,"open_issues_count":0,"updated_at":"2025-08-17T00:45:50Z","created_at":"2025-01-27T02:48:36Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":1010654032,"name":"PydanticAI-A2A-Poc","full_name":"Coding-Crashkurse/PydanticAI-A2A-Poc","html_url":"https://github.com/Coding-Crashkurse/PydanticAI-A2A-Poc","language":"Python","stargazers_count":5,"forks_count":2,"open_issues_count":0,"updated_at":"2025-09-02T00:48:51Z","created_at":"2025-06-29T14:33:18Z","private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":485369551,"name":"pydantic_aiohttp","full_name":"pylakey/pydantic_aiohttp","description":"This
-              repository provides simple HTTP Client based on aiohttp with integration of pydantic","html_url":"https://github.com/pylakey/pydantic_aiohttp","language":"Python","stargazers_count":5,"forks_count":2,"open_issues_count":5,"updated_at":"2024-12-30T22:26:54Z","created_at":"2022-04-25T12:49:29Z","topics":["aiohttp","asyncio","pydantic","python"],"private":false,"fork":false,"archived":false,"default_branch":"main"},{"id":913054216,"name":"mcpx-pydantic-ai","full_name":"dylibso/mcpx-pydantic-ai","html_url":"https://github.com/dylibso/mcpx-pydantic-ai","language":"Python","stargazers_count":5,"forks_count":2,"open_issues_count":0,"updated_at":"2025-06-05T00:39:17Z","created_at":"2025-01-07T00:04:04Z","private":false,"fork":false,"archived":false,"default_branch":"main"}]}'
+            text: |
+              Pydantic AI is a Python agent framework designed to simplify the development of production-grade applications using Generative AI . The repository contains this framework, which emphasizes an ergonomic developer experience and type-safety, similar to Pydantic and FastAPI .
+
+              ## Core Functionality
+
+              The `pydantic-ai` repository provides a comprehensive set of tools and abstractions for building AI agents . Its core components include:
+
+              *   **Type-safe agents**: Agents are defined using `Agent[Deps, Output]` for compile-time validation .
+              *   **Model-agnostic design**: It supports over 15 LLM providers through a unified `Model` interface .
+              *   **Structured outputs**: Automatic Pydantic validation and self-correction ensure structured outputs .
+              *   **Observability**: Integration with OpenTelemetry and Logfire provides comprehensive observability .
+              *   **Production-ready tooling**: This includes an evaluation framework, durable execution, and protocol integrations .
+
+              ## Repository Structure
+
+              The `pydantic-ai` repository is organized as a UV workspace monorepo, containing several packages :
+
+              *   `pydantic-ai-slim`: This is the core framework, containing modules for `Agent`, `Model`, and tools .
+              *   `pydantic-graph`: Provides the graph execution engine .
+              *   `pydantic-evals`: Offers an evaluation framework for datasets and evaluators .
+              *   `examples`: Contains example applications .
+              *   `clai`: A CLI interface for the framework .
+              *   `pydantic-ai`: A meta-package that includes all optional extras .
+
+              ## Agent Execution
+
+              The `Agent` class is the primary interface for orchestrating AI tasks . It coordinates the model abstraction, message protocol, tool system, and graph execution . Agent execution uses a graph-based state machine from `pydantic_graph.Graph` . The execution flow involves three core node types :
+
+              *   `UserPromptNode`: Processes user input and creates initial `ModelRequest` .
+              *   `ModelRequestNode`: Calls `model.request()` or `model.request_stream()` and handles retries .
+              *   `CallToolsNode`: Executes tool functions via `RunContext[Deps]` .
+
+              The `Agent` class provides methods like `run()`, `run_sync()`, and `run_stream()` for different execution needs .
+
+              ## Key Features
+
+              ### Model Provider Support
+              Pydantic AI offers a unified `Model` abstract base class for various LLM providers, including OpenAI, Anthropic, Google, and more . All models implement `request(messages)` and `request_stream(messages)` methods .
+
+              ### Tool System
+              The framework includes a tool system for registering and executing functions via decorators like `@agent.tool` . It automatically generates JSON schemas from function signatures and docstrings, validates tool call arguments, and injects `RunContext[Deps]` for dependencies .
+
+              ### Observability
+              Pydantic AI integrates with OpenTelemetry, providing instrumentation for agent runs, model requests, and tool executions . It also has native integration with Pydantic Logfire for real-time debugging and performance monitoring .
+
+              ### Evaluation Framework
+              The `pydantic-evals` package provides a framework for systematically testing and evaluating agent performance . It supports datasets with `Case` objects, various evaluators, and generates `EvaluationReport` with aggregated metrics .
+
+              ## Integrations
+              Pydantic AI supports various integrations for development and production, including :
+              *   **Model Context Protocol (MCP)**: For external tool server access .
+              *   **AG-UI Protocol**: For interactive application frontends .
+              *   **Agent2Agent (A2A)**: For multi-agent communication .
+              *   **Temporal**: For durable workflow execution .
+              *   **DBOS**: For database-backed execution .
+
+              Notes:
+              The `pydantic-ai-slim` package  is a core version of the framework, allowing users to install only necessary dependencies for specific models or features . The `pydantic-ai` package  is a meta-package that includes all optional extras .
+
+              Wiki pages you might want to explore:
+              - [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)
+
+              View this search on DeepWiki: https://deepwiki.com/search/what-is-pydanticai-and-what-do_2dc46d92-288e-470b-b52e-24bb13f839c7
             type: text
           is_error: false
-          tool_use_id: mcptoolu_01AmgVfcYg7HkjXerTSn1F93
+          tool_use_id: mcptoolu_01SAss3KEwASziHZoMR6HcZU
           type: mcp_tool_result
-        - text: "**Pydantic AI** is a GenAI Agent Framework by the Pydantic team. It's a Python library for building AI agents
-            using the familiar Pydantic approach with type safety and validation.\n\nKey details:\n- **12.9K stars** on GitHub
-            \n- Created in June 2024, actively maintained\n- Focuses on **agent frameworks, GenAI, and LLM integration**\n-
-            Built by the creators of Pydantic for type-safe AI agent development\n- Has spawned numerous tutorials and example
-            projects in the community\n\nThe framework emphasizes the \"Pydantic way\" of building AI agents with structured
-            data validation and type hints."
+        - text: |-
+            **Pydantic AI** is a Python agent framework for building production-grade applications with Generative AI. It provides:
+
+            - **Type-safe agents** with compile-time validation using `Agent[Deps, Output]`
+            - **Model-agnostic design** supporting 15+ LLM providers (OpenAI, Anthropic, Google, etc.)
+            - **Structured outputs** with automatic Pydantic validation and self-correction
+            - **Built-in observability** via OpenTelemetry and Logfire integration
+            - **Production tooling** including evaluation framework, durable execution, and tool system
+
+            The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (core framework), `pydantic-graph` (execution engine), and `pydantic-evals` (evaluation tools). It emphasizes developer ergonomics and type safety, similar to Pydantic and FastAPI.
           type: text
         role: assistant
       - content:
-        - text: What is the latest commit hash in that repo?
+        - text: How about the pydantic repo in the same org?
           type: text
         role: user
       model: claude-sonnet-4-0
@@ -226,7 +291,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2904'
+      - '6408'
       content-type:
       - application/json
       strict-transport-security:
@@ -235,25 +300,85 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - signature: ErwGCkYICBgCKkBFPz7OVbJns7V/POXg2UauSqh02bRB4r60s4UweheupiAWH8KSjCqvVrfReBKHqGUvseAaT5IgqlcljysVVAJ0Egy//mX/+/bhtWUoFWsaDBhMdJBa+ME+2vEykCIwvy/ImrjW7tp1p6XkIYHo+I6k98DpUQgFtsTh/G5gmnTN3mj3lPDXwRPG5p2DnjTxKqMF8OZDanFLTVhKgxmYnKxndTiO9W8Ku9lOepA7oo2oPSzR/K9jnxqbpKNQQd19Vq/H9Q95WJZwdm6bhOLjW07cxlTxXRqAxrAFoxKdVhuRkUrCJ6dx+7YHte1J4IIRbxqjwjiReAwG9y/VxySNNBeaNvuejOeedIwRw/lGmKxL3NrBAgvigGgq4CDzaR3jqW85EsXwmd+7WqdQGhHKoooVEOe4lMvGhofpHEBINx5XlGb3diVVRdlL+Sj8c39u33Risq+zF4bMui/qBBZ6FqAwit7mbmy+t1P024nd+4holQlaXYHB4LOcajehqogM0Yh8xnzbEKB9r8ezt2Mw4Hg9ObMJ7K3DbVabcrk0BH7FQN7XGOFS3eGRr3SMe8qgPWzWRCpLj/ms8jMewqYJKYQEUVSwm/cdPKYi70W61Hu+59e41BNXFczZA7v11ckKFqo4w0ZCr179SIN+PTj4YKe/sA/eNxzDc9sdA6MmEf2fZiq7IWcguuaYiiYxCcSPSoYSDCrf1cWXTh0J8Gbo+KE8cwKxDC63+u/CKITUfVu3sSaGxYFQFzLUNuhyml92sBL4FoYGB9YNFQdh6NO4DpdcW4M0lVUr4MFMmzUPISPe/GAGrhv6HqFLsFqsuQutt118hp/ZBsO5/9Ac80AzDpY4r1KOx5rQv2G5SfcGxXfAnyEA3DFMYp0LvrdeA7vHgtgOlk7LR1MWdcctJtE0zj61ldDJpWZcVbe61iJRLsd876/V+4nnFMwFAr3fubHs1+5SJWgSyzYjkQ/elDL8+AFGdXZI/s89zA0Q7JY9SzzYrI7Am/8YrprNg2Gam+XCCC0Cx1rupmIMgkjzSkyn+YyHmOyaQXvbO5PAG4bM5sGSU1io0S3NZrsxsm5ciMek1YLwEPfuGAE=
-        thinking: |-
-          The user is asking for the latest commit hash in the pydantic-ai repository. However, the search function I have access to only returns basic repository information like stars, forks, description, etc. It doesn't provide commit information or the latest commit hash.
-
-          Looking at the function schema, the search_repositories function returns minimal repository information by default, and even when minimal_output is set to false, it returns "full GitHub API repository objects" but based on the current results, I don't see commit hash information included.
-
-          I need to let the user know that I cannot retrieve commit hash information with the available tools.
+      - signature: EtECCkYICBgCKkAkKy+K3Z/q4dGwZGr1MdsH8HLaULElUSaa/Y8A1L/Jp7y1AfJd1zrTL7Zfa2KoPr0HqO/AI/cJJreheuwcn/dWEgw0bPLie900a4h9wS0aDACnsdbr+adzpUyExiIwyuNjV82BVkK/kU+sMyrfbhgb6ob/DUgudJPaK5zR6cINAAGQnIy3iOXTwu3OUfPAKrgBzF9HD5HjiPSJdsxlkI0RA5Yjiol05/hR3fUB6WWrs0aouxIzlriJ6NzmzvqctkFJdRgAL9Mh06iK1A61PLyBWRdo1f5TBziFP1c6z7iQQzH9DdcaHvG8yLoaadbyTxMvTn2PtfEcSPjuZcLgv7QcF+HZXbDVjsHJW78OK2ta0M6/xuU1p4yG3qgoss3b0G6fAyvUVgVbb1wknkE/9W9gd2k/ZSh4P7F6AcvLTXQScTyMfWRtAWQqABgB
+        thinking: The user is asking about the pydantic repo in the same org, so that would be pydantic/pydantic. I should
+          ask about what this repository does and provide a short answer.
         type: thinking
+      - id: mcptoolu_01A9RvAqDeoUnaMgQc6Nn75y
+        input:
+          question: What is Pydantic and what does this repository do?
+          repoName: pydantic/pydantic
+        name: ask_question
+        server_name: deepwiki
+        type: mcp_tool_use
+      - content:
+        - text: |
+            Pydantic is a Python library for data validation, parsing, and serialization using type hints  . This repository, `pydantic/pydantic`, contains the source code for the Pydantic library itself, including its core validation logic, documentation, and continuous integration/continuous deployment (CI/CD) pipelines  .
+
+            ## What is Pydantic
+
+            Pydantic is designed to ensure that data conforms to specified types and constraints at runtime . It leverages Python type hints to define data schemas and provides mechanisms for data conversion and validation . The library's core validation logic is implemented in Rust within a separate package called `pydantic-core`, which contributes to its performance .
+
+            Pydantic offers several user-facing APIs for validation:
+            *   `BaseModel`: Used for defining class-based models with fields, suitable for domain models, API schemas, and configuration .
+            *   `TypeAdapter`: Provides a flexible way to validate and serialize arbitrary Python types, including primitive types and dataclasses .
+            *   `@dataclass`: Enhances Python's built-in dataclasses with Pydantic's validation capabilities .
+            *   `@validate_call`: Used for validating function arguments and return values .
+
+            ## What this Repository Does
+
+            The `pydantic/pydantic` repository serves as the development hub for the Pydantic library. Its primary functions include:
+
+            ### Core Library Development
+            The repository contains the Python source code for the Pydantic library, including modules for `BaseModel` , `Field` definitions , configuration management , and type adapters . It also includes internal modules responsible for model construction and schema generation .
+
+            ### Documentation
+            The repository hosts the documentation for Pydantic, which is built using MkDocs . The documentation covers installation instructions , core concepts like models , fields, and JSON Schema generation . It also includes information on contributing to the project .
+
+            ### Continuous Integration and Deployment (CI/CD)
+            The repository utilizes GitHub Actions for its CI/CD pipeline . This pipeline includes:
+            *   **Linting**: Checks code quality and style .
+            *   **Testing**: Runs a comprehensive test suite across multiple operating systems and Python versions . This includes memory profiling tests, Mypy plugin tests, and type-checking integration tests   .
+            *   **Coverage**: Aggregates test coverage data and posts comments to pull requests .
+            *   **Release Process**: Automates publishing new versions to PyPI and sending release announcements .
+            *   **Third-Party Integration Testing**: Tests Pydantic's compatibility with other popular libraries like FastAPI, SQLModel, and Beanie .
+            *   **Dependency Management**: Uses `uv` for managing dependencies and includes workflows to check compatibility with various dependency versions  .
+            *   **Performance Benchmarking**: Utilizes CodSpeed to track and analyze performance .
+
+            ## Versioning and Compatibility
+            Pydantic maintains strict version compatibility between the pure Python package (`pydantic`) and its Rust-based validation core (`pydantic-core`)  . A `SystemError` is raised if there's a mismatch in `pydantic-core` versions, ensuring a stable environment . The `version_info()` function provides detailed version information for Pydantic and its dependencies .
+
+            Notes:
+            The `CITATION.cff` file also provides a concise description of Pydantic as "the most widely used data validation library for Python" . The `README.md` and `docs/index.md` files reiterate this, emphasizing its speed and extensibility  .
+
+            Wiki pages you might want to explore:
+            - [Overview (pydantic/pydantic)](/wiki/pydantic/pydantic#1)
+            - [Development and Deployment (pydantic/pydantic)](/wiki/pydantic/pydantic#7)
+
+            View this search on DeepWiki: https://deepwiki.com/search/what-is-pydantic-and-what-does_dab96efa-752a-4688-a630-3f4658084a88
+          type: text
+        is_error: false
+        tool_use_id: mcptoolu_01A9RvAqDeoUnaMgQc6Nn75y
+        type: mcp_tool_result
       - text: |-
-          I don't have access to commit information through the available search function. The repository search tool only provides basic metadata like stars, forks, description, and last updated date, but doesn't include commit hashes or detailed commit history.
+          **Pydantic** is Python's most widely used data validation library for parsing, validation, and serialization using type hints. The repository contains:
 
-          To get the latest commit hash, you would need to:
-          1. Visit the repository directly at https://github.com/pydantic/pydantic-ai
-          2. Use Git commands like `git log -1 --format="%H"` if you have the repo cloned
-          3. Use GitHub's API directly with endpoints that provide commit information
+          **Core Features:**
+          - **Data validation** with automatic type conversion and constraint checking
+          - **Multiple APIs**: `BaseModel` for class-based models, `TypeAdapter` for arbitrary types, `@dataclass` decorator, and `@validate_call` for functions
+          - **High performance** via Rust-based validation core (`pydantic-core`)
+          - **JSON Schema generation** and comprehensive serialization support
 
-          The repo was last updated on October 13, 2025 according to the search results, but I can't provide the specific commit hash.
+          **Repository Contents:**
+          - Python source code for the main Pydantic library
+          - Comprehensive documentation built with MkDocs
+          - Extensive CI/CD pipeline with testing across multiple Python versions and OS
+          - Integration testing with popular libraries (FastAPI, SQLModel, etc.)
+          - Performance benchmarking and dependency compatibility checks
+
+          Pydantic ensures runtime data integrity through type hints and is foundational to many Python frameworks, especially in web APIs and data processing applications.
         type: text
-      id: msg_012GhUvN5n6KVUZwxg9AarJd
+      id: msg_01DSGib8F7nNoYprfYSGp1sd
       model: claude-sonnet-4-20250514
       role: assistant
       stop_reason: end_turn
@@ -265,8 +390,10 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 5962
-        output_tokens: 296
+        input_tokens: 5262
+        output_tokens: 369
+        server_tool_use:
+          web_search_requests: 0
         service_tier: standard
     status:
       code: 200

@@ -3071,23 +3071,21 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
         m,
         builtin_tools=[
             MCPServerTool(
-                id='test-server',
-                url='https://api.githubcopilot.com/mcp/',
-                authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),
-                allowed_tools=['search_repositories'],
+                id='deepwiki',
+                url='https://mcp.deepwiki.com/mcp',
             )
         ],
         model_settings=settings,
     )
 
-    result = await agent.run('Can you tell me more about pydantic-ai repo? Keep your answer short')
+    result = await agent.run('Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short')
     messages = result.all_messages()
     assert messages == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Can you tell me more about pydantic-ai repo? Keep your answer short',
+                        content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -3095,16 +3093,22 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user is asking about the "pydantic-ai" repository. I need to search for this specific repository using the search function. I\'ll search for "pydantic-ai" to find information about this repository.',
-                        signature='EvECCkYICBgCKkCeuCUVeVlbOhA+gHNZZaHFOixlAHnq2exLDYxPuBbJXDgZ62IURpi4CC0YZ4f4nlrBm8jxa/K3FLQC3jIaQSsSEgy63wA3a52a9RyMdYYaDMw8qf3i8C22GDqdRiIwtYWltueQx95iIdHf/eIZ7Dm28zBHJU0o+07IEcf53+K046o3qjO14WjzZwkMgeJXKtgBV08pozWl5NIRRT/yvkq7du+dTSJbQ4XUsSPsjqOrclIvYcJvze/XswFlG0P9XdE8l60ABX7/iHxWOtbQxqCBN6fahkyd7QfEu51vlHjdrxkWwvqKbh3ZEKpZ/IlSHVt9bkYAFVaCg5tWua/8ytCW+m4FMqmROl34z/VjWN27HKHTYdiN0S75QWnaFny2j9cx9yqP0hqjDVn0MHIumxrnkkn59dTxLn0I8nS6t2jDOuCX6GZSomkVfpgEHEKfdt6UacvBLuLleSf1JT8ATMeUGZVZ9KOG6aOYGAE=',
+                        content='The user is asking about the pydantic/pydantic-ai repository and wants me to keep the answer short. I should use the deepwiki tools to get information about this repository. Let me start by asking a general question about what this repository is about.',
+                        signature='EqUDCkYICBgCKkCTiLjx5Rzw9zXo4pFDhFAc9Ci1R+d2fpkiqw7IPt1PgxBankr7bhRfh2iQOFEUy7sYVtsBxvnHW8zfBRxH1j6lEgySvdOyObrcFdJX3qkaDMAMCdLHIevZ/mSx/SIwi917U34N5jLQH1yMoCx/k72klLG5v42vcwUTG4ngKDI69Ddaf0eeDpgg3tL5FHfvKowCnslWg3Pd3ITe+TLlzu+OVZhRKU9SEwDJbjV7ZF954Ls6XExAfjdXhrhvXDB+hz6fZFPGFEfXV7jwElFT5HcGPWy84xvlwzbklZ2zH3XViik0B5dMErMAKs6IVwqXo3s+0p9xtX5gCBuvLkalET2upNsmdKGJv7WQWoaLch5N07uvSgWkO8AkGuVtBgqZH+uRGlPfYlnAgifNHu00GSAVK3beeyZfpnSQ6LQKcH+wVmrOi/3UvzA5f1LvsXG32gQKUCxztATnlBaI+7GMs1IAloaRHBndyRoe8Lwv79zZe9u9gnF9WCgK3yQsAR5hGZXlBKiIWfnRrXQ7QmA2hVO+mhEOCnz7OQkMIEUlfxgB',
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
                         tool_name='mcp_server:call_tool',
-                        args={'query': 'pydantic-ai in:name'},
-                        tool_call_id='mcptoolu_01AmgVfcYg7HkjXerTSn1F93',
+                        args={
+                            'server_id': 'deepwiki',
+                            'tool_name': 'ask_question',
+                            'tool_args': {
+                                'repoName': 'pydantic/pydantic-ai',
+                                'question': 'What is pydantic-ai and what does this repository do?',
+                            },
+                        },
+                        tool_call_id='mcptoolu_01SAss3KEwASziHZoMR6HcZU',
                         provider_name='anthropic',
-                        tool_call_metadata={'mcp_server_id': 'test-server', 'mcp_tool_name': 'search_repositories'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:call_tool',
@@ -3118,53 +3122,52 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                             ],
                             'is_error': False,
                         },
-                        tool_call_id='mcptoolu_01AmgVfcYg7HkjXerTSn1F93',
+                        tool_call_id='mcptoolu_01SAss3KEwASziHZoMR6HcZU',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
                     TextPart(
                         content="""\
-**Pydantic AI** is a GenAI Agent Framework by the Pydantic team. It's a Python library for building AI agents using the familiar Pydantic approach with type safety and validation.
+**Pydantic AI** is a Python agent framework for building production-grade applications with Generative AI. It provides:
 
-Key details:
-- **12.9K stars** on GitHub \n\
-- Created in June 2024, actively maintained
-- Focuses on **agent frameworks, GenAI, and LLM integration**
-- Built by the creators of Pydantic for type-safe AI agent development
-- Has spawned numerous tutorials and example projects in the community
+- **Type-safe agents** with compile-time validation using `Agent[Deps, Output]`
+- **Model-agnostic design** supporting 15+ LLM providers (OpenAI, Anthropic, Google, etc.)
+- **Structured outputs** with automatic Pydantic validation and self-correction
+- **Built-in observability** via OpenTelemetry and Logfire integration
+- **Production tooling** including evaluation framework, durable execution, and tool system
 
-The framework emphasizes the "Pydantic way" of building AI agents with structured data validation and type hints.\
+The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (core framework), `pydantic-graph` (execution engine), and `pydantic-evals` (evaluation tools). It emphasizes developer ergonomics and type safety, similar to Pydantic and FastAPI.\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=6529,
-                    output_tokens=269,
+                    input_tokens=2674,
+                    output_tokens=373,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 6529,
-                        'output_tokens': 269,
+                        'input_tokens': 2674,
+                        'output_tokens': 373,
                     },
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_018AXFcpDGpwqaT6LrN7cZVF',
+                provider_response_id='msg_01MYDjkvBDRaKsY6PDwQz3n6',
                 finish_reason='stop',
             ),
         ]
     )
 
-    result = await agent.run('What is the latest commit hash in that repo?', message_history=messages)
-    messages = result.all_messages()
+    result = await agent.run('How about the pydantic repo in the same org?', message_history=messages)
+    messages = result.new_messages()
     assert messages == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Can you tell me more about pydantic-ai repo? Keep your answer short',
+                        content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -3172,16 +3175,22 @@ The framework emphasizes the "Pydantic way" of building AI agents with structure
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user is asking about the "pydantic-ai" repository. I need to search for this specific repository using the search function. I\'ll search for "pydantic-ai" to find information about this repository.',
-                        signature='EvECCkYICBgCKkCeuCUVeVlbOhA+gHNZZaHFOixlAHnq2exLDYxPuBbJXDgZ62IURpi4CC0YZ4f4nlrBm8jxa/K3FLQC3jIaQSsSEgy63wA3a52a9RyMdYYaDMw8qf3i8C22GDqdRiIwtYWltueQx95iIdHf/eIZ7Dm28zBHJU0o+07IEcf53+K046o3qjO14WjzZwkMgeJXKtgBV08pozWl5NIRRT/yvkq7du+dTSJbQ4XUsSPsjqOrclIvYcJvze/XswFlG0P9XdE8l60ABX7/iHxWOtbQxqCBN6fahkyd7QfEu51vlHjdrxkWwvqKbh3ZEKpZ/IlSHVt9bkYAFVaCg5tWua/8ytCW+m4FMqmROl34z/VjWN27HKHTYdiN0S75QWnaFny2j9cx9yqP0hqjDVn0MHIumxrnkkn59dTxLn0I8nS6t2jDOuCX6GZSomkVfpgEHEKfdt6UacvBLuLleSf1JT8ATMeUGZVZ9KOG6aOYGAE=',
+                        content='The user is asking about the pydantic/pydantic-ai repository and wants me to keep the answer short. I should use the deepwiki tools to get information about this repository. Let me start by asking a general question about what this repository is about.',
+                        signature='EqUDCkYICBgCKkCTiLjx5Rzw9zXo4pFDhFAc9Ci1R+d2fpkiqw7IPt1PgxBankr7bhRfh2iQOFEUy7sYVtsBxvnHW8zfBRxH1j6lEgySvdOyObrcFdJX3qkaDMAMCdLHIevZ/mSx/SIwi917U34N5jLQH1yMoCx/k72klLG5v42vcwUTG4ngKDI69Ddaf0eeDpgg3tL5FHfvKowCnslWg3Pd3ITe+TLlzu+OVZhRKU9SEwDJbjV7ZF954Ls6XExAfjdXhrhvXDB+hz6fZFPGFEfXV7jwElFT5HcGPWy84xvlwzbklZ2zH3XViik0B5dMErMAKs6IVwqXo3s+0p9xtX5gCBuvLkalET2upNsmdKGJv7WQWoaLch5N07uvSgWkO8AkGuVtBgqZH+uRGlPfYlnAgifNHu00GSAVK3beeyZfpnSQ6LQKcH+wVmrOi/3UvzA5f1LvsXG32gQKUCxztATnlBaI+7GMs1IAloaRHBndyRoe8Lwv79zZe9u9gnF9WCgK3yQsAR5hGZXlBKiIWfnRrXQ7QmA2hVO+mhEOCnz7OQkMIEUlfxgB',
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
                         tool_name='mcp_server:call_tool',
-                        args={'query': 'pydantic-ai in:name'},
-                        tool_call_id='mcptoolu_01AmgVfcYg7HkjXerTSn1F93',
+                        args={
+                            'server_id': 'deepwiki',
+                            'tool_name': 'ask_question',
+                            'tool_args': {
+                                'repoName': 'pydantic/pydantic-ai',
+                                'question': 'What is pydantic-ai and what does this repository do?',
+                            },
+                        },
+                        tool_call_id='mcptoolu_01SAss3KEwASziHZoMR6HcZU',
                         provider_name='anthropic',
-                        tool_call_metadata={'mcp_server_id': 'test-server', 'mcp_tool_name': 'search_repositories'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:call_tool',
@@ -3195,46 +3204,45 @@ The framework emphasizes the "Pydantic way" of building AI agents with structure
                             ],
                             'is_error': False,
                         },
-                        tool_call_id='mcptoolu_01AmgVfcYg7HkjXerTSn1F93',
+                        tool_call_id='mcptoolu_01SAss3KEwASziHZoMR6HcZU',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
                     TextPart(
                         content="""\
-**Pydantic AI** is a GenAI Agent Framework by the Pydantic team. It's a Python library for building AI agents using the familiar Pydantic approach with type safety and validation.
+**Pydantic AI** is a Python agent framework for building production-grade applications with Generative AI. It provides:
 
-Key details:
-- **12.9K stars** on GitHub \n\
-- Created in June 2024, actively maintained
-- Focuses on **agent frameworks, GenAI, and LLM integration**
-- Built by the creators of Pydantic for type-safe AI agent development
-- Has spawned numerous tutorials and example projects in the community
+- **Type-safe agents** with compile-time validation using `Agent[Deps, Output]`
+- **Model-agnostic design** supporting 15+ LLM providers (OpenAI, Anthropic, Google, etc.)
+- **Structured outputs** with automatic Pydantic validation and self-correction
+- **Built-in observability** via OpenTelemetry and Logfire integration
+- **Production tooling** including evaluation framework, durable execution, and tool system
 
-The framework emphasizes the "Pydantic way" of building AI agents with structured data validation and type hints.\
+The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (core framework), `pydantic-graph` (execution engine), and `pydantic-evals` (evaluation tools). It emphasizes developer ergonomics and type safety, similar to Pydantic and FastAPI.\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=6529,
-                    output_tokens=269,
+                    input_tokens=2674,
+                    output_tokens=373,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 6529,
-                        'output_tokens': 269,
+                        'input_tokens': 2674,
+                        'output_tokens': 373,
                     },
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_018AXFcpDGpwqaT6LrN7cZVF',
+                provider_response_id='msg_01MYDjkvBDRaKsY6PDwQz3n6',
                 finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='What is the latest commit hash in that repo?',
+                        content='How about the pydantic repo in the same org?',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -3242,44 +3250,119 @@ The framework emphasizes the "Pydantic way" of building AI agents with structure
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content="""\
-The user is asking for the latest commit hash in the pydantic-ai repository. However, the search function I have access to only returns basic repository information like stars, forks, description, etc. It doesn't provide commit information or the latest commit hash.
+                        content='The user is asking about the pydantic repo in the same org, so that would be pydantic/pydantic. I should ask about what this repository does and provide a short answer.',
+                        signature='EtECCkYICBgCKkAkKy+K3Z/q4dGwZGr1MdsH8HLaULElUSaa/Y8A1L/Jp7y1AfJd1zrTL7Zfa2KoPr0HqO/AI/cJJreheuwcn/dWEgw0bPLie900a4h9wS0aDACnsdbr+adzpUyExiIwyuNjV82BVkK/kU+sMyrfbhgb6ob/DUgudJPaK5zR6cINAAGQnIy3iOXTwu3OUfPAKrgBzF9HD5HjiPSJdsxlkI0RA5Yjiol05/hR3fUB6WWrs0aouxIzlriJ6NzmzvqctkFJdRgAL9Mh06iK1A61PLyBWRdo1f5TBziFP1c6z7iQQzH9DdcaHvG8yLoaadbyTxMvTn2PtfEcSPjuZcLgv7QcF+HZXbDVjsHJW78OK2ta0M6/xuU1p4yG3qgoss3b0G6fAyvUVgVbb1wknkE/9W9gd2k/ZSh4P7F6AcvLTXQScTyMfWRtAWQqABgB',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:call_tool',
+                        args={
+                            'server_id': 'deepwiki',
+                            'tool_name': 'ask_question',
+                            'tool_args': {
+                                'repoName': 'pydantic/pydantic',
+                                'question': 'What is Pydantic and what does this repository do?',
+                            },
+                        },
+                        tool_call_id='mcptoolu_01A9RvAqDeoUnaMgQc6Nn75y',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:call_tool',
+                        content={
+                            'content': [
+                                {
+                                    'citations': None,
+                                    'text': """\
+Pydantic is a Python library for data validation, parsing, and serialization using type hints  . This repository, `pydantic/pydantic`, contains the source code for the Pydantic library itself, including its core validation logic, documentation, and continuous integration/continuous deployment (CI/CD) pipelines  .
 
-Looking at the function schema, the search_repositories function returns minimal repository information by default, and even when minimal_output is set to false, it returns "full GitHub API repository objects" but based on the current results, I don't see commit hash information included.
+## What is Pydantic
 
-I need to let the user know that I cannot retrieve commit hash information with the available tools.\
+Pydantic is designed to ensure that data conforms to specified types and constraints at runtime . It leverages Python type hints to define data schemas and provides mechanisms for data conversion and validation . The library's core validation logic is implemented in Rust within a separate package called `pydantic-core`, which contributes to its performance .
+
+Pydantic offers several user-facing APIs for validation:
+*   `BaseModel`: Used for defining class-based models with fields, suitable for domain models, API schemas, and configuration .
+*   `TypeAdapter`: Provides a flexible way to validate and serialize arbitrary Python types, including primitive types and dataclasses .
+*   `@dataclass`: Enhances Python's built-in dataclasses with Pydantic's validation capabilities .
+*   `@validate_call`: Used for validating function arguments and return values .
+
+## What this Repository Does
+
+The `pydantic/pydantic` repository serves as the development hub for the Pydantic library. Its primary functions include:
+
+### Core Library Development
+The repository contains the Python source code for the Pydantic library, including modules for `BaseModel` , `Field` definitions , configuration management , and type adapters . It also includes internal modules responsible for model construction and schema generation .
+
+### Documentation
+The repository hosts the documentation for Pydantic, which is built using MkDocs . The documentation covers installation instructions , core concepts like models , fields, and JSON Schema generation . It also includes information on contributing to the project .
+
+### Continuous Integration and Deployment (CI/CD)
+The repository utilizes GitHub Actions for its CI/CD pipeline . This pipeline includes:
+*   **Linting**: Checks code quality and style .
+*   **Testing**: Runs a comprehensive test suite across multiple operating systems and Python versions . This includes memory profiling tests, Mypy plugin tests, and type-checking integration tests   .
+*   **Coverage**: Aggregates test coverage data and posts comments to pull requests .
+*   **Release Process**: Automates publishing new versions to PyPI and sending release announcements .
+*   **Third-Party Integration Testing**: Tests Pydantic's compatibility with other popular libraries like FastAPI, SQLModel, and Beanie .
+*   **Dependency Management**: Uses `uv` for managing dependencies and includes workflows to check compatibility with various dependency versions  .
+*   **Performance Benchmarking**: Utilizes CodSpeed to track and analyze performance .
+
+## Versioning and Compatibility
+Pydantic maintains strict version compatibility between the pure Python package (`pydantic`) and its Rust-based validation core (`pydantic-core`)  . A `SystemError` is raised if there's a mismatch in `pydantic-core` versions, ensuring a stable environment . The `version_info()` function provides detailed version information for Pydantic and its dependencies .
+
+Notes:
+The `CITATION.cff` file also provides a concise description of Pydantic as "the most widely used data validation library for Python" . The `README.md` and `docs/index.md` files reiterate this, emphasizing its speed and extensibility  .
+
+Wiki pages you might want to explore:
+- [Overview (pydantic/pydantic)](/wiki/pydantic/pydantic#1)
+- [Development and Deployment (pydantic/pydantic)](/wiki/pydantic/pydantic#7)
+
+View this search on DeepWiki: https://deepwiki.com/search/what-is-pydantic-and-what-does_dab96efa-752a-4688-a630-3f4658084a88
 """,
-                        signature='ErwGCkYICBgCKkBFPz7OVbJns7V/POXg2UauSqh02bRB4r60s4UweheupiAWH8KSjCqvVrfReBKHqGUvseAaT5IgqlcljysVVAJ0Egy//mX/+/bhtWUoFWsaDBhMdJBa+ME+2vEykCIwvy/ImrjW7tp1p6XkIYHo+I6k98DpUQgFtsTh/G5gmnTN3mj3lPDXwRPG5p2DnjTxKqMF8OZDanFLTVhKgxmYnKxndTiO9W8Ku9lOepA7oo2oPSzR/K9jnxqbpKNQQd19Vq/H9Q95WJZwdm6bhOLjW07cxlTxXRqAxrAFoxKdVhuRkUrCJ6dx+7YHte1J4IIRbxqjwjiReAwG9y/VxySNNBeaNvuejOeedIwRw/lGmKxL3NrBAgvigGgq4CDzaR3jqW85EsXwmd+7WqdQGhHKoooVEOe4lMvGhofpHEBINx5XlGb3diVVRdlL+Sj8c39u33Risq+zF4bMui/qBBZ6FqAwit7mbmy+t1P024nd+4holQlaXYHB4LOcajehqogM0Yh8xnzbEKB9r8ezt2Mw4Hg9ObMJ7K3DbVabcrk0BH7FQN7XGOFS3eGRr3SMe8qgPWzWRCpLj/ms8jMewqYJKYQEUVSwm/cdPKYi70W61Hu+59e41BNXFczZA7v11ckKFqo4w0ZCr179SIN+PTj4YKe/sA/eNxzDc9sdA6MmEf2fZiq7IWcguuaYiiYxCcSPSoYSDCrf1cWXTh0J8Gbo+KE8cwKxDC63+u/CKITUfVu3sSaGxYFQFzLUNuhyml92sBL4FoYGB9YNFQdh6NO4DpdcW4M0lVUr4MFMmzUPISPe/GAGrhv6HqFLsFqsuQutt118hp/ZBsO5/9Ac80AzDpY4r1KOx5rQv2G5SfcGxXfAnyEA3DFMYp0LvrdeA7vHgtgOlk7LR1MWdcctJtE0zj61ldDJpWZcVbe61iJRLsd876/V+4nnFMwFAr3fubHs1+5SJWgSyzYjkQ/elDL8+AFGdXZI/s89zA0Q7JY9SzzYrI7Am/8YrprNg2Gam+XCCC0Cx1rupmIMgkjzSkyn+YyHmOyaQXvbO5PAG4bM5sGSU1io0S3NZrsxsm5ciMek1YLwEPfuGAE=',
+                                    'type': 'text',
+                                }
+                            ],
+                            'is_error': False,
+                        },
+                        tool_call_id='mcptoolu_01A9RvAqDeoUnaMgQc6Nn75y',
+                        timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
                     TextPart(
                         content="""\
-I don't have access to commit information through the available search function. The repository search tool only provides basic metadata like stars, forks, description, and last updated date, but doesn't include commit hashes or detailed commit history.
+**Pydantic** is Python's most widely used data validation library for parsing, validation, and serialization using type hints. The repository contains:
 
-To get the latest commit hash, you would need to:
-1. Visit the repository directly at https://github.com/pydantic/pydantic-ai
-2. Use Git commands like `git log -1 --format="%H"` if you have the repo cloned
-3. Use GitHub's API directly with endpoints that provide commit information
+**Core Features:**
+- **Data validation** with automatic type conversion and constraint checking
+- **Multiple APIs**: `BaseModel` for class-based models, `TypeAdapter` for arbitrary types, `@dataclass` decorator, and `@validate_call` for functions
+- **High performance** via Rust-based validation core (`pydantic-core`)
+- **JSON Schema generation** and comprehensive serialization support
 
-The repo was last updated on October 13, 2025 according to the search results, but I can't provide the specific commit hash.\
+**Repository Contents:**
+- Python source code for the main Pydantic library
+- Comprehensive documentation built with MkDocs
+- Extensive CI/CD pipeline with testing across multiple Python versions and OS
+- Integration testing with popular libraries (FastAPI, SQLModel, etc.)
+- Performance benchmarking and dependency compatibility checks
+
+Pydantic ensures runtime data integrity through type hints and is foundational to many Python frameworks, especially in web APIs and data processing applications.\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=5962,
-                    output_tokens=296,
+                    input_tokens=5262,
+                    output_tokens=369,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 5962,
-                        'output_tokens': 296,
+                        'input_tokens': 5262,
+                        'output_tokens': 369,
                     },
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_012GhUvN5n6KVUZwxg9AarJd',
+                provider_response_id='msg_01DSGib8F7nNoYprfYSGp1sd',
                 finish_reason='stop',
             ),
         ]
@@ -3293,10 +3376,9 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
         m,
         builtin_tools=[
             MCPServerTool(
-                id='test-server',
-                url='https://api.githubcopilot.com/mcp/',
-                authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),
-                allowed_tools=['search_repositories'],
+                id='deepwiki',
+                url='https://mcp.deepwiki.com/mcp',
+                allowed_tools=['ask_question'],
             )
         ],
         model_settings=settings,
@@ -3304,13 +3386,17 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
 
     event_parts: list[Any] = []
     async with agent.iter(
-        user_prompt='Can you tell me more about pydantic-ai repo? Keep your answer short'
+        user_prompt='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'
     ) as agent_run:
         async for node in agent_run:
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        event_parts.append(event)
+                        if (
+                            isinstance(event, PartStartEvent)
+                            and isinstance(event.part, BuiltinToolCallPart | BuiltinToolReturnPart)
+                        ) or (isinstance(event, PartDeltaEvent) and isinstance(event.delta, ToolCallPartDelta)):
+                            event_parts.append(event)
 
     assert agent_run.result is not None
     messages = agent_run.result.all_messages()
@@ -3319,7 +3405,7 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Can you tell me more about pydantic-ai repo? Keep your answer short',
+                        content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -3327,20 +3413,15 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content="""\
-The user is asking about a specific repository called "pydantic-ai". I should search for this repository on GitHub to get information about it.
-
-I'll use the search_repositories function with a query for "pydantic-ai". To be more specific, I might want to search for it in the name or as part of a specific organization if I know it. Let me search for "pydantic-ai in:name" to find repositories with that name.\
-""",
-                        signature='EsQECkYICBgCKkCK82+nlmjnKiZfbu6NGJSGOAp0cYf+o9ZYGIW237IaltgDWXzKJTQASoCF5Gdpp1zZ921+7qagpulTQkpoLj00EgxX4F5oVf4Jb4cSY/oaDH/eOhAD4Kj6edkFvSIwnWMSL4Mr9hpnmil8nPoxCJUqIpDJjR/NIU9Ox+gpfOv2aF9XecnhPl3sXt2RCGeAKqsDX7H4MVRaGDev9+ulOst6v9etRmvAKsJhFwksbqsmbffvfo4tkcV8cyJ2InKyiFQlEfDpUxCNosHlI2I0UBmKCv1u5i144TufwKblygIYS6q2GRu5EpasdjI+mJGnJ9DzLR2MrD3Q/6BtM/78Jg9HggEThiHRL9+95OnwoXXNQIEf/V4We2SyZmcht6EoPMBEluvLqTdq4Y1aaDYoI7XRQOcHnbYA39Scxk5X5gLBbtMaNBWkzyLHnkB5zeYqA2L357oIgdS47nxR8xexkp7yCE0sNDlu6803UYLL9I4qTcs1iX3v4JPALooB+xrnX0BSleTz45/02T540M92ysmK+chrWbjoa0dCZGbDdA6vtezxlI5yebvBJtz3ptTfxdVXj+gp/hlaZmQtbUCN/FKt1WAXwpw9gAZENC5qcF3P03OMyVBmYmXKW4vRqlHMHOcp+eYEmX4pLwAj1bNMhbnfZN0Nlv12rYIlmyrlW6y1XyycSmrlBGDW9ubtsWv0kA4v4vhLuslKVnPdlORou6/LlCUc480kz6n2dSZeKcUyIrRebOaIIVtBm8/vUhgB',
+                        content='The user is asking about the pydantic/pydantic-ai repository. They want a short answer about the repo. I should use the deepwiki_ask_question function to get information about this repository.',
+                        signature='EuoCCkYICBgCKkDPqznnPHupi9rVXvaQQqrMprXof9wtQsCqw7Yw687UIk/FvF65omU22QO+CmIcYqTwhBfifPEp9A3/lM9C8cIcEgzGsjorcyNe2H0ZFf8aDCA4iLG6qgUL6fLhzCIwVWcg65CrvSFusXtMH18p+XiF+BUxT+rvnCFsnLbFsxtjGyKh1j4UW6V0Tk0O7+3sKtEBEzvxztXkMkeXkXRsQFJ00jTNhkUHu74sqnh6QxgV8wK2vlJRnBnes/oh7QdED0h/pZaUbxplYJiPFisWx/zTJQvOv29I46sM2CdY5ggGO1KWrEF/pognyod+jdCdb481XUET9T7nl/VMz/Og2QkyGf+5MvSecKQhujlS0VFhCgaYv68sl0Fv3hj2AkeE4vcYu3YdDaNDLXerbIaLCMkkn08NID/wKZTwtLSL+N6+kOi+4peGqXDNps8oa3mqIn7NAWFlwEUrFZd5kjtDkQ5dw/IYAQ==',
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
                         tool_name='mcp_server:call_tool',
-                        args='{"query": "pydantic-ai in:name", "minimal_output": false}',
-                        tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM',
+                        args='{"server_id":"deepwiki","tool_name":"ask_question","tool_args":{"repoName": "pydantic/pydantic-ai", "question": "What is this repository about? What are its main features and purpose?"}}',
+                        tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
                         provider_name='anthropic',
-                        tool_call_metadata={'mcp_server_id': 'test-server', 'mcp_tool_name': 'search_repositories'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:call_tool',
@@ -3354,43 +3435,41 @@ I'll use the search_repositories function with a query for "pydantic-ai". To be 
                             ],
                             'is_error': False,
                         },
-                        tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM',
+                        tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
                     TextPart(
                         content="""\
-**Pydantic AI** is a GenAI agent framework from Pydantic. Here's the quick overview:
+**Pydantic-AI** is a framework for building Generative AI applications with type safety. It provides:
 
-- **Repository**: `pydantic/pydantic-ai`
-- **Stars**: 12,928 ⭐
-- **License**: MIT
-- **Language**: Python
-- **Website**: https://ai.pydantic.dev
+- **Unified LLM interface** - Works with OpenAI, Anthropic, Google, Groq, Cohere, Mistral, AWS Bedrock, and more
+- **Type-safe agents** - Uses Pydantic for validation and type checking throughout
+- **Tool integration** - Easily add custom functions/tools agents can call
+- **Graph-based execution** - Manages agent workflows as finite state machines
+- **Multiple output formats** - Text, structured data, and multimodal content
+- **Durable execution** - Integration with systems like DBOS and Temporal for fault tolerance
+- **Streaming support** - Stream responses in real-time
 
-**What it does**: It's an agent framework that leverages Pydantic's data validation capabilities to build LLM-powered agents with structured outputs. Think of it as building AI agents "the Pydantic way" - with type safety and validation built in.
-
-**Key topics**: GenAI, LLM, agent framework, Python, Pydantic
-
-It's actively maintained with recent pushes and has a growing community with 1,300+ forks and 331 open issues.\
+It's designed to simplify building robust, production-ready AI agents while abstracting away provider-specific complexities.\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=64084,
-                    output_tokens=384,
+                    input_tokens=3042,
+                    output_tokens=354,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 64084,
-                        'output_tokens': 384,
+                        'input_tokens': 3042,
+                        'output_tokens': 354,
                     },
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_013pK5B4RBV3QPRTSENdtiLV',
+                provider_response_id='msg_01Xf6SmUVY1mDrSwFc5RsY3n',
                 finish_reason='stop',
             ),
         ]
@@ -3398,109 +3477,87 @@ It's actively maintained with recent pushes and has a growing community with 1,3
 
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta='The user is asking about a', provider_name='anthropic')
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' specific repository called "pydantic-ai".', provider_name='anthropic'
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' I should search for this repository on GitHub to get information',
-                    provider_name='anthropic',
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- about it.
-
-I'll use the search_repositories\
-""",
-                    provider_name='anthropic',
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' function with a query for "pydantic-ai". To', provider_name='anthropic'
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' be more specific, I might want to search for it', provider_name='anthropic'
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' in the name or as part of a specific', provider_name='anthropic'
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=' organization if I know it. Let me search for "pydantic-ai in',
-                    provider_name='anthropic',
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta=':name" to find repositories with that name.', provider_name='anthropic'
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='EsQECkYICBgCKkCK82+nlmjnKiZfbu6NGJSGOAp0cYf+o9ZYGIW237IaltgDWXzKJTQASoCF5Gdpp1zZ921+7qagpulTQkpoLj00EgxX4F5oVf4Jb4cSY/oaDH/eOhAD4Kj6edkFvSIwnWMSL4Mr9hpnmil8nPoxCJUqIpDJjR/NIU9Ox+gpfOv2aF9XecnhPl3sXt2RCGeAKqsDX7H4MVRaGDev9+ulOst6v9etRmvAKsJhFwksbqsmbffvfo4tkcV8cyJ2InKyiFQlEfDpUxCNosHlI2I0UBmKCv1u5i144TufwKblygIYS6q2GRu5EpasdjI+mJGnJ9DzLR2MrD3Q/6BtM/78Jg9HggEThiHRL9+95OnwoXXNQIEf/V4We2SyZmcht6EoPMBEluvLqTdq4Y1aaDYoI7XRQOcHnbYA39Scxk5X5gLBbtMaNBWkzyLHnkB5zeYqA2L357oIgdS47nxR8xexkp7yCE0sNDlu6803UYLL9I4qTcs1iX3v4JPALooB+xrnX0BSleTz45/02T540M92ysmK+chrWbjoa0dCZGbDdA6vtezxlI5yebvBJtz3ptTfxdVXj+gp/hlaZmQtbUCN/FKt1WAXwpw9gAZENC5qcF3P03OMyVBmYmXKW4vRqlHMHOcp+eYEmX4pLwAj1bNMhbnfZN0Nlv12rYIlmyrlW6y1XyycSmrlBGDW9ubtsWv0kA4v4vhLuslKVnPdlORou6/LlCUc480kz6n2dSZeKcUyIrRebOaIIVtBm8/vUhgB',
-                    provider_name='anthropic',
-                ),
-            ),
             PartStartEvent(
                 index=1,
                 part=BuiltinToolCallPart(
                     tool_name='mcp_server:call_tool',
-                    tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM',
+                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
                     provider_name='anthropic',
-                    tool_call_metadata={'mcp_server_id': 'test-server', 'mcp_tool_name': 'search_repositories'},
                 ),
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM')
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='{"server_id":"deepwiki","tool_name":"ask_question","tool_args":',
+                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                ),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='{"query":', tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM'),
+                delta=ToolCallPartDelta(args_delta='{"repoName"', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta=': "', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta=' "pydantic-', tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM'),
+                delta=ToolCallPartDelta(args_delta='pydantic', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='ai in:na', tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM'),
+                delta=ToolCallPartDelta(args_delta='/pydantic-ai', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='me"', tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM')
-            ),
-            PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta=', "minimal', tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM'),
+                index=1, delta=ToolCallPartDelta(args_delta='"', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='_output": f', tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM'),
+                delta=ToolCallPartDelta(args_delta=', "question', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='alse}', tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM')
+                index=1,
+                delta=ToolCallPartDelta(args_delta='": "What', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta=' is ', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='this repo', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='sitory about', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='? Wha', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='t are i', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='ts main feat', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='ure', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='s and purpo', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='se?"}', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='}', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
             ),
             PartStartEvent(
                 index=2,
@@ -3510,139 +3567,85 @@ I'll use the search_repositories\
                         'content': [
                             {
                                 'citations': None,
-                                'text': IsStr(),
+                                'text': """\
+This repository, `pydantic/pydantic-ai`, is a GenAI Agent Framework that leverages Pydantic for building Generative AI applications. Its main purpose is to provide a unified and type-safe way to interact with various large language models (LLMs) from different providers, manage agent execution flows, and integrate with external tools and services. \n\
+
+## Main Features and Purpose
+
+The `pydantic-ai` repository offers several core features:
+
+### 1. Agent System
+The `Agent` class serves as the main orchestrator for managing interactions with LLMs and executing tasks.  Agents can be configured with generic types for dependency injection (`Agent[AgentDepsT, OutputDataT]`) and output validation, ensuring type safety throughout the application. \n\
+
+Agents support various execution methods:
+*   `agent.run()`: An asynchronous function that returns a completed `RunResult`. \n\
+*   `agent.run_sync()`: A synchronous function that internally calls `run()` to return a completed `RunResult`. \n\
+*   `agent.run_stream()`: An asynchronous context manager for streaming text and structured output. \n\
+*   `agent.run_stream_events()`: Returns an asynchronous iterable of `AgentStreamEvent`s and a final `AgentRunResultEvent`. \n\
+*   `agent.iter()`: A context manager that provides an asynchronous iterable over the nodes of the agent's underlying `Graph`, allowing for deeper control and insight into the execution flow. \n\
+
+### 2. Model Integration
+The framework provides a unified interface for integrating with various LLM providers, including OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Bedrock, and HuggingFace.  Each model integration follows a consistent settings pattern with provider-specific prefixes (e.g., `google_*`, `anthropic_*`). \n\
+
+Examples of supported models and their capabilities include:
+*   `GoogleModel`: Integrates with Google's Gemini API, supporting both Gemini API (`google-gla`) and Vertex AI (`google-vertex`) providers.  It supports token counting, streaming, built-in tools like `WebSearchTool`, `UrlContextTool`, `CodeExecutionTool`, and native JSON schema output. \n\
+*   `AnthropicModel`: Uses Anthropic's beta API for advanced features like "Thinking Blocks" and built-in tools. \n\
+*   `GroqModel`: Offers high-speed inference and specialized reasoning support with configurable reasoning formats. \n\
+*   `MistralModel`: Supports customizable JSON schema prompting and thinking support. \n\
+*   `BedrockConverseModel`: Utilizes AWS Bedrock's Converse API for unified access to various foundation models like Claude, Titan, Llama, and Mistral. \n\
+*   `CohereModel`: Integrates with Cohere's v2 API for chat completions, including thinking support and tool calling. \n\
+
+The framework also supports multimodal inputs such as `AudioUrl`, `DocumentUrl`, `ImageUrl`, and `VideoUrl`, allowing agents to process and respond to diverse content types. \n\
+
+### 3. Graph-based Execution
+Pydantic AI uses `pydantic-graph` to manage the execution flow of agents, representing it as a finite state machine.  The execution typically flows through `UserPromptNode` → `ModelRequestNode` → `CallToolsNode`.  This allows for detailed tracking of message history and usage. \n\
+
+### 4. Tool System
+Function tools enable models to perform actions and retrieve additional information.  Tools can be registered using decorators like `@agent.tool` (for tools needing `RunContext` access) or `@agent.tool_plain` (for tools without `RunContext` access).  The framework also supports toolsets for managing collections of tools. \n\
+
+Tools can return various types of output, including anything Pydantic can serialize to JSON, as well as multimodal content like `AudioUrl`, `VideoUrl`, `ImageUrl`, or `DocumentUrl`.  The `ToolReturn` object allows for separating the `return_value` (for the model), `content` (for additional context), and `metadata` (for application-specific use). \n\
+
+Built-in tools like `UrlContextTool` allow agents to pull web content into their context. \n\
+
+### 5. Output Handling
+The framework supports various output types:
+*   `TextOutput`: Plain text responses. \n\
+*   `ToolOutput`: Structured data via tool calls. \n\
+*   `NativeOutput`: Provider-specific structured output. \n\
+*   `PromptedOutput`: Prompt-based structured extraction. \n\
+
+### 6. Durable Execution
+Pydantic AI integrates with durable execution systems like DBOS and Temporal.  This allows agents to maintain state and resume execution after failures or restarts, making them suitable for long-running or fault-tolerant applications. \n\
+
+### 7. Multi-Agent Patterns and Integrations
+The repository supports multi-agent applications and various integrations, including:
+*   Pydantic Evals: For evaluating agent performance. \n\
+*   Pydantic Graph: The underlying graph execution engine. \n\
+*   Logfire: For debugging and monitoring. \n\
+*   Agent-User Interaction (AG-UI) and Agent2Agent (A2A): For facilitating interactions between agents and users, and between agents themselves. \n\
+*   Clai: A CLI tool. \n\
+
+## Purpose
+
+The overarching purpose of `pydantic-ai` is to simplify the development of robust and reliable Generative AI applications by providing a structured, type-safe, and extensible framework. It aims to abstract away the complexities of interacting with different LLM providers and managing agent workflows, allowing developers to focus on application logic. \n\
+
+Notes:
+The `CLAUDE.md` file provides guidance for Claude Code when working with the repository, outlining development commands and project architecture.  The `mkdocs.yml` file defines the structure and content of the project's documentation, further detailing the features and organization of the repository. \n\
+
+Wiki pages you might want to explore:
+- [Google, Anthropic and Other Providers (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.3)
+
+View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repository-about_5104a64d-2f5e-4461-80d8-eb0892242441
+""",
                                 'type': 'text',
                             }
                         ],
                         'is_error': False,
                     },
-                    tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM',
+                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
-            ),
-            PartStartEvent(index=3, part=TextPart(content='**')),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='Pydantic AI**')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' is a')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' GenAI agent')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' framework from Pydantic. Here')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta="'s the quick")),
-            PartDeltaEvent(
-                index=3,
-                delta=TextPartDelta(
-                    content_delta="""\
- overview:
-
--\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' **Repository**: `')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='pydantic/')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='pydantic-ai`')),
-            PartDeltaEvent(
-                index=3,
-                delta=TextPartDelta(
-                    content_delta="""\
-
-- **Stars\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='**: 12')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',928')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='⭐')),
-            PartDeltaEvent(
-                index=3,
-                delta=TextPartDelta(
-                    content_delta="""\
-
-- **License**: MIT
-- **\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=3,
-                delta=TextPartDelta(
-                    content_delta="""\
-Language**: Python
-- **Website\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='**: https://ai.pydantic.dev')),
-            PartDeltaEvent(
-                index=3,
-                delta=TextPartDelta(
-                    content_delta="""\
-
-
-**What it does**:\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=" It's an agent")),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=" framework that leverages Pydantic's data")),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' validation capabilities to build L')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='LM-powered agents with structure')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d outputs. Think of it as building AI')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' agents "the Pydantic way"')),
-            PartDeltaEvent(
-                index=3,
-                delta=TextPartDelta(
-                    content_delta="""\
- - with type safety and validation built in.
-
-**Key topics\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='**: GenAI, LLM')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=', agent framework, Python')),
-            PartDeltaEvent(
-                index=3,
-                delta=TextPartDelta(
-                    content_delta="""\
-, Pydantic
-
-It's actively\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' maintained with recent push')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='es and has')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' a growing community with 1')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',300+ forks and 331')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' open issues.')),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='mcp_server:call_tool',
-                    args='{"query": "pydantic-ai in:name", "minimal_output": false}',
-                    tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM',
-                    provider_name='anthropic',
-                    tool_call_metadata={'mcp_server_id': 'test-server', 'mcp_tool_name': 'search_repositories'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
-                    tool_name='mcp_server:call_tool',
-                    content={
-                        'content': [
-                            {
-                                'citations': None,
-                                'text': IsStr(),
-                                'type': 'text',
-                            }
-                        ],
-                        'is_error': False,
-                    },
-                    tool_call_id='mcptoolu_01TRFAY96u5EJD81iQwJqcBM',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                )
             ),
         ]
     )
