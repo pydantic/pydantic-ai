@@ -665,13 +665,8 @@ OutputType = [Result[StringData], Result[int]]
     assert m.last_model_request_parameters.output_tools is not None
     assert len(m.last_model_request_parameters.output_tools) == 2
 
-    # Check that tool names don't contain brackets
     tool_names = [tool.name for tool in m.last_model_request_parameters.output_tools]
-    for tool_name in tool_names:
-        assert '[' not in tool_name, f"Tool name '{tool_name}' contains brackets"
-        assert ']' not in tool_name, f"Tool name '{tool_name}' contains brackets"
-        # Verify the name follows the pattern [a-zA-Z0-9_-]
-        assert re.match(r'^[a-zA-Z0-9_-]+$', tool_name), f"Tool name '{tool_name}' contains invalid characters"
+    assert tool_names == snapshot(['final_result_ResultStringData', 'final_result_Resultint'])
 
 
 def test_output_type_with_two_descriptions():
