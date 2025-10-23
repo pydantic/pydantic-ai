@@ -46,7 +46,7 @@ from pydantic_graph.beta.paths import (
 )
 from pydantic_graph.beta.step import NodeStep, Step, StepContext, StepFunction, StepNode, StreamFunction
 from pydantic_graph.beta.util import TypeOrTypeExpression, get_callable_name, unpack_type_expression
-from pydantic_graph.exceptions import GraphBuildingError
+from pydantic_graph.exceptions import GraphBuildingError, GraphValidationError
 from pydantic_graph.nodes import BaseNode, End
 
 StateT = TypeVar('StateT', infer_variance=True)
@@ -633,11 +633,15 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             return edge.to(decision)
 
     # Graph building
-    def build(self) -> Graph[StateT, DepsT, GraphInputT, GraphOutputT]:
+    def build(self, validate_graph_structure: bool = True) -> Graph[StateT, DepsT, GraphInputT, GraphOutputT]:
         """Build the final executable graph from the accumulated nodes and edges.
 
         This method performs validation, normalization, and analysis of the graph
         structure to create a complete, executable graph instance.
+
+        Args:
+            validate_graph_structure: whether to perform validation of the graph structure
+            See the docstring of `_validate_graph_structure` below for more details.
 
         Returns:
             A complete Graph instance ready for execution
@@ -651,9 +655,8 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         nodes, edges_by_source = _replace_placeholder_node_ids(nodes, edges_by_source)
         nodes, edges_by_source = _flatten_paths(nodes, edges_by_source)
         nodes, edges_by_source = _normalize_forks(nodes, edges_by_source)
-        # TODO(P2): Warn/error if the graph is not connected
-        # TODO(P2): Warn/error if there is no start node / edges, or end node / edges
-        # TODO(P2): Warn/error if any non-End node is a dead end
+        if validate_graph_structure:
+            _validate_graph_structure(nodes, edges_by_source)
         parent_forks = _collect_dominating_forks(nodes, edges_by_source)
 
         return Graph[StateT, DepsT, GraphInputT, GraphOutputT](
@@ -666,6 +669,116 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             edges_by_source=edges_by_source,
             parent_forks=parent_forks,
             auto_instrument=self.auto_instrument,
+        )
+
+
+def _validate_graph_structure(  # noqa C901
+    nodes: dict[NodeID, AnyNode],
+    edges_by_source: dict[NodeID, list[Path]],
+) -> None:
+    """Validate the graph structure for common issues.
+
+    This function raises an error if any of the following criteria are not met:
+    1. There are edges from the start node
+    2. There are edges to the end node
+    3. No non-End node is a dead end (no outgoing edges)
+    4. The end node is reachable from the start node
+    5. All nodes are reachable from the start node
+
+    Note 1: Under some circumstances it may be reasonable to build a graph that violates one or more of
+    the above conditions. We may eventually add support for more granular control over validation,
+    but today, if you want to build a graph that violates any of these assumptions you need to pass
+    `validate_graph_structure=False` to the call to `GraphBuilder.build`.
+
+    Note 2: Some of the earlier items in the above list are redundant with the later items.
+    I've included the earlier items in the list as a reminder to ourselves if/when we add more granular validation
+    because you might want to check the earlier items but not the later items, as described in Note 1.
+
+    Args:
+        nodes: The nodes in the graph
+        edges_by_source: The edges by source node
+
+    Raises:
+        GraphBuildingError: If any of the aforementioned structural issues are found.
+    """
+    how_to_suppress = ' If this is intentional, you can suppress this error by passing `validate_graph_structure=False` to the call to `GraphBuilder.build`.'
+
+    # Extract all destination IDs from edges and decision branches
+    all_destinations: set[NodeID] = set()
+
+    def _collect_destinations_from_path(path: Path) -> None:
+        for item in path.items:
+            if isinstance(item, DestinationMarker):
+                all_destinations.add(item.destination_id)
+
+    for paths in edges_by_source.values():
+        for path in paths:
+            _collect_destinations_from_path(path)
+
+    # Also collect destinations from decision branches
+    for node in nodes.values():
+        if isinstance(node, Decision):
+            for branch in node.branches:
+                _collect_destinations_from_path(branch.path)
+
+    # Check 1: Check if there are edges from the start node
+    start_edges = edges_by_source.get(StartNode.id, [])
+    if not start_edges:
+        raise GraphValidationError('The graph has no edges from the start node.' + how_to_suppress)
+
+    # Check 2: Check if there are edges to the end node
+    if EndNode.id not in all_destinations:
+        raise GraphValidationError('The graph has no edges to the end node.' + how_to_suppress)
+
+    # Check 3: Find all nodes with no outgoing edges (dead ends)
+    dead_end_nodes: list[NodeID] = []
+    for node_id, node in nodes.items():
+        # Skip the end node itself
+        if isinstance(node, EndNode):
+            continue
+
+        # Check if this node has any outgoing edges
+        has_edges = node_id in edges_by_source and len(edges_by_source[node_id]) > 0
+
+        # Also check if it's a decision node with branches
+        if isinstance(node, Decision):
+            has_edges = has_edges or len(node.branches) > 0
+
+        if not has_edges:
+            dead_end_nodes.append(node_id)
+
+    if dead_end_nodes:
+        raise GraphValidationError(f'The following nodes have no outgoing edges: {dead_end_nodes}.' + how_to_suppress)
+
+    # Checks 4 and 5: Ensure all nodes (and in particular, the end node) are reachable from the start node
+    reachable: set[NodeID] = {StartNode.id}
+    to_visit = [StartNode.id]
+
+    while to_visit:
+        current_id = to_visit.pop()
+
+        # Add destinations from regular edges
+        for path in edges_by_source.get(current_id, []):
+            for item in path.items:
+                if isinstance(item, DestinationMarker):
+                    if item.destination_id not in reachable:
+                        reachable.add(item.destination_id)
+                        to_visit.append(item.destination_id)
+
+        # Add destinations from decision branches
+        current_node = nodes.get(current_id)
+        if isinstance(current_node, Decision):
+            for branch in current_node.branches:
+                for item in branch.path.items:
+                    if isinstance(item, DestinationMarker):
+                        if item.destination_id not in reachable:
+                            reachable.add(item.destination_id)
+                            to_visit.append(item.destination_id)
+
+    unreachable_nodes = [node_id for node_id in nodes if node_id not in reachable]
+    if unreachable_nodes:
+        raise GraphValidationError(
+            f'The following nodes are not reachable from the start node: {unreachable_nodes}.' + how_to_suppress
         )
 
 

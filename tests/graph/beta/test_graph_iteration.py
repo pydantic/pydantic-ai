@@ -388,7 +388,7 @@ async def test_iter_turn_end_marker_into_tasks():
         g.edge_from(second_step).to(g.end_node),
     )
 
-    graph = g.build()
+    graph = g.build(validate_graph_structure=False)
     state = IterState()
 
     override_done = False

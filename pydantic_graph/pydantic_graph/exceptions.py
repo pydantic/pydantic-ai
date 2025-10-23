@@ -26,6 +26,17 @@ class GraphBuildingError(ValueError):
         super().__init__(message)
 
 
+class GraphValidationError(ValueError):
+    """An error raised during graph validation."""
+
+    message: str
+    """The error message."""
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)
+
+
 class GraphRuntimeError(RuntimeError):
     """Error caused by an issue during graph execution."""
 
