@@ -553,6 +553,10 @@ class StreamedResponse(ABC):
 
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
+        # Flush any buffered content before building response
+        for _ in self._parts_manager.finalize():
+            pass
+
         return ModelResponse(
             parts=self._parts_manager.get_parts(),
             model_name=self.model_name,

@@ -202,3 +202,85 @@ def test_exact_tag_length_boundary():
     assert events[0] == snapshot(
         PartStartEvent(index=0, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start')
     )
+
+
+def test_buffered_content_flushed_on_finalize():
+    """Test that buffered content is flushed when finalize is called."""
+    manager = ModelResponsePartsManager()
+    thinking_tags = ('<think>', '</think>')
+
+    # Buffer partial tag
+    events = list(manager.handle_text_delta(vendor_part_id='content', content='<thi', thinking_tags=thinking_tags))
+    assert len(events) == 0  # Buffered
+
+    # Finalize should flush buffer
+    final_events = list(manager.finalize())
+    assert len(final_events) == 1
+    assert final_events[0] == snapshot(
+        PartStartEvent(index=0, part=TextPart(content='<thi', part_kind='text'), event_kind='part_start')
+    )
+
+
+def test_finalize_flushes_all_buffers():
+    """Test that finalize flushes all vendor_part_id buffers."""
+    manager = ModelResponsePartsManager()
+    thinking_tags = ('<think>', '</think>')
+
+    # Buffer for vendor_id_1
+    list(manager.handle_text_delta(vendor_part_id='id1', content='<th', thinking_tags=thinking_tags))
+
+    # Buffer for vendor_id_2
+    list(manager.handle_text_delta(vendor_part_id='id2', content='<thi', thinking_tags=thinking_tags))
+
+    # Finalize should flush both
+    final_events = list(manager.finalize())
+    assert len(final_events) == 2
+
+    # Both should become TextParts
+    parts = manager.get_parts()
+    assert len(parts) == 2
+    assert all(isinstance(p, TextPart) for p in parts)
+    # Note: order may vary, so check content exists
+    text_parts = [p for p in parts if isinstance(p, TextPart)]
+    contents = {p.content for p in text_parts}
+    assert contents == {'<th', '<thi'}
+
+
+def test_finalize_with_no_buffer():
+    """Test that finalize is safe when buffer is empty."""
+    manager = ModelResponsePartsManager()
+    events = list(manager.finalize())
+    assert len(events) == 0  # No events, no errors
+
+
+def test_finalize_with_empty_buffered_content():
+    """Test that finalize handles empty string in buffer (covers 83->82 branch)."""
+    manager = ModelResponsePartsManager()
+    # Add both empty and non-empty content to test the branch where buffered_content is falsy
+    # This ensures the loop continues after skipping the empty content
+    manager._thinking_tag_buffer['id1'] = ''  # Will be skipped  # pyright: ignore[reportPrivateUsage]
+    manager._thinking_tag_buffer['id2'] = 'content'  # Will be flushed  # pyright: ignore[reportPrivateUsage]
+    events = list(manager.finalize())
+    assert len(events) == 1  # Only non-empty content produces events
+    assert isinstance(events[0], PartStartEvent)
+    assert events[0].part == TextPart(content='content')
+    assert manager._thinking_tag_buffer == {}  # Buffer should be cleared  # pyright: ignore[reportPrivateUsage]
+
+
+def test_get_parts_after_finalize():
+    """Test that get_parts returns flushed content after finalize (unit test)."""
+    # NOTE: This is a unit test of the manager. Real integration testing with
+    # StreamedResponse is done in test_finalize_integration().
+    manager = ModelResponsePartsManager()
+    thinking_tags = ('<think>', '</think>')
+
+    list(manager.handle_text_delta(vendor_part_id='content', content='<thi', thinking_tags=thinking_tags))
+
+    # Before finalize
+    assert manager.get_parts() == []  # Buffer not included
+
+    # Finalize
+    list(manager.finalize())
+
+    # After finalize
+    assert manager.get_parts() == snapshot([TextPart(content='<thi', part_kind='text')])

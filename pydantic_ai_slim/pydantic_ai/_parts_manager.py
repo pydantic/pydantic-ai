@@ -69,6 +69,28 @@ class ModelResponsePartsManager:
         """
         return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
 
+    def finalize(self) -> Generator[ModelResponseStreamEvent, None, None]:
+        """Flush any buffered content as text parts.
+
+        This should be called when streaming is complete to ensure no content is lost.
+        Any content buffered in _thinking_tag_buffer that hasn't been processed will be
+        treated as regular text and emitted.
+
+        Yields:
+            ModelResponseStreamEvent for any buffered content that gets flushed.
+        """
+        for vendor_part_id, buffered_content in list(self._thinking_tag_buffer.items()):
+            if buffered_content:
+                yield from self._handle_text_delta_simple(
+                    vendor_part_id=vendor_part_id,
+                    content=buffered_content,
+                    id=None,
+                    thinking_tags=None,
+                    ignore_leading_whitespace=False,
+                )
+
+        self._thinking_tag_buffer.clear()
+
     def handle_text_delta(
         self,
         *,
