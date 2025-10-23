@@ -3098,8 +3098,9 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
+                        tool_name='mcp_server',
                         args={
+                            'action': 'call_tool',
                             'server_id': 'deepwiki',
                             'tool_name': 'ask_question',
                             'tool_args': {
@@ -3111,7 +3112,7 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
+                        tool_name='mcp_server',
                         content={
                             'content': [
                                 {
@@ -3167,81 +3168,6 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
-                    ThinkingPart(
-                        content='The user is asking about the pydantic/pydantic-ai repository and wants me to keep the answer short. I should use the deepwiki tools to get information about this repository. Let me start by asking a general question about what this repository is about.',
-                        signature='EqUDCkYICBgCKkCTiLjx5Rzw9zXo4pFDhFAc9Ci1R+d2fpkiqw7IPt1PgxBankr7bhRfh2iQOFEUy7sYVtsBxvnHW8zfBRxH1j6lEgySvdOyObrcFdJX3qkaDMAMCdLHIevZ/mSx/SIwi917U34N5jLQH1yMoCx/k72klLG5v42vcwUTG4ngKDI69Ddaf0eeDpgg3tL5FHfvKowCnslWg3Pd3ITe+TLlzu+OVZhRKU9SEwDJbjV7ZF954Ls6XExAfjdXhrhvXDB+hz6fZFPGFEfXV7jwElFT5HcGPWy84xvlwzbklZ2zH3XViik0B5dMErMAKs6IVwqXo3s+0p9xtX5gCBuvLkalET2upNsmdKGJv7WQWoaLch5N07uvSgWkO8AkGuVtBgqZH+uRGlPfYlnAgifNHu00GSAVK3beeyZfpnSQ6LQKcH+wVmrOi/3UvzA5f1LvsXG32gQKUCxztATnlBaI+7GMs1IAloaRHBndyRoe8Lwv79zZe9u9gnF9WCgK3yQsAR5hGZXlBKiIWfnRrXQ7QmA2hVO+mhEOCnz7OQkMIEUlfxgB',
-                        provider_name='anthropic',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
-                        args={
-                            'server_id': 'deepwiki',
-                            'tool_name': 'ask_question',
-                            'tool_args': {
-                                'repoName': 'pydantic/pydantic-ai',
-                                'question': 'What is pydantic-ai and what does this repository do?',
-                            },
-                        },
-                        tool_call_id='mcptoolu_01SAss3KEwASziHZoMR6HcZU',
-                        provider_name='anthropic',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
-                        content={
-                            'content': [
-                                {
-                                    'citations': None,
-                                    'text': IsStr(),
-                                    'type': 'text',
-                                }
-                            ],
-                            'is_error': False,
-                        },
-                        tool_call_id='mcptoolu_01SAss3KEwASziHZoMR6HcZU',
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
-                    ),
-                    TextPart(
-                        content="""\
-**Pydantic AI** is a Python agent framework for building production-grade applications with Generative AI. It provides:
-
-- **Type-safe agents** with compile-time validation using `Agent[Deps, Output]`
-- **Model-agnostic design** supporting 15+ LLM providers (OpenAI, Anthropic, Google, etc.)
-- **Structured outputs** with automatic Pydantic validation and self-correction
-- **Built-in observability** via OpenTelemetry and Logfire integration
-- **Production tooling** including evaluation framework, durable execution, and tool system
-
-The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (core framework), `pydantic-graph` (execution engine), and `pydantic-evals` (evaluation tools). It emphasizes developer ergonomics and type safety, similar to Pydantic and FastAPI.\
-"""
-                    ),
-                ],
-                usage=RequestUsage(
-                    input_tokens=2674,
-                    output_tokens=373,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 2674,
-                        'output_tokens': 373,
-                    },
-                ),
-                model_name='claude-sonnet-4-20250514',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01MYDjkvBDRaKsY6PDwQz3n6',
-                finish_reason='stop',
-            ),
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
                         content='How about the pydantic repo in the same org?',
                         timestamp=IsDatetime(),
                     )
@@ -3255,8 +3181,9 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
+                        tool_name='mcp_server',
                         args={
+                            'action': 'call_tool',
                             'server_id': 'deepwiki',
                             'tool_name': 'ask_question',
                             'tool_args': {
@@ -3268,7 +3195,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
+                        tool_name='mcp_server',
                         content={
                             'content': [
                                 {
@@ -3418,13 +3345,13 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
-                        args='{"server_id":"deepwiki","tool_name":"ask_question","tool_args":{"repoName": "pydantic/pydantic-ai", "question": "What is this repository about? What are its main features and purpose?"}}',
+                        tool_name='mcp_server',
+                        args='{"action":"call_tool","server_id":"deepwiki","tool_name":"ask_question","tool_args":{"repoName": "pydantic/pydantic-ai", "question": "What is this repository about? What are its main features and purpose?"}}',
                         tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
+                        tool_name='mcp_server',
                         content={
                             'content': [
                                 {
@@ -3480,7 +3407,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
             PartStartEvent(
                 index=1,
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:call_tool',
+                    tool_name='mcp_server',
                     tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
                     provider_name='anthropic',
                 ),
@@ -3488,7 +3415,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
             PartDeltaEvent(
                 index=1,
                 delta=ToolCallPartDelta(
-                    args_delta='{"server_id":"deepwiki","tool_name":"ask_question","tool_args":',
+                    args_delta='{"action":"call_tool","server_id":"deepwiki","tool_name":"ask_question","tool_args":',
                     tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
                 ),
             ),
@@ -3562,7 +3489,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
             PartStartEvent(
                 index=2,
                 part=BuiltinToolReturnPart(
-                    tool_name='mcp_server:call_tool',
+                    tool_name='mcp_server',
                     content={
                         'content': [
                             {

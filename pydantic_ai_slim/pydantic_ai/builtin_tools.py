@@ -321,9 +321,6 @@ class MCPServerTool(AbstractBuiltinTool):
 
     kind: str = 'mcp_server'
 
-    LIST_TOOLS: Literal['mcp_server:list_tools'] = 'mcp_server:list_tools'
-    CALL_TOOL: Literal['mcp_server:call_tool'] = 'mcp_server:call_tool'
-
 
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
     if isinstance(tool_data, dict):

@@ -545,7 +545,7 @@ class AnthropicModel(Model):
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif (
-                                response_part.tool_name == MCPServerTool.CALL_TOOL
+                                response_part.tool_name == MCPServerTool.kind
                                 and (args := response_part.args_as_dict())
                                 and (server_id := args.get('server_id'))
                                 and (tool_name := args.get('tool_name'))
@@ -590,14 +590,14 @@ class AnthropicModel(Model):
                                         ),
                                     )
                                 )
-                            elif response_part.tool_name == MCPServerTool.CALL_TOOL and isinstance(
+                            elif response_part.tool_name == MCPServerTool.kind and isinstance(
                                 response_part.content, dict
                             ):  # pragma: no branch
                                 assistant_content_params.append(
                                     BetaMCPToolResultBlock(
                                         tool_use_id=tool_use_id,
                                         type='mcp_tool_result',
-                                        **cast(dict[str, Any], response_part.content),
+                                        **cast(dict[str, Any], response_part.content),  # pyright: ignore[reportUnknownMemberType]
                                     )
                                 )
                     elif isinstance(response_part, FilePart):  # pragma: no cover
@@ -908,8 +908,9 @@ def _map_code_execution_tool_result_block(
 def _map_mcp_server_use_block(item: BetaMCPToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
     return BuiltinToolCallPart(
         provider_name=provider_name,
-        tool_name=MCPServerTool.CALL_TOOL,
+        tool_name=MCPServerTool.kind,
         args={
+            'action': 'call_tool',
             'server_id': item.server_name,
             'tool_name': item.name,
             'tool_args': cast(dict[str, Any], item.input),
@@ -921,7 +922,7 @@ def _map_mcp_server_use_block(item: BetaMCPToolUseBlock, provider_name: str) -> 
 def _map_mcp_server_result_block(item: BetaMCPToolResultBlock, provider_name: str) -> BuiltinToolReturnPart:
     return BuiltinToolReturnPart(
         provider_name=provider_name,
-        tool_name=MCPServerTool.CALL_TOOL,
+        tool_name=MCPServerTool.kind,
         content=item.model_dump(mode='json', include={'content', 'is_error'}),
         tool_call_id=item.tool_use_id,
     )

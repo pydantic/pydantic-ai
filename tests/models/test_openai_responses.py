@@ -6356,13 +6356,13 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
             ModelResponse(
                 parts=[
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:list_tools',
-                        args={'server_id': 'deepwiki'},
+                        tool_name='mcp_server',
+                        args={'action': 'list_tools', 'server_id': 'deepwiki'},
                         tool_call_id='mcpl_0109ee23c01d02ff0068faa0b38a1481a3a99669f3aa518000',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:list_tools',
+                        tool_name='mcp_server',
                         content={
                             'tools': [
                                 {
@@ -6400,8 +6400,9 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
+                        tool_name='mcp_server',
                         args={
+                            'action': 'call_tool',
                             'server_id': 'deepwiki',
                             'tool_name': 'ask_question',
                             'tool_args': {
@@ -6413,7 +6414,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
+                        tool_name='mcp_server',
                         content={
                             'error': None,
                             'output': """\
@@ -6502,8 +6503,9 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
+                        tool_name='mcp_server',
                         args={
+                            'action': 'call_tool',
                             'server_id': 'deepwiki',
                             'tool_name': 'ask_question',
                             'tool_args': {
@@ -6515,7 +6517,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
+                        tool_name='mcp_server',
                         content={
                             'error': None,
                             'output': """\
@@ -6649,13 +6651,13 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
             ModelResponse(
                 parts=[
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:list_tools',
-                        args={'server_id': 'deepwiki'},
+                        tool_name='mcp_server',
+                        args={'action': 'list_tools', 'server_id': 'deepwiki'},
                         tool_call_id='mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:list_tools',
+                        tool_name='mcp_server',
                         content={
                             'tools': [
                                 {
@@ -6710,13 +6712,13 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
-                        args='{"server_id":"deepwiki","tool_name":"ask_question","tool_args":{"repoName":"pydantic/pydantic-ai","question":"What is the pydantic/pydantic-ai repository about?"}}',
+                        tool_name='mcp_server',
+                        args='{"action":"call_tool","server_id":"deepwiki","tool_name":"ask_question","tool_args":{"repoName":"pydantic/pydantic-ai","question":"What is the pydantic/pydantic-ai repository about?"}}',
                         tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
+                        tool_name='mcp_server',
                         content={
                             'error': None,
                             'output': """\
@@ -6826,8 +6828,8 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
             PartStartEvent(
                 index=0,
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:list_tools',
-                    args={'server_id': 'deepwiki'},
+                    tool_name='mcp_server',
+                    args={'action': 'list_tools', 'server_id': 'deepwiki'},
                     tool_call_id='mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd',
                     provider_name='openai',
                 ),
@@ -6835,7 +6837,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
             PartStartEvent(
                 index=1,
                 part=BuiltinToolReturnPart(
-                    tool_name='mcp_server:list_tools',
+                    tool_name='mcp_server',
                     content={
                         'tools': [
                             {
@@ -6887,7 +6889,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
             PartStartEvent(
                 index=3,
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server:call_tool',
+                    tool_name='mcp_server',
                     tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
                     provider_name='openai',
                 ),
@@ -6895,7 +6897,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
             PartDeltaEvent(
                 index=3,
                 delta=ToolCallPartDelta(
-                    args_delta='{"server_id":"deepwiki","tool_name":"ask_question","tool_args":',
+                    args_delta='{"action":"call_tool","server_id":"deepwiki","tool_name":"ask_question","tool_args":',
                     tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
                 ),
             ),
@@ -6915,7 +6917,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
             PartStartEvent(
                 index=4,
                 part=BuiltinToolReturnPart(
-                    tool_name='mcp_server:call_tool',
+                    tool_name='mcp_server',
                     content={
                         'error': None,
                         'output': """\
@@ -7034,13 +7036,13 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
             ModelResponse(
                 parts=[
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:list_tools',
-                        args={'server_id': 'google_calendar'},
+                        tool_name='mcp_server',
+                        args={'action': 'list_tools', 'server_id': 'google_calendar'},
                         tool_call_id='mcpl_0558010cf1416a490068faa0f9679481a082dc4ac08889f104',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:list_tools',
+                        tool_name='mcp_server',
                         content={
                             'tools': [
                                 {
@@ -7103,8 +7105,9 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
+                        tool_name='mcp_server',
                         args={
+                            'action': 'call_tool',
                             'server_id': 'google_calendar',
                             'tool_name': 'search_events',
                             'tool_args': {
@@ -7121,7 +7124,7 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
+                        tool_name='mcp_server',
                         content={
                             'output': None,
                             'error': {
@@ -7141,8 +7144,9 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server:call_tool',
+                        tool_name='mcp_server',
                         args={
+                            'action': 'call_tool',
                             'server_id': 'google_calendar',
                             'tool_name': 'search_events',
                             'tool_args': {
@@ -7159,7 +7163,7 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server:call_tool',
+                        tool_name='mcp_server',
                         content={
                             'output': None,
                             'error': {
