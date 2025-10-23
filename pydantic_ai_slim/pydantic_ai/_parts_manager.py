@@ -58,7 +58,7 @@ class ModelResponsePartsManager:
     """A list of parts (text or tool calls) that make up the current state of the model's response."""
     _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict, init=False)
     """Maps a vendor's "part" ID (if provided) to the index in `_parts` where that part resides."""
-    _tag_buffer: dict[VendorId, str] = field(default_factory=dict, init=False)
+    _thinking_tag_buffer: dict[VendorId, str] = field(default_factory=dict, init=False)
     """Buffers partial content when thinking tags might be split across chunks."""
 
     def get_parts(self) -> list[ModelResponsePart]:
@@ -192,7 +192,7 @@ class ModelResponsePartsManager:
     ) -> Generator[ModelResponseStreamEvent, None, None]:
         """Handle text delta with thinking tag detection and buffering for split tags."""
         start_tag, end_tag = thinking_tags
-        buffered = self._tag_buffer.get(vendor_part_id, '')
+        buffered = self._thinking_tag_buffer.get(vendor_part_id, '')
         combined_content = buffered + content
 
         part_index = self._vendor_id_to_part_index.get(vendor_part_id)
@@ -201,24 +201,24 @@ class ModelResponsePartsManager:
         if existing_part is not None and isinstance(existing_part, ThinkingPart):
             if combined_content == end_tag:
                 self._vendor_id_to_part_index.pop(vendor_part_id)
-                self._tag_buffer.pop(vendor_part_id, None)
+                self._thinking_tag_buffer.pop(vendor_part_id, None)
                 return
             else:
-                self._tag_buffer.pop(vendor_part_id, None)
+                self._thinking_tag_buffer.pop(vendor_part_id, None)
                 yield self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=combined_content)
                 return
 
         if combined_content == start_tag:
-            self._tag_buffer.pop(vendor_part_id, None)
+            self._thinking_tag_buffer.pop(vendor_part_id, None)
             self._vendor_id_to_part_index.pop(vendor_part_id, None)
             yield self.handle_thinking_delta(vendor_part_id=vendor_part_id, content='')
             return
 
         if content.startswith(start_tag[0]) and self._could_be_tag_start(combined_content, start_tag):
-            self._tag_buffer[vendor_part_id] = combined_content
+            self._thinking_tag_buffer[vendor_part_id] = combined_content
             return
 
-        self._tag_buffer.pop(vendor_part_id, None)
+        self._thinking_tag_buffer.pop(vendor_part_id, None)
         yield from self._handle_text_delta_simple(
             vendor_part_id=vendor_part_id,
             content=combined_content,
