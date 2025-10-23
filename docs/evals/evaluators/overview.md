@@ -73,9 +73,10 @@ dataset = Dataset(
 - Following instructions
 - RAG quality (groundedness, citation accuracy)
 
-### Custom Evaluators (Domain-Specific)
+### Custom Evaluators
 
-Write custom evaluators for domain-specific logic:
+Custom evaluators can be useful if you want to make use of any evaluation logic we don't provide with the framework.
+They are frequently useful for domain-specific logic:
 
 ```python
 from dataclasses import dataclass
@@ -95,6 +96,7 @@ class ValidSQL(Evaluator):
 ```
 
 **When to use:**
+
 - Domain-specific validation (SQL syntax, regex patterns, business rules)
 - External API calls (running generated code, checking databases)
 - Complex calculations (precision/recall, BLEU scores)
@@ -102,7 +104,10 @@ class ValidSQL(Evaluator):
 
 ## Evaluation Types
 
-Evaluators return three types of results:
+!!! info "Detailed Return Types Guide"
+    For full detail about precisely what custom Evaluators may return, see [Custom Evaluator Return Types](custom.md#return-types).
+
+Evaluators essentially return three types of results:
 
 ### 1. Assertions (bool)
 
@@ -126,7 +131,7 @@ class HasKeyword(Evaluator):
 
 ### 2. Scores (int or float)
 
-Numeric quality metrics, typically 0.0 to 1.0 or 0 to 100:
+Numeric metrics:
 
 ```python
 from dataclasses import dataclass
@@ -167,7 +172,7 @@ class SentimentClassifier(Evaluator):
 
 ### Multiple Results
 
-Return multiple evaluations from a single evaluator:
+You can return multiple evaluations from a single evaluator:
 
 ```python
 from dataclasses import dataclass
@@ -196,7 +201,7 @@ class ComprehensiveCheck(Evaluator):
 
 ## Combining Evaluators
 
-Mix and match evaluators to create comprehensive test suites:
+Mix and match evaluators to create comprehensive evaluation suites:
 
 ```python
 from pydantic_evals import Case, Dataset
@@ -223,7 +228,126 @@ dataset = Dataset(
 )
 ```
 
-**Best Practice:** Put fast, cheap checks first to fail fast on obvious issues before running expensive evaluations.
+## Case-specific evaluators
+
+Case-specific evaluators are one of the most powerful features for building comprehensive evaluation suites. You can attach evaluators to individual [`Case`][pydantic_evals.Case] objects that only run for those specific cases:
+
+```python
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import LLMJudge, IsInstance
+
+dataset = Dataset(
+    cases=[
+        Case(
+            name='greeting_response',
+            inputs='Say hello',
+            evaluators=[
+                # This evaluator only runs for this case
+                LLMJudge(
+                    rubric='Response is warm and friendly, uses casual tone',
+                    include_input=True,
+                ),
+            ],
+        ),
+        Case(
+            name='formal_response',
+            inputs='Write a business email',
+            evaluators=[
+                # Different requirements for this case
+                LLMJudge(
+                    rubric='Response is professional and formal, uses business language',
+                    include_input=True,
+                ),
+            ],
+        ),
+    ],
+    evaluators=[
+        # This runs for ALL cases
+        IsInstance(type_name='str'),
+    ],
+)
+```
+
+### Why Case-Specific Evaluators Matter
+
+Case-specific evaluators solve a fundamental problem with one-size-fits-all evaluation: **if you could write a single evaluator rubric that perfectly captured your requirements across all cases, you'd just incorporate that rubric into your agent's instructions**. (Note: this is less relevant in cases where you want to use a cheaper model in production and assess it using a more expensive model, but in many cases it makes sense to use the best model you can in production.)
+
+The power of case-specific evaluation comes from the nuance:
+
+- **Different cases have different requirements**: A customer support response needs empathy; a technical API response needs precision
+- **Avoid "inmates running the asylum"**: If your LLMJudge rubric is generic enough to work everywhere, your agent should already be following it
+- **Capture nuanced golden behavior**: Each case can specify exactly what "good" looks like for that scenario
+
+### Building Golden Datasets with Case-Specific LLMJudge
+
+A particularly powerful pattern is using case-specific [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] evaluators to quickly build comprehensive, maintainable evaluation suites. Instead of needing exact `expected_output` values, you can describe what you care about:
+
+```python
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import LLMJudge
+
+dataset = Dataset(
+    cases=[
+        Case(
+            name='handle_refund_request',
+            inputs={'query': 'I want my money back', 'order_id': '12345'},
+            evaluators=[
+                LLMJudge(
+                    rubric="""
+                    Response should:
+                    1. Acknowledge the refund request empathetically
+                    2. Ask for the reason for the refund
+                    3. Mention our 30-day refund policy
+                    4. NOT process the refund immediately (needs manager approval)
+                    """,
+                    include_input=True,
+                ),
+            ],
+        ),
+        Case(
+            name='handle_shipping_question',
+            inputs={'query': 'Where is my order?', 'order_id': '12345'},
+            evaluators=[
+                LLMJudge(
+                    rubric="""
+                    Response should:
+                    1. Confirm the order number
+                    2. Provide tracking information
+                    3. Give estimated delivery date
+                    4. Be brief and factual (not overly apologetic)
+                    """,
+                    include_input=True,
+                ),
+            ],
+        ),
+        Case(
+            name='handle_angry_customer',
+            inputs={'query': 'This is completely unacceptable!', 'order_id': '12345'},
+            evaluators=[
+                LLMJudge(
+                    rubric="""
+                    Response should:
+                    1. Prioritize de-escalation with empathy
+                    2. Avoid being defensive
+                    3. Offer concrete next steps
+                    4. Use phrases like "I understand" and "Let me help"
+                    """,
+                    include_input=True,
+                ),
+            ],
+        ),
+    ],
+)
+```
+
+This approach lets you:
+
+- **Build comprehensive test suites quickly**: Just describe what you want per case
+- **Maintain easily**: Update rubrics as requirements change, without regenerating outputs
+- **Cover edge cases naturally**: Add new cases with specific requirements as you discover them
+- **Capture domain knowledge**: Each rubric documents what "good" means for that scenario
+
+The LLM evaluator excels at understanding nuanced requirements and assessing compliance, making this a practical way to create thorough evaluation coverage without brittleness.
 
 ## Async vs Sync
 

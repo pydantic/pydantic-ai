@@ -18,6 +18,26 @@ The key distinction is between:
 - **Execution** (Experiment) - running your task against those tests
 - **Results** (`EvaluationReport`) - what happened during the experiment
 
+## Unit Testing Analogy
+
+A helpful way to think about Pydantic Evals:
+
+| Unit Testing | Pydantic Evals |
+|--------------|----------------|
+| Test function | [`Case`][pydantic_evals.Case] + [`Evaluator`][pydantic_evals.evaluators.Evaluator] |
+| Test suite | [`Dataset`][pydantic_evals.Dataset] |
+| Running tests (`pytest`) | **Experiment** (`dataset.evaluate(task)`) |
+| Test report | [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] |
+| `assert` | Evaluator returning `bool` |
+
+**Key Difference**: AI systems are probabilistic, so instead of simple pass/fail, evaluations can have:
+
+- Quantitative scores (0.0 to 1.0)
+- Qualitative labels ("good", "acceptable", "poor")
+- Pass/fail assertions with explanatory reasons
+
+Just like you can run `pytest` multiple times on the same test suite, you can run multiple experiments on the same dataset to compare different implementations or track changes over time.
+
 ## Dataset
 
 A [`Dataset`][pydantic_evals.Dataset] is a collection of test cases and evaluators that define an evaluation suite.
@@ -236,6 +256,10 @@ Metadata is useful for:
 - Filtering cases during analysis
 - Providing context to evaluators
 - Organizing test suites
+
+#### Evaluators
+
+Cases can have their own evaluators that only run for that specific case. This is particularly powerful for building comprehensive evaluation suites where different cases have different requirements - if you could write one evaluator rubric that worked perfectly for all cases, you'd just incorporate it into your agent instructions. Case-specific [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] evaluators are especially useful for quickly building maintainable golden datasets by describing what "good" looks like for each scenario. See [Case-specific evaluators](evaluators/overview.md#case-specific-evaluators) for a more detailed explanation and examples.
 
 ## Evaluator
 
@@ -460,84 +484,6 @@ When you call `dataset.evaluate(task)`, an **Experiment** runs:
 - **One Experiment → One Report**: Each time you call `dataset.evaluate(...)`, you get one report
 - **One Experiment → Many Case Results**: The report contains results for every case in the dataset
 
-## Evaluation Flow
-
-Here's what happens when you run `dataset.evaluate(task)`:
-
-```mermaid
-sequenceDiagram
-    participant D as Dataset
-    participant T as Task
-    participant E as Evaluators
-    participant R as Report
-
-    D->>T: Run task(case.inputs)
-    T->>D: Return output
-    D->>E: Evaluate(context)
-    E->>D: Return scores/assertions
-    D->>R: Collect results
-```
-
-### Step by Step
-
-1. **Setup**: Dataset loads cases and evaluators
-1. **Execution**: For each case:
-    1. Run `task(case.inputs)` → get `output`
-    1. Capture duration and telemetry
-    1. Create [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext]
-1. **Evaluation**: For each evaluator:
-    1. Call `evaluator.evaluate(context)`
-    1. Collect scores, assertions, and labels
-1. **Reporting**: Aggregate all results into [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport]
-
-### Concurrency
-
-By default, cases run concurrently. Control this with `max_concurrency`:
-
-```python
-from pydantic_evals import Case, Dataset
-
-dataset = Dataset(
-    cases=[
-        Case(inputs='hello'),
-        Case(inputs='world'),
-    ],
-)
-
-
-def task(text: str) -> str:
-    return text.upper()
-
-
-# Run all cases concurrently (default)
-report = dataset.evaluate_sync(task)
-
-# Limit to 5 concurrent cases
-report = dataset.evaluate_sync(task, max_concurrency=5)
-
-# Run sequentially (one at a time)
-report = dataset.evaluate_sync(task, max_concurrency=1)
-```
-
-## Unit Testing Analogy
-
-A helpful way to think about Pydantic Evals:
-
-| Unit Testing | Pydantic Evals |
-|--------------|----------------|
-| Test function | [`Case`][pydantic_evals.Case] + [`Evaluator`][pydantic_evals.evaluators.Evaluator] |
-| Test suite | [`Dataset`][pydantic_evals.Dataset] |
-| Running tests (`pytest`) | **Experiment** (`dataset.evaluate(task)`) |
-| Test report | [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] |
-| `assert` | Evaluator returning `bool` |
-
-**Key Difference**: AI systems are probabilistic, so instead of simple pass/fail, evaluations can have:
-
-- Quantitative scores (0.0 to 1.0)
-- Qualitative labels ("good", "acceptable", "poor")
-- Pass/fail assertions with explanatory reasons
-
-Just like you can run `pytest` multiple times on the same test suite, you can run multiple experiments on the same dataset to compare different implementations or track changes over time.
 
 ## Next Steps
 
