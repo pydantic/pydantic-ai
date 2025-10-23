@@ -725,6 +725,11 @@ class SpellingChecker(Evaluator):
         return check_spelling(ctx.output)
 ```
 
+Some exceptions to this:
+
+* When there is a significant amount of shared computation or network request latency, it may be better to have a single evaluator calculate all dependent outputs together.
+* If multiple checks are tightly coupled or very closely related to each other, it may make sense to include all their logic in one evaluator.
+
 ### 2. Handle Missing Data Gracefully
 
 ```python

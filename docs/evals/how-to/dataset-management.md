@@ -525,24 +525,9 @@ dataset = Dataset(
 dataset.add_case(name='newly_discovered_edge_case', inputs='edge')
 ```
 
-### 4. Use Metadata Extensively
+### 4. Use Case-specific Evaluators Where Appropriate
 
-```python
-from pydantic_evals import Case
-
-Case(
-    name='complex_query',
-    inputs='solve integral of x^2',
-    metadata={
-        'difficulty': 'hard',
-        'category': 'math',
-        'subcategory': 'calculus',
-        'source': 'textbook_page_123',
-        'added_date': '2024-03-20',
-        'issue_ref': 'GH-456',
-    },
-)
-```
+Case-specific evaluators let different cases have different evaluation criteria, which is essential for comprehensive "test coverage". Rather than trying to write one-size-fits-all evaluators, you can specify exactly what "good" looks like for each scenario. This is particularly powerful with [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] evaluators where you can describe nuanced requirements per case, making it easy to build and maintain golden datasets. See [Case-specific evaluators](../evaluators/overview.md#case-specific-evaluators) for detailed guidance.
 
 ### 5. Separate Datasets by Purpose
 

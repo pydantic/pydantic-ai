@@ -478,7 +478,7 @@ LLMJudge(
 
 ### 2. Use Multiple Judges
 
-Don't try to evaluate everything with one rubric:
+Don't always try to evaluate everything with one rubric:
 
 ```python
 from pydantic_evals.evaluators import LLMJudge
@@ -496,17 +496,14 @@ evaluators = [
 
 ### 3. Combine with Deterministic Checks
 
-Run fast checks before expensive LLM evaluation:
+Don't use LLM evaluation for checks that can be done deterministically:
 
 ```python
 from pydantic_evals.evaluators import Contains, IsInstance, LLMJudge
 
 evaluators = [
-    # Fast checks first
     IsInstance(type_name='str'),
     Contains(value='required_section'),
-
-    # Expensive LLM check last
     LLMJudge(rubric='Response quality is high'),
 ]
 ```
@@ -523,44 +520,6 @@ LLMJudge(
 )
 ```
 
-### 5. Enable Reasons for Debugging
-
-```python
-from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import LLMJudge
-
-
-def my_task(inputs: str) -> str:
-    return f'Result: {inputs}'
-
-
-dataset = Dataset(
-    cases=[Case(inputs='test')],
-    evaluators=[
-        LLMJudge(
-            rubric='Response is clear',
-            assertion={'include_reason': True},
-        ),
-    ],
-)
-
-# Then view reasons in reports:
-report = dataset.evaluate_sync(my_task)
-report.print(include_reasons=True)
-"""
-     Evaluation Summary: my_task
-┏━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID  ┃ Assertions  ┃ Duration ┃
-┡━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ Case 1   │ LLMJudge: ✔ │     10ms │
-│          │   Reason: - │          │
-│          │             │          │
-│          │             │          │
-├──────────┼─────────────┼──────────┤
-│ Averages │ 100.0% ✔    │     10ms │
-└──────────┴─────────────┴──────────┘
-"""
-```
 
 ## Limitations
 

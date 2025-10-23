@@ -417,79 +417,6 @@ class QualityEvaluator(Evaluator):
         }
 ```
 
-## Best Practices
-
-### 1. Use Metrics for Numbers
-
-```python
-from pydantic_evals import increment_eval_metric, set_eval_attribute
-
-# Good: Use metrics for numeric values
-increment_eval_metric('token_count', 100)
-increment_eval_metric('api_latency_ms', 250)
-
-# Bad: Don't use attributes for numbers that you'll aggregate
-set_eval_attribute('token_count', 100)  # Use metrics instead
-```
-
-### 2. Use Attributes for Context
-
-```python
-from pydantic_evals import set_eval_attribute
-
-# Good: Use attributes for qualitative data
-set_eval_attribute('model_version', 'gpt-4o-2024-05-13')
-set_eval_attribute('error_type', 'RateLimitError')
-set_eval_attribute('used_fallback', True)
-
-# Bad: Don't use metrics for non-numeric data
-# increment_eval_metric('model_version', 'gpt-4o')  # Wrong type!
-```
-
-### 3. Increment, Don't Set
-
-```python
-from pydantic_evals import increment_eval_metric, set_eval_attribute
-
-# Good: Increment for cumulative values
-increment_eval_metric('api_calls', 1)
-increment_eval_metric('api_calls', 1)  # Now 2
-
-# Bad: Setting overwrites
-set_eval_attribute('api_calls', 1)
-set_eval_attribute('api_calls', 1)  # Still 1, not 2
-```
-
-### 4. Use Descriptive Names
-
-```python
-from pydantic_evals import increment_eval_metric, set_eval_attribute
-
-# Good: Clear, specific names
-increment_eval_metric('openai_api_calls', 1)
-increment_eval_metric('total_input_tokens', 100)
-set_eval_attribute('cache_hit_on_first_attempt', True)
-
-# Bad: Vague names
-increment_eval_metric('calls', 1)
-increment_eval_metric('tokens', 100)
-set_eval_attribute('hit', True)
-```
-
-### 5. Don't Abuse Attributes
-
-```python
-from pydantic_evals import set_eval_attribute
-
-massive_object = {'key': 'value' * 1000}
-
-# Bad: Don't store huge objects
-set_eval_attribute('entire_response', massive_object)  # Too big!
-
-# Good: Store summarized info
-set_eval_attribute('response_length', len(str(massive_object)))
-set_eval_attribute('response_type', type(massive_object).__name__)
-```
 
 ## Metrics vs Attributes vs Metadata
 
@@ -520,39 +447,6 @@ def task(inputs):
     set_eval_attribute('model', 'gpt-4o')
     return f'Result: {inputs}'
 ```
-
-## Integration with Logfire
-
-When using Logfire, metrics and attributes appear as span attributes:
-
-```python
-import logfire
-
-from pydantic_evals import Case, Dataset, increment_eval_metric, set_eval_attribute
-
-logfire.configure(send_to_logfire='if-token-present')
-
-
-def process(inputs: str) -> str:
-    return f'Processed: {inputs}'
-
-
-def task(inputs: str) -> str:
-    increment_eval_metric('api_calls', 1)
-    set_eval_attribute('cache_hit', False)
-    return process(inputs)
-
-
-dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
-
-# Metrics and attributes are visible in Logfire UI
-report = dataset.evaluate_sync(task)
-```
-
-View in Logfire:
-- Metrics appear on the case span
-- Attributes appear on the case span
-- Can query and filter by these values
 
 ## Troubleshooting
 

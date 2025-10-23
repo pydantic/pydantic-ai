@@ -5,21 +5,24 @@ Handle transient failures in tasks and evaluators with automatic retry logic.
 ## Overview
 
 LLM-based systems can experience transient failures:
+
 - Rate limits
 - Network timeouts
 - Temporary API outages
 - Context length errors
 
 Pydantic Evals supports retry configuration for both:
+
 - **Task execution** - The function being evaluated
 - **Evaluator execution** - The evaluators themselves
 
 ## Basic Retry Configuration
 
-Pass a retry configuration to `evaluate()` or `evaluate_sync()`:
+Pass a retry configuration to `evaluate()` or `evaluate_sync()` using [Tenacity](https://tenacity.readthedocs.io/) parameters:
 
 ```python
 from pydantic_evals import Case, Dataset
+from tenacity import stop_after_attempt
 
 
 def my_function(inputs: str) -> str:
@@ -30,17 +33,18 @@ dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
 
 report = dataset.evaluate_sync(
     task=my_function,
-    retry_task={'max_attempts': 3},
-    retry_evaluators={'max_attempts': 2},
+    retry_task={'stop': stop_after_attempt(3)},
+    retry_evaluators={'stop': stop_after_attempt(2)},
 )
 ```
 
 ## Retry Configuration Options
 
-Retry configurations use [Tenacity](https://tenacity.readthedocs.io/) under the hood and support the same options as Pydantic AI's [`RetryConfig`](../../retries.md):
+Retry configurations use [Tenacity](https://tenacity.readthedocs.io/) and support the same options as Pydantic AI's [`RetryConfig`][pydantic_ai.retries.RetryConfig]:
 
 ```python
 from pydantic_evals import Case, Dataset
+from tenacity import stop_after_attempt, wait_exponential
 
 
 def my_function(inputs: str) -> str:
@@ -50,10 +54,9 @@ def my_function(inputs: str) -> str:
 dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
 
 retry_config = {
-    'max_attempts': 3,  # Total attempts (default: 1, no retries)
-    'initial_delay': 0.5,  # Initial delay in seconds (default: 0.5)
-    'max_delay': 10.0,  # Maximum delay in seconds (default: 10)
-    'timeout': 60.0,  # Total timeout in seconds (optional)
+    'stop': stop_after_attempt(3),  # Stop after 3 attempts
+    'wait': wait_exponential(multiplier=1, min=1, max=10),  # Exponential backoff: 1s, 2s, 4s, 8s (capped at 10s)
+    'reraise': True,  # Re-raise the original exception after exhausting retries
 }
 
 dataset.evaluate_sync(
@@ -62,14 +65,19 @@ dataset.evaluate_sync(
 )
 ```
 
-### Parameters
+### Common Parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `max_attempts` | int | 1 | Total number of attempts (1 = no retries) |
-| `initial_delay` | float | 0.5 | Initial retry delay in seconds |
-| `max_delay` | float | 10.0 | Maximum retry delay (uses exponential backoff) |
-| `timeout` | float \| None | None | Total timeout for all attempts |
+The retry configuration accepts any parameters from the tenacity `retry` decorator. Common ones include:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `stop` | `StopBaseT` | Stop strategy (e.g., `stop_after_attempt(3)`, `stop_after_delay(60)`) |
+| `wait` | `WaitBaseT` | Wait strategy (e.g., `wait_exponential()`, `wait_fixed(2)`) |
+| `retry` | `RetryBaseT` | Retry condition (e.g., `retry_if_exception_type(TimeoutError)`) |
+| `reraise` | `bool` | Whether to reraise the original exception (default: `False`) |
+| `before_sleep` | `Callable` | Callback before sleeping between retries |
+
+See the [Tenacity documentation](https://tenacity.readthedocs.io/) for all available options.
 
 ## Task Retries
 
@@ -77,6 +85,7 @@ Retry the task function when it fails:
 
 ```python
 from pydantic_evals import Case, Dataset
+from tenacity import stop_after_attempt, wait_exponential
 
 
 async def call_llm(inputs: str) -> str:
@@ -94,10 +103,9 @@ dataset = Dataset(cases=[Case(inputs='test')])
 report = dataset.evaluate_sync(
     task=flaky_llm_task,
     retry_task={
-        'max_attempts': 5,  # Try up to 5 times
-        'initial_delay': 1.0,  # Wait 1s before first retry
-        'max_delay': 30.0,  # Cap delays at 30s
-        'timeout': 120.0,  # Give up after 2 minutes total
+        'stop': stop_after_attempt(5),  # Try up to 5 times
+        'wait': wait_exponential(multiplier=1, min=1, max=30),  # Exponential backoff, capped at 30s
+        'reraise': True,
     },
 )
 ```
@@ -132,15 +140,17 @@ async def my_task(inputs: str) -> str:
 
 ### Exponential Backoff
 
-Delays increase exponentially with jitter:
+When using `wait_exponential()`, delays increase exponentially:
 
 ```
 Attempt 1: immediate
-Attempt 2: ~0.5s delay
-Attempt 3: ~1.0s delay
-Attempt 4: ~2.0s delay
-Attempt 5: ~4.0s delay (capped at max_delay)
+Attempt 2: ~1s delay (multiplier * 2^0)
+Attempt 3: ~2s delay (multiplier * 2^1)
+Attempt 4: ~4s delay (multiplier * 2^2)
+Attempt 5: ~8s delay (multiplier * 2^3, capped at max)
 ```
+
+The actual delay depends on the `multiplier`, `min`, and `max` parameters passed to `wait_exponential()`.
 
 ## Evaluator Retries
 
@@ -149,6 +159,7 @@ Retry evaluators when they fail:
 ```python
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
+from tenacity import stop_after_attempt, wait_exponential
 
 
 def my_task(inputs: str) -> str:
@@ -166,8 +177,9 @@ dataset = Dataset(
 report = dataset.evaluate_sync(
     task=my_task,
     retry_evaluators={
-        'max_attempts': 3,
-        'initial_delay': 0.5,
+        'stop': stop_after_attempt(3),
+        'wait': wait_exponential(multiplier=1, min=0.5, max=10),
+        'reraise': True,
     },
 )
 ```
@@ -200,6 +212,7 @@ If an evaluator fails after all retries, it's recorded as an [`EvaluatorFailure`
 
 ```python
 from pydantic_evals import Case, Dataset
+from tenacity import stop_after_attempt
 
 
 def task(inputs: str) -> str:
@@ -208,7 +221,7 @@ def task(inputs: str) -> str:
 
 dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
 
-report = dataset.evaluate_sync(task, retry_evaluators={'max_attempts': 3})
+report = dataset.evaluate_sync(task, retry_evaluators={'stop': stop_after_attempt(3)})
 
 # Check for evaluator failures
 for case in report.cases:
@@ -253,6 +266,7 @@ You can configure both independently:
 
 ```python
 from pydantic_evals import Case, Dataset
+from tenacity import stop_after_attempt, wait_exponential
 
 
 def flaky_task(inputs: str) -> str:
@@ -264,14 +278,14 @@ dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
 report = dataset.evaluate_sync(
     task=flaky_task,
     retry_task={
-        'max_attempts': 5,  # Retry task up to 5 times
-        'initial_delay': 1.0,
-        'timeout': 120.0,
+        'stop': stop_after_attempt(5),  # Retry task up to 5 times
+        'wait': wait_exponential(multiplier=1, min=1, max=30),
+        'reraise': True,
     },
     retry_evaluators={
-        'max_attempts': 3,  # Retry evaluators up to 3 times
-        'initial_delay': 0.5,
-        'timeout': 30.0,
+        'stop': stop_after_attempt(3),  # Retry evaluators up to 3 times
+        'wait': wait_exponential(multiplier=1, min=0.5, max=10),
+        'reraise': True,
     },
 )
 ```
@@ -283,6 +297,7 @@ report = dataset.evaluate_sync(
 ```python
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
+from tenacity import stop_after_attempt, wait_exponential
 
 
 async def expensive_llm_call(inputs: str) -> str:
@@ -305,15 +320,14 @@ dataset = Dataset(
 report = dataset.evaluate_sync(
     task=llm_task,
     retry_task={
-        'max_attempts': 10,  # Rate limits can take multiple retries
-        'initial_delay': 2.0,
-        'max_delay': 60.0,  # Wait up to 1 minute between retries
-        'timeout': 300.0,  # 5 minutes total timeout
+        'stop': stop_after_attempt(10),  # Rate limits can take multiple retries
+        'wait': wait_exponential(multiplier=2, min=2, max=60),  # Start at 2s, exponential up to 60s
+        'reraise': True,
     },
     retry_evaluators={
-        'max_attempts': 5,
-        'initial_delay': 2.0,
-        'max_delay': 30.0,
+        'stop': stop_after_attempt(5),
+        'wait': wait_exponential(multiplier=2, min=2, max=30),
+        'reraise': True,
     },
 )
 ```
@@ -324,6 +338,7 @@ report = dataset.evaluate_sync(
 import httpx
 
 from pydantic_evals import Case, Dataset
+from tenacity import stop_after_attempt, wait_exponential
 
 
 async def api_task(inputs: str) -> str:
@@ -339,10 +354,9 @@ dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
 report = dataset.evaluate_sync(
     task=api_task,
     retry_task={
-        'max_attempts': 4,  # A few quick retries
-        'initial_delay': 0.5,  # Fast retry
-        'max_delay': 5.0,  # Don't wait too long
-        'timeout': 60.0,  # Give up after 1 minute
+        'stop': stop_after_attempt(4),  # A few quick retries
+        'wait': wait_exponential(multiplier=0.5, min=0.5, max=5),  # Fast retry, capped at 5s
+        'reraise': True,
     },
 )
 ```
@@ -351,6 +365,7 @@ report = dataset.evaluate_sync(
 
 ```python
 from pydantic_evals import Case, Dataset
+from tenacity import stop_after_attempt
 
 
 class ContextLengthError(Exception):
@@ -376,7 +391,7 @@ dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
 # Don't retry context length errors (handle in task)
 report = dataset.evaluate_sync(
     task=smart_llm_task,
-    retry_task={'max_attempts': 1},  # No retries, we handle it
+    retry_task={'stop': stop_after_attempt(1)},  # No retries, we handle it
 )
 ```
 
@@ -435,6 +450,7 @@ Retries increase execution time:
 
 ```python
 from pydantic_evals import Case, Dataset
+from tenacity import stop_after_attempt
 
 
 def task(inputs: str) -> str:
@@ -443,7 +459,7 @@ def task(inputs: str) -> str:
 
 dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
 
-report = dataset.evaluate_sync(task, retry_task={'max_attempts': 5})
+report = dataset.evaluate_sync(task, retry_task={'stop': stop_after_attempt(5)})
 
 for case in report.cases:
     print(f'{case.name}: {case.task_duration:.2f}s (includes retries)')
@@ -458,6 +474,7 @@ If you're using Logfire, retries appear as separate spans:
 import logfire
 
 from pydantic_evals import Case, Dataset
+from tenacity import stop_after_attempt
 
 
 def task(inputs: str) -> str:
@@ -467,124 +484,22 @@ def task(inputs: str) -> str:
 logfire.configure(send_to_logfire='if-token-present')
 
 dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
-report = dataset.evaluate_sync(task, retry_task={'max_attempts': 3})
+report = dataset.evaluate_sync(task, retry_task={'stop': stop_after_attempt(3)})
 
 # View in Logfire web UI to see retry spans
-```
-
-## Best Practices
-
-### 1. Be Conservative with max_attempts
-
-More retries = longer evaluation time:
-
-```python
-# Development: fail fast
-retry_config = {'max_attempts': 2}
-
-# Production: be patient
-retry_config = {'max_attempts': 5}
-```
-
-### 2. Use Different Configs for Tasks and Evaluators
-
-Tasks might need more retries than evaluators:
-
-```python
-from pydantic_evals import Case, Dataset
-
-
-def expensive_llm_task(inputs: str) -> str:
-    return f'Result: {inputs}'
-
-
-dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
-
-report = dataset.evaluate_sync(
-    task=expensive_llm_task,
-    retry_task={'max_attempts': 5},  # Task is critical
-    retry_evaluators={'max_attempts': 2},  # Evaluators less critical
-)
-```
-
-### 3. Set Timeouts
-
-Prevent hanging evaluations:
-
-```python
-retry_config = {
-    'max_attempts': 10,
-    'timeout': 120.0,  # Give up after 2 minutes, regardless of attempts
-}
-```
-
-### 4. Log Retry Attempts
-
-```python
-from dataclasses import dataclass, field
-
-from pydantic_evals.evaluators import Evaluator, EvaluatorContext
-
-
-async def flaky_check(output: str) -> bool:
-    return len(output) > 0
-
-
-@dataclass
-class LoggingEvaluator(Evaluator):
-    attempts: int = field(default=0, init=False)
-
-    async def evaluate(self, ctx: EvaluatorContext) -> bool:
-        self.attempts += 1
-        print(f'Attempt {self.attempts}')
-
-        result = await flaky_check(ctx.output)
-        return result
-```
-
-### 5. Test Retry Logic
-
-Simulate failures to test retry behavior:
-
-```python {test="skip"}
-from pydantic_evals import Case, Dataset
-
-
-def my_task(inputs: str) -> str:
-    """Task that demonstrates retry configuration.
-
-    In a real scenario, this would fail intermittently due to
-    rate limits or network issues, then succeed on retry.
-    """
-    return f'Success: {inputs}'
-
-
-# Configure retries for handling transient failures
-dataset = Dataset(cases=[Case(inputs='test')])
-
-report = dataset.evaluate_sync(
-    task=my_task,
-    retry_task={'max_attempts': 3},  # Will retry up to 3 times if needed
-)
-
-# Check results
-print(f'Cases evaluated: {len(report.cases)}')
-#> Cases evaluated: 1
-if report.cases:
-    print(f'Output: {report.cases[0].output}')
-    #> Output: Success: test
 ```
 
 ## Troubleshooting
 
 ### "Still failing after retries"
 
-Increase `max_attempts` or check if error is retriable:
+Increase retry attempts or check if error is retriable:
 
 ```python
 import logging
 
 from pydantic_evals import Case, Dataset
+from tenacity import stop_after_attempt
 
 
 def task(inputs: str) -> str:
@@ -597,20 +512,21 @@ logging.basicConfig(level=logging.DEBUG)
 dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
 
 # Tenacity logs retry attempts
-report = dataset.evaluate_sync(task, retry_task={'max_attempts': 5})
+report = dataset.evaluate_sync(task, retry_task={'stop': stop_after_attempt(5)})
 ```
 
 ### "Evaluations taking too long"
 
-Reduce `max_attempts` or `max_delay`:
+Reduce retry attempts or wait times:
 
 ```python
+from tenacity import stop_after_attempt, wait_exponential
+
 # Faster retries
 retry_config = {
-    'max_attempts': 3,  # Fewer attempts
-    'initial_delay': 0.1,  # Quick retries
-    'max_delay': 2.0,  # Low cap
-    'timeout': 30.0,  # Overall timeout
+    'stop': stop_after_attempt(3),  # Fewer attempts
+    'wait': wait_exponential(multiplier=0.1, min=0.1, max=2),  # Quick retries, capped at 2s
+    'reraise': True,
 }
 ```
 
@@ -620,6 +536,7 @@ Increase delays or use `max_concurrency`:
 
 ```python
 from pydantic_evals import Case, Dataset
+from tenacity import stop_after_attempt, wait_exponential
 
 
 def task(inputs: str) -> str:
@@ -630,9 +547,9 @@ dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
 
 # Longer delays
 retry_config = {
-    'max_attempts': 5,
-    'initial_delay': 5.0,  # Start with 5s delay
-    'max_delay': 60.0,  # Up to 1 minute
+    'stop': stop_after_attempt(5),
+    'wait': wait_exponential(multiplier=5, min=5, max=60),  # Start at 5s, exponential up to 60s
+    'reraise': True,
 }
 
 # Also reduce concurrency
