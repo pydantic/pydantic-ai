@@ -10,6 +10,7 @@ from pydantic_graph.beta import GraphBuilder, StepContext
 from pydantic_graph.beta.graph_builder import GraphBuildingError
 from pydantic_graph.beta.join import reduce_list_append, reduce_sum
 from pydantic_graph.beta.node import Fork
+from pydantic_graph.exceptions import GraphValidationError
 
 pytestmark = pytest.mark.anyio
 
@@ -326,3 +327,118 @@ async def test_join_without_dominating_fork_error():
         match='For every Join J in the graph, there must be a Fork F between the StartNode and J satisfying',
     ):
         g.build()
+
+
+async def test_validation_no_edges_from_start():
+    """Test that validation catches graphs with no edges from start node."""
+    g = GraphBuilder(output_type=int)
+
+    @g.step
+    async def orphan_step(ctx: StepContext[None, None, None]) -> int:
+        return 42  # pragma: no cover
+
+    # Add the step to the graph but don't connect it to start
+    g.add(g.edge_from(orphan_step).to(g.end_node))
+
+    with pytest.raises(GraphValidationError, match='The graph has no edges from the start node'):
+        g.build()
+
+
+async def test_validation_no_edges_to_end():
+    """Test that validation catches graphs with no edges to end node."""
+    g = GraphBuilder(output_type=int)
+
+    @g.step
+    async def dead_end_step(ctx: StepContext[None, None, None]) -> int:
+        return 42  # pragma: no cover
+
+    # Connect start to step but don't connect step to end
+    g.add(g.edge_from(g.start_node).to(dead_end_step))
+
+    with pytest.raises(GraphValidationError, match='The graph has no edges to the end node'):
+        g.build()
+
+
+async def test_validation_node_with_no_outgoing_edges():
+    """Test that validation catches nodes with no outgoing edges."""
+    g = GraphBuilder(output_type=int)
+
+    @g.step
+    async def first_step(ctx: StepContext[None, None, None]) -> int:
+        return 42  # pragma: no cover
+
+    @g.step
+    async def dead_end_step(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs  # pragma: no cover
+
+    # first_step connects to both dead_end_step and end_node
+    # But dead_end_step has no outgoing edges
+    g.add(
+        g.edge_from(g.start_node).to(first_step),
+        g.edge_from(first_step).to(dead_end_step, g.end_node),
+    )
+
+    with pytest.raises(GraphValidationError, match='The following nodes have no outgoing edges'):
+        g.build()
+
+
+async def test_validation_end_node_unreachable():
+    """Test that validation catches when end node is unreachable from start."""
+    g = GraphBuilder(input_type=int, output_type=int)
+
+    @g.step
+    async def first_step(ctx: StepContext[None, None, int]) -> int:
+        return 42  # pragma: no cover
+
+    @g.step
+    async def second_step(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs  # pragma: no cover
+
+    # Create a cycle that doesn't reach the end node
+    g.add(
+        g.edge_from(g.start_node).to(first_step),
+        g.edge_from(first_step).to(second_step),
+        g.edge_from(second_step).to(first_step),
+    )
+
+    with pytest.raises(GraphValidationError, match='The graph has no edges to the end node'):
+        g.build()
+
+
+async def test_validation_unreachable_nodes():
+    """Test that validation catches nodes that are not reachable from start."""
+    g = GraphBuilder(output_type=int)
+
+    @g.step
+    async def reachable_step(ctx: StepContext[None, None, None]) -> int:
+        return 10
+
+    @g.step
+    async def unreachable_step(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs * 2  # pragma: no cover
+
+    # unreachable_step is in the graph but not connected from start
+    g.add(
+        g.edge_from(g.start_node).to(reachable_step),
+        g.edge_from(reachable_step).to(g.end_node),
+        g.edge_from(unreachable_step).to(g.end_node),
+    )
+
+    with pytest.raises(GraphValidationError, match='The following nodes are not reachable from the start node'):
+        g.build()
+
+
+async def test_validation_can_be_disabled():
+    """Test that validation can be disabled with validate_graph_structure=False."""
+    g = GraphBuilder(output_type=int)
+
+    @g.step
+    async def orphan_step(ctx: StepContext[None, None, None]) -> int:
+        return 42  # pragma: no cover
+
+    # Add the step to the graph but don't connect it to start
+    # This would normally fail validation
+    g.add(g.edge_from(orphan_step).to(g.end_node))
+
+    # Should not raise an error when validation is disabled
+    g.build(validate_graph_structure=False)

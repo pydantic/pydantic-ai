@@ -1,9 +1,9 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import inspect
 import types
 import warnings
-import inspect
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from functools import partial

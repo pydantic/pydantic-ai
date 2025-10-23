@@ -22,7 +22,7 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai.exceptions import ExceptionGroup
 from pydantic_graph import exceptions
-from pydantic_graph._utils import AbstractSpan, get_traceparent, logfire_span, infer_obj_name
+from pydantic_graph._utils import AbstractSpan, get_traceparent, infer_obj_name, logfire_span
 from pydantic_graph.beta.decision import Decision
 from pydantic_graph.beta.id_types import ForkID, ForkStack, ForkStackItem, GraphRunID, JoinID, NodeID, NodeRunID, TaskID
 from pydantic_graph.beta.join import Join, JoinNode, JoinState, ReducerContext

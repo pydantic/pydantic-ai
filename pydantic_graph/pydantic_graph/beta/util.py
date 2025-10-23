@@ -20,11 +20,11 @@ class TypeExpression(Generic[T]):
     requiring `type[T]`, such as `Any`, `Union[...]`, or `Literal[...]`. It provides a
         way to pass these complex type expressions to functions expecting concrete types.
 
-        Example:
+    Example:
             Instead of `output_type=Union[str, int]` (which may cause type errors),
             use `output_type=TypeExpression[Union[str, int]]`.
 
-        Note:
+    Note:
             This is a workaround for the lack of TypeForm in the Python type system.
     """
 
