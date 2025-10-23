@@ -9,14 +9,14 @@ Pydantic Evals is built around these core concepts:
 - **[`Dataset`][pydantic_evals.Dataset]** - A static definition containing test cases and evaluators
 - **[`Case`][pydantic_evals.Case]** - A single test scenario with inputs and optional expected outputs
 - **[`Evaluator`][pydantic_evals.evaluators.Evaluator]** - Logic for scoring or validating outputs
-- **Experiment** - The act of running a task function against all cases in a dataset
+- **Experiment** - The act of running a task function against all cases in a dataset. (This corresponds to a call to `Dataset.evaluate`.)
 - **[`EvaluationReport`][pydantic_evals.reporting.EvaluationReport]** - The results from running an experiment
 
 The key distinction is between:
 
-- **Definition** (Dataset with Cases and Evaluators) - what you want to test
+- **Definition** (`Dataset` with `Case`s and `Evaluator`s) - what you want to test
 - **Execution** (Experiment) - running your task against those tests
-- **Results** (EvaluationReport) - what happened during the experiment
+- **Results** (`EvaluationReport`) - what happened during the experiment
 
 ## Dataset
 
@@ -43,12 +43,12 @@ dataset = Dataset(
 - **Serializable**: Can be saved to/loaded from YAML or JSON files
 - **Evaluable**: Run against any function with matching input/output types
 
-### Dataset-Level vs Case-Level Evaluators
+### `Dataset`-Level vs `Case`-Level Evaluators
 
 Evaluators can be defined at two levels:
 
-- **Dataset-level**: Apply to all cases in the dataset
-- **Case-level**: Apply only to specific cases
+- **`Dataset`-level**: Apply to all cases in the dataset
+- **`Case`-level**: Apply only to specific cases
 
 ```python
 from pydantic_evals import Case, Dataset
@@ -105,15 +105,15 @@ report = dataset.evaluate_sync(uppercase_task)
 When you run an experiment:
 
 1. **Setup**: The dataset loads all cases and evaluators
-1. **Execution**: For each case:
+2. **Execution**: For each case:
     1. The task function is called with `case.inputs`
-    1. Execution time is measured
-    1. OpenTelemetry spans are captured (if logfire is configured)
-1. **Evaluation**: For each case output:
+    2. Execution time is measured and OpenTelemetry spans are captured (if `logfire` is configured)
+    3. The outputs of the task function for each case are recorded
+3. **Evaluation**: For each case output:
     1. All dataset-level evaluators are run
-    1. Case-specific evaluators are run (if any)
-    1. Results are collected (scores, assertions, labels)
-1. **Reporting**: All results are aggregated into an [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport]
+    2. Case-specific evaluators are run (if any)
+    3. Results are collected (scores, assertions, labels)
+4. **Reporting**: All results are aggregated into an [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport]
 
 ### Multiple Experiments from One Dataset
 
@@ -232,13 +232,14 @@ Case(
 ```
 
 Metadata is useful for:
+
 - Filtering cases during analysis
 - Providing context to evaluators
 - Organizing test suites
 
 ## Evaluator
 
-An [`Evaluator`][pydantic_evals.evaluators.Evaluator] assesses the output of your task and returns a score, label, or assertion.
+An [`Evaluator`][pydantic_evals.evaluators.Evaluator] assesses the output of your task and returns one or more scores, labels, or assertions. Each score, label or assertion can also have an optional string-value reason associated.
 
 ### Evaluator Types
 
@@ -277,6 +278,9 @@ class Classifier(Evaluator):
         return 'success'
 ```
 
+Evaluators can also return instances of [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason], and dictionaries mapping labels to output values.
+See the [custom evaluator return types](evaluators/custom/#return-types) docs for more detail.
+
 ### EvaluatorContext
 
 All evaluators receive an [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] containing:
@@ -287,7 +291,7 @@ All evaluators receive an [`EvaluatorContext`][pydantic_evals.evaluators.Evaluat
 - `expected_output`: Expected output (optional)
 - `output`: Actual output from task
 - `duration`: Task execution time in seconds
-- `span_tree`: OpenTelemetry spans (if logfire configured)
+- `span_tree`: OpenTelemetry spans (if `logfire` is configured)
 - `attributes`: Custom attributes dict
 - `metrics`: Custom metrics dict
 
@@ -389,9 +393,10 @@ The [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] contains:
 
 ### ReportCase
 
-Each successful case result contains:
+Each successfulcase result contains:
 
 **Case data:**
+
 - `name`: Case name
 - `inputs`: Task inputs
 - `metadata`: Case metadata (optional)
@@ -399,23 +404,28 @@ Each successful case result contains:
 - `output`: Actual output from task
 
 **Evaluation results:**
+
 - `scores`: Dictionary of numeric scores from evaluators
 - `labels`: Dictionary of categorical labels from evaluators
 - `assertions`: Dictionary of pass/fail assertions from evaluators
 
 **Performance data:**
+
 - `task_duration`: Task execution time
 - `total_duration`: Total time including evaluators
 
 **Additional data:**
+
 - `metrics`: Custom metrics dict
 - `attributes`: Custom attributes dict
 
 **Tracing:**
+
 - `trace_id`: OpenTelemetry trace ID (optional)
 - `span_id`: OpenTelemetry span ID (optional)
 
 **Errors:**
+
 - `evaluator_failures`: List of evaluator errors
 
 ## Data Model Relationships
@@ -430,13 +440,11 @@ Here's how the core concepts relate to each other:
 
 ### Execution (Experiment)
 
-When you call `dataset.evaluate_sync(task)`:
+When you call `dataset.evaluate(task)`, an **Experiment** runs:
 
-- An **Experiment** runs:
-  - Takes one **Task** function
-  - Executes it against all **Cases** in the **Dataset**
-  - Runs all **Evaluators** (both dataset-level and case-specific) against each output
-  - Produces one **EvaluationReport**
+- The **Task** function is executed against all **Cases** in the **Dataset**
+- All **Evaluators** are run (both dataset-level and case-specific) against each output as appropriate
+- One **EvaluationReport** is produced as the final output
 
 ### Results
 
@@ -449,7 +457,7 @@ When you call `dataset.evaluate_sync(task)`:
 ### Key Relationships
 
 - **One Dataset → Many Experiments**: You can run the same dataset against different task implementations or multiple times to track changes
-- **One Experiment → One Report**: Each time you call `evaluate_sync()`, you get one report
+- **One Experiment → One Report**: Each time you call `dataset.evaluate(...)`, you get one report
 - **One Experiment → Many Case Results**: The report contains results for every case in the dataset
 
 ## Evaluation Flow
