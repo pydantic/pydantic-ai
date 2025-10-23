@@ -160,10 +160,10 @@ class ModelResponsePartsManager:
                 else:
                     raise UnexpectedModelBehavior(f'Cannot apply a text delta to {existing_part=}')
 
-        if thinking_tags and content == thinking_tags[0]:  # pragma: no cover
-            self._vendor_id_to_part_index.pop(vendor_part_id, None)  # pragma: no cover
-            yield self.handle_thinking_delta(vendor_part_id=vendor_part_id, content='')  # pragma: no cover
-            return  # pragma: no cover
+        if thinking_tags and content == thinking_tags[0]:
+            self._vendor_id_to_part_index.pop(vendor_part_id, None)
+            yield self.handle_thinking_delta(vendor_part_id=vendor_part_id, content='')
+            return
 
         if existing_text_part_and_index is None:
             if ignore_leading_whitespace and (len(content) == 0 or content.isspace()):
@@ -233,7 +233,7 @@ class ModelResponsePartsManager:
         # This occurs when buffered content + new chunk exceeds tag length
         # Example: buffer='<think' + new='<' = '<think<' (7 chars) >= '<think>' (7 chars)
         if len(content) >= len(tag):
-            return False  # pragma: no cover - defensive check for malformed input
+            return False
         return tag.startswith(content)
 
     def handle_thinking_delta(
