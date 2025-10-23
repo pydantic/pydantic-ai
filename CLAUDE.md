@@ -1,161 +1,100 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## Purpose
 
-## Development Commands
+This fork of Pydantic AI is a **workspace for analyzing and understanding the Pydantic AI codebase and documentation**. Both Claude Code Mobile (iOS) and Claude Code Desktop (Mac) collaborate on this analysis, creating reports and documentation in the `claude/` directory.
 
-### Core Development Tasks
+**What we do here:**
+- Explore and analyze the Pydantic AI codebase
+- Document how various components work
+- Create guides and explainers for complex features
+- Share findings between Mobile and Desktop instances
 
-- **Install dependencies**: `make install` (requires uv, pre-commit, and deno)
-- **Run all checks**: `pre-commit run --all-files`
-- **Run tests**: `make test`
-- **Build docs**: `make docs` or `make docs-serve` (local development)
+**What we don't do:**
+- Develop or modify Pydantic AI itself (this is a read-only analysis fork)
+- Run tests or CI/CD workflows (removed for simplicity)
 
-### Single Test Commands
+## Repository Setup
 
-- **Run specific test**: `uv run pytest tests/test_agent.py::test_function_name -v`
-- **Run test file**: `uv run pytest tests/test_agent.py -v`
-- **Run with debug**: `uv run pytest tests/test_agent.py -v -s`
+- **Fork**: `ericksonc/pydantic-ai`
+- **Upstream**: `pydantic/pydantic-ai` (official repo, for reference only)
+- **Working Directory**: `claude/` - all reports and documentation go here
+- **No CI/CD**: GitHub Actions workflows have been removed (we only sync markdown files)
 
-## Project Architecture
+## Sync Workflow
 
-### Core Components
+### For Claude Code Mobile (iOS)
 
-**Agent System (`pydantic_ai_slim/pydantic_ai/agent/`)**
-- `Agent[AgentDepsT, OutputDataT]`: Main orchestrator class with generic types for dependency injection and output validation
-- Entry points: `run()`, `run_sync()`, `run_stream()` methods
-- Handles tool management, system prompts, and model interaction
+When you create or update reports:
 
-**Model Integration (`pydantic_ai_slim/pydantic_ai/models/`)**
-- Unified interface across providers: OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Bedrock, HuggingFace
-- Model strings: `"openai:gpt-4o"`, `"anthropic:claude-3-5-sonnet"`, `"google:gemini-1.5-pro"`
-- `ModelRequestParameters` for configuration, `StreamedResponse` for streaming
+1. **Edit files** in the `claude/` directory
+2. **Commit changes** with a descriptive message
+3. **Push directly to main**:
+   ```bash
+   git add claude/
+   git commit -m "Add/update report: [description]"
+   git push origin main
+   ```
 
-**Graph-based Execution (`pydantic_graph/` + `_agent_graph.py`)**
-- State machine execution through: `UserPromptNode` → `ModelRequestNode` → `CallToolsNode`
-- `GraphAgentState` maintains message history and usage tracking
-- `GraphRunContext` provides execution context
+**Important**: Work directly on `main` branch. No need to create feature branches for simple markdown sync.
 
-**Tool System (`tools.py`, `toolsets/`)**
-- `@agent.tool` decorator for function registration
-- `RunContext[AgentDepsT]` provides dependency injection in tools
-- Support for sync/async functions with automatic schema generation
+### For Claude Code Desktop (Mac)
 
-**Output Handling**
-- `TextOutput`: Plain text responses
-- `ToolOutput`: Structured data via tool calls
-- `NativeOutput`: Provider-specific structured output
-- `PromptedOutput`: Prompt-based structured extraction
+To sync reports from Mobile:
 
-### Key Design Patterns
-
-**Dependency Injection**
-```python
-@dataclass
-class MyDeps:
-    database: DatabaseConn
-
-agent = Agent('openai:gpt-4o', deps_type=MyDeps)
-
-@agent.tool
-async def get_data(ctx: RunContext[MyDeps]) -> str:
-    return await ctx.deps.database.fetch_data()
+**Option 1: Use the sync script (recommended)**
+```bash
+./sync-mobile-reports.sh
 ```
 
-**Type-Safe Agents**
-```python
-class OutputModel(BaseModel):
-    result: str
-    confidence: float
-
-agent: Agent[MyDeps, OutputModel] = Agent(
-    'openai:gpt-4o',
-    deps_type=MyDeps,
-    output_type=OutputModel
-)
+**Option 2: Manual pull**
+```bash
+git pull origin main
 ```
 
-## Workspace Structure
+The sync script will:
+- Fetch latest changes from the fork
+- Check for updates in `claude/` directory
+- Pull changes automatically if found
+- Display sync status
 
-This is a uv workspace with multiple packages:
-- **`pydantic_ai_slim/`**: Core framework (minimal dependencies)
-- **`pydantic_evals/`**: Evaluation system
-- **`pydantic_graph/`**: Graph execution engine
-- **`examples/`**: Example applications
-- **`clai/`**: CLI tool
+## File Organization
 
-## Testing Strategy
-
-- **Unit tests**: `tests/` directory with comprehensive model and component coverage
-- **VCR cassettes**: `tests/cassettes/` for recorded LLM API interactions
-- **Test models**: Use `TestModel` for deterministic testing
-- **Examples testing**: `tests/test_examples.py` validates all documentation examples
-- **Multi-version testing**: Python 3.10-3.13 support
-
-## Key Configuration Files
-
-- **`pyproject.toml`**: Main workspace configuration with dependency groups
-- **`pydantic_ai_slim/pyproject.toml`**: Core package with model optional dependencies
-- **`Makefile`**: Development task automation
-- **`uv.lock`**: Locked dependencies for reproducible builds
-
-## Important Implementation Notes
-
-- **Model Provider Integration**: Each provider in `models/` directory implements the `Model` abstract base class
-- **Message System**: Vendor-agnostic message format in `messages.py` with rich content type support
-- **Streaming Architecture**: Real-time response processing with validation during streaming
-- **Error Handling**: Specific exception types with retry mechanisms at multiple levels
-- **OpenTelemetry Integration**: Built-in observability support
-
-## Documentation Development
-
-- **Local docs**: `make docs-serve` (serves at http://localhost:8000)
-- **Docs source**: `docs/` directory (MkDocs with Material theme)
-- **API reference**: Auto-generated from docstrings using mkdocstrings
-
-## Dependencies Management
-
-- **Package manager**: uv (fast Python package manager)
-- **Lock file**: `uv.lock` (commit this file)
-- **Sync command**: `make sync` to update dependencies
-- **Optional extras**: Define groups in `pyproject.toml` optional-dependencies
-
-## Best Practices
-
-This is the list of best practices for working with the codebase.
-
-### Rename a class
-
-When asked to rename a class, you need to rename the class in the code and add a deprecation warning to the old class.
-
-```python
-from typing_extensions import deprecated
-
-class NewClass: ...  # This class was renamed from OldClass.
-
-@deprecated("Use `NewClass` instead.")
-class OldClass(NewClass): ...
+```
+claude/
+├── [various report files].md       # Reports created by either Mobile or Desktop
+├── modelmessage/                   # Organized documentation subdirectories
+│   └── [related docs].md
+└── user/                           # User-specific documentation
+    └── [user docs].md
 ```
 
-In the test suite, you MUST use the `NewClass` instead of the `OldClass`, and create a new test to verify the
-deprecation warning:
+## How Analysis & Sync Works
 
-```python
-def test_old_class_is_deprecated():
-    with pytest.warns(DeprecationWarning, match="Use `NewClass` instead."):
-        OldClass()
+**Analysis Flow:**
+- Both Mobile and Desktop Claude analyze the Pydantic AI codebase
+- Reports and findings are written to `claude/` directory
+- Each instance can build on the other's work
+
+**Sync Flow:**
+```
+Mobile: Analyzes code → Creates report → Commits & pushes to main
+                                            ↓
+                            GitHub Fork (ericksonc/pydantic-ai)
+                                            ↓
+Desktop: Runs ./sync-mobile-reports.sh → Pulls reports → Can continue analysis
 ```
 
-In the documentation, you should not have references to the old class, only the new class.
+## Important Notes
 
-### Writing documentation
+- **Both instances work on `main`**: No branching needed for markdown sync
+- **Conflicts are rare**: Mobile and Desktop typically work on different files
+- **If conflicts occur**: Desktop should pull first, resolve manually, then push
+- **The sync script is idempotent**: Safe to run multiple times
+- **Original CLAUDE.md**: See `CLAUDE-original.md` for Pydantic AI development instructions
 
-Always reference Python objects with the "`" (backticks) around them, and link to the API reference, for example:
+## Reference Links
 
-```markdown
-The [`Agent`][pydantic_ai.agent.Agent] class is the main entry point for creating and running agents.
-```
-
-### Coverage
-
-Every pull request MUST have 100% coverage. You can check the coverage by running `make test`.
+- Fork: https://github.com/ericksonc/pydantic-ai
+- Upstream: https://github.com/pydantic/pydantic-ai
+- Claude Code: https://claude.com/claude-code
