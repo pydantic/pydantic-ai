@@ -781,7 +781,6 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
             return self._handle_non_fork_edges(node, inputs, fork_stack)
 
     def _handle_non_fork_edges(self, node: AnyNode, inputs: Any, fork_stack: ForkStack) -> Sequence[GraphTask]:
-        # TODO: Replace `node` with a type that implies it is not a Fork
         edges = self.graph.edges_by_source.get(node.id, [])
         assert len(edges) == 1  # this should have already been ensured during graph building
         return self._handle_path(edges[0], inputs, fork_stack)

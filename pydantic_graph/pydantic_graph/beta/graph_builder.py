@@ -383,7 +383,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         # Automatically create edges from step function return hints including `BaseNode`s
         for destination in destinations:
             if not isinstance(destination, Step) or isinstance(destination, NodeStep):
-                # TODO: Confirm with Douwe that this logic is correct. It seems like we continue in more general conditions?
                 continue
             parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
             type_hints = get_type_hints(destination.call, localns=parent_namespace, include_extras=True)

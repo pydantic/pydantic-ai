@@ -22,7 +22,6 @@ InputT = TypeVar('InputT', infer_variance=True)
 OutputT = TypeVar('OutputT', infer_variance=True)
 
 
-# TODO: Consider removing inputs from StepContext and provide multiple allowed signatures like with ReducerFunction
 @dataclass(init=False)
 class StepContext(Generic[StateT, DepsT, InputT]):
     """Context information passed to step functions during graph execution.
@@ -142,9 +141,6 @@ class Step(Generic[StateT, DepsT, InputT, OutputT]):
         self.id = id
         self._call = call
         self.label = label
-
-    # TODO(P3): Consider defining __call__, so a decorated step can still be called with the same signature
-    # TODO(P3): Consider adding a `bind` method that returns an object that can be used to get something you can return from a BaseNode that allows you to transition to nodes using "new"-form edges
 
     @property
     def call(self) -> StepFunction[StateT, DepsT, InputT, OutputT]:
