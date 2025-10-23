@@ -294,7 +294,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
 
         If you want more control over the output, use `console_table` instead and pass it to `rich.Console.print`.
         """
-        if console is None:
+        if console is None:  # pragma: no branch
             console = Console(width=width)
 
         table = self.console_table(
