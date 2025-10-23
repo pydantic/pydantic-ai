@@ -207,7 +207,7 @@ class BedrockConverseModel(Model):
         self,
         model_name: BedrockModelName,
         *,
-        provider: Literal['bedrock'] | Provider[BaseClient] = 'bedrock',
+        provider: Literal['bedrock', 'gateway'] | Provider[BaseClient] = 'bedrock',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -226,7 +226,7 @@ class BedrockConverseModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(provider)
+            provider = infer_provider('gateway/bedrock' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = cast('BedrockRuntimeClient', provider.client)
 

@@ -167,7 +167,7 @@ class AnthropicModel(Model):
         self,
         model_name: AnthropicModelName,
         *,
-        provider: Literal['anthropic'] | Provider[AsyncAnthropicClient] = 'anthropic',
+        provider: Literal['anthropic', 'gateway'] | Provider[AsyncAnthropicClient] = 'anthropic',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -184,7 +184,7 @@ class AnthropicModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(provider)
+            provider = infer_provider('gateway/anthropic' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
