@@ -28,14 +28,16 @@ def test_handle_text_deltas(vendor_part_id: str | None):
     manager = ModelResponsePartsManager()
     assert manager.get_parts() == []
 
-    event = manager.handle_text_delta(vendor_part_id=vendor_part_id, content='hello ')
-    assert event == snapshot(
+    events = list(manager.handle_text_delta(vendor_part_id=vendor_part_id, content='hello '))
+    assert len(events) == 1
+    assert events[0] == snapshot(
         PartStartEvent(index=0, part=TextPart(content='hello ', part_kind='text'), event_kind='part_start')
     )
     assert manager.get_parts() == snapshot([TextPart(content='hello ', part_kind='text')])
 
-    event = manager.handle_text_delta(vendor_part_id=vendor_part_id, content='world')
-    assert event == snapshot(
+    events = list(manager.handle_text_delta(vendor_part_id=vendor_part_id, content='world'))
+    assert len(events) == 1
+    assert events[0] == snapshot(
         PartDeltaEvent(
             index=0, delta=TextPartDelta(content_delta='world', part_delta_kind='text'), event_kind='part_delta'
         )
@@ -46,22 +48,25 @@ def test_handle_text_deltas(vendor_part_id: str | None):
 def test_handle_dovetailed_text_deltas():
     manager = ModelResponsePartsManager()
 
-    event = manager.handle_text_delta(vendor_part_id='first', content='hello ')
-    assert event == snapshot(
+    events = list(manager.handle_text_delta(vendor_part_id='first', content='hello '))
+    assert len(events) == 1
+    assert events[0] == snapshot(
         PartStartEvent(index=0, part=TextPart(content='hello ', part_kind='text'), event_kind='part_start')
     )
     assert manager.get_parts() == snapshot([TextPart(content='hello ', part_kind='text')])
 
-    event = manager.handle_text_delta(vendor_part_id='second', content='goodbye ')
-    assert event == snapshot(
+    events = list(manager.handle_text_delta(vendor_part_id='second', content='goodbye '))
+    assert len(events) == 1
+    assert events[0] == snapshot(
         PartStartEvent(index=1, part=TextPart(content='goodbye ', part_kind='text'), event_kind='part_start')
     )
     assert manager.get_parts() == snapshot(
         [TextPart(content='hello ', part_kind='text'), TextPart(content='goodbye ', part_kind='text')]
     )
 
-    event = manager.handle_text_delta(vendor_part_id='first', content='world')
-    assert event == snapshot(
+    events = list(manager.handle_text_delta(vendor_part_id='first', content='world'))
+    assert len(events) == 1
+    assert events[0] == snapshot(
         PartDeltaEvent(
             index=0, delta=TextPartDelta(content_delta='world', part_delta_kind='text'), event_kind='part_delta'
         )
@@ -70,8 +75,9 @@ def test_handle_dovetailed_text_deltas():
         [TextPart(content='hello world', part_kind='text'), TextPart(content='goodbye ', part_kind='text')]
     )
 
-    event = manager.handle_text_delta(vendor_part_id='second', content='Samuel')
-    assert event == snapshot(
+    events = list(manager.handle_text_delta(vendor_part_id='second', content='Samuel'))
+    assert len(events) == 1
+    assert events[0] == snapshot(
         PartDeltaEvent(
             index=1, delta=TextPartDelta(content_delta='Samuel', part_delta_kind='text'), event_kind='part_delta'
         )
@@ -383,8 +389,9 @@ def test_handle_tool_call_part():
 def test_handle_mixed_deltas_without_text_part_id(text_vendor_part_id: str | None, tool_vendor_part_id: str | None):
     manager = ModelResponsePartsManager()
 
-    event = manager.handle_text_delta(vendor_part_id=text_vendor_part_id, content='hello ')
-    assert event == snapshot(
+    events = list(manager.handle_text_delta(vendor_part_id=text_vendor_part_id, content='hello '))
+    assert len(events) == 1
+    assert events[0] == snapshot(
         PartStartEvent(index=0, part=TextPart(content='hello ', part_kind='text'), event_kind='part_start')
     )
     assert manager.get_parts() == snapshot([TextPart(content='hello ', part_kind='text')])
@@ -400,9 +407,10 @@ def test_handle_mixed_deltas_without_text_part_id(text_vendor_part_id: str | Non
         )
     )
 
-    event = manager.handle_text_delta(vendor_part_id=text_vendor_part_id, content='world')
+    events = list(manager.handle_text_delta(vendor_part_id=text_vendor_part_id, content='world'))
+    assert len(events) == 1
     if text_vendor_part_id is None:
-        assert event == snapshot(
+        assert events[0] == snapshot(
             PartStartEvent(
                 index=2,
                 part=TextPart(content='world', part_kind='text'),
@@ -417,7 +425,7 @@ def test_handle_mixed_deltas_without_text_part_id(text_vendor_part_id: str | Non
             ]
         )
     else:
-        assert event == snapshot(
+        assert events[0] == snapshot(
             PartDeltaEvent(
                 index=0, delta=TextPartDelta(content_delta='world', part_delta_kind='text'), event_kind='part_delta'
             )
@@ -432,7 +440,7 @@ def test_handle_mixed_deltas_without_text_part_id(text_vendor_part_id: str | Non
 
 def test_cannot_convert_from_text_to_tool_call():
     manager = ModelResponsePartsManager()
-    manager.handle_text_delta(vendor_part_id=1, content='hello')
+    list(manager.handle_text_delta(vendor_part_id=1, content='hello'))
     with pytest.raises(
         UnexpectedModelBehavior, match=re.escape('Cannot apply a tool call delta to existing_part=TextPart(')
     ):
@@ -445,7 +453,7 @@ def test_cannot_convert_from_tool_call_to_text():
     with pytest.raises(
         UnexpectedModelBehavior, match=re.escape('Cannot apply a text delta to existing_part=ToolCallPart(')
     ):
-        manager.handle_text_delta(vendor_part_id=1, content='hello')
+        list(manager.handle_text_delta(vendor_part_id=1, content='hello'))
 
 
 def test_tool_call_id_delta():
@@ -553,7 +561,7 @@ def test_handle_thinking_delta_wrong_part_type():
     manager = ModelResponsePartsManager()
 
     # Add a text part first
-    manager.handle_text_delta(vendor_part_id='text', content='hello')
+    list(manager.handle_text_delta(vendor_part_id='text', content='hello'))
 
     # Try to apply thinking delta to the text part - should raise error
     with pytest.raises(UnexpectedModelBehavior, match=r'Cannot apply a thinking delta to existing_part='):
