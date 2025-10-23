@@ -1188,7 +1188,7 @@ def build_agent_graph(
             SetFinalResult[DepsT, OutputT],
         ),
     )
-    return g.build()
+    return g.build(validate_graph_structure=False)
 
 
 async def _process_message_history(
