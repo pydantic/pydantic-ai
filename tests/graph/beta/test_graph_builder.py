@@ -309,26 +309,20 @@ async def test_join_without_dominating_fork_error():
     g = GraphBuilder(output_type=int, input_type=int)
 
     @g.step
-    async def source_1(ctx: StepContext[None, None, int]) -> list[int]:
+    async def source(ctx: StepContext[None, None, int]) -> list[int]:
         return [ctx.inputs, 1]  # pragma: no cover
 
-    @g.step
-    async def source_2(ctx: StepContext[None, None, int]) -> list[int]:
-        return [ctx.inputs, 2]  # pragma: no cover
-
-    sum_1 = g.join(reduce_sum, initial=0)
-    sum_2 = g.join(reduce_sum, initial=0)
+    join_sum = g.join(reduce_sum, initial=0)
 
     g.add(
-        g.edge_from(g.start_node).to(source_1),
-        g.edge_from(source_1).map().to(sum_1),
-        g.edge_from(sum_1).to(source_2),
-        g.edge_from(source_2).map().to(sum_2),
-        g.edge_from(sum_2).to(
-            g.decision()
-            .branch(g.match(int, matches=lambda x: x % 2 == 0).to(g.end_node))
-            .branch(g.match(int).to(source_1))
-        ),
+        g.edge_from(g.start_node).to(source),
+        g.edge_from(source).map().to(join_sum),
+        g.edge_from(join_sum).to(join_sum),
+        g.edge_from(join_sum).to(g.end_node),
     )
 
-    g.build()
+    with pytest.raises(
+        GraphBuildingError,
+        match='For every Join J in the graph, there must be a Fork F between the StartNode and J satisfying',
+    ):
+        g.build()

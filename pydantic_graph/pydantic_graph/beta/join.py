@@ -27,12 +27,10 @@ K = TypeVar('K', infer_variance=True)
 V = TypeVar('V', infer_variance=True)
 
 
+# TODO(P1): I guess we should make this class private, etc.
 @dataclass
 class JoinState:
-    """The state of a join during graph execution associated to a particular fork run.
-
-    TODO: Should probably improve this docstring
-    """
+    """The state of a join during graph execution associated to a particular fork run."""
 
     current: Any
     downstream_fork_stack: ForkStack

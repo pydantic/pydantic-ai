@@ -437,8 +437,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             builder = builder.label(post_map_label)
         self.add(builder.to(map_to))
 
-    # TODO(P2): Support adding subgraphs ... not sure exactly what that looks like yet..
-    #  probably similar to a step, but with some tweaks
+    # TODO(DavidM): Support adding subgraphs; I think this behaves like a step with the same inputs/outputs but gets rendered as a subgraph in mermaid
 
     def edge_from(self, *sources: Source[SourceOutputT]) -> EdgePathBuilder[StateT, DepsT, SourceOutputT]:
         """Create an edge path builder starting from the given source nodes.
@@ -492,7 +491,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         source: type[SourceNodeT],
         *,
         matches: Callable[[Any], bool] | None = None,
-    ) -> DecisionBranch[SourceNodeT]:  # pragma: no cover  # TODO: We should cover this
+    ) -> DecisionBranch[SourceNodeT]:
         """Create a decision branch for BaseNode subclasses.
 
         This is similar to match() but specifically designed for matching
@@ -646,20 +645,15 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         Raises:
             ValueError: If the graph structure is invalid (e.g., join without parent fork)
         """
-        # TODO(P2): Warn/error if there is no start node / edges, or end node / edges
-        # TODO(P2): Warn/error if the graph is not connected
-        # TODO(P2): Warn/error if any non-End node is a dead end
-        # TODO(P2): Error if the graph does not meet the every-join-has-a-parent-fork requirement (otherwise can't know when to proceed past joins)
-        # TODO(P2): Allow the user to specify the parent forks; only infer them if _not_ specified
-        # TODO(P2): Verify that any user-specified parent forks are _actually_ valid parent forks, and if not, generate a helpful error message
-        # TODO(P3): Consider doing a deepcopy here to prevent modifications to the underlying nodes and edges
-
         nodes = self._nodes
         edges_by_source = self._edges_by_source
 
         nodes, edges_by_source = _replace_placeholder_node_ids(nodes, edges_by_source)
         nodes, edges_by_source = _flatten_paths(nodes, edges_by_source)
         nodes, edges_by_source = _normalize_forks(nodes, edges_by_source)
+        # TODO(P2): Warn/error if the graph is not connected
+        # TODO(P2): Warn/error if there is no start node / edges, or end node / edges
+        # TODO(P2): Warn/error if any non-End node is a dead end
         parent_forks = _collect_dominating_forks(nodes, edges_by_source)
 
         return Graph[StateT, DepsT, GraphInputT, GraphOutputT](
@@ -821,9 +815,10 @@ def _collect_dominating_forks(
         dominating_fork = finder.find_parent_fork(
             join.id, parent_fork_id=join.parent_fork_id, prefer_closest=join.preferred_parent_fork == 'closest'
         )
-        if dominating_fork is None:  # pragma: no cover  # TODO: We should cover this
+        if dominating_fork is None:
             rendered_mermaid_graph = build_mermaid_graph(graph_nodes, graph_edges_by_source).render()
-            raise GraphBuildingError(f"""\
+            raise GraphBuildingError(f"""A node in the graph is missing a dominating fork.
+
 For every Join J in the graph, there must be a Fork F between the StartNode and J satisfying:
 * Every path from the StartNode to J passes through F
 * There are no cycles in the graph including J that don't pass through F.
@@ -834,8 +829,7 @@ This is used to determine when all tasks upstream of this Join are complete and 
 Mermaid diagram:
 {rendered_mermaid_graph}
 
-Join {join.id!r} in this graph has no dominating fork in this graph.\
-""")
+Join {join.id!r} in this graph has no dominating fork in this graph.""")
         dominating_forks[join.id] = dominating_fork
 
     return dominating_forks

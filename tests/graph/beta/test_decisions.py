@@ -7,6 +7,7 @@ from typing import Literal
 
 import pytest
 
+from pydantic_graph import BaseNode, End, GraphRunContext
 from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
 from pydantic_graph.beta.join import reduce_list_append, reduce_sum
 
@@ -462,3 +463,62 @@ async def test_empty_decision_broadcast():
     g = GraphBuilder(state_type=DecisionState, output_type=list[str])
     with pytest.raises(ValueError, match=r'returned no branches, but must return at least one'):
         g.match(TypeExpression[Literal['fork']]).broadcast(lambda b: [])
+
+
+async def test_match_node():
+    """Test using match_node() with BaseNode types in decisions.
+
+    match_node() is designed for exhaustive matching of BaseNode return types
+    in decision branches. Unlike match().to(), it doesn't require a .to() call
+    since the destination is the BaseNode class itself.
+
+    This is only necessary if you have a step that might return a v1-style node _or_ an
+    arbitrary output that you want to route to another node using the builder API.
+    """
+    g = GraphBuilder(state_type=DecisionState, input_type=int, output_type=str)
+
+    @dataclass
+    class NodeStep(BaseNode[DecisionState, None, str]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[DecisionState, None]) -> End[str]:
+            ctx.state.path_taken = 'path_a'
+            return End(f'Path A: {self.value}')
+
+    @g.step
+    async def regular_step(ctx: StepContext[DecisionState, None, int]):
+        ctx.state.path_taken = 'path_b'
+        return f'Path B: {ctx.inputs}'
+
+    @g.step
+    async def route_to_node(ctx: StepContext[DecisionState, None, int]) -> NodeStep | int:
+        # Route based on input value
+        if ctx.inputs < 10:
+            return NodeStep(ctx.inputs)
+        else:
+            return ctx.inputs
+
+    # Use match_node to create decision branches for BaseNode types
+    # Note: match_node doesn't require .to() - the node type IS the destination
+    g.add(
+        g.node(NodeStep),
+        g.edge_from(g.start_node).to(route_to_node),
+        g.edge_from(route_to_node).to(
+            g.decision().branch(g.match_node(NodeStep)).branch(g.match(int).to(regular_step))
+        ),
+        g.edge_from(regular_step).to(g.end_node),
+    )
+
+    graph = g.build()
+
+    # Test path A (value < 10)
+    state_a = DecisionState()
+    result_a = await graph.run(state=state_a, inputs=5)
+    assert result_a == 'Path A: 5'
+    assert state_a.path_taken == 'path_a'
+
+    # Test path B (value >= 10)
+    state_b = DecisionState()
+    result_b = await graph.run(state=state_b, inputs=15)
+    assert result_b == 'Path B: 15'
+    assert state_b.path_taken == 'path_b'
