@@ -55,9 +55,33 @@ nav:
 
   - Pydantic Evals:
       - Overview: evals.md
+      - Getting Started:
+          - Quick Start: evals/quick-start.md
+          - Core Concepts: evals/core-concepts.md
+      - Evaluators:
+          - Overview: evals/evaluators/overview.md
+          - Built-in Evaluators: evals/evaluators/built-in.md
+          - LLM Judge: evals/evaluators/llm-judge.md
+          - Custom Evaluators: evals/evaluators/custom.md
+          - Span-Based: evals/evaluators/span-based.md
+      - How-To Guides:
+          - Logfire Integration: evals/how-to/logfire-integration.md
+          - Dataset Management: evals/how-to/dataset-management.md
+          - Dataset Serialization: evals/how-to/dataset-serialization.md
+          - Concurrency & Performance: evals/how-to/concurrency.md
+          - Retry Strategies: evals/how-to/retry-strategies.md
+          - Metrics & Attributes: evals/how-to/metrics-attributes.md
+      - Examples:
+          - Simple Validation: evals/examples/simple-validation.md
 
   - Pydantic Graph:
       - Overview: graph.md
+      - Beta API:
+          - Getting Started: graph/beta/index.md
+          - Steps: graph/beta/steps.md
+          - Joins & Reducers: graph/beta/joins.md
+          - Decisions: graph/beta/decisions.md
+          - Parallel Execution: graph/beta/parallel.md
 
   - Integrations:
       - Debugging & Monitoring with Pydantic Logfire: logfire.md
@@ -145,6 +169,14 @@ nav:
           - api/pydantic_graph/persistence.md
           - api/pydantic_graph/mermaid.md
           - api/pydantic_graph/exceptions.md
+          - Beta API:
+              - api/pydantic_graph/beta.md
+              - api/pydantic_graph/beta_graph.md
+              - api/pydantic_graph/beta_graph_builder.md
+              - api/pydantic_graph/beta_step.md
+              - api/pydantic_graph/beta_join.md
+              - api/pydantic_graph/beta_decision.md
+              - api/pydantic_graph/beta_node.md
       - fasta2a:
           - api/fasta2a.md
 
