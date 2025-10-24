@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, replace
 from datetime import timezone
-from typing import Any, Literal, Union
+from typing import Any, Generic, Literal, TypeVar, Union
 
 import httpx
 import pytest
@@ -94,6 +94,21 @@ def test_result_tuple():
 
 class Person(BaseModel):
     name: str
+
+
+# Generic classes for testing tool name sanitization with generic types
+T = TypeVar('T')
+
+
+class ResultGeneric(BaseModel, Generic[T]):
+    """A generic result class."""
+
+    value: T
+    success: bool
+
+
+class StringData(BaseModel):
+    text: str
 
 
 def test_result_list_of_models_with_stringified_response():
@@ -633,6 +648,24 @@ class Bar(BaseModel):
     result = agent.run_sync('Hello', model=TestModel(seed=1))
     assert result.output == mod.Bar(b='b')
     assert got_tool_call_name == snapshot('final_result_Bar')
+
+
+def test_output_type_generic_class_name_sanitization():
+    """Test that generic class names with brackets are properly sanitized."""
+    # This will have a name like "ResultGeneric[StringData]" which needs sanitization
+    output_type = [ResultGeneric[StringData], ResultGeneric[int]]
+
+    m = TestModel()
+    agent = Agent(m, output_type=output_type)
+    agent.run_sync('Hello')
+
+    # The sanitizer should remove brackets from the generic type name
+    assert m.last_model_request_parameters is not None
+    assert m.last_model_request_parameters.output_tools is not None
+    assert len(m.last_model_request_parameters.output_tools) == 2
+
+    tool_names = [tool.name for tool in m.last_model_request_parameters.output_tools]
+    assert tool_names == snapshot(['final_result_ResultGenericStringData', 'final_result_ResultGenericint'])
 
 
 def test_output_type_with_two_descriptions():
