@@ -96,7 +96,7 @@ KnownOpenRouterProviders = Literal[
 ]
 """Known providers in the OpenRouter marketplace"""
 
-OpenRouterSlug = str | LatestOpenRouterSlugs
+OpenRouterProvider = str | KnownOpenRouterProviders
 """Possible OpenRouter provider slugs.
 
 Since OpenRouter is constantly updating their list of providers, we explicitly list some known providers but
