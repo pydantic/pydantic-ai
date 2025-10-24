@@ -58,15 +58,13 @@ server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
 agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
 
 async def main():
-    async with agent:  # (3)!
-        result = await agent.run('What is 7 plus 5?')
+    result = await agent.run('What is 7 plus 5?')
     print(result.output)
     #> The answer is 12.
 ```
 
 1. Define the MCP server with the URL used to connect.
 2. Create an agent with the MCP server attached.
-3. Create a client session to connect to the server.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -122,15 +120,13 @@ agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
 
 
 async def main():
-    async with agent:  # (3)!
-        result = await agent.run('What is 7 plus 5?')
+    result = await agent.run('What is 7 plus 5?')
     print(result.output)
     #> The answer is 12.
 ```
 
 1. Define the MCP server with the URL used to connect.
 2. Create an agent with the MCP server attached.
-3. Create a client session to connect to the server.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -151,8 +147,7 @@ agent = Agent('openai:gpt-4o', toolsets=[server])
 
 
 async def main():
-    async with agent:
-        result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
+    result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
     print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```
@@ -205,8 +200,7 @@ servers = load_mcp_servers('mcp_config.json')
 agent = Agent('openai:gpt-5', toolsets=servers)
 
 async def main():
-    async with agent:
-        result = await agent.run('What is 7 plus 5?')
+    result = await agent.run('What is 7 plus 5?')
     print(result.output)
 ```
 
@@ -247,8 +241,7 @@ agent = Agent(
 
 
 async def main():
-    async with agent:
-        result = await agent.run('Echo with deps set to 42', deps=42)
+    result = await agent.run('Echo with deps set to 42', deps=42)
     print(result.output)
     #> {"echo_deps":{"echo":"This is an echo message","deps":42}}
 ```
@@ -356,8 +349,7 @@ server = MCPServerSSE(
 agent = Agent('openai:gpt-4o', toolsets=[server])
 
 async def main():
-    async with agent:
-        result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
+    result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
     print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```
@@ -454,9 +446,8 @@ agent = Agent('openai:gpt-4o', toolsets=[server])
 
 
 async def main():
-    async with agent:
-        agent.set_mcp_sampling_model()
-        result = await agent.run('Create an image of a robot in a punk style.')
+    agent.set_mcp_sampling_model()
+    result = await agent.run('Create an image of a robot in a punk style.')
     print(result.output)
     #> Image file written to robot_punk.svg.
 ```
@@ -598,9 +589,8 @@ agent = Agent('openai:gpt-4o', toolsets=[restaurant_server])
 
 async def main():
     """Run the agent to book a restaurant table."""
-    async with agent:
-        result = await agent.run('Book me a table')
-        print(f'\nResult: {result.output}')
+    result = await agent.run('Book me a table')
+    print(f'\nResult: {result.output}')
 
 
 if __name__ == '__main__':
