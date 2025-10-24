@@ -851,7 +851,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
     )
     agent = Agent(m, instructions='You hate the world!', model_settings=settings)
 
-    with pytest.raises(UnexpectedModelBehavior, match='Safety settings triggered'):
+    with pytest.raises(UnexpectedModelBehavior, match="Content filter 'SAFETY' triggered"):
         await agent.run('Tell me a joke about a Brazilians.')
 
 

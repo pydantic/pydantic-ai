@@ -339,6 +339,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What was his most famous equation?': "Albert Einstein's most famous equation is (E = mc^2).",
     'What is the date?': 'Hello Frank, the date today is 2032-01-02.',
     'What is this? https://ai.pydantic.dev': 'A Python agent framework for building Generative AI applications.',
+    'Give me some examples of my products.': 'Here are some examples of my data: Pen, Paper, Pencil.',
     'Put my money on square eighteen': ToolCallPart(
         tool_name='roulette_wheel', args={'square': 18}, tool_call_id='pyd_ai_tool_call_id'
     ),
@@ -519,6 +520,8 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     ),
     'Remember that I live in Mexico City': "Got it! I've recorded that you live in Mexico City. I'll remember this for future reference.",
     'Where do I live?': 'You live in Mexico City.',
+    'Tell me about the pydantic/pydantic-ai repo.': 'The pydantic/pydantic-ai repo is a Python agent framework for building Generative AI applications.',
+    'What do I have on my calendar today?': "You're going to spend all day playing with Pydantic AI.",
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -564,7 +567,7 @@ async def model_logic(  # noqa: C901
                 ]
             )
         elif m.content.startswith('Write a list of 5 very rude things that I might say'):
-            raise UnexpectedModelBehavior('Safety settings triggered', body='<safety settings details>')
+            raise UnexpectedModelBehavior("Content filter 'SAFETY' triggered", body='<safety settings details>')
         elif m.content.startswith('<user>\n  <name>John Doe</name>'):
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result_EmailOk', args={}, tool_call_id='pyd_ai_tool_call_id')]
