@@ -15,7 +15,6 @@ from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
-from pydantic_graph import Graph
 
 from .. import (
     _agent_graph,
@@ -41,7 +40,6 @@ from ..builtin_tools import AbstractBuiltinTool
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec
 from ..profiles import ModelProfile
-from ..result import FinalResult
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import (
@@ -566,9 +564,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_manager = ToolManager[AgentDepsT](toolset)
 
         # Build the graph
-        graph: Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[Any]] = (
-            _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
-        )
+        graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
 
         # Build the initial state
         usage = usage or _usage.RunUsage()
@@ -628,7 +624,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings=instrumentation_settings,
         )
 
-        start_node = _agent_graph.UserPromptNode[AgentDepsT](
+        user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
             deferred_tool_results=deferred_tool_results,
             instructions=instructions_literal,
@@ -655,7 +651,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         try:
             async with graph.iter(
-                start_node,
+                inputs=user_prompt_node,
                 state=state,
                 deps=graph_deps,
                 span=use_span(run_span) if run_span.is_recording() else None,

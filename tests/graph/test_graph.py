@@ -445,3 +445,44 @@ async def test_deps(mock_snapshot_id: object):
             EndSnapshot(state=None, result=End(data=123), ts=IsNow(tz=timezone.utc), id='end:3'),
         ]
     )
+
+
+async def test_custom_span():
+    """Test that a custom span can be passed to graph.iter()."""
+    from contextlib import contextmanager
+    from unittest.mock import Mock
+
+    @dataclass
+    class Foo(BaseNode):
+        async def run(self, ctx: GraphRunContext) -> Bar:
+            return Bar()
+
+    @dataclass
+    class Bar(BaseNode[None, None, int]):
+        async def run(self, ctx: GraphRunContext) -> End[int]:
+            return End(42)
+
+    # Create a mock span context manager
+    mock_span = Mock()
+    span_entered = False
+
+    @contextmanager
+    def custom_span():
+        nonlocal span_entered
+        span_entered = True
+        yield mock_span
+
+    g = Graph(nodes=(Foo, Bar))
+    result = await g.run(Foo())
+    assert result.output == 42
+
+    # Now test with custom span
+    span_entered = False
+    async with g.iter(Foo(), span=custom_span()) as graph_run:
+        async for _ in graph_run:
+            pass
+        assert graph_run.result is not None
+        assert graph_run.result.output == 42
+
+    # Verify the span was entered
+    assert span_entered
