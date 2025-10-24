@@ -596,7 +596,7 @@ class AnthropicModel(Model):
                                         ),
                                     )
                                 )
-                            elif response_part.tool_name == MCPServerTool.kind and isinstance(
+                            elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
                                 response_part.content, dict
                             ):  # pragma: no branch
                                 assistant_content_params.append(

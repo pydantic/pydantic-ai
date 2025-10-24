@@ -1525,7 +1525,7 @@ class OpenAIResponsesModel(Model):
                             elif item.tool_name == ImageGenerationTool.kind:
                                 # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
                                 pass
-                            elif item.tool_name == MCPServerTool.kind:  # pragma: no branch
+                            elif item.tool_name.startswith(MCPServerTool.kind):  # pragma: no branch
                                 # MCP call result does not need to be sent back, just the fields off of `BuiltinToolCallPart`.
                                 pass
                     elif isinstance(item, FilePart):
