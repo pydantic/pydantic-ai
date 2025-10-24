@@ -10,10 +10,30 @@ from pydantic_ai_examples.weather_agent import Deps, weather_agent
 
 try:
     import gradio as gr
+    from gradio_client import utils as gradio_utils
 except ImportError as e:
     raise ImportError(
         'Please install gradio with `pip install gradio`. You must use python>=3.10.'
     ) from e
+
+# Monkey patch to fix Gradio's JSON schema parser for boolean additionalProperties
+_original_json_schema_to_python_type = gradio_utils._json_schema_to_python_type
+
+
+def _patched_json_schema_to_python_type(schema, defs):
+    """Handle boolean additionalProperties in JSON schemas."""
+    if isinstance(schema, bool):
+        return 'Any'
+    if isinstance(schema, dict) and isinstance(schema.get('additionalProperties'), bool):
+        schema = schema.copy()
+        if schema['additionalProperties']:
+            schema['additionalProperties'] = {}
+        else:
+            schema.pop('additionalProperties', None)
+    return _original_json_schema_to_python_type(schema, defs)
+
+
+gradio_utils._json_schema_to_python_type = _patched_json_schema_to_python_type
 
 TOOL_TO_DISPLAY_NAME = {'get_lat_lng': 'Geocoding API', 'get_weather': 'Weather API'}
 
@@ -21,7 +41,8 @@ client = AsyncClient()
 deps = Deps(client=client)
 
 
-async def stream_from_agent(prompt: str, chatbot: list[dict], past_messages: list):
+async def stream_from_agent(prompt, chatbot, past_messages):
+    """Stream agent responses with tool calls to Gradio chatbot."""
     chatbot.append({'role': 'user', 'content': prompt})
     yield gr.Textbox(interactive=False, value=''), chatbot, gr.skip()
     async with weather_agent.run_stream(
@@ -64,7 +85,8 @@ async def stream_from_agent(prompt: str, chatbot: list[dict], past_messages: lis
         yield gr.Textbox(interactive=True), gr.skip(), past_messages
 
 
-async def handle_retry(chatbot, past_messages: list, retry_data: gr.RetryData):
+async def handle_retry(chatbot, past_messages, retry_data: gr.RetryData):
+    """Handle retry events from the chatbot."""
     new_history = chatbot[: retry_data.index]
     previous_prompt = chatbot[retry_data.index]['content']
     past_messages = past_messages[: retry_data.index]
@@ -72,13 +94,15 @@ async def handle_retry(chatbot, past_messages: list, retry_data: gr.RetryData):
         yield update
 
 
-def undo(chatbot, past_messages: list, undo_data: gr.UndoData):
+def undo(chatbot, past_messages, undo_data: gr.UndoData):
+    """Handle undo events from the chatbot."""
     new_history = chatbot[: undo_data.index]
     past_messages = past_messages[: undo_data.index]
     return chatbot[undo_data.index]['content'], new_history, past_messages
 
 
-def select_data(message: gr.SelectData) -> str:
+def select_data(message: gr.SelectData):
+    """Handle example selection from the chatbot."""
     return message.value['text']
 
 
@@ -116,6 +140,7 @@ with gr.Blocks() as demo:
         stream_from_agent,
         inputs=[prompt, chatbot, past_messages],
         outputs=[prompt, chatbot, past_messages],
+        api_name=False,
     )
     chatbot.example_select(select_data, None, [prompt])
     chatbot.retry(
