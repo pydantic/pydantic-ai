@@ -32,6 +32,7 @@ from .messages import (
     BaseToolCallPart,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CustomEvent,
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
@@ -431,6 +432,8 @@ async def _agent_stream(run: AgentRun[AgentDepsT, Any]) -> AsyncIterator[BaseEve
                     if isinstance(event, FunctionToolResultEvent):
                         async for msg in _handle_tool_result_event(stream_ctx, event):
                             yield msg
+                    elif isinstance(event, CustomEvent) and isinstance(event.payload, BaseEvent):
+                        yield event.payload
 
 
 async def _handle_model_request_event(  # noqa: C901
@@ -581,6 +584,8 @@ async def _handle_tool_result_event(
         tool_call_id=result.tool_call_id,
         content=result.model_response_str(),
     )
+
+    # TODO (DouweM): Stream `event.content` as if they were user parts?
 
     # Now check for AG-UI events returned by the tool calls.
     possible_event = result.metadata or result.content

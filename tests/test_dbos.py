@@ -265,7 +265,6 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
             'complex_agent__model.request_stream',
             'event_stream_handler',
             'event_stream_handler',
-            'event_stream_handler',
             'complex_agent__mcp_server__mcp.call_tool',
             'event_stream_handler',
             'complex_agent__mcp_server__mcp.get_tools',
@@ -354,16 +353,9 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             content='running 2 tools',
                             children=[
                                 BasicSpan(content='running tool: get_country'),
+                                BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='event_stream_handler',
-                                    children=[
-                                        BasicSpan(content='ctx.run_step=1'),
-                                        BasicSpan(
-                                            content=IsStr(
-                                                regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                            )
-                                        ),
-                                    ],
+                                    content='{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":"2025-10-08T14:38:30.370338+00:00","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
                                 ),
                                 BasicSpan(
                                     content='running tool: get_product_name',
