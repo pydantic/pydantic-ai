@@ -105,7 +105,6 @@ dev = [
     "pip>=25.2",
     "genai-prices>=0.0.28",
     "mcp-run-python>=0.0.20",
-    "pytest-asyncio>=1.2.0",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [
@@ -233,8 +232,6 @@ filterwarnings = [
     "ignore:unclosed <socket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
 ]
-asyncio_default_fixture_loop_scope = "module"
-asyncio_mode = "auto"
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]

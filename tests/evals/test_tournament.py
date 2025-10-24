@@ -23,7 +23,7 @@ def test_evalplayer() -> None:
     assert player.item == 'toasted rice & miso caramel ice cream'
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_evalgame(ice_cream_players: list[EvalPlayer]) -> None:
     """
     Test the EvalGame class.
