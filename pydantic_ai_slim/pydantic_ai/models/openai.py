@@ -1430,6 +1430,8 @@ class OpenAIResponsesModel(Model):
                             arguments=item.args_as_json_str(),
                             call_id=call_id,
                             type='function_call',
+                            # `status` field is optional in the SDK, but required by vLLM Responses API: https://github.com/pydantic/pydantic-ai/issues/3245
+                            status='completed',
                         )
                         if id and send_item_ids:  # pragma: no branch
                             param['id'] = id
