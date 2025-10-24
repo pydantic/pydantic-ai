@@ -25,6 +25,7 @@ from vcr import VCR, request as vcr_request
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.models import Model, cached_async_http_client
+from pydantic_evals.tournament import EvalPlayer
 
 __all__ = (
     'IsDatetime',
@@ -560,3 +561,17 @@ def mock_snapshot_id(mocker: MockerFixture):
         return f'{node_id}:{i}'
 
     return mocker.patch('pydantic_graph.nodes.generate_snapshot_id', side_effect=generate_snapshot_id)
+
+
+@pytest.fixture
+def ice_cream_players() -> list[EvalPlayer]:
+    """
+    Provide a list of EvalPlayer instances with ice cream flavours.
+    """
+    return [
+        EvalPlayer(idx=0, item='vanilla'),
+        EvalPlayer(idx=1, item='chocolate'),
+        EvalPlayer(idx=2, item='strawberry'),
+        EvalPlayer(idx=3, item='peach'),
+        EvalPlayer(idx=4, item='toasted rice & miso caramel ice cream'),
+    ]
