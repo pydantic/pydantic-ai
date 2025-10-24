@@ -19,7 +19,7 @@ pip/uv-add "pydantic-ai-slim[fastmcp]"
 A `FastMCPToolset` can then be created from:
 
 - A FastMCP Server: `#!python FastMCPToolset(fastmcp.FastMCP('my_server'))`
-- A FastMCP Client: `#!python FastMCPToolset(client=fastmcp.Client(...))`
+- A FastMCP Client: `#!python FastMCPToolset(fastmcp.Client(...))`
 - A FastMCP Transport: `#!python FastMCPToolset(fastmcp.StdioTransport(command='uvx', args=['mcp-run-python', 'stdio']))`
 - A Streamable HTTP URL: `#!python FastMCPToolset('http://localhost:8000/mcp')`
 - An HTTP SSE URL: `#!python FastMCPToolset('http://localhost:8000/sse')`

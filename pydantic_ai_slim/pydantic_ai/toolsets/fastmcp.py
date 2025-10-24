@@ -3,17 +3,12 @@ from __future__ import annotations
 import base64
 from asyncio import Lock
 from contextlib import AsyncExitStack
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal
 
-from fastmcp.client.transports import ClientTransport
-from fastmcp.mcp_config import MCPConfig
-from fastmcp.server import FastMCP
-from mcp.server.fastmcp import FastMCP as FastMCP1Server
-from mcp.types import BlobResourceContents, EmbeddedResource, ResourceLink
 from pydantic import AnyUrl
-from typing_extensions import Self
+from typing_extensions import Self, assert_never
 
 from pydantic_ai import messages
 from pydantic_ai.exceptions import ModelRetry
@@ -23,12 +18,20 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 
 try:
     from fastmcp.client import Client
+    from fastmcp.client.transports import ClientTransport
     from fastmcp.exceptions import ToolError
+    from fastmcp.mcp_config import MCPConfig
+    from fastmcp.server import FastMCP
+    from mcp.server.fastmcp import FastMCP as FastMCP1Server
     from mcp.types import (
         AudioContent,
+        BlobResourceContents,
         ContentBlock,
+        EmbeddedResource,
         ImageContent,
+        ResourceLink,
         TextContent,
+        TextResourceContents,
         Tool as MCPTool,
     )
 
@@ -52,7 +55,7 @@ ToolErrorBehavior = Literal['model_retry', 'error']
 UNKNOWN_BINARY_MEDIA_TYPE = 'application/octet-stream'
 
 
-@dataclass
+@dataclass(init=False)
 class FastMCPToolset(AbstractToolset[AgentDepsT]):
     """A FastMCP Toolset that uses the FastMCP Client to call tools from a local or remote MCP Server.
 
@@ -62,73 +65,38 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     """
 
     client: Client[Any]
-    """The FastMCP transport to use. This can be a local or remote MCP Server configuration, a transport string, or a FastMCP Client."""
+    """The FastMCP client to use."""
 
     _: KW_ONLY
 
-    tool_error_behavior: Literal['model_retry', 'error'] = field(default='error')
+    tool_error_behavior: Literal['model_retry', 'error']
     """The behavior to take when a tool error occurs."""
 
-    max_retries: int = field(default=2)
+    max_retries: int
     """The maximum number of retries to attempt if a tool call fails."""
 
-    _id: str | None = field(default=None)
+    _id: str | None
 
-    @overload
     def __init__(
         self,
-        *,
-        client: Client[Any],
-        max_retries: int = 2,
-        tool_error_behavior: Literal['model_retry', 'error'] = 'error',
-        id: str | None = None,
-    ) -> None: ...
-
-    @overload
-    def __init__(
-        self,
-        transport: ClientTransport
+        client: Client[Any]
+        | ClientTransport
         | FastMCP
         | FastMCP1Server
         | AnyUrl
         | Path
         | MCPConfig
         | dict[str, Any]
-        | str
-        | None = None,
+        | str,
         *,
-        max_retries: int = 2,
-        tool_error_behavior: Literal['model_retry', 'error'] = 'error',
-        id: str | None = None,
-    ) -> None: ...
-
-    def __init__(
-        self,
-        transport: ClientTransport
-        | FastMCP
-        | FastMCP1Server
-        | AnyUrl
-        | Path
-        | MCPConfig
-        | dict[str, Any]
-        | str
-        | None = None,
-        *,
-        client: Client[Any] | None = None,
-        max_retries: int = 2,
+        max_retries: int = 1,
         tool_error_behavior: Literal['model_retry', 'error'] = 'model_retry',
         id: str | None = None,
     ) -> None:
-        if not client and not transport:
-            raise ValueError('Either client or transport must be provided')
-
-        if client and transport:
-            raise ValueError('Either client or transport must be provided, not both')
-
-        if client:
+        if isinstance(client, Client):
             self.client = client
         else:
-            self.client = Client[Any](transport=transport)
+            self.client = Client[Any](transport=client)
 
         self._id = id
         self.max_retries = max_retries
@@ -144,7 +112,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
-            if self._running_count == 0 and self.client:
+            if self._running_count == 0:
                 self._exit_stack = AsyncExitStack()
                 await self._exit_stack.enter_async_context(self.client)
 
@@ -226,25 +194,22 @@ def _map_fastmcp_tool_results(parts: list[ContentBlock]) -> list[FastMCPToolResu
 def _map_fastmcp_tool_result(part: ContentBlock) -> FastMCPToolResult:
     if isinstance(part, TextContent):
         return part.text
-
-    if isinstance(part, ImageContent | AudioContent):
+    elif isinstance(part, ImageContent | AudioContent):
         return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
-
-    if isinstance(part, EmbeddedResource):
+    elif isinstance(part, EmbeddedResource):
         if isinstance(part.resource, BlobResourceContents):
             return messages.BinaryContent(
                 data=base64.b64decode(part.resource.blob),
                 media_type=part.resource.mimeType or UNKNOWN_BINARY_MEDIA_TYPE,
             )
-
-        # If not a BlobResourceContents, it's a TextResourceContents
-        return part.resource.text
-
-    if isinstance(part, ResourceLink):
+        elif isinstance(part.resource, TextResourceContents):
+            return part.resource.text
+        else:
+            assert_never(part.resource)
+    elif isinstance(part, ResourceLink):
         # ResourceLink is not yet supported by the FastMCP toolset as reading resources is not yet supported.
         raise NotImplementedError(
             'ResourceLink is not supported by the FastMCP toolset as reading resources is not yet supported.'
         )
-
-    msg = f'Unsupported/Unknown content block type: {type(part)}'  # pragma: no cover
-    raise ValueError(msg)  # pragma: no cover)
+    else:
+        assert_never(part)

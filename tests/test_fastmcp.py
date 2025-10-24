@@ -158,41 +158,29 @@ class TestFastMCPToolsetInitialization:
 
     async def test_init_with_client(self, fastmcp_client: Client[FastMCPTransport]):
         """Test initialization with a FastMCP client."""
-        toolset = FastMCPToolset(client=fastmcp_client)
+        toolset = FastMCPToolset(fastmcp_client)
 
         # Test that the client is accessible via the property
         assert toolset.id is None
 
     async def test_init_with_id(self, fastmcp_client: Client[FastMCPTransport]):
         """Test initialization with an id."""
-        toolset = FastMCPToolset(client=fastmcp_client, id='test_id')
+        toolset = FastMCPToolset(fastmcp_client, id='test_id')
 
         # Test that the client is accessible via the property
         assert toolset.id == 'test_id'
 
     async def test_init_with_custom_retries_and_error_behavior(self, fastmcp_client: Client[FastMCPTransport]):
         """Test initialization with custom retries and error behavior."""
-        toolset = FastMCPToolset(client=fastmcp_client, max_retries=5, tool_error_behavior='model_retry')
+        toolset = FastMCPToolset(fastmcp_client, max_retries=5, tool_error_behavior='model_retry')
 
         # Test that the toolset was created successfully
         assert toolset.client is fastmcp_client
 
     async def test_id_property(self, fastmcp_client: Client[FastMCPTransport]):
         """Test that the id property returns None."""
-        toolset = FastMCPToolset(client=fastmcp_client)
+        toolset = FastMCPToolset(fastmcp_client)
         assert toolset.id is None
-
-    async def test_init_without_client_or_transport(self):
-        """Test initialization without a client or transport."""
-        with pytest.raises(ValueError, match='Either client or transport must be provided'):
-            FastMCPToolset()
-
-    async def test_init_with_client_and_transport(self):
-        """Test initialization with a client and transport."""
-        with pytest.raises(ValueError, match='Either client or transport must be provided, not both'):
-            tmp_server = FastMCP('tmp_server')
-            client = Client(transport=tmp_server)
-            FastMCPToolset(client=client, transport=tmp_server)  # pyright: ignore[reportCallIssue]
 
 
 class TestFastMCPToolsetContextManagement:
@@ -202,7 +190,7 @@ class TestFastMCPToolsetContextManagement:
         self, fastmcp_client: Client[FastMCPTransport], run_context: RunContext[None]
     ):
         """Test single enter/exit cycle."""
-        toolset = FastMCPToolset(client=fastmcp_client)
+        toolset = FastMCPToolset(fastmcp_client)
 
         async with toolset:
             # Test that we can get tools when the context is active
@@ -216,7 +204,7 @@ class TestFastMCPToolsetContextManagement:
         self, fastmcp_client: Client[FastMCPTransport], run_context: RunContext[None]
     ):
         """Test no enter/exit cycle."""
-        toolset = FastMCPToolset(client=fastmcp_client)
+        toolset = FastMCPToolset(fastmcp_client)
 
         # Test that we can get tools when the context is not active
         tools = await toolset.get_tools(run_context)
@@ -227,7 +215,7 @@ class TestFastMCPToolsetContextManagement:
         self, fastmcp_client: Client[FastMCPTransport], run_context: RunContext[None]
     ):
         """Test nested enter/exit cycles."""
-        toolset = FastMCPToolset(client=fastmcp_client)
+        toolset = FastMCPToolset(fastmcp_client)
 
         async with toolset:
             tools1 = await toolset.get_tools(run_context)
@@ -248,7 +236,7 @@ class TestFastMCPToolsetToolDiscovery:
         run_context: RunContext[None],
     ):
         """Test getting tools from the FastMCP client."""
-        toolset = FastMCPToolset(client=fastmcp_client)
+        toolset = FastMCPToolset(fastmcp_client)
 
         async with toolset:
             tools = await toolset.get_tools(run_context)
@@ -275,7 +263,7 @@ class TestFastMCPToolsetToolDiscovery:
             assert test_tool.tool_def.name == 'test_tool'
             assert test_tool.tool_def.description is not None
             assert 'test tool that returns a formatted string' in test_tool.tool_def.description
-            assert test_tool.max_retries == 2
+            assert test_tool.max_retries == 1
             assert test_tool.toolset is toolset
 
             # Check that the tool has proper schema
@@ -288,7 +276,7 @@ class TestFastMCPToolsetToolDiscovery:
         """Test getting tools from an empty FastMCP server."""
         empty_server = FastMCP('empty_server')
         empty_client = Client(transport=empty_server)
-        toolset = FastMCPToolset(client=empty_client)
+        toolset = FastMCPToolset(empty_client)
 
         async with toolset:
             tools = await toolset.get_tools(run_context)
@@ -301,7 +289,7 @@ class TestFastMCPToolsetToolCalling:
     @pytest.fixture
     async def fastmcp_toolset(self, fastmcp_client: Client[FastMCPTransport]) -> FastMCPToolset[None]:
         """Create a FastMCP Toolset."""
-        return FastMCPToolset(client=fastmcp_client)
+        return FastMCPToolset(fastmcp_client)
 
     async def test_call_tool_success(
         self,
@@ -491,7 +479,7 @@ class TestFastMCPToolsetToolCalling:
         run_context: RunContext[None],
     ):
         """Test tool call with error behavior set to raise."""
-        toolset = FastMCPToolset(client=fastmcp_client, tool_error_behavior='error')
+        toolset = FastMCPToolset(fastmcp_client, tool_error_behavior='error')
 
         async with toolset:
             tools = await toolset.get_tools(run_context)
@@ -506,7 +494,7 @@ class TestFastMCPToolsetToolCalling:
         run_context: RunContext[None],
     ):
         """Test tool call with error behavior set to model retry."""
-        toolset = FastMCPToolset(client=fastmcp_client, tool_error_behavior='model_retry')
+        toolset = FastMCPToolset(fastmcp_client, tool_error_behavior='model_retry')
 
         async with toolset:
             tools = await toolset.get_tools(run_context)
@@ -577,7 +565,7 @@ server.run()"""
     @pytest.mark.parametrize(
         'invalid_transport', ['tomato_is_not_a_valid_transport', '/path/to/server.ini', 'ftp://localhost']
     )
-    async def test_invalid_transports_uninferrable(self, invalid_transport: str | None):
+    async def test_invalid_transports_uninferrable(self, invalid_transport: str):
         """Test creating toolset from invalid transports."""
         with pytest.raises(ValueError, match='Could not infer a valid transport from:'):
             FastMCPToolset(invalid_transport)
