@@ -567,7 +567,7 @@ async def model_logic(  # noqa: C901
                 ]
             )
         elif m.content.startswith('Write a list of 5 very rude things that I might say'):
-            raise UnexpectedModelBehavior('Safety settings triggered', body='<safety settings details>')
+            raise UnexpectedModelBehavior("Content filter 'SAFETY' triggered", body='<safety settings details>')
         elif m.content.startswith('<user>\n  <name>John Doe</name>'):
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result_EmailOk', args={}, tool_call_id='pyd_ai_tool_call_id')]
