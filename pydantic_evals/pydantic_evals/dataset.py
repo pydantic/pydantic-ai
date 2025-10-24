@@ -265,6 +265,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         retry_evaluators: RetryConfig | None = None,
         *,
         task_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        tags: Sequence[str] | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -283,6 +285,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             retry_evaluators: Optional retry configuration for evaluator execution.
             task_name: Optional override to the name of the task being executed, otherwise the name of the task
                 function will be used.
+            metadata: Optional dict of experiment metadata.
+            tags: Optional sequence of logfire tags.
 
         Returns:
             A report containing the results of the evaluation.
@@ -294,6 +298,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else AsyncExitStack()
 
+        extra_attributes: dict[str, Any] = {'gen_ai.operation.name': 'experiment'}
+        if metadata is not None:
+            extra_attributes['metadata'] = metadata
         with (
             logfire_span(
                 'evaluate {name}',
@@ -301,7 +308,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 task_name=task_name,
                 dataset_name=self.name,
                 n_cases=len(self.cases),
-                **{'gen_ai.operation.name': 'experiment'},  # pyright: ignore[reportArgumentType]
+                metadata=metadata,
+                **extra_attributes,
+                _tags=tags,
             ) as eval_span,
             progress_bar or nullcontext(),
         ):
@@ -342,10 +351,16 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 span_id=span_id,
                 trace_id=trace_id,
             )
-            if (averages := report.averages()) is not None and averages.assertions is not None:
-                experiment_metadata = {'n_cases': len(self.cases), 'averages': averages}
-                eval_span.set_attribute('logfire.experiment.metadata', experiment_metadata)
-                eval_span.set_attribute('assertion_pass_rate', averages.assertions)
+            full_experiment_metadata: dict[str, Any] = {'n_cases': len(self.cases)}
+            if metadata is not None:
+                full_experiment_metadata['metadata'] = metadata
+            if tags is not None:
+                full_experiment_metadata['tags'] = tags
+            if (averages := report.averages()) is not None:
+                full_experiment_metadata['averages'] = averages
+                if averages.assertions is not None:
+                    eval_span.set_attribute('assertion_pass_rate', averages.assertions)
+            eval_span.set_attribute('logfire.experiment.metadata', full_experiment_metadata)
         return report
 
     def evaluate_sync(
