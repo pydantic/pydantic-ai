@@ -29,7 +29,7 @@ class OpenRouterMaxPrice(TypedDict, total=False):
     request: int
 
 
-LatestOpenRouterSlugs = Literal[
+KnownOpenRouterProviders = Literal[
     'z-ai',
     'cerebras',
     'venice',
