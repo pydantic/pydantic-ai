@@ -1,0 +1,122 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '141'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of France?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '549'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=581
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: The capital of France is **Paris**.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash-lite
+      responseId: mI37aJyZEsGtz7IPjumZ8AM
+      usageMetadata:
+        candidatesTokenCount: 8
+        promptTokenCount: 8
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 8
+        totalTokenCount: 16
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '141'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of Mexico?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '555'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=408
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: The capital of Mexico is **Mexico City**.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash-lite
+      responseId: mY37aIyAFKDUz7IPv4PK4AY
+      usageMetadata:
+        candidatesTokenCount: 9
+        promptTokenCount: 8
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 8
+        totalTokenCount: 17
+    status:
+      code: 200
+      message: OK
+version: 1
