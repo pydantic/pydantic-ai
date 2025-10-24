@@ -115,7 +115,7 @@ class GoogleProvider(Provider[Client]):
                 base_url=base_url,
                 headers={'User-Agent': get_user_agent()},
                 httpx_async_client=http_client,
-                # TODO: Remove once https://github.com/googleapis/python-genai/pull/1509#issuecomment-3430028790 is solved.
+                # TODO: Remove once https://github.com/googleapis/python-genai/issues/1565 is solved.
                 async_client_args={'transport': httpx.AsyncHTTPTransport()},
             )
             if not vertexai:
@@ -208,6 +208,7 @@ class _SafelyClosingClient(Client):
 
     def close(self) -> None:
         # This is called from `Client.__del__`, even if `Client.__init__` raised an error before `self._api_client` is set, which would raise an `AttributeError` here.
+        # TODO: Remove once https://github.com/googleapis/python-genai/issues/1567 is solved.
         try:
             super().close()
         except AttributeError:
@@ -217,5 +218,6 @@ class _SafelyClosingClient(Client):
 class _NonClosingApiClient(BaseApiClient):
     async def aclose(self) -> None:
         # The original implementation also calls `await self._async_httpx_client.aclose()`, but we don't want to close our `cached_async_http_client` or the one the user passed in.
+        # TODO: Remove once https://github.com/googleapis/python-genai/issues/1566 is solved.
         if self._aiohttp_session:
             await self._aiohttp_session.close()
