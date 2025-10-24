@@ -243,7 +243,7 @@ class BaseReasoningDetail(BaseModel):
     """Common fields shared across all reasoning detail types."""
 
     id: str | None = None
-    format: Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1']
+    format: Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1']
     index: int | None
 
 
@@ -320,7 +320,7 @@ def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSetti
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
     """
-    extra_body = model_settings['extra_body']
+    extra_body = model_settings.get('extra_body', {})
 
     if models := model_settings.pop('openrouter_models', None):
         extra_body['models'] = models
@@ -386,39 +386,51 @@ class OpenRouterModel(OpenAIChatModel):
             # This is done because 'super()._process_response' reads 'reasoning' to create a ThinkingPart.
             # but this method will also create a ThinkingPart  using 'reasoning_details'; Delete 'reasoning' to avoid duplication
             if choice.message.reasoning is not None:
-                setattr(response.choices[0].message, 'reasoning', None)
+                delattr(response.choices[0].message, 'reasoning')
 
         model_response = super()._process_response(response=response)
 
-        provider_details: dict[str, Any] = {}
+        provider_details = model_response.provider_details or {}
         provider_details['downstream_provider'] = native_response.provider
         provider_details['native_finish_reason'] = choice.native_finish_reason
 
         if reasoning_details := choice.message.reasoning_details:
-            provider_details['reasoning_details'] = [detail.model_dump() for detail in reasoning_details]
-
             reasoning = reasoning_details[0]
 
-            assert isinstance(model_response.parts, list)
+            new_parts: list[ThinkingPart] = []
+
             if isinstance(reasoning, ReasoningText):
-                model_response.parts.insert(
-                    0,
+                new_parts.append(
                     ThinkingPart(
                         id=reasoning.id,
                         content=reasoning.text,
                         signature=reasoning.signature,
                         provider_name=native_response.provider,
-                    ),
+                    )
                 )
             elif isinstance(reasoning, ReasoningSummary):
-                model_response.parts.insert(
-                    0,
+                new_parts.append(
                     ThinkingPart(
                         id=reasoning.id,
                         content=reasoning.summary,
                         provider_name=native_response.provider,
                     ),
                 )
+            else:
+                new_parts.append(
+                    ThinkingPart(
+                        id=reasoning.id,
+                        content='',
+                        signature=reasoning.data,
+                        provider_name=native_response.provider,
+                    ),
+                )
+
+            # TODO: Find a better way to store these attributes
+            new_parts[0].openrouter_type = reasoning.type
+            new_parts[0].openrouter_format = reasoning.format
+
+            model_response.parts = [*new_parts, *model_response.parts]
 
         model_response.provider_details = provider_details
 
@@ -430,8 +442,24 @@ class OpenRouterModel(OpenAIChatModel):
 
         for message, openai_message in zip(messages, openai_messages):
             if isinstance(message, ModelResponse):
-                provider_details = cast(dict[str, Any], message.provider_details)
-                if reasoning_details := provider_details.get('reasoning_details', None):  # pragma: lax no cover
-                    openai_message['reasoning_details'] = reasoning_details  # type: ignore[reportGeneralTypeIssue]
+                for part in message.parts:
+                    if isinstance(part, ThinkingPart):
+                        reasoning_detail: dict[str, Any] = {
+                            'type': part.openrouter_type,
+                            'id': part.id,
+                            'format': part.openrouter_format,
+                            'index': 0,
+                        }
+
+                        match part.openrouter_type:
+                            case 'reasoning.summary':
+                                reasoning_detail['summary'] = part.content
+                            case 'reasoning.text':
+                                reasoning_detail['text'] = part.content
+                                reasoning_detail['signature'] = part.signature
+                            case 'reasoning.encrypted':
+                                reasoning_detail['data'] = part.signature
+
+                        openai_message['reasoning_details'] = [reasoning_detail]
 
         return openai_messages

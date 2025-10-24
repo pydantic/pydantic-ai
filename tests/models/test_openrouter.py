@@ -92,33 +92,8 @@ The response should be welcoming and encourage further questions about specific 
 Let me structure this information in a clear, friendly manner that addresses the user's question while inviting further interaction.\
 """
     )
-    assert response.provider_details is not None
-    assert response.provider_details['reasoning_details'] == snapshot(
-        [
-            {
-                'id': None,
-                'format': 'unknown',
-                'index': 0,
-                'text': """\
-Let me process this query about who I am. First, I should consider what the user really wants to know - they're likely seeking to understand my identity and capabilities as an AI assistant.
-
-I need to be clear and accurate about my nature. I'm a GLM large language model developed by Zhipu AI, not a human. This distinction is fundamental to our interaction.
-
-Looking at my core functions, I should highlight my ability to engage in natural conversations, answer questions, and assist with various tasks. My training involves processing vast amounts of text data, which enables me to understand and generate human-like responses.
-
-It's important to mention my commitment to being helpful, harmless, and honest. These principles guide my interactions and ensure I provide appropriate assistance.
-
-I should also emphasize my continuous learning aspect. While I don't store personal data, I'm regularly updated to improve my capabilities and knowledge base.
-
-The response should be welcoming and encourage further questions about specific areas where I can help. This creates an open dialogue and shows my willingness to assist with various topics.
-
-Let me structure this information in a clear, friendly manner that addresses the user's question while inviting further interaction.\
-""",
-                'type': 'reasoning.text',
-                'signature': None,
-            }
-        ]
-    )
+    assert thinking_part.openrouter_type == snapshot('reasoning.text')
+    assert thinking_part.openrouter_format == snapshot('unknown')
 
 
 async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_api_key: str) -> None:
