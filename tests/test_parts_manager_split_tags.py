@@ -403,14 +403,11 @@ def test_start_tag_with_trailing_content_same_chunk():
     )
 
     # Should emit event for new ThinkingPart, then delta for content
-    assert len(events) >= 1
+    assert len(events) == 2
     assert isinstance(events[0], PartStartEvent)
     assert isinstance(events[0].part, ThinkingPart)
-
-    # If content is included in the same event stream
-    if len(events) == 2:
-        assert isinstance(events[1], PartDeltaEvent)
-        assert events[1].delta == ThinkingPartDelta(content_delta='thinking')
+    assert isinstance(events[1], PartDeltaEvent)
+    assert events[1].delta == ThinkingPartDelta(content_delta='thinking')
 
     # Final state
     assert manager.get_parts() == snapshot([ThinkingPart(content='thinking', part_kind='thinking')])
@@ -431,13 +428,11 @@ def test_split_start_tag_with_trailing_content():
     )
 
     # Should create ThinkingPart and add content
-    assert len(events) >= 1
+    assert len(events) == 2
     assert isinstance(events[0], PartStartEvent)
     assert isinstance(events[0].part, ThinkingPart)
-
-    if len(events) == 2:
-        assert isinstance(events[1], PartDeltaEvent)
-        assert events[1].delta == ThinkingPartDelta(content_delta='content')
+    assert isinstance(events[1], PartDeltaEvent)
+    assert events[1].delta == ThinkingPartDelta(content_delta='content')
 
     assert manager.get_parts() == snapshot([ThinkingPart(content='content', part_kind='thinking')])
 
@@ -481,13 +476,11 @@ def test_text_then_start_tag_with_content():
     )
 
     # Should create ThinkingPart and add reasoning content
-    assert len(events) >= 1
+    assert len(events) == 2
     assert isinstance(events[0], PartStartEvent)
     assert isinstance(events[0].part, ThinkingPart)
-
-    if len(events) == 2:
-        assert isinstance(events[1], PartDeltaEvent)
-        assert events[1].delta == ThinkingPartDelta(content_delta='reasoning')
+    assert isinstance(events[1], PartDeltaEvent)
+    assert events[1].delta == ThinkingPartDelta(content_delta='reasoning')
 
     # Final state
     assert manager.get_parts() == snapshot(
