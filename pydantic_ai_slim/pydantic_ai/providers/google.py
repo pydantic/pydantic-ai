@@ -220,4 +220,4 @@ class _NonClosingApiClient(BaseApiClient):
         # The original implementation also calls `await self._async_httpx_client.aclose()`, but we don't want to close our `cached_async_http_client` or the one the user passed in.
         # TODO: Remove once https://github.com/googleapis/python-genai/issues/1566 is solved.
         if self._aiohttp_session:
-            await self._aiohttp_session.close()
+            await self._aiohttp_session.close()  # pragma: no cover
