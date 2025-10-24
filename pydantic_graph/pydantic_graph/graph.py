@@ -239,7 +239,11 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             entered_span: AbstractSpan | None = None
             if span is None:
                 if self.auto_instrument:  # pragma: no branch
-                    entered_span = stack.enter_context(logfire_span('run graph {graph.name}', graph=self))
+                    # Separate variable because we actually don't want logfire's f-string magic here,
+                    # we want the span_name to be preformatted for other backends
+                    # as requested in https://github.com/pydantic/pydantic-ai/issues/3173.
+                    span_name = f'run graph {self.name}'
+                    entered_span = stack.enter_context(logfire_span(span_name, graph=self))
             else:
                 entered_span = stack.enter_context(span)
             traceparent = None if entered_span is None else get_traceparent(entered_span)
@@ -724,7 +728,11 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
 
         with ExitStack() as stack:
             if self.graph.auto_instrument:  # pragma: no branch
-                stack.enter_context(logfire_span('run node {node_id}', node_id=node_id, node=node))
+                # Separate variable because we actually don't want logfire's f-string magic here,
+                # we want the span_name to be preformatted for other backends
+                # as requested in https://github.com/pydantic/pydantic-ai/issues/3173.
+                span_name = f'run node {node_id}'
+                stack.enter_context(logfire_span(span_name, node_id=node_id, node=node))
 
             async with self.persistence.record_run(node_snapshot_id):
                 ctx = GraphRunContext(state=self.state, deps=self.deps)
