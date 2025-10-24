@@ -661,7 +661,10 @@ If you want to reuse a network connection or session across tool listings and ca
 
 ### MCP Servers
 
-Pydantic AI provides two ways to connect to and call tools on local and remote MCP Servers. There is the [MCP SDK-based Client](./mcp/mcp-client.md) which offers more direct control by leveraging the MCP SDK directly, and the [FastMCP-based Client](./mcp/fastmcp-client.md) which offers a higher-level API with additional capabilities like Tool Transformation, simpler OAuth configuration, and more.
+Pydantic AI provides two toolsets that allow an agent to connect to and call tools on local and remote MCP Servers:
+
+1. `MCPServer`: the [MCP SDK-based Client](./mcp/client.md) which offers more direct control by leveraging the MCP SDK directly
+2. `FastMCPToolset`: the [FastMCP-based Client](./mcp/fastmcp-client.md) which offers additional capabilities like Tool Transformation, simpler OAuth configuration, and more.
 
 ### LangChain Tools {#langchain-tools}
 
