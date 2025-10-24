@@ -114,7 +114,7 @@ Currently only supports 'middle-out', but is expected to grow in the future.
 class OpenRouterProviderConfig(TypedDict, total=False):
     """Represents the 'Provider' object from the OpenRouter API."""
 
-    order: list[OpenRouterSlug]
+    order: list[OpenRouterProvider]
     """List of provider slugs to try in order (e.g. ["anthropic", "openai"]). [See details](https://openrouter.ai/docs/features/provider-routing#ordering-specific-providers)"""
 
     allow_fallbacks: bool
@@ -129,7 +129,7 @@ class OpenRouterProviderConfig(TypedDict, total=False):
     zdr: bool
     """Restrict routing to only ZDR (Zero Data Retention) endpoints. [See details](https://openrouter.ai/docs/features/provider-routing#zero-data-retention-enforcement)"""
 
-    only: list[OpenRouterSlug]
+    only: list[OpenRouterProvider]
     """List of provider slugs to allow for this request. [See details](https://openrouter.ai/docs/features/provider-routing#allowing-only-specific-providers)"""
 
     ignore: list[str]
@@ -166,6 +166,36 @@ class OpenRouterReasoning(TypedDict, total=False):
     """Whether to enable reasoning with default parameters. Default is inferred from effort or max_tokens."""
 
 
+class WebPlugin(TypedDict, total=False):
+    """You can incorporate relevant web search results for any model on OpenRouter by activating and customizing the web plugin.
+
+    The web search plugin is powered by native search for Anthropic and OpenAI natively and by Exa for other models. For Exa, it uses their "auto" method (a combination of keyword search and embeddings-based web search) to find the most relevant results and augment/ground your prompt.
+    """
+
+    id: Literal['web']
+
+    engine: Literal['native', 'exa', 'undefined']
+    """The web search plugin supports the following options for the engine parameter:
+
+    `native`: Always uses the model provider's built-in web search capabilities
+    `exa`: Uses Exa's search API for web results
+    `undefined` (not specified): Uses native search if available for the provider, otherwise falls back to Exa
+
+    Native search is used by default for OpenAI and Anthropic models that support it
+    Exa search is used for all other models or when native search is not supported.
+
+    When you explicitly specify "engine": "native", it will always attempt to use the provider's native search, even if the model doesn't support it (which may result in an error)."""
+
+    max_results: int
+    """The maximum results allowed by the web plugin."""
+
+    search_prompt: str
+    """The prompt used to attach results to your message."""
+
+
+OpenRouterPlugin = WebPlugin
+
+
 class OpenRouterModelSettings(ModelSettings, total=False):
     """Settings used for an OpenRouter model request."""
 
@@ -198,6 +228,8 @@ class OpenRouterModelSettings(ModelSettings, total=False):
 
     The reasoning config object consolidates settings for controlling reasoning strength across different models. [See more](https://openrouter.ai/docs/use-cases/reasoning-tokens)
     """
+
+    openrouter_plugins: list[OpenRouterPlugin]
 
 
 class OpenRouterError(BaseModel):
@@ -288,23 +320,18 @@ def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSetti
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
     """
-    extra_body: dict[str, Any] = {}
+    extra_body = model_settings['extra_body']
 
-    if models := model_settings.get('openrouter_models'):
+    if models := model_settings.pop('openrouter_models', None):
         extra_body['models'] = models
-    if provider := model_settings.get('openrouter_provider'):
+    if provider := model_settings.pop('openrouter_provider', None):
         extra_body['provider'] = provider
-    if preset := model_settings.get('openrouter_preset'):
+    if preset := model_settings.pop('openrouter_preset', None):
         extra_body['preset'] = preset
-    if transforms := model_settings.get('openrouter_transforms'):
+    if transforms := model_settings.pop('openrouter_transforms', None):
         extra_body['transforms'] = transforms
 
-    base_keys = ModelSettings.__annotations__.keys()
-    base_data: dict[str, Any] = {k: model_settings[k] for k in base_keys if k in model_settings}
-
-    new_settings = OpenAIChatModelSettings(**base_data, extra_body=extra_body)
-
-    return new_settings
+    return OpenAIChatModelSettings(**model_settings, extra_body=extra_body)
 
 
 class OpenRouterModel(OpenAIChatModel):
