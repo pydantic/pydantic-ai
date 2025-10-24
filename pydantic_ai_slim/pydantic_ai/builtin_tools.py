@@ -38,7 +38,7 @@ class AbstractBuiltinTool(ABC):
     def unique_id(self) -> str:
         """A unique identifier for the builtin tool.
 
-        If multiple instances of the same builtin tool can be passed to the model, this should be used to distinguish them.
+        If multiple instances of the same builtin tool can be passed to the model, subclasses should override this property to allow them to be distinguished.
         """
         return self.kind
 
