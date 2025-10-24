@@ -410,9 +410,17 @@ class Model(ABC):
         they need to customize the preparation flow further, but most implementations should simply call
         ``self.prepare_request(...)`` at the start of their ``request`` (and related) methods.
         """
-        merged_settings = merge_model_settings(self.settings, model_settings)
-        customized_parameters = self.customize_request_parameters(model_request_parameters)
-        return merged_settings, customized_parameters
+        model_settings = merge_model_settings(self.settings, model_settings)
+
+        if builtin_tools := model_request_parameters.builtin_tools:
+            # Deduplicate builtin tools
+            model_request_parameters = replace(
+                model_request_parameters,
+                builtin_tools=list({tool.unique_id: tool for tool in builtin_tools}.values()),
+            )
+
+        model_request_parameters = self.customize_request_parameters(model_request_parameters)
+        return model_settings, model_request_parameters
 
     @property
     @abstractmethod
