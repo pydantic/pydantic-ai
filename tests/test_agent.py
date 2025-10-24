@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, replace
 from datetime import timezone
-from typing import Any, Literal, Union
+from typing import Any, Generic, Literal, TypeVar, Union
 
 import httpx
 import pytest
@@ -95,6 +95,21 @@ def test_result_tuple():
 
 class Person(BaseModel):
     name: str
+
+
+# Generic classes for testing tool name sanitization with generic types
+T = TypeVar('T')
+
+
+class ResultGeneric(BaseModel, Generic[T]):
+    """A generic result class."""
+
+    value: T
+    success: bool
+
+
+class StringData(BaseModel):
+    text: str
 
 
 def test_result_list_of_models_with_stringified_response():
@@ -638,21 +653,8 @@ class Bar(BaseModel):
 
 def test_output_type_generic_class_name_sanitization():
     """Test that generic class names with brackets are properly sanitized."""
-    from typing import Generic, TypeVar
-
-    T = TypeVar('T')
-
-    class Result(BaseModel, Generic[T]):
-        """A generic result class."""
-
-        value: T
-        success: bool
-
-    class StringData(BaseModel):
-        text: str
-
-    # This will have a name like "Result[StringData]" which needs sanitization
-    output_type = [Result[StringData], Result[int]]
+    # This will have a name like "ResultGeneric[StringData]" which needs sanitization
+    output_type = [ResultGeneric[StringData], ResultGeneric[int]]
 
     m = TestModel()
     agent = Agent(m, output_type=output_type)
@@ -664,12 +666,7 @@ def test_output_type_generic_class_name_sanitization():
     assert len(m.last_model_request_parameters.output_tools) == 2
 
     tool_names = [tool.name for tool in m.last_model_request_parameters.output_tools]
-    assert tool_names == snapshot(
-        [
-            'final_result_Resulttest_output_type_generic_class_name_sanitizationlocalsStringData',
-            'final_result_Resultint',
-        ]
-    )
+    assert tool_names == snapshot(['final_result_ResultGenericStringData', 'final_result_ResultGenericint'])
 
 
 def test_output_type_with_two_descriptions():
