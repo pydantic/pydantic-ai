@@ -3098,10 +3098,9 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server',
+                        tool_name='mcp_server:deepwiki',
                         args={
                             'action': 'call_tool',
-                            'server_id': 'deepwiki',
                             'tool_name': 'ask_question',
                             'tool_args': {
                                 'repoName': 'pydantic/pydantic-ai',
@@ -3112,7 +3111,7 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server',
+                        tool_name='mcp_server:deepwiki',
                         content={
                             'content': [
                                 {
@@ -3181,10 +3180,9 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server',
+                        tool_name='mcp_server:deepwiki',
                         args={
                             'action': 'call_tool',
-                            'server_id': 'deepwiki',
                             'tool_name': 'ask_question',
                             'tool_args': {
                                 'repoName': 'pydantic/pydantic',
@@ -3195,7 +3193,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server',
+                        tool_name='mcp_server:deepwiki',
                         content={
                             'content': [
                                 {
@@ -3345,13 +3343,13 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='mcp_server',
-                        args='{"action":"call_tool","server_id":"deepwiki","tool_name":"ask_question","tool_args":{"repoName": "pydantic/pydantic-ai", "question": "What is this repository about? What are its main features and purpose?"}}',
+                        tool_name='mcp_server:deepwiki',
+                        args='{"action":"call_tool","tool_name":"ask_question","tool_args":{"repoName": "pydantic/pydantic-ai", "question": "What is this repository about? What are its main features and purpose?"}}',
                         tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='mcp_server',
+                        tool_name='mcp_server:deepwiki',
                         content={
                             'content': [
                                 {
@@ -3407,7 +3405,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
             PartStartEvent(
                 index=1,
                 part=BuiltinToolCallPart(
-                    tool_name='mcp_server',
+                    tool_name='mcp_server:deepwiki',
                     tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
                     provider_name='anthropic',
                 ),
@@ -3415,7 +3413,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
             PartDeltaEvent(
                 index=1,
                 delta=ToolCallPartDelta(
-                    args_delta='{"action":"call_tool","server_id":"deepwiki","tool_name":"ask_question","tool_args":',
+                    args_delta='{"action":"call_tool","tool_name":"ask_question","tool_args":',
                     tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
                 ),
             ),
@@ -3489,7 +3487,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
             PartStartEvent(
                 index=2,
                 part=BuiltinToolReturnPart(
-                    tool_name='mcp_server',
+                    tool_name='mcp_server:deepwiki',
                     content={
                         'content': [
                             {

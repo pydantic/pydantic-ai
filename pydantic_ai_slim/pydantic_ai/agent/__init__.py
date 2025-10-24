@@ -542,6 +542,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
+
         model_used = self._get_model(model)
         del model
 
@@ -607,16 +608,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             instrumentation_settings = None
             tracer = NoOpTracer()
-        if builtin_tools:
-            # Deduplicate builtin tools passed to the agent and the run based on type
-            builtin_tools = list(
-                {
-                    **({type(tool): tool for tool in self._builtin_tools or []}),
-                    **({type(tool): tool for tool in builtin_tools}),
-                }.values()
-            )
-        else:
-            builtin_tools = list(self._builtin_tools)
+
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,
             prompt=user_prompt,
@@ -629,7 +621,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_schema=output_schema,
             output_validators=output_validators,
             history_processors=self.history_processors,
-            builtin_tools=builtin_tools,
+            builtin_tools=[*self._builtin_tools, *(builtin_tools or [])],
             tool_manager=tool_manager,
             tracer=tracer,
             get_instructions=get_instructions,
