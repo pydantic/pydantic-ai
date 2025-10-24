@@ -3480,6 +3480,7 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
                 'arguments': '{}',
                 'call_id': 'call_3WCunBU7lCG1HHaLmnnRJn8I',
                 'type': 'function_call',
+                'status': 'completed',
             },
             {'type': 'function_call_output', 'call_id': 'call_3WCunBU7lCG1HHaLmnnRJn8I', 'output': '42'},
             {
