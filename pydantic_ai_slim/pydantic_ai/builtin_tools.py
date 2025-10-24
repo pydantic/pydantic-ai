@@ -34,6 +34,14 @@ class AbstractBuiltinTool(ABC):
     kind: str = 'unknown_builtin_tool'
     """Built-in tool identifier, this should be available on all built-in tools as a discriminator."""
 
+    @property
+    def unique_id(self) -> str:
+        """A unique identifier for the builtin tool.
+
+        If multiple instances of the same builtin tool can be passed to the model, subclasses should override this property to allow them to be distinguished.
+        """
+        return self.kind
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         _BUILTIN_TOOL_TYPES[cls.kind] = cls
@@ -275,7 +283,7 @@ class MCPServerTool(AbstractBuiltinTool):
     """
 
     id: str
-    """The ID of the MCP server."""
+    """A unique identifier for the MCP server."""
 
     url: str
     """The URL of the MCP server to use.
@@ -320,6 +328,10 @@ class MCPServerTool(AbstractBuiltinTool):
     """
 
     kind: str = 'mcp_server'
+
+    @property
+    def unique_id(self) -> str:
+        return ':'.join([self.kind, self.id])
 
 
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:

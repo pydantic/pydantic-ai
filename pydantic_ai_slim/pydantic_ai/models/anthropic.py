@@ -324,11 +324,14 @@ class AnthropicModel(Model):
     def _process_response(self, response: BetaMessage) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
+        builtin_tool_calls: dict[str, BuiltinToolCallPart] = {}
         for item in response.content:
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
             elif isinstance(item, BetaServerToolUseBlock):
-                items.append(_map_server_tool_use_block(item, self.system))
+                call_part = _map_server_tool_use_block(item, self.system)
+                builtin_tool_calls[call_part.tool_call_id] = call_part
+                items.append(call_part)
             elif isinstance(item, BetaWebSearchToolResultBlock):
                 items.append(_map_web_search_tool_result_block(item, self.system))
             elif isinstance(item, BetaCodeExecutionToolResultBlock):
@@ -340,9 +343,12 @@ class AnthropicModel(Model):
             elif isinstance(item, BetaThinkingBlock):
                 items.append(ThinkingPart(content=item.thinking, signature=item.signature, provider_name=self.system))
             elif isinstance(item, BetaMCPToolUseBlock):
-                items.append(_map_mcp_server_use_block(item, self.system))
+                call_part = _map_mcp_server_use_block(item, self.system)
+                builtin_tool_calls[call_part.tool_call_id] = call_part
+                items.append(call_part)
             elif isinstance(item, BetaMCPToolResultBlock):
-                items.append(_map_mcp_server_result_block(item, self.system))
+                call_part = builtin_tool_calls.get(item.tool_use_id)
+                items.append(_map_mcp_server_result_block(item, call_part, self.system))
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
                 items.append(
@@ -545,9 +551,9 @@ class AnthropicModel(Model):
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif (
-                                response_part.tool_name == MCPServerTool.kind
+                                response_part.tool_name.startswith(MCPServerTool.kind)
+                                and (server_id := response_part.tool_name.split(':', 1)[1])
                                 and (args := response_part.args_as_dict())
-                                and (server_id := args.get('server_id'))
                                 and (tool_name := args.get('tool_name'))
                                 and (tool_args := args.get('tool_args'))
                             ):  # pragma: no branch
@@ -590,7 +596,7 @@ class AnthropicModel(Model):
                                         ),
                                     )
                                 )
-                            elif response_part.tool_name == MCPServerTool.kind and isinstance(
+                            elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
                                 response_part.content, dict
                             ):  # pragma: no branch
                                 assistant_content_params.append(
@@ -714,6 +720,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         current_block: BetaContentBlock | None = None
 
+        builtin_tool_calls: dict[str, BuiltinToolCallPart] = {}
         async for event in self._response:
             if isinstance(event, BetaRawMessageStartEvent):
                 self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name)
@@ -751,9 +758,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 elif isinstance(current_block, BetaServerToolUseBlock):
+                    call_part = _map_server_tool_use_block(current_block, self.provider_name)
+                    builtin_tool_calls[call_part.tool_call_id] = call_part
                     yield self._parts_manager.handle_part(
                         vendor_part_id=event.index,
-                        part=_map_server_tool_use_block(current_block, self.provider_name),
+                        part=call_part,
                     )
                 elif isinstance(current_block, BetaWebSearchToolResultBlock):
                     yield self._parts_manager.handle_part(
@@ -767,6 +776,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                     )
                 elif isinstance(current_block, BetaMCPToolUseBlock):
                     call_part = _map_mcp_server_use_block(current_block, self.provider_name)
+                    builtin_tool_calls[call_part.tool_call_id] = call_part
 
                     args_json = call_part.args_as_json_str()
                     # Drop the final `{}}` so that we can add tool args deltas
@@ -785,9 +795,10 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 elif isinstance(current_block, BetaMCPToolResultBlock):
+                    call_part = builtin_tool_calls.get(current_block.tool_use_id)
                     yield self._parts_manager.handle_part(
                         vendor_part_id=event.index,
-                        part=_map_mcp_server_result_block(current_block, self.provider_name),
+                        part=_map_mcp_server_result_block(current_block, call_part, self.provider_name),
                     )
 
             elif isinstance(event, BetaRawContentBlockDeltaEvent):
@@ -908,10 +919,9 @@ def _map_code_execution_tool_result_block(
 def _map_mcp_server_use_block(item: BetaMCPToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
     return BuiltinToolCallPart(
         provider_name=provider_name,
-        tool_name=MCPServerTool.kind,
+        tool_name=':'.join([MCPServerTool.kind, item.server_name]),
         args={
             'action': 'call_tool',
-            'server_id': item.server_name,
             'tool_name': item.name,
             'tool_args': cast(dict[str, Any], item.input),
         },
@@ -919,10 +929,12 @@ def _map_mcp_server_use_block(item: BetaMCPToolUseBlock, provider_name: str) -> 
     )
 
 
-def _map_mcp_server_result_block(item: BetaMCPToolResultBlock, provider_name: str) -> BuiltinToolReturnPart:
+def _map_mcp_server_result_block(
+    item: BetaMCPToolResultBlock, call_part: BuiltinToolCallPart | None, provider_name: str
+) -> BuiltinToolReturnPart:
     return BuiltinToolReturnPart(
         provider_name=provider_name,
-        tool_name=MCPServerTool.kind,
+        tool_name=call_part.tool_name if call_part else MCPServerTool.kind,
         content=item.model_dump(mode='json', include={'content', 'is_error'}),
         tool_call_id=item.tool_use_id,
     )

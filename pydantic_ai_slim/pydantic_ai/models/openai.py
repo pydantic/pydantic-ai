@@ -1474,11 +1474,11 @@ class OpenAIResponsesModel(Model):
                                 )
                                 openai_messages.append(image_generation_item)
                             elif (  # pragma: no branch
-                                item.tool_name == MCPServerTool.kind
+                                item.tool_name.startswith(MCPServerTool.kind)
                                 and item.tool_call_id
+                                and (server_id := item.tool_name.split(':', 1)[1])
                                 and (args := item.args_as_dict())
                                 and (action := args.get('action'))
-                                and (server_id := args.get('server_id'))
                             ):
                                 if action == 'list_tools':
                                     mcp_list_tools_item = responses.response_input_item_param.McpListTools(
@@ -1525,7 +1525,7 @@ class OpenAIResponsesModel(Model):
                             elif item.tool_name == ImageGenerationTool.kind:
                                 # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
                                 pass
-                            elif item.tool_name == MCPServerTool.kind:  # pragma: no branch
+                            elif item.tool_name.startswith(MCPServerTool.kind):  # pragma: no branch
                                 # MCP call result does not need to be sent back, just the fields off of `BuiltinToolCallPart`.
                                 pass
                     elif isinstance(item, FilePart):
@@ -2257,15 +2257,16 @@ def _map_image_generation_tool_call(
 def _map_mcp_list_tools(
     item: responses.response_output_item.McpListTools, provider_name: str
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
+    tool_name = ':'.join([MCPServerTool.kind, item.server_label])
     return (
         BuiltinToolCallPart(
-            tool_name=MCPServerTool.kind,
+            tool_name=tool_name,
             tool_call_id=item.id,
             provider_name=provider_name,
-            args={'action': 'list_tools', 'server_id': item.server_label},
+            args={'action': 'list_tools'},
         ),
         BuiltinToolReturnPart(
-            tool_name=MCPServerTool.kind,
+            tool_name=tool_name,
             tool_call_id=item.id,
             content=item.model_dump(mode='json', include={'tools', 'error'}),
             provider_name=provider_name,
@@ -2276,20 +2277,20 @@ def _map_mcp_list_tools(
 def _map_mcp_call(
     item: responses.response_output_item.McpCall, provider_name: str
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
+    tool_name = ':'.join([MCPServerTool.kind, item.server_label])
     return (
         BuiltinToolCallPart(
-            tool_name=MCPServerTool.kind,
+            tool_name=tool_name,
             tool_call_id=item.id,
             args={
                 'action': 'call_tool',
-                'server_id': item.server_label,
                 'tool_name': item.name,
                 'tool_args': json.loads(item.arguments) if item.arguments else {},
             },
             provider_name=provider_name,
         ),
         BuiltinToolReturnPart(
-            tool_name=MCPServerTool.kind,
+            tool_name=tool_name,
             tool_call_id=item.id,
             content={
                 'output': item.output,
