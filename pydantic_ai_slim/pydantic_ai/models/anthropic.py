@@ -430,7 +430,7 @@ class AnthropicModel(Model):
                         enabled=bool(tool.allowed_tools),
                         allowed_tools=tool.allowed_tools,
                     )
-                if tool.authorization_token:  # pragma: no branch
+                if tool.authorization_token:  # pragma: no cover
                     mcp_server_url_definition_param['authorization_token'] = tool.authorization_token
                 mcp_servers.append(mcp_server_url_definition_param)
                 beta_features.append('mcp-client-2025-04-04')

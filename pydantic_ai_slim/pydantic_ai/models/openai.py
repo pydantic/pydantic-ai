@@ -1473,7 +1473,7 @@ class OpenAIResponsesModel(Model):
                                     },
                                 )
                                 openai_messages.append(image_generation_item)
-                            elif (
+                            elif (  # pragma: no branch
                                 item.tool_name == MCPServerTool.kind
                                 and item.tool_call_id
                                 and (args := item.args_as_dict())
@@ -2046,7 +2046,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseMcpCallInProgressEvent):
                 pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseMcpCallFailedEvent):
+            elif isinstance(chunk, responses.ResponseMcpCallFailedEvent):  # pragma: no cover
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseMcpCallCompletedEvent):
