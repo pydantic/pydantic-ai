@@ -521,7 +521,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Remember that I live in Mexico City': "Got it! I've recorded that you live in Mexico City. I'll remember this for future reference.",
     'Where do I live?': 'You live in Mexico City.',
     'Tell me about the pydantic/pydantic-ai repo.': 'The pydantic/pydantic-ai repo is a Python agent framework for building Generative AI applications.',
-    'What do I have on my calendar for today?': "You're going to spend all day playing with Pydantic AI.",
+    'What do I have on my calendar today?': "You're going to spend all day playing with Pydantic AI.",
 }
 
 tool_responses: dict[tuple[str, str], str] = {
