@@ -16,6 +16,7 @@ __all__ = (
     'UrlContextTool',
     'ImageGenerationTool',
     'MemoryTool',
+    'MCPServerTool',
 )
 
 _BUILTIN_TOOL_TYPES: dict[str, type[AbstractBuiltinTool]] = {}
@@ -261,6 +262,64 @@ class MemoryTool(AbstractBuiltinTool):
 
     kind: str = 'memory'
     """The kind of tool."""
+
+
+@dataclass(kw_only=True)
+class MCPServerTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to use MCP servers.
+
+    Supported by:
+
+    * OpenAI Responses
+    * Anthropic
+    """
+
+    id: str
+    """The ID of the MCP server."""
+
+    url: str
+    """The URL of the MCP server to use.
+
+    For OpenAI Responses, it is possible to use `connector_id` by providing it as `x-openai-connector:<connector_id>`.
+    """
+
+    authorization_token: str | None = None
+    """Authorization header to use when making requests to the MCP server.
+
+    Supported by:
+
+    * OpenAI Responses
+    * Anthropic
+    """
+
+    description: str | None = None
+    """A description of the MCP server.
+
+    Supported by:
+
+    * OpenAI Responses
+    """
+
+    allowed_tools: list[str] | None = None
+    """A list of tools that the MCP server can use.
+
+    Supported by:
+
+    * OpenAI Responses
+    * Anthropic
+    """
+
+    headers: dict[str, str] | None = None
+    """Optional HTTP headers to send to the MCP server.
+
+    Use for authentication or other purposes.
+
+    Supported by:
+
+    * OpenAI Responses
+    """
+
+    kind: str = 'mcp_server'
 
 
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
