@@ -2925,12 +2925,12 @@ async def test_google_vertexai_image_generation(allow_model_requests: None, vert
     assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/png', identifier='b037a4'))
 
 
-async def test_google_httpx_client_is_not_closed(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_httpx_client_is_not_closed(allow_model_requests: None, gemini_api_key: str):
     # This should not raise any errors, see https://github.com/pydantic/pydantic-ai/issues/3242.
-    agent = Agent('google-gla:gemini-2.5-flash-lite')
+    agent = Agent(GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key=gemini_api_key)))
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is **Paris**.')
 
-    agent = Agent('google-gla:gemini-2.5-flash-lite')
+    agent = Agent(GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key=gemini_api_key)))
     result = await agent.run('What is the capital of Mexico?')
     assert result.output == snapshot('The capital of Mexico is **Mexico City**.')
