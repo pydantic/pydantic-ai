@@ -567,10 +567,6 @@ class OpenAIChatModel(Model):
         if reasoning := getattr(choice.message, 'reasoning', None):
             items.append(ThinkingPart(id='reasoning', content=reasoning, provider_name=self.system))
 
-        # NOTE: We don't currently handle OpenRouter `reasoning_details`:
-        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
-        # If you need this, please file an issue.
-
         if choice.message.content:
             items.extend(
                 (replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part)
