@@ -348,6 +348,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 name=name,
                 cases=cases,
                 failures=failures,
+                experiment_metadata=metadata,
                 span_id=span_id,
                 trace_id=trace_id,
             )

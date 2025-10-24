@@ -7,8 +7,10 @@ from io import StringIO
 from typing import Any, Generic, Literal, Protocol, cast
 
 from pydantic import BaseModel, TypeAdapter
-from rich.console import Console
+from rich.console import Console, Group, RenderableType
+from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 from typing_extensions import TypedDict, TypeVar
 
 from pydantic_evals._utils import UNSET, Unset
@@ -196,6 +198,8 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     failures: list[ReportCaseFailure[InputsT, OutputT, MetadataT]] = field(default_factory=list)
     """The failures in the report. These are cases where task execution raised an exception."""
 
+    experiment_metadata: dict[str, Any] | None = None
+    """Metadata associated with the specific experiment represented by this report."""
     trace_id: str | None = None
     """The trace ID of the evaluation."""
     span_id: str | None = None
@@ -261,7 +265,6 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             duration_config=duration_config,
             include_reasons=include_reasons,
         )
-        Console(file=io_file)
         return io_file.getvalue()
 
     def print(
@@ -297,7 +300,8 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         if console is None:  # pragma: no branch
             console = Console(width=width)
 
-        table = self.console_table(
+        metadata_panel = self._metadata_panel(baseline=baseline)
+        renderable: RenderableType = self.console_table(
             baseline=baseline,
             include_input=include_input,
             include_metadata=include_metadata,
@@ -316,8 +320,12 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             metric_configs=metric_configs,
             duration_config=duration_config,
             include_reasons=include_reasons,
+            with_title=not metadata_panel,
         )
-        console.print(table)
+        # Wrap table with experiment metadata panel if present
+        if metadata_panel:
+            renderable = Group(metadata_panel, renderable)
+        console.print(renderable)
         if include_errors and self.failures:  # pragma: no cover
             failures_table = self.failures_table(
                 include_input=include_input,
@@ -330,6 +338,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             )
             console.print(failures_table, style='red')
 
+    # TODO(DavidM): in v2, change the return type here to RenderableType
     def console_table(
         self,
         baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None,
@@ -351,9 +360,11 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         metric_configs: dict[str, RenderNumberConfig] | None = None,
         duration_config: RenderNumberConfig | None = None,
         include_reasons: bool = False,
+        with_title: bool = True,
     ) -> Table:
-        """Return a table containing the data from this report, or the diff between this report and a baseline report.
+        """Return a table containing the data from this report.
 
+        If a baseline is provided, returns a diff between this report and the baseline report.
         Optionally include input and output details.
         """
         renderer = EvaluationRenderer(
@@ -378,10 +389,82 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             include_reasons=include_reasons,
         )
         if baseline is None:
-            return renderer.build_table(self)
+            return renderer.build_table(self, with_title=with_title)
         else:  # pragma: no cover
-            return renderer.build_diff_table(self, baseline)
+            return renderer.build_diff_table(self, baseline, with_title=with_title)
 
+    def _metadata_panel(
+        self, baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None
+    ) -> RenderableType | None:
+        """Wrap a table with an experiment metadata panel if metadata exists.
+
+        Args:
+            table: The table to wrap
+            baseline: Optional baseline report for diff metadata
+
+        Returns:
+            Either the table unchanged or a Group with Panel and Table
+        """
+        if baseline is None:
+            # Single report - show metadata if present
+            if self.experiment_metadata:
+                metadata_text = Text()
+                items = list(self.experiment_metadata.items())
+                for i, (key, value) in enumerate(items):
+                    metadata_text.append(f'{key}: {value}', style='dim')
+                    if i < len(items) - 1:
+                        metadata_text.append('\n')
+                return Panel(
+                    metadata_text,
+                    title=f'Evaluation Summary: {self.name}',
+                    title_align='left',
+                    border_style='dim',
+                    padding=(0, 1),
+                    expand=False,
+                )
+        else:
+            # Diff report - show metadata diff if either has metadata
+            if self.experiment_metadata or baseline.experiment_metadata:
+                diff_name = baseline.name if baseline.name == self.name else f'{baseline.name} → {self.name}'
+                metadata_text = Text()
+                lines_styles: list[tuple[str, str]] = []
+                if baseline.experiment_metadata and self.experiment_metadata:
+                    # Collect all keys from both
+                    all_keys = sorted(set(baseline.experiment_metadata.keys()) | set(self.experiment_metadata.keys()))
+                    for key in all_keys:
+                        baseline_val = baseline.experiment_metadata.get(key)
+                        report_val = self.experiment_metadata.get(key)
+                        if baseline_val == report_val:
+                            lines_styles.append((f'{key}: {report_val}', 'dim'))
+                        elif baseline_val is None:
+                            lines_styles.append((f'+ {key}: {report_val}', 'green'))
+                        elif report_val is None:
+                            lines_styles.append((f'- {key}: {baseline_val}', 'red'))
+                        else:
+                            lines_styles.append((f'{key}: {baseline_val} → {report_val}', 'yellow'))
+                elif self.experiment_metadata:
+                    lines_styles = [(f'+ {k}: {v}', 'green') for k, v in self.experiment_metadata.items()]
+                else:  # baseline.experiment_metadata only
+                    assert baseline.experiment_metadata is not None
+                    lines_styles = [(f'- {k}: {v}', 'red') for k, v in baseline.experiment_metadata.items()]
+
+                for i, (line, style) in enumerate(lines_styles):
+                    metadata_text.append(line, style=style)
+                    if i < len(lines_styles) - 1:
+                        metadata_text.append('\n')
+
+                return Panel(
+                    metadata_text,
+                    title=f'Evaluation Diff: {diff_name}',
+                    title_align='left',
+                    border_style='dim',
+                    padding=(0, 1),
+                    expand=False,
+                )
+
+        return None
+
+    # TODO(DavidM): in v2, change the return type here to RenderableType
     def failures_table(
         self,
         *,
@@ -705,6 +788,7 @@ class ReportCaseRenderer:
     metric_renderers: Mapping[str, _NumberRenderer]
     duration_renderer: _NumberRenderer
 
+    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_base_table(self, title: str) -> Table:
         """Build and return a Rich Table for the diff output."""
         table = Table(title=title, show_lines=True)
@@ -731,6 +815,7 @@ class ReportCaseRenderer:
             table.add_column('Durations' if self.include_total_duration else 'Duration', justify='right')
         return table
 
+    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_failures_table(self, title: str) -> Table:
         """Build and return a Rich Table for the failures output."""
         table = Table(title=title, show_lines=True)
@@ -1190,9 +1275,22 @@ class EvaluationRenderer:
             duration_renderer=duration_renderer,
         )
 
-    def build_table(self, report: EvaluationReport) -> Table:
+    # TODO(DavidM): in v2, change the return type here to RenderableType
+    def build_table(self, report: EvaluationReport, *, with_title: bool = True) -> Table:
+        """Build a table for the report.
+
+        Args:
+            report: The evaluation report to render
+            with_title: Whether to include the title in the table (default True)
+
+        Returns:
+            A Rich Table object
+        """
         case_renderer = self._get_case_renderer(report)
-        table = case_renderer.build_base_table(f'Evaluation Summary: {report.name}')
+
+        title = f'Evaluation Summary: {report.name}' if with_title else ''
+        table = case_renderer.build_base_table(title)
+
         for case in report.cases:
             table.add_row(*case_renderer.build_row(case))
 
@@ -1203,7 +1301,20 @@ class EvaluationRenderer:
 
         return table
 
-    def build_diff_table(self, report: EvaluationReport, baseline: EvaluationReport) -> Table:
+    # TODO(DavidM): in v2, change the return type here to RenderableType
+    def build_diff_table(
+        self, report: EvaluationReport, baseline: EvaluationReport, *, with_title: bool = True
+    ) -> Table:
+        """Build a diff table comparing report to baseline.
+
+        Args:
+            report: The evaluation report to compare
+            baseline: The baseline report to compare against
+            with_title: Whether to include the title in the table (default True)
+
+        Returns:
+            A Rich Table object
+        """
         report_cases = report.cases
         baseline_cases = self._baseline_cases_to_include(report, baseline)
 
@@ -1228,7 +1339,10 @@ class EvaluationRenderer:
 
         case_renderer = self._get_case_renderer(report, baseline)
         diff_name = baseline.name if baseline.name == report.name else f'{baseline.name} → {report.name}'
-        table = case_renderer.build_base_table(f'Evaluation Diff: {diff_name}')
+
+        title = f'Evaluation Diff: {diff_name}' if with_title else ''
+        table = case_renderer.build_base_table(title)
+
         for baseline_case, new_case in diff_cases:
             table.add_row(*case_renderer.build_diff_row(new_case, baseline_case))
         for case in added_cases:
@@ -1247,6 +1361,7 @@ class EvaluationRenderer:
 
         return table
 
+    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_failures_table(self, report: EvaluationReport) -> Table:
         case_renderer = self._get_case_renderer(report)
         table = case_renderer.build_failures_table('Case Failures')

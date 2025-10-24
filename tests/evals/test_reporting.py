@@ -950,3 +950,370 @@ async def test_evaluation_renderer_no_evaluator_failures_column():
 │ test_case │ {'query': 'What is 2+2?'} │ {'answer': '4'} │ accuracy: 0.950 │    0.100 │
 └───────────┴───────────────────────────┴─────────────────┴─────────────────┴──────────┘
 """)
+
+
+async def test_evaluation_renderer_with_experiment_metadata(sample_report_case: ReportCase):
+    """Test EvaluationRenderer with experiment metadata."""
+    report = EvaluationReport(
+        cases=[sample_report_case],
+        name='test_report',
+        experiment_metadata={'model': 'gpt-4o', 'temperature': 0.7, 'prompt_version': 'v2'},
+    )
+
+    output = report.render(
+        include_input=True,
+        include_metadata=False,
+        include_expected_output=False,
+        include_output=False,
+        include_durations=True,
+        include_total_duration=False,
+        include_removed_cases=False,
+        include_averages=True,
+        include_errors=False,
+        include_error_stacktrace=False,
+        include_evaluator_failures=True,
+        input_config={},
+        metadata_config={},
+        output_config={},
+        score_configs={},
+        label_configs={},
+        metric_configs={},
+        duration_config={},
+        include_reasons=False,
+    )
+
+    assert output == snapshot("""\
+╭─ Evaluation Summary: test_report ─╮
+│ model: gpt-4o                     │
+│ temperature: 0.7                  │
+│ prompt_version: v2                │
+╰───────────────────────────────────╯
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Inputs                    ┃ Scores       ┃ Labels                 ┃ Metrics         ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ {'query': 'What is 2+2?'} │ score1: 2.50 │ label1: hello          │ accuracy: 0.950 │ ✔          │  100.0ms │
+├───────────┼───────────────────────────┼──────────────┼────────────────────────┼─────────────────┼────────────┼──────────┤
+│ Averages  │                           │ score1: 2.50 │ label1: {'hello': 1.0} │ accuracy: 0.950 │ 100.0% ✔   │  100.0ms │
+└───────────┴───────────────────────────┴──────────────┴────────────────────────┴─────────────────┴────────────┴──────────┘
+""")
+
+
+async def test_evaluation_renderer_with_long_experiment_metadata(sample_report_case: ReportCase):
+    """Test EvaluationRenderer with very long experiment metadata."""
+    report = EvaluationReport(
+        cases=[sample_report_case],
+        name='test_report',
+        experiment_metadata={
+            'model': 'gpt-4o-2024-08-06',
+            'temperature': 0.7,
+            'prompt_version': 'v2.1.5',
+            'system_prompt': 'You are a helpful assistant',
+            'max_tokens': 1000,
+            'top_p': 0.9,
+            'frequency_penalty': 0.1,
+            'presence_penalty': 0.1,
+        },
+    )
+
+    output = report.render(
+        include_input=False,
+        include_metadata=False,
+        include_expected_output=False,
+        include_output=False,
+        include_durations=True,
+        include_total_duration=False,
+        include_removed_cases=False,
+        include_averages=False,
+        include_errors=False,
+        include_error_stacktrace=False,
+        include_evaluator_failures=True,
+        input_config={},
+        metadata_config={},
+        output_config={},
+        score_configs={},
+        label_configs={},
+        metric_configs={},
+        duration_config={},
+        include_reasons=False,
+    )
+
+    assert output == snapshot("""\
+╭─ Evaluation Summary: test_report ──────────╮
+│ model: gpt-4o-2024-08-06                   │
+│ temperature: 0.7                           │
+│ prompt_version: v2.1.5                     │
+│ system_prompt: You are a helpful assistant │
+│ max_tokens: 1000                           │
+│ top_p: 0.9                                 │
+│ frequency_penalty: 0.1                     │
+│ presence_penalty: 0.1                      │
+╰────────────────────────────────────────────╯
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
+└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+""")
+
+
+async def test_evaluation_renderer_diff_with_experiment_metadata(sample_report_case: ReportCase):
+    """Test EvaluationRenderer diff table with experiment metadata."""
+    baseline_report = EvaluationReport(
+        cases=[sample_report_case],
+        name='baseline_report',
+        experiment_metadata={'model': 'gpt-4', 'temperature': 0.5},
+    )
+
+    new_report = EvaluationReport(
+        cases=[sample_report_case],
+        name='new_report',
+        experiment_metadata={'model': 'gpt-4o', 'temperature': 0.7},
+    )
+
+    output = new_report.render(
+        baseline=baseline_report,
+        include_input=False,
+        include_metadata=False,
+        include_expected_output=False,
+        include_output=False,
+        include_durations=True,
+        include_total_duration=False,
+        include_removed_cases=False,
+        include_averages=True,
+        include_errors=False,
+        include_error_stacktrace=False,
+        include_evaluator_failures=True,
+        input_config={},
+        metadata_config={},
+        output_config={},
+        score_configs={},
+        label_configs={},
+        metric_configs={},
+        duration_config={},
+        include_reasons=False,
+    )
+
+    assert output == snapshot("""\
+╭─ Evaluation Diff: baseline_report → new_report ─╮
+│ model: gpt-4 → gpt-4o                           │
+│ temperature: 0.5 → 0.7                          │
+╰─────────────────────────────────────────────────╯
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores       ┃ Labels                 ┃ Metrics         ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1: 2.50 │ label1: hello          │ accuracy: 0.950 │ ✔          │  100.0ms │
+├───────────┼──────────────┼────────────────────────┼─────────────────┼────────────┼──────────┤
+│ Averages  │ score1: 2.50 │ label1: {'hello': 1.0} │ accuracy: 0.950 │ 100.0% ✔   │  100.0ms │
+└───────────┴──────────────┴────────────────────────┴─────────────────┴────────────┴──────────┘
+""")
+
+
+async def test_evaluation_renderer_diff_with_only_new_metadata(sample_report_case: ReportCase):
+    """Test EvaluationRenderer diff table where only new report has metadata."""
+    baseline_report = EvaluationReport(
+        cases=[sample_report_case],
+        name='baseline_report',
+        experiment_metadata=None,  # No metadata
+    )
+
+    new_report = EvaluationReport(
+        cases=[sample_report_case],
+        name='new_report',
+        experiment_metadata={'model': 'gpt-4o', 'temperature': 0.7},
+    )
+
+    output = new_report.render(
+        baseline=baseline_report,
+        include_input=False,
+        include_metadata=False,
+        include_expected_output=False,
+        include_output=False,
+        include_durations=True,
+        include_total_duration=False,
+        include_removed_cases=False,
+        include_averages=False,
+        include_errors=False,
+        include_error_stacktrace=False,
+        include_evaluator_failures=True,
+        input_config={},
+        metadata_config={},
+        output_config={},
+        score_configs={},
+        label_configs={},
+        metric_configs={},
+        duration_config={},
+        include_reasons=False,
+    )
+
+    assert output == snapshot("""\
+╭─ Evaluation Diff: baseline_report → new_report ─╮
+│ + model: gpt-4o                                 │
+│ + temperature: 0.7                              │
+╰─────────────────────────────────────────────────╯
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
+└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+""")
+
+
+async def test_evaluation_renderer_diff_with_only_baseline_metadata(sample_report_case: ReportCase):
+    """Test EvaluationRenderer diff table where only baseline report has metadata."""
+    baseline_report = EvaluationReport(
+        cases=[sample_report_case],
+        name='baseline_report',
+        experiment_metadata={'model': 'gpt-4', 'temperature': 0.5},
+    )
+
+    new_report = EvaluationReport(
+        cases=[sample_report_case],
+        name='new_report',
+        experiment_metadata=None,  # No metadata
+    )
+
+    output = new_report.render(
+        baseline=baseline_report,
+        include_input=False,
+        include_metadata=False,
+        include_expected_output=False,
+        include_output=False,
+        include_durations=True,
+        include_total_duration=False,
+        include_removed_cases=False,
+        include_averages=False,
+        include_errors=False,
+        include_error_stacktrace=False,
+        include_evaluator_failures=True,
+        input_config={},
+        metadata_config={},
+        output_config={},
+        score_configs={},
+        label_configs={},
+        metric_configs={},
+        duration_config={},
+        include_reasons=False,
+    )
+
+    assert output == snapshot("""\
+╭─ Evaluation Diff: baseline_report → new_report ─╮
+│ - model: gpt-4                                  │
+│ - temperature: 0.5                              │
+╰─────────────────────────────────────────────────╯
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
+└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+""")
+
+
+async def test_evaluation_renderer_diff_with_same_metadata(sample_report_case: ReportCase):
+    """Test EvaluationRenderer diff table where both reports have the same metadata."""
+    metadata = {'model': 'gpt-4o', 'temperature': 0.7}
+
+    baseline_report = EvaluationReport(
+        cases=[sample_report_case],
+        name='baseline_report',
+        experiment_metadata=metadata,
+    )
+
+    new_report = EvaluationReport(
+        cases=[sample_report_case],
+        name='new_report',
+        experiment_metadata=metadata,
+    )
+
+    output = new_report.render(
+        include_input=False,
+        include_metadata=False,
+        include_expected_output=False,
+        include_output=False,
+        include_durations=True,
+        include_total_duration=False,
+        include_removed_cases=False,
+        include_averages=False,
+        include_error_stacktrace=False,
+        include_evaluator_failures=True,
+        input_config={},
+        metadata_config={},
+        output_config={},
+        score_configs={},
+        label_configs={},
+        metric_configs={},
+        duration_config={},
+        include_reasons=False,
+        baseline=baseline_report,
+        include_errors=False,  # Prevent failures table from being added
+    )
+    assert output == snapshot("""\
+╭─ Evaluation Diff: baseline_report → new_report ─╮
+│ model: gpt-4o                                   │
+│ temperature: 0.7                                │
+╰─────────────────────────────────────────────────╯
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
+└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+""")
+
+
+async def test_evaluation_renderer_diff_with_changed_metadata(sample_report_case: ReportCase):
+    """Test EvaluationRenderer diff table where both reports have the same metadata."""
+
+    baseline_report = EvaluationReport(
+        cases=[sample_report_case],
+        name='baseline_report',
+        experiment_metadata={
+            'updated-key': 'original value',
+            'preserved-key': 'preserved value',
+            'old-key': 'old value',
+        },
+    )
+
+    new_report = EvaluationReport(
+        cases=[sample_report_case],
+        name='new_report',
+        experiment_metadata={
+            'updated-key': 'updated value',
+            'preserved-key': 'preserved value',
+            'new-key': 'new value',
+        },
+    )
+
+    output = new_report.render(
+        include_input=False,
+        include_metadata=False,
+        include_expected_output=False,
+        include_output=False,
+        include_durations=True,
+        include_total_duration=False,
+        include_removed_cases=False,
+        include_averages=False,
+        include_error_stacktrace=False,
+        include_evaluator_failures=True,
+        input_config={},
+        metadata_config={},
+        output_config={},
+        score_configs={},
+        label_configs={},
+        metric_configs={},
+        duration_config={},
+        include_reasons=False,
+        baseline=baseline_report,
+        include_errors=False,  # Prevent failures table from being added
+    )
+    assert output == snapshot("""\
+╭─ Evaluation Diff: baseline_report → new_report ─╮
+│ + new-key: new value                            │
+│ - old-key: old value                            │
+│ preserved-key: preserved value                  │
+│ updated-key: original value → updated value     │
+╰─────────────────────────────────────────────────╯
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
+└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+""")
