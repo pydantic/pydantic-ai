@@ -7117,3 +7117,48 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
             ),
         ]
     )
+
+
+async def test_openai_responses_requires_function_call_status_none(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=OpenAIProvider(api_key=openai_api_key),
+        profile=replace(openai_model_profile('gpt-5'), openai_responses_requires_function_call_status_none=True),
+    )
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_meaning_of_life() -> int:
+        return 42
+
+    result = await agent.run('What is the meaning of life?')
+    messages = result.all_messages()
+
+    _, openai_messages = await model._map_messages(messages, model_settings=model.settings or {})  # type: ignore[reportPrivateUsage]
+    assert openai_messages == snapshot(
+        [
+            {'role': 'user', 'content': 'What is the meaning of life?'},
+            {
+                'id': 'rs_01d311e2633707df0068fbac0050ec81a2ad76fd9256abcaf7',
+                'summary': [],
+                'encrypted_content': 'gAAAAABo-6wE6H4S9A886ZkwXcvvHqZ6Vx5BtpYvvNAJV5Ijq7pz-mTBJxfdjilNSzBj0ruy7NOsMRMhWzNahRf-n3KDQ2x1p-PjVCHM5IAGqHqae8A-aAUn_FDRiTbAT5N5FXTrZ80DAtdDv17z2HlODmTTYRvBU2-rX7opysjc4rf7-rvy6j4cUcNbM0ntT5DH8UHxC9LCM_s7Cb2unEV0jaDt7NzFxgfWN2u24Avs2EnjPoxOjd6BR-PWHJk_7kGGkVBub8NU7ZOyHsci3T8DAq_eX38DgkHJBJCPT4EqvlNP-VjPdecYEFUCw5G_Pye6h55-77g8LjkrFO43f8p6wscQ0iM601i1Ugmqbzxyv1ogPIN-YuSk2tkCw-D7xBD7I4fum2AmvyN-fR58lWcn-Z0WTqACA4baTJiCtW5b7uVeAp8vm8-gWzFR5BdDHVdQqu1TAKVWl_1P8NauDtd5M24MjVZd6WC0WrbTDPY9i2gieMMjFek2M8aoQFO0CG7r3JHn2zxfFB3THWCpl4VqZAQp6Ok7rymeY0Oayj--OLpNMBXIYUWc51eyYeurwQ943BSkf-m6PPVKO8T5U__Bx-biCNCePSlFKp7V0Du6h7UgYoqqonH2S3Jrg87c6dk7VJ7ca2i8sZqhy0rG6Kb7ENDVvwkMOdpnaFgdWd3VINp6P8j69kBQg-qwWP-YHPC9LnsjT2j1ktMowVO97eOpV4j2BhiThxunmu_SOIAEbghmjJEkLuRxLxBUPFRIajke2CvvFeIuReJr53isPKOxOjVzsc6oG5ZeykDlfz_mfEap7AByPNY0987zwG58tGueNxXjdpd7NQFcn_6DKj60SvUg0sk49V_QrDY3cAhSRvZoEeqA8XR97pEe7CByYMl80b9fzgyahc4NCdUwK8es2ll-lsJwEx1ZGdC8cB45QOrTnw8tJAUsSM44rLKwAQY-KsuN4UygO99d1CQZEm2YWtnPAvA9I-EhY87UIDx0CpPsEyxxFu2GZCTy7ceSnpcmQbAFWXzfBSpM7k42xVV8G8IK_bHpoF1enF5Vbc37_L_aWd4AgzuAwF_RVyd8exVh3NVJtO3BqPv72kTukr2Fok3KEaSeU0whP_dxr-thP2exS0F2Jdn13ZtB_pqxwKVWEsvzdbN92Q9qs10BAgYs2SA4cq66semwRl-1n-dr7XJyZzPOEiA9TQYgUCw0ueIc0ciMOZ0Waaj094bKIylw_TD5Bu1diXpzbTma_AVO-NZn7INhAZN3guSme-zIUEMrh66w0VJP-DbDA-ecSD41eMRSadyV4g86wLL4NOBE5NwSiSkwd2xJ9NqG7YohFM8BlPdEV4zhmqHcIKpVwAitFItqnAaUSU42Aebdritt9oNVnpKCeeA4QQv_8W7rOXJlLfGXRJUBCrh3Rv7KCVC3yncAOIU8FWu3jyaAqhLrWHLW958wjF8ka7lw80YZbToPjIuiii0UXu2w3Tv5EGVdkhf05A3Yj6M_LXStns8iBMzcU4-mJ1649FnnImLnW5AeohoWPBB6WYhW9gfwjuxejTI3Q5R0mo9jUSP3_tFiawlC2zFgvkNFufC6Kry8-Burjf8l6rpAX7_sjtCu1AlAbI6PEFtxcKhNWHfQp4mUATR6P4k68jk_Kl-FpRBtNOf8YOlLGrKE-WbwCoIV7VAgK2CTZJOxaslxVZRCLObNrA3XuEtc3jo8pMzqx8GJWshIgmF4XiQcmgh65U_kjB07adlgnbCZvGUXdIIQiA2vqIWC6Qu8SSO20nOOR65hGXyIgf4aOolU0Ljbi4slXnJKjbcPaX5O3cXvKHbkVFwXmHK2Ymaqb6fZcap78_On8jLK_GRlw3jV18SLeOcJiG2LqtHzcUawY4K7bPDNY2QX89yL5d4qxRF577QgzalmdQDsKyC_N-wk',
+                'type': 'reasoning',
+            },
+            {
+                'name': 'get_meaning_of_life',
+                'arguments': '{}',
+                'call_id': 'call_cp3x6W9eeyMIryJUNhgMaP5w',
+                'type': 'function_call',
+                'status': None,
+                'id': 'fc_01d311e2633707df0068fbac038f1c81a29847e80d6a1a3f60',
+            },
+            {'type': 'function_call_output', 'call_id': 'call_cp3x6W9eeyMIryJUNhgMaP5w', 'output': '42'},
+            {
+                'role': 'assistant',
+                'id': 'msg_01d311e2633707df0068fbac094ff481a297b1f4fdafb6ebd9',
+                'content': [{'text': '42', 'type': 'output_text', 'annotations': []}],
+                'type': 'message',
+                'status': 'completed',
+            },
+        ]
+    )
