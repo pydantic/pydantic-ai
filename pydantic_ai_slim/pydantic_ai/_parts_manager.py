@@ -212,8 +212,8 @@ class ModelResponsePartsManager:
             start_tag = thinking_tags[0]
             before_start, after_start = content.split(start_tag, 1)
 
-            if before_start:  # pragma: no cover
-                yield from self._handle_text_delta_simple(  # pragma: no cover
+            if before_start:
+                yield from self._handle_text_delta_simple(
                     vendor_part_id=vendor_part_id,
                     content=before_start,
                     id=id,
@@ -224,8 +224,8 @@ class ModelResponsePartsManager:
             self._vendor_id_to_part_index.pop(vendor_part_id, None)
             yield self.handle_thinking_delta(vendor_part_id=vendor_part_id, content='')
 
-            if after_start:  # pragma: no cover
-                yield from self._handle_text_delta_simple(  # pragma: no cover
+            if after_start:
+                yield from self._handle_text_delta_simple(
                     vendor_part_id=vendor_part_id,
                     content=after_start,
                     id=id,
