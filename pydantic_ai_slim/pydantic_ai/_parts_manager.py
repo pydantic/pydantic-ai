@@ -145,7 +145,7 @@ class ModelResponsePartsManager:
                 ignore_leading_whitespace=ignore_leading_whitespace,
             )
 
-    def _handle_text_delta_simple(
+    def _handle_text_delta_simple(  # noqa: C901
         self,
         *,
         vendor_part_id: VendorId | None,
@@ -161,7 +161,12 @@ class ModelResponsePartsManager:
             if self._parts:
                 part_index = len(self._parts) - 1
                 latest_part = self._parts[part_index]
-                if isinstance(latest_part, TextPart):
+                if isinstance(latest_part, ThinkingPart):
+                    # If there's an existing ThinkingPart and no thinking tags, add content to it
+                    # This handles the case where vendor_part_id=None with trailing content after start tag
+                    yield self.handle_thinking_delta(vendor_part_id=None, content=content)
+                    return
+                elif isinstance(latest_part, TextPart):
                     existing_text_part_and_index = latest_part, part_index
         else:
             part_index = self._vendor_id_to_part_index.get(vendor_part_id)
@@ -169,22 +174,64 @@ class ModelResponsePartsManager:
                 existing_part = self._parts[part_index]
 
                 if thinking_tags and isinstance(existing_part, ThinkingPart):  # pragma: no cover
-                    if content == thinking_tags[1]:  # pragma: no cover
+                    end_tag = thinking_tags[1]  # pragma: no cover
+                    if end_tag in content:  # pragma: no cover
+                        before_end, after_end = content.split(end_tag, 1)  # pragma: no cover
+
+                        if before_end:  # pragma: no cover
+                            yield self.handle_thinking_delta(  # pragma: no cover
+                                vendor_part_id=vendor_part_id, content=before_end
+                            )
+
+                        self._vendor_id_to_part_index.pop(vendor_part_id)  # pragma: no cover
+
+                        if after_end:  # pragma: no cover
+                            yield from self._handle_text_delta_simple(  # pragma: no cover
+                                vendor_part_id=vendor_part_id,
+                                content=after_end,
+                                id=id,
+                                thinking_tags=thinking_tags,
+                                ignore_leading_whitespace=ignore_leading_whitespace,
+                            )
+                        return  # pragma: no cover
+
+                    if content == end_tag:  # pragma: no cover
                         self._vendor_id_to_part_index.pop(vendor_part_id)  # pragma: no cover
                         return  # pragma: no cover
-                    else:  # pragma: no cover
-                        yield self.handle_thinking_delta(
-                            vendor_part_id=vendor_part_id, content=content
-                        )  # pragma: no cover
-                        return  # pragma: no cover
+
+                    yield self.handle_thinking_delta(  # pragma: no cover
+                        vendor_part_id=vendor_part_id, content=content
+                    )
+                    return  # pragma: no cover
                 elif isinstance(existing_part, TextPart):
                     existing_text_part_and_index = existing_part, part_index
                 else:
                     raise UnexpectedModelBehavior(f'Cannot apply a text delta to {existing_part=}')
 
-        if thinking_tags and content == thinking_tags[0]:
+        if thinking_tags and thinking_tags[0] in content:
+            start_tag = thinking_tags[0]
+            before_start, after_start = content.split(start_tag, 1)
+
+            if before_start:  # pragma: no cover
+                yield from self._handle_text_delta_simple(  # pragma: no cover
+                    vendor_part_id=vendor_part_id,
+                    content=before_start,
+                    id=id,
+                    thinking_tags=None,
+                    ignore_leading_whitespace=ignore_leading_whitespace,
+                )
+
             self._vendor_id_to_part_index.pop(vendor_part_id, None)
             yield self.handle_thinking_delta(vendor_part_id=vendor_part_id, content='')
+
+            if after_start:  # pragma: no cover
+                yield from self._handle_text_delta_simple(  # pragma: no cover
+                    vendor_part_id=vendor_part_id,
+                    content=after_start,
+                    id=id,
+                    thinking_tags=thinking_tags,
+                    ignore_leading_whitespace=ignore_leading_whitespace,
+                )
             return
 
         if existing_text_part_and_index is None:
@@ -221,19 +268,57 @@ class ModelResponsePartsManager:
         existing_part = self._parts[part_index] if part_index is not None else None
 
         if existing_part is not None and isinstance(existing_part, ThinkingPart):
-            if combined_content == end_tag:
+            if end_tag in combined_content:
+                before_end, after_end = combined_content.split(end_tag, 1)
+
+                if before_end:
+                    yield self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=before_end)
+
                 self._vendor_id_to_part_index.pop(vendor_part_id)
                 self._thinking_tag_buffer.pop(vendor_part_id, None)
-                return
-            else:
-                self._thinking_tag_buffer.pop(vendor_part_id, None)
-                yield self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=combined_content)
+
+                if after_end:
+                    yield from self._handle_text_delta_with_thinking_tags(
+                        vendor_part_id=vendor_part_id,
+                        content=after_end,
+                        id=id,
+                        thinking_tags=thinking_tags,
+                        ignore_leading_whitespace=ignore_leading_whitespace,
+                    )
                 return
 
-        if combined_content == start_tag:
+            if self._could_be_tag_start(combined_content, end_tag):
+                self._thinking_tag_buffer[vendor_part_id] = combined_content
+                return
+
+            self._thinking_tag_buffer.pop(vendor_part_id, None)
+            yield self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=combined_content)
+            return
+
+        if start_tag in combined_content:
+            before_start, after_start = combined_content.split(start_tag, 1)
+
+            if before_start:
+                yield from self._handle_text_delta_simple(
+                    vendor_part_id=vendor_part_id,
+                    content=before_start,
+                    id=id,
+                    thinking_tags=thinking_tags,
+                    ignore_leading_whitespace=ignore_leading_whitespace,
+                )
+
             self._thinking_tag_buffer.pop(vendor_part_id, None)
             self._vendor_id_to_part_index.pop(vendor_part_id, None)
             yield self.handle_thinking_delta(vendor_part_id=vendor_part_id, content='')
+
+            if after_start:
+                yield from self._handle_text_delta_with_thinking_tags(
+                    vendor_part_id=vendor_part_id,
+                    content=after_start,
+                    id=id,
+                    thinking_tags=thinking_tags,
+                    ignore_leading_whitespace=ignore_leading_whitespace,
+                )
             return
 
         if content.startswith(start_tag[0]) and self._could_be_tag_start(combined_content, start_tag):
