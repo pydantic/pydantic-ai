@@ -13,7 +13,8 @@ from pydantic_ai.providers import Provider
 
 try:
     from google.auth.credentials import Credentials
-    from google.genai import Client
+    from google.genai._api_client import BaseApiClient
+    from google.genai.client import Client, DebugConfig
     from google.genai.types import HttpOptions
 except ImportError as _import_error:
     raise ImportError(
@@ -186,9 +187,35 @@ More details [here](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/
 
 
 class _SafelyClosingClient(Client):
+    @staticmethod
+    def _get_api_client(
+        vertexai: bool | None = None,
+        api_key: str | None = None,
+        credentials: Credentials | None = None,
+        project: str | None = None,
+        location: str | None = None,
+        debug_config: DebugConfig | None = None,
+        http_options: HttpOptions | None = None,
+    ) -> BaseApiClient:
+        return _NonClosingApiClient(
+            vertexai=vertexai,
+            api_key=api_key,
+            credentials=credentials,
+            project=project,
+            location=location,
+            http_options=http_options,
+        )
+
     def close(self) -> None:
         # This is called from `Client.__del__`, even if `Client.__init__` raised an error before `self._api_client` is set, which would raise an `AttributeError` here.
         try:
             super().close()
         except AttributeError:
             pass
+
+
+class _NonClosingApiClient(BaseApiClient):
+    async def aclose(self) -> None:
+        # The original implementation also calls `await self._async_httpx_client.aclose()`, but we don't want to close our `cached_async_http_client` or the one the user passed in.
+        if self._aiohttp_session:
+            await self._aiohttp_session.close()
