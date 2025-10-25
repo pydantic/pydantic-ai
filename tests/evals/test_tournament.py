@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import random
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +42,7 @@ def evaluation_agent() -> Agent[None, GameResult]:
     """Create a test evaluation agent for tournament games."""
     return Agent(
         model=OpenAIChatModel(
-            model_name='qwen2.5:72b',
+            model_name='qwen2.5:32b',
             provider=OpenAIProvider(base_url='http://localhost:11434/v1'),
         ),
         output_type=GameResult,
@@ -55,7 +56,7 @@ def query_agent() -> Agent[None, GameResult]:
     """Create a test evaluation agent for generating search queries."""
     return Agent(
         model=OpenAIChatModel(
-            model_name='qwen2.5:72b',
+            model_name='qwen2.5:32b',
             provider=OpenAIProvider(base_url='http://localhost:11434/v1'),
         ),
         output_type=str,
@@ -115,6 +116,8 @@ async def test_evalgame(ice_cream_players: list[EvalPlayer], evaluation_agent: A
 @pytest.mark.vcr()
 async def test_random_sampling_strategy(ice_cream_players: list[EvalPlayer], ice_cream_game: EvalGame, evaluation_agent: Agent[None, GameResult], allow_model_requests: None) -> None:
     """Test the random sampling tournament strategy."""
+    random.seed(42)  # Make test deterministic for VCR recording
+
     players_with_scores = await random_sampling_strategy(
         players=ice_cream_players,
         game=ice_cream_game,
@@ -133,6 +136,8 @@ async def test_random_sampling_strategy(ice_cream_players: list[EvalPlayer], ice
 @pytest.mark.vcr()
 async def test_round_robin_strategy(ice_cream_players: list[EvalPlayer], ice_cream_game: EvalGame, evaluation_agent: Agent[None, GameResult], allow_model_requests: None) -> None:
     """Test the round robin tournament strategy."""
+    random.seed(42)  # Make test deterministic for VCR recording
+
     players_with_scores = await round_robin_strategy(
         players=ice_cream_players,
         game=ice_cream_game,
@@ -151,6 +156,8 @@ async def test_round_robin_strategy(ice_cream_players: list[EvalPlayer], ice_cre
 @pytest.mark.vcr()
 async def test_adaptive_uncertainty_strategy(ice_cream_players: list[EvalPlayer], ice_cream_game: EvalGame, evaluation_agent: Agent[None, GameResult], allow_model_requests: None) -> None:
     """Test the adaptive uncertainty tournament strategy."""
+    random.seed(42)  # Make test deterministic for VCR recording
+
     players_with_scores = await adaptive_uncertainty_strategy(
         players=ice_cream_players,
         game=ice_cream_game,
@@ -170,6 +177,8 @@ async def test_adaptive_uncertainty_strategy(ice_cream_players: list[EvalPlayer]
 @pytest.mark.vcr()
 async def test_evaltournament(ice_cream_players: list[EvalPlayer], ice_cream_game: EvalGame, evaluation_agent: Agent[None, GameResult], allow_model_requests: None) -> None:
     """Test the EvalTournament class."""
+    random.seed(42)  # Make test deterministic for VCR recording
+
     tournament = EvalTournament(players=ice_cream_players, game=ice_cream_game)
 
     assert len(tournament.players) == len(ice_cream_players)
@@ -214,8 +223,8 @@ async def test_evaltournament_usecase(tmp_path: Path, query_agent: Agent[None, s
     The code demonstrates how the evaluation framework can be used in practice. It is not intended as test for individual components.
     In this use case, we are provided with a list of topics. The objective is to generate creative web search queries for these topics.
     We have a baseline implementation in the `main` branch and a novel implementation in some `feature` branch. In this simple example,
-    the implementations differ merely in the prompt (`prompt_baseline` vs. `prompt_novel`) and temperature. We want to check whether the
-    novel implementation does indeed generate more creative queries.
+    the implementations differ merely in the prompt: `prompt_baseline` vs. `prompt_novel`. We want to check whether the novel
+    implementation does indeed generate more creative queries.
 
     The use case proceeds in three steps:
     (1) We generate an evaluation `Dataset` containing the topics.
@@ -224,6 +233,7 @@ async def test_evaltournament_usecase(tmp_path: Path, query_agent: Agent[None, s
     (3) We run the novel implementation, score both baseline and novel queries in one go using a Bradley-Terry tournament,
         and check whether the scores have improved.
     """
+    random.seed(42)  # Make test deterministic for VCR recording
 
     # Path to store the evaluation dataset
     path_out = tmp_path / 'dataset.json'
@@ -240,6 +250,7 @@ async def test_evaltournament_usecase(tmp_path: Path, query_agent: Agent[None, s
         'Anne Brorhilke',
         'bioconcrete self-healing',
         'bacteriophage therapy revival',
+        'Habsburg jaw genetics',
     ]
 
     cases: list[Case[dict[str, str], type[None], Any]] = []
@@ -284,10 +295,7 @@ async def test_evaltournament_usecase(tmp_path: Path, query_agent: Agent[None, s
         async with query_agent:
             result = await query_agent.run(
                 user_prompt=prompt_novel,
-                model_settings=ModelSettings(
-                    temperature=1.0,
-                    timeout=300,
-                ),
+                model_settings=MODEL_SETTINGS,  # Ideally, we would run the model at higher temperature here. But for VCR recording we need determinism.
             )
 
         player_baseline = EvalPlayer(idx=idx, item=case.inputs['query'])
@@ -298,13 +306,23 @@ async def test_evaltournament_usecase(tmp_path: Path, query_agent: Agent[None, s
     # Run the Bradley-Terry tournament to score both baseline and novel queries
     game = EvalGame(criterion='Which of the two search queries shows more genuine curiosity and creativity, and is less formulaic?')
     tournament = EvalTournament(players=players, game=game)
-    await tournament.run(
+    players_scored = await tournament.run(
         agent=evaluation_agent,
         model_settings=MODEL_SETTINGS,
     )
 
+    # Players sorted by score
+    print('\n\nPlayers 0 to 9 are baseline queries. Players 10 to 19 are novel queries:\n')
+    players_sorted = sorted(players_scored, key=lambda p: p.score if p.score is not None else float('-inf'))
+    for player in players_sorted:
+        print(f'Player {player.idx:4d}   score: {player.score:7.4f}   query: {player.item}')
+
     # Average score for both baseline and novel queries
     scores_baseline = [tournament.get_player_by_idx(idx=i).score or 0.0 for i in range(len(dataset.cases))]
     scores_novel = [tournament.get_player_by_idx(idx=i + len(dataset.cases)).score or 0.0 for i in range(len(dataset.cases))]
-    # Not every novel query will have scored higher than the baseline case. But on average the novel queries should have improved scores.
+    print(f'Average score for baseline queries: {np.mean(scores_baseline):0.4f}')
+    print(f'Average score for novel queries:    {np.mean(scores_novel):0.4f}')
+    # Not every novel query will have scored higher than the baseline equivalent. For example, score(12) > score(2). But on average, the novel queries should have higher scores.
     assert np.mean(scores_novel) > np.mean(scores_baseline)
+    # The sum of all Bradley-Terry scores is zero.
+    assert np.isclose(np.mean(scores_novel) + np.mean(scores_baseline), 0)

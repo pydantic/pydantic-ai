@@ -8,207 +8,6 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2404'
-      content-type:
-      - application/json
-      host:
-      - localhost:11434
-    method: POST
-    parsed_body:
-      messages:
-      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
-          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
-          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
-          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
-          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
-          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
-          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
-          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
-          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
-          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
-          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
-          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
-          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
-          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
-          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
-        role: system
-      - content: |2
-
-          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
-          <A> chocolate </A>
-          <B> vanilla </B>
-        role: user
-      model: qwen2.5:72b
-      stream: false
-      temperature: 0.0
-      tool_choice: required
-      tools:
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            $defs:
-              GameResult:
-                description: Possible results of an evaluation game.
-                enum:
-                - A
-                - B
-                type: string
-            additionalProperties: false
-            properties:
-              response:
-                $ref: '#/$defs/GameResult'
-            required:
-            - response
-            type: object
-          strict: true
-        type: function
-    uri: http://localhost:11434/v1/chat/completions
-  response:
-    headers:
-      content-length:
-      - '317'
-      content-type:
-      - application/json
-    parsed_body:
-      choices:
-      - finish_reason: stop
-        index: 0
-        message:
-          content: |-
-            {
-                "response": "B"
-            }
-          role: assistant
-      created: 1761391113
-      id: chatcmpl-592
-      model: qwen2.5:72b
-      object: chat.completion
-      system_fingerprint: fp_ollama
-      usage:
-        completion_tokens: 10
-        prompt_tokens: 577
-        total_tokens: 587
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '2595'
-      content-type:
-      - application/json
-      host:
-      - localhost:11434
-    method: POST
-    parsed_body:
-      messages:
-      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
-          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
-          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
-          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
-          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
-          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
-          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
-          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
-          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
-          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
-          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
-          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
-          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
-          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
-          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
-        role: system
-      - content: |2
-
-          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
-          <A> chocolate </A>
-          <B> vanilla </B>
-        role: user
-      - content: |-
-          {
-              "response": "B"
-          }
-        role: assistant
-      - content: |-
-          Validation feedback:
-          Please include your response in a tool call.
-
-          Fix the errors and try again.
-        role: user
-      model: qwen2.5:72b
-      stream: false
-      temperature: 0.0
-      tool_choice: required
-      tools:
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            $defs:
-              GameResult:
-                description: Possible results of an evaluation game.
-                enum:
-                - A
-                - B
-                type: string
-            additionalProperties: false
-            properties:
-              response:
-                $ref: '#/$defs/GameResult'
-            required:
-            - response
-            type: object
-          strict: true
-        type: function
-    uri: http://localhost:11434/v1/chat/completions
-  response:
-    headers:
-      content-length:
-      - '430'
-      content-type:
-      - application/json
-    parsed_body:
-      choices:
-      - finish_reason: tool_calls
-        index: 0
-        message:
-          content: ''
-          role: assistant
-          tool_calls:
-          - function:
-              arguments: '{"response":"B"}'
-              name: final_result
-            id: call_hu5i8z2s
-            index: 0
-            type: function
-      created: 1761391118
-      id: chatcmpl-428
-      model: qwen2.5:72b
-      object: chat.completion
-      system_fingerprint: fp_ollama
-      usage:
-        completion_tokens: 20
-        prompt_tokens: 615
-        total_tokens: 635
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
       - '2430'
       content-type:
       - application/json
@@ -239,111 +38,7 @@ interactions:
           <A> toasted rice & miso caramel ice cream </A>
           <B> peach </B>
         role: user
-      model: qwen2.5:72b
-      stream: false
-      temperature: 0.0
-      tool_choice: required
-      tools:
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            $defs:
-              GameResult:
-                description: Possible results of an evaluation game.
-                enum:
-                - A
-                - B
-                type: string
-            additionalProperties: false
-            properties:
-              response:
-                $ref: '#/$defs/GameResult'
-            required:
-            - response
-            type: object
-          strict: true
-        type: function
-    uri: http://localhost:11434/v1/chat/completions
-  response:
-    headers:
-      content-length:
-      - '317'
-      content-type:
-      - application/json
-    parsed_body:
-      choices:
-      - finish_reason: stop
-        index: 0
-        message:
-          content: |-
-            {
-                "response": "A"
-            }
-          role: assistant
-      created: 1761391120
-      id: chatcmpl-106
-      model: qwen2.5:72b
-      object: chat.completion
-      system_fingerprint: fp_ollama
-      usage:
-        completion_tokens: 10
-        prompt_tokens: 584
-        total_tokens: 594
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '2621'
-      content-type:
-      - application/json
-      host:
-      - localhost:11434
-    method: POST
-    parsed_body:
-      messages:
-      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
-          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
-          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
-          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
-          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
-          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
-          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
-          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
-          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
-          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
-          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
-          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
-          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
-          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
-          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
-        role: system
-      - content: |2
-
-          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
-          <A> toasted rice & miso caramel ice cream </A>
-          <B> peach </B>
-        role: user
-      - content: |-
-          {
-              "response": "A"
-          }
-        role: assistant
-      - content: |-
-          Validation feedback:
-          Please include your response in a tool call.
-
-          Fix the errors and try again.
-        role: user
-      model: qwen2.5:72b
+      model: qwen2.5:32b
       stream: false
       temperature: 0.0
       tool_choice: required
@@ -386,511 +81,12 @@ interactions:
           - function:
               arguments: '{"response":"A"}'
               name: final_result
-            id: call_ik1jpdct
+            id: call_ru7cz0p5
             index: 0
             type: function
-      created: 1761391125
-      id: chatcmpl-374
-      model: qwen2.5:72b
-      object: chat.completion
-      system_fingerprint: fp_ollama
-      usage:
-        completion_tokens: 20
-        prompt_tokens: 622
-        total_tokens: 642
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '2400'
-      content-type:
-      - application/json
-      host:
-      - localhost:11434
-    method: POST
-    parsed_body:
-      messages:
-      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
-          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
-          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
-          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
-          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
-          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
-          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
-          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
-          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
-          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
-          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
-          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
-          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
-          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
-          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
-        role: system
-      - content: |2
-
-          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
-          <A> peach </A>
-          <B> vanilla </B>
-        role: user
-      model: qwen2.5:72b
-      stream: false
-      temperature: 0.0
-      tool_choice: required
-      tools:
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            $defs:
-              GameResult:
-                description: Possible results of an evaluation game.
-                enum:
-                - A
-                - B
-                type: string
-            additionalProperties: false
-            properties:
-              response:
-                $ref: '#/$defs/GameResult'
-            required:
-            - response
-            type: object
-          strict: true
-        type: function
-    uri: http://localhost:11434/v1/chat/completions
-  response:
-    headers:
-      content-length:
-      - '317'
-      content-type:
-      - application/json
-    parsed_body:
-      choices:
-      - finish_reason: stop
-        index: 0
-        message:
-          content: |-
-            {
-                "response": "A"
-            }
-          role: assistant
-      created: 1761391128
-      id: chatcmpl-838
-      model: qwen2.5:72b
-      object: chat.completion
-      system_fingerprint: fp_ollama
-      usage:
-        completion_tokens: 10
-        prompt_tokens: 577
-        total_tokens: 587
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '2591'
-      content-type:
-      - application/json
-      host:
-      - localhost:11434
-    method: POST
-    parsed_body:
-      messages:
-      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
-          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
-          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
-          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
-          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
-          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
-          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
-          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
-          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
-          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
-          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
-          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
-          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
-          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
-          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
-        role: system
-      - content: |2
-
-          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
-          <A> peach </A>
-          <B> vanilla </B>
-        role: user
-      - content: |-
-          {
-              "response": "A"
-          }
-        role: assistant
-      - content: |-
-          Validation feedback:
-          Please include your response in a tool call.
-
-          Fix the errors and try again.
-        role: user
-      model: qwen2.5:72b
-      stream: false
-      temperature: 0.0
-      tool_choice: required
-      tools:
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            $defs:
-              GameResult:
-                description: Possible results of an evaluation game.
-                enum:
-                - A
-                - B
-                type: string
-            additionalProperties: false
-            properties:
-              response:
-                $ref: '#/$defs/GameResult'
-            required:
-            - response
-            type: object
-          strict: true
-        type: function
-    uri: http://localhost:11434/v1/chat/completions
-  response:
-    headers:
-      content-length:
-      - '430'
-      content-type:
-      - application/json
-    parsed_body:
-      choices:
-      - finish_reason: tool_calls
-        index: 0
-        message:
-          content: ''
-          role: assistant
-          tool_calls:
-          - function:
-              arguments: '{"response":"A"}'
-              name: final_result
-            id: call_gopto17m
-            index: 0
-            type: function
-      created: 1761391132
-      id: chatcmpl-353
-      model: qwen2.5:72b
-      object: chat.completion
-      system_fingerprint: fp_ollama
-      usage:
-        completion_tokens: 20
-        prompt_tokens: 615
-        total_tokens: 635
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '2400'
-      content-type:
-      - application/json
-      host:
-      - localhost:11434
-    method: POST
-    parsed_body:
-      messages:
-      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
-          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
-          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
-          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
-          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
-          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
-          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
-          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
-          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
-          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
-          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
-          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
-          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
-          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
-          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
-        role: system
-      - content: |2
-
-          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
-          <A> vanilla </A>
-          <B> peach </B>
-        role: user
-      model: qwen2.5:72b
-      stream: false
-      temperature: 0.0
-      tool_choice: required
-      tools:
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            $defs:
-              GameResult:
-                description: Possible results of an evaluation game.
-                enum:
-                - A
-                - B
-                type: string
-            additionalProperties: false
-            properties:
-              response:
-                $ref: '#/$defs/GameResult'
-            required:
-            - response
-            type: object
-          strict: true
-        type: function
-    uri: http://localhost:11434/v1/chat/completions
-  response:
-    headers:
-      content-length:
-      - '317'
-      content-type:
-      - application/json
-    parsed_body:
-      choices:
-      - finish_reason: stop
-        index: 0
-        message:
-          content: |-
-            {
-                "response": "B"
-            }
-          role: assistant
-      created: 1761391135
-      id: chatcmpl-426
-      model: qwen2.5:72b
-      object: chat.completion
-      system_fingerprint: fp_ollama
-      usage:
-        completion_tokens: 10
-        prompt_tokens: 577
-        total_tokens: 587
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '2591'
-      content-type:
-      - application/json
-      host:
-      - localhost:11434
-    method: POST
-    parsed_body:
-      messages:
-      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
-          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
-          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
-          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
-          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
-          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
-          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
-          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
-          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
-          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
-          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
-          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
-          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
-          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
-          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
-        role: system
-      - content: |2
-
-          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
-          <A> vanilla </A>
-          <B> peach </B>
-        role: user
-      - content: |-
-          {
-              "response": "B"
-          }
-        role: assistant
-      - content: |-
-          Validation feedback:
-          Please include your response in a tool call.
-
-          Fix the errors and try again.
-        role: user
-      model: qwen2.5:72b
-      stream: false
-      temperature: 0.0
-      tool_choice: required
-      tools:
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            $defs:
-              GameResult:
-                description: Possible results of an evaluation game.
-                enum:
-                - A
-                - B
-                type: string
-            additionalProperties: false
-            properties:
-              response:
-                $ref: '#/$defs/GameResult'
-            required:
-            - response
-            type: object
-          strict: true
-        type: function
-    uri: http://localhost:11434/v1/chat/completions
-  response:
-    headers:
-      content-length:
-      - '430'
-      content-type:
-      - application/json
-    parsed_body:
-      choices:
-      - finish_reason: tool_calls
-        index: 0
-        message:
-          content: ''
-          role: assistant
-          tool_calls:
-          - function:
-              arguments: '{"response":"B"}'
-              name: final_result
-            id: call_a4hfgq28
-            index: 0
-            type: function
-      created: 1761391140
-      id: chatcmpl-296
-      model: qwen2.5:72b
-      object: chat.completion
-      system_fingerprint: fp_ollama
-      usage:
-        completion_tokens: 20
-        prompt_tokens: 615
-        total_tokens: 635
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '2432'
-      content-type:
-      - application/json
-      host:
-      - localhost:11434
-    method: POST
-    parsed_body:
-      messages:
-      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
-          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
-          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
-          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
-          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
-          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
-          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
-          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
-          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
-          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
-          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
-          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
-          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
-          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
-          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
-        role: system
-      - content: |2
-
-          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
-          <A> toasted rice & miso caramel ice cream </A>
-          <B> vanilla </B>
-        role: user
-      model: qwen2.5:72b
-      stream: false
-      temperature: 0.0
-      tool_choice: required
-      tools:
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            $defs:
-              GameResult:
-                description: Possible results of an evaluation game.
-                enum:
-                - A
-                - B
-                type: string
-            additionalProperties: false
-            properties:
-              response:
-                $ref: '#/$defs/GameResult'
-            required:
-            - response
-            type: object
-          strict: true
-        type: function
-    uri: http://localhost:11434/v1/chat/completions
-  response:
-    headers:
-      content-length:
-      - '430'
-      content-type:
-      - application/json
-    parsed_body:
-      choices:
-      - finish_reason: tool_calls
-        index: 0
-        message:
-          content: ''
-          role: assistant
-          tool_calls:
-          - function:
-              arguments: '{"response":"A"}'
-              name: final_result
-            id: call_m3xycyeu
-            index: 0
-            type: function
-      created: 1761391144
-      id: chatcmpl-116
-      model: qwen2.5:72b
+      created: 1761400143
+      id: chatcmpl-854
+      model: qwen2.5:32b
       object: chat.completion
       system_fingerprint: fp_ollama
       usage:
@@ -909,104 +105,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2432'
-      content-type:
-      - application/json
-      host:
-      - localhost:11434
-    method: POST
-    parsed_body:
-      messages:
-      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
-          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
-          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
-          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
-          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
-          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
-          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
-          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
-          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
-          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
-          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
-          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
-          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
-          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
-          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
-        role: system
-      - content: |2
-
-          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
-          <A> vanilla </A>
-          <B> toasted rice & miso caramel ice cream </B>
-        role: user
-      model: qwen2.5:72b
-      stream: false
-      temperature: 0.0
-      tool_choice: required
-      tools:
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            $defs:
-              GameResult:
-                description: Possible results of an evaluation game.
-                enum:
-                - A
-                - B
-                type: string
-            additionalProperties: false
-            properties:
-              response:
-                $ref: '#/$defs/GameResult'
-            required:
-            - response
-            type: object
-          strict: true
-        type: function
-    uri: http://localhost:11434/v1/chat/completions
-  response:
-    headers:
-      content-length:
-      - '430'
-      content-type:
-      - application/json
-    parsed_body:
-      choices:
-      - finish_reason: tool_calls
-        index: 0
-        message:
-          content: ''
-          role: assistant
-          tool_calls:
-          - function:
-              arguments: '{"response":"B"}'
-              name: final_result
-            id: call_r46y7e2t
-            index: 0
-            type: function
-      created: 1761391149
-      id: chatcmpl-968
-      model: qwen2.5:72b
-      object: chat.completion
-      system_fingerprint: fp_ollama
-      usage:
-        completion_tokens: 20
-        prompt_tokens: 584
-        total_tokens: 604
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '2434'
+      - '2407'
       content-type:
       - application/json
       host:
@@ -1034,9 +133,9 @@ interactions:
 
           <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
           <A> chocolate </A>
-          <B> toasted rice & miso caramel ice cream </B>
+          <B> strawberry </B>
         role: user
-      model: qwen2.5:72b
+      model: qwen2.5:32b
       stream: false
       temperature: 0.0
       tool_choice: required
@@ -1065,7 +164,7 @@ interactions:
   response:
     headers:
       content-length:
-      - '430'
+      - '551'
       content-type:
       - application/json
     parsed_body:
@@ -1077,20 +176,26 @@ interactions:
           role: assistant
           tool_calls:
           - function:
-              arguments: '{"response":"B"}'
+              arguments: '{"response":"A"}'
               name: final_result
-            id: call_pcak184h
+            id: call_433qjaic
             index: 0
             type: function
-      created: 1761391153
-      id: chatcmpl-234
-      model: qwen2.5:72b
+          - function:
+              arguments: '{"response":"B"}'
+              name: final_result
+            id: call_k8yz6wrf
+            index: 1
+            type: function
+      created: 1761400148
+      id: chatcmpl-852
+      model: qwen2.5:32b
       object: chat.completion
       system_fingerprint: fp_ollama
       usage:
-        completion_tokens: 20
-        prompt_tokens: 584
-        total_tokens: 604
+        completion_tokens: 50
+        prompt_tokens: 577
+        total_tokens: 627
     status:
       code: 200
       message: OK
@@ -1130,10 +235,10 @@ interactions:
       - content: |2
 
           <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
-          <A> strawberry </A>
-          <B> peach </B>
+          <A> peach </A>
+          <B> strawberry </B>
         role: user
-      model: qwen2.5:72b
+      model: qwen2.5:32b
       stream: false
       temperature: 0.0
       tool_choice: required
@@ -1162,111 +267,7 @@ interactions:
   response:
     headers:
       content-length:
-      - '317'
-      content-type:
-      - application/json
-    parsed_body:
-      choices:
-      - finish_reason: stop
-        index: 0
-        message:
-          content: |-
-            {
-                "response": "B"
-            }
-          role: assistant
-      created: 1761391156
-      id: chatcmpl-923
-      model: qwen2.5:72b
-      object: chat.completion
-      system_fingerprint: fp_ollama
-      usage:
-        completion_tokens: 10
-        prompt_tokens: 577
-        total_tokens: 587
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '2594'
-      content-type:
-      - application/json
-      host:
-      - localhost:11434
-    method: POST
-    parsed_body:
-      messages:
-      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
-          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
-          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
-          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
-          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
-          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
-          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
-          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
-          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
-          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
-          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
-          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
-          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
-          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
-          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
-        role: system
-      - content: |2
-
-          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
-          <A> strawberry </A>
-          <B> peach </B>
-        role: user
-      - content: |-
-          {
-              "response": "B"
-          }
-        role: assistant
-      - content: |-
-          Validation feedback:
-          Please include your response in a tool call.
-
-          Fix the errors and try again.
-        role: user
-      model: qwen2.5:72b
-      stream: false
-      temperature: 0.0
-      tool_choice: required
-      tools:
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            $defs:
-              GameResult:
-                description: Possible results of an evaluation game.
-                enum:
-                - A
-                - B
-                type: string
-            additionalProperties: false
-            properties:
-              response:
-                $ref: '#/$defs/GameResult'
-            required:
-            - response
-            type: object
-          strict: true
-        type: function
-    uri: http://localhost:11434/v1/chat/completions
-  response:
-    headers:
-      content-length:
-      - '429'
+      - '551'
       content-type:
       - application/json
     parsed_body:
@@ -1278,20 +279,26 @@ interactions:
           role: assistant
           tool_calls:
           - function:
-              arguments: '{"response":"B"}'
+              arguments: '{"response":"A"}'
               name: final_result
-            id: call_j9w8edli
+            id: call_d52mm6hz
             index: 0
             type: function
-      created: 1761391161
-      id: chatcmpl-20
-      model: qwen2.5:72b
+          - function:
+              arguments: '{"response":"B"}'
+              name: final_result
+            id: call_qn30zn59
+            index: 1
+            type: function
+      created: 1761400153
+      id: chatcmpl-116
+      model: qwen2.5:32b
       object: chat.completion
       system_fingerprint: fp_ollama
       usage:
-        completion_tokens: 20
-        prompt_tokens: 615
-        total_tokens: 635
+        completion_tokens: 50
+        prompt_tokens: 577
+        total_tokens: 627
     status:
       code: 200
       message: OK
@@ -1304,7 +311,104 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2435'
+      - '2404'
+      content-type:
+      - application/json
+      host:
+      - localhost:11434
+    method: POST
+    parsed_body:
+      messages:
+      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
+          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
+          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
+          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
+          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
+          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
+          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
+          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
+          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
+          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
+          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
+          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
+          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
+          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
+          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
+        role: system
+      - content: |2
+
+          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
+          <A> chocolate </A>
+          <B> vanilla </B>
+        role: user
+      model: qwen2.5:32b
+      stream: false
+      temperature: 0.0
+      tool_choice: required
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            $defs:
+              GameResult:
+                description: Possible results of an evaluation game.
+                enum:
+                - A
+                - B
+                type: string
+            additionalProperties: false
+            properties:
+              response:
+                $ref: '#/$defs/GameResult'
+            required:
+            - response
+            type: object
+          strict: true
+        type: function
+    uri: http://localhost:11434/v1/chat/completions
+  response:
+    headers:
+      content-length:
+      - '430'
+      content-type:
+      - application/json
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"response":"A"}'
+              name: final_result
+            id: call_xjz5owr3
+            index: 0
+            type: function
+      created: 1761400155
+      id: chatcmpl-601
+      model: qwen2.5:32b
+      object: chat.completion
+      system_fingerprint: fp_ollama
+      usage:
+        completion_tokens: 20
+        prompt_tokens: 577
+        total_tokens: 597
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2407'
       content-type:
       - application/json
       host:
@@ -1332,9 +436,209 @@ interactions:
 
           <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
           <A> strawberry </A>
+          <B> chocolate </B>
+        role: user
+      model: qwen2.5:32b
+      stream: false
+      temperature: 0.0
+      tool_choice: required
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            $defs:
+              GameResult:
+                description: Possible results of an evaluation game.
+                enum:
+                - A
+                - B
+                type: string
+            additionalProperties: false
+            properties:
+              response:
+                $ref: '#/$defs/GameResult'
+            required:
+            - response
+            type: object
+          strict: true
+        type: function
+    uri: http://localhost:11434/v1/chat/completions
+  response:
+    headers:
+      content-length:
+      - '551'
+      content-type:
+      - application/json
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"response":"A"}'
+              name: final_result
+            id: call_n9tlmkxd
+            index: 0
+            type: function
+          - function:
+              arguments: '{"response":"B"}'
+              name: final_result
+            id: call_9h65jv0y
+            index: 1
+            type: function
+      created: 1761400160
+      id: chatcmpl-285
+      model: qwen2.5:32b
+      object: chat.completion
+      system_fingerprint: fp_ollama
+      usage:
+        completion_tokens: 50
+        prompt_tokens: 577
+        total_tokens: 627
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2402'
+      content-type:
+      - application/json
+      host:
+      - localhost:11434
+    method: POST
+    parsed_body:
+      messages:
+      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
+          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
+          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
+          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
+          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
+          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
+          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
+          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
+          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
+          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
+          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
+          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
+          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
+          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
+          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
+        role: system
+      - content: |2
+
+          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
+          <A> peach </A>
+          <B> chocolate </B>
+        role: user
+      model: qwen2.5:32b
+      stream: false
+      temperature: 0.0
+      tool_choice: required
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            $defs:
+              GameResult:
+                description: Possible results of an evaluation game.
+                enum:
+                - A
+                - B
+                type: string
+            additionalProperties: false
+            properties:
+              response:
+                $ref: '#/$defs/GameResult'
+            required:
+            - response
+            type: object
+          strict: true
+        type: function
+    uri: http://localhost:11434/v1/chat/completions
+  response:
+    headers:
+      content-length:
+      - '430'
+      content-type:
+      - application/json
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"response":"A"}'
+              name: final_result
+            id: call_mi05jsgj
+            index: 0
+            type: function
+      created: 1761400162
+      id: chatcmpl-969
+      model: qwen2.5:32b
+      object: chat.completion
+      system_fingerprint: fp_ollama
+      usage:
+        completion_tokens: 20
+        prompt_tokens: 577
+        total_tokens: 597
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2430'
+      content-type:
+      - application/json
+      host:
+      - localhost:11434
+    method: POST
+    parsed_body:
+      messages:
+      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
+          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
+          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
+          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
+          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
+          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
+          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
+          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
+          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
+          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
+          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
+          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
+          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
+          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
+          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
+        role: system
+      - content: |2
+
+          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
+          <A> peach </A>
           <B> toasted rice & miso caramel ice cream </B>
         role: user
-      model: qwen2.5:72b
+      model: qwen2.5:32b
       stream: false
       temperature: 0.0
       tool_choice: required
@@ -1377,12 +681,400 @@ interactions:
           - function:
               arguments: '{"response":"B"}'
               name: final_result
-            id: call_h6usdgeb
+            id: call_tr98uq1x
             index: 0
             type: function
-      created: 1761391165
-      id: chatcmpl-570
-      model: qwen2.5:72b
+      created: 1761400165
+      id: chatcmpl-644
+      model: qwen2.5:32b
+      object: chat.completion
+      system_fingerprint: fp_ollama
+      usage:
+        completion_tokens: 20
+        prompt_tokens: 584
+        total_tokens: 604
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2435'
+      content-type:
+      - application/json
+      host:
+      - localhost:11434
+    method: POST
+    parsed_body:
+      messages:
+      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
+          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
+          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
+          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
+          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
+          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
+          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
+          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
+          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
+          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
+          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
+          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
+          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
+          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
+          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
+        role: system
+      - content: |2
+
+          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
+          <A> toasted rice & miso caramel ice cream </A>
+          <B> strawberry </B>
+        role: user
+      model: qwen2.5:32b
+      stream: false
+      temperature: 0.0
+      tool_choice: required
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            $defs:
+              GameResult:
+                description: Possible results of an evaluation game.
+                enum:
+                - A
+                - B
+                type: string
+            additionalProperties: false
+            properties:
+              response:
+                $ref: '#/$defs/GameResult'
+            required:
+            - response
+            type: object
+          strict: true
+        type: function
+    uri: http://localhost:11434/v1/chat/completions
+  response:
+    headers:
+      content-length:
+      - '430'
+      content-type:
+      - application/json
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"response":"A"}'
+              name: final_result
+            id: call_qjj3gdnz
+            index: 0
+            type: function
+      created: 1761400167
+      id: chatcmpl-109
+      model: qwen2.5:32b
+      object: chat.completion
+      system_fingerprint: fp_ollama
+      usage:
+        completion_tokens: 20
+        prompt_tokens: 584
+        total_tokens: 604
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2402'
+      content-type:
+      - application/json
+      host:
+      - localhost:11434
+    method: POST
+    parsed_body:
+      messages:
+      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
+          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
+          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
+          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
+          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
+          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
+          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
+          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
+          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
+          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
+          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
+          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
+          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
+          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
+          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
+        role: system
+      - content: |2
+
+          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
+          <A> chocolate </A>
+          <B> peach </B>
+        role: user
+      model: qwen2.5:32b
+      stream: false
+      temperature: 0.0
+      tool_choice: required
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            $defs:
+              GameResult:
+                description: Possible results of an evaluation game.
+                enum:
+                - A
+                - B
+                type: string
+            additionalProperties: false
+            properties:
+              response:
+                $ref: '#/$defs/GameResult'
+            required:
+            - response
+            type: object
+          strict: true
+        type: function
+    uri: http://localhost:11434/v1/chat/completions
+  response:
+    headers:
+      content-length:
+      - '430'
+      content-type:
+      - application/json
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"response":"B"}'
+              name: final_result
+            id: call_939j5ncd
+            index: 0
+            type: function
+      created: 1761400169
+      id: chatcmpl-469
+      model: qwen2.5:32b
+      object: chat.completion
+      system_fingerprint: fp_ollama
+      usage:
+        completion_tokens: 20
+        prompt_tokens: 577
+        total_tokens: 597
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2400'
+      content-type:
+      - application/json
+      host:
+      - localhost:11434
+    method: POST
+    parsed_body:
+      messages:
+      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
+          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
+          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
+          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
+          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
+          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
+          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
+          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
+          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
+          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
+          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
+          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
+          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
+          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
+          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
+        role: system
+      - content: |2
+
+          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
+          <A> peach </A>
+          <B> vanilla </B>
+        role: user
+      model: qwen2.5:32b
+      stream: false
+      temperature: 0.0
+      tool_choice: required
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            $defs:
+              GameResult:
+                description: Possible results of an evaluation game.
+                enum:
+                - A
+                - B
+                type: string
+            additionalProperties: false
+            properties:
+              response:
+                $ref: '#/$defs/GameResult'
+            required:
+            - response
+            type: object
+          strict: true
+        type: function
+    uri: http://localhost:11434/v1/chat/completions
+  response:
+    headers:
+      content-length:
+      - '430'
+      content-type:
+      - application/json
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"response":"A"}'
+              name: final_result
+            id: call_bulf6xwv
+            index: 0
+            type: function
+      created: 1761400171
+      id: chatcmpl-849
+      model: qwen2.5:32b
+      object: chat.completion
+      system_fingerprint: fp_ollama
+      usage:
+        completion_tokens: 20
+        prompt_tokens: 577
+        total_tokens: 597
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2432'
+      content-type:
+      - application/json
+      host:
+      - localhost:11434
+    method: POST
+    parsed_body:
+      messages:
+      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
+          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
+          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
+          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
+          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
+          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
+          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
+          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
+          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
+          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
+          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
+          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
+          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
+          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
+          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
+        role: system
+      - content: |2
+
+          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
+          <A> vanilla </A>
+          <B> toasted rice & miso caramel ice cream </B>
+        role: user
+      model: qwen2.5:32b
+      stream: false
+      temperature: 0.0
+      tool_choice: required
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            $defs:
+              GameResult:
+                description: Possible results of an evaluation game.
+                enum:
+                - A
+                - B
+                type: string
+            additionalProperties: false
+            properties:
+              response:
+                $ref: '#/$defs/GameResult'
+            required:
+            - response
+            type: object
+          strict: true
+        type: function
+    uri: http://localhost:11434/v1/chat/completions
+  response:
+    headers:
+      content-length:
+      - '430'
+      content-type:
+      - application/json
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"response":"B"}'
+              name: final_result
+            id: call_fg2kaufy
+            index: 0
+            type: function
+      created: 1761400173
+      id: chatcmpl-406
+      model: qwen2.5:32b
       object: chat.completion
       system_fingerprint: fp_ollama
       usage:
@@ -1431,111 +1123,7 @@ interactions:
           <A> vanilla </A>
           <B> strawberry </B>
         role: user
-      model: qwen2.5:72b
-      stream: false
-      temperature: 0.0
-      tool_choice: required
-      tools:
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            $defs:
-              GameResult:
-                description: Possible results of an evaluation game.
-                enum:
-                - A
-                - B
-                type: string
-            additionalProperties: false
-            properties:
-              response:
-                $ref: '#/$defs/GameResult'
-            required:
-            - response
-            type: object
-          strict: true
-        type: function
-    uri: http://localhost:11434/v1/chat/completions
-  response:
-    headers:
-      content-length:
-      - '317'
-      content-type:
-      - application/json
-    parsed_body:
-      choices:
-      - finish_reason: stop
-        index: 0
-        message:
-          content: |-
-            {
-                "response": "B"
-            }
-          role: assistant
-      created: 1761391168
-      id: chatcmpl-584
-      model: qwen2.5:72b
-      object: chat.completion
-      system_fingerprint: fp_ollama
-      usage:
-        completion_tokens: 10
-        prompt_tokens: 577
-        total_tokens: 587
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '2596'
-      content-type:
-      - application/json
-      host:
-      - localhost:11434
-    method: POST
-    parsed_body:
-      messages:
-      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
-          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
-          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
-          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
-          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
-          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
-          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
-          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
-          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
-          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
-          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
-          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
-          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
-          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
-          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
-        role: system
-      - content: |2
-
-          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
-          <A> vanilla </A>
-          <B> strawberry </B>
-        role: user
-      - content: |-
-          {
-              "response": "B"
-          }
-        role: assistant
-      - content: |-
-          Validation feedback:
-          Please include your response in a tool call.
-
-          Fix the errors and try again.
-        role: user
-      model: qwen2.5:72b
+      model: qwen2.5:32b
       stream: false
       temperature: 0.0
       tool_choice: required
@@ -1578,111 +1166,18 @@ interactions:
           - function:
               arguments: '{"response":"B"}'
               name: final_result
-            id: call_92m0lo9x
+            id: call_1ug8rh9d
             index: 0
             type: function
-      created: 1761391172
-      id: chatcmpl-522
-      model: qwen2.5:72b
+      created: 1761400176
+      id: chatcmpl-922
+      model: qwen2.5:32b
       object: chat.completion
       system_fingerprint: fp_ollama
       usage:
         completion_tokens: 20
-        prompt_tokens: 615
-        total_tokens: 635
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '2402'
-      content-type:
-      - application/json
-      host:
-      - localhost:11434
-    method: POST
-    parsed_body:
-      messages:
-      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
-          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
-          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
-          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
-          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
-          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
-          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
-          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
-          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
-          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
-          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
-          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
-          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
-          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
-          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
-        role: system
-      - content: |2
-
-          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
-          <A> chocolate </A>
-          <B> peach </B>
-        role: user
-      model: qwen2.5:72b
-      stream: false
-      temperature: 0.0
-      tool_choice: required
-      tools:
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            $defs:
-              GameResult:
-                description: Possible results of an evaluation game.
-                enum:
-                - A
-                - B
-                type: string
-            additionalProperties: false
-            properties:
-              response:
-                $ref: '#/$defs/GameResult'
-            required:
-            - response
-            type: object
-          strict: true
-        type: function
-    uri: http://localhost:11434/v1/chat/completions
-  response:
-    headers:
-      content-length:
-      - '317'
-      content-type:
-      - application/json
-    parsed_body:
-      choices:
-      - finish_reason: stop
-        index: 0
-        message:
-          content: |-
-            {
-                "response": "B"
-            }
-          role: assistant
-      created: 1761391175
-      id: chatcmpl-977
-      model: qwen2.5:72b
-      object: chat.completion
-      system_fingerprint: fp_ollama
-      usage:
-        completion_tokens: 10
         prompt_tokens: 577
-        total_tokens: 587
+        total_tokens: 597
     status:
       code: 200
       message: OK
@@ -1695,7 +1190,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2593'
+      - '2434'
       content-type:
       - application/json
       host:
@@ -1723,20 +1218,9 @@ interactions:
 
           <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
           <A> chocolate </A>
-          <B> peach </B>
+          <B> toasted rice & miso caramel ice cream </B>
         role: user
-      - content: |-
-          {
-              "response": "B"
-          }
-        role: assistant
-      - content: |-
-          Validation feedback:
-          Please include your response in a tool call.
-
-          Fix the errors and try again.
-        role: user
-      model: qwen2.5:72b
+      model: qwen2.5:32b
       stream: false
       temperature: 0.0
       tool_choice: required
@@ -1779,219 +1263,18 @@ interactions:
           - function:
               arguments: '{"response":"B"}'
               name: final_result
-            id: call_lxzsd5ut
+            id: call_qjc58gm7
             index: 0
             type: function
-      created: 1761391180
-      id: chatcmpl-178
-      model: qwen2.5:72b
+      created: 1761400178
+      id: chatcmpl-214
+      model: qwen2.5:32b
       object: chat.completion
       system_fingerprint: fp_ollama
       usage:
         completion_tokens: 20
-        prompt_tokens: 615
-        total_tokens: 635
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '2407'
-      content-type:
-      - application/json
-      host:
-      - localhost:11434
-    method: POST
-    parsed_body:
-      messages:
-      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
-          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
-          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
-          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
-          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
-          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
-          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
-          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
-          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
-          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
-          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
-          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
-          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
-          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
-          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
-        role: system
-      - content: |2
-
-          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
-          <A> chocolate </A>
-          <B> strawberry </B>
-        role: user
-      model: qwen2.5:72b
-      stream: false
-      temperature: 0.0
-      tool_choice: required
-      tools:
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            $defs:
-              GameResult:
-                description: Possible results of an evaluation game.
-                enum:
-                - A
-                - B
-                type: string
-            additionalProperties: false
-            properties:
-              response:
-                $ref: '#/$defs/GameResult'
-            required:
-            - response
-            type: object
-          strict: true
-        type: function
-    uri: http://localhost:11434/v1/chat/completions
-  response:
-    headers:
-      content-length:
-      - '316'
-      content-type:
-      - application/json
-    parsed_body:
-      choices:
-      - finish_reason: stop
-        index: 0
-        message:
-          content: |-
-            {
-                "response": "B"
-            }
-          role: assistant
-      created: 1761391182
-      id: chatcmpl-89
-      model: qwen2.5:72b
-      object: chat.completion
-      system_fingerprint: fp_ollama
-      usage:
-        completion_tokens: 10
-        prompt_tokens: 577
-        total_tokens: 587
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '2598'
-      content-type:
-      - application/json
-      host:
-      - localhost:11434
-    method: POST
-    parsed_body:
-      messages:
-      - content: "\nYou are presented with a question and two possible answers A and B. Evaluate carefully whether answer
-          A or answer B is the better reply.\nYou have got only these two options. Your evaluations contribute to Bradley-Terry
-          scores across multiple items. Consistency and\nobjectivity are critical for reliable rankings. Each comparison should
-          be independent but internally consistent.\n\n<EXAMPLES>\nExample 1:\n<QUESTION> Which of the two ice cream flavours
-          below is more creative? </QUESTION>\n<A> Vanilla </A> \n<B> Pickled Citrus Ribbon </B>\nExpected output:\n{\n    \"result\":
-          \"B\",\n}\n\nExample 2:\n<QUESTION> Which search query shows more genuine curiosity? </QUESTION>\n<A> effect of
-          ocean acidification feedback loops on Arctic methane release </A> \n<B> climate change effects </B>\nExpected output:\n{\n
-          \   \"result\": \"A\",\n}\n\nExample 3:\n<QUESTION> Which reply is more insulting? </QUESTION>\n<A> Your argument
-          lacks logical coherence and fails to address the core issue at hand. </A> \n<B> That's an interesting perspective,
-          though I see it differently. </B>\nExpected output:\n{\n    \"result\": \"A\",\n}\n</EXAMPLES>\n\n<REQUIREMENTS>\n1.
-          Consider the question carefully. What aspects are important for the answer?\n2. Think about answer A. Is it a good
-          answer to the question? Why (not)?\n3. Think about answer B. Is it a good answer to the question? Why (not)?\n4.
-          Make a decision based on your analysis.\n</REQUIREMENTS>\n\n<OUTPUT_FORMAT>\nYou must respond with valid JSON containing
-          exactly one field called \"response\" with value \"A\" or \"B\":\n\n{\n    \"response\": \"A\",\n}\nor\n{\n    \"response\":
-          \"B\",\n}\n\nDo NOT include explanations, reasoning, or any other fields.\n</OUTPUT_FORMAT>\n"
-        role: system
-      - content: |2
-
-          <QUESTION> Which of the two ice cream flavours A or B is more creative? </QUESTION>
-          <A> chocolate </A>
-          <B> strawberry </B>
-        role: user
-      - content: |-
-          {
-              "response": "B"
-          }
-        role: assistant
-      - content: |-
-          Validation feedback:
-          Please include your response in a tool call.
-
-          Fix the errors and try again.
-        role: user
-      model: qwen2.5:72b
-      stream: false
-      temperature: 0.0
-      tool_choice: required
-      tools:
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            $defs:
-              GameResult:
-                description: Possible results of an evaluation game.
-                enum:
-                - A
-                - B
-                type: string
-            additionalProperties: false
-            properties:
-              response:
-                $ref: '#/$defs/GameResult'
-            required:
-            - response
-            type: object
-          strict: true
-        type: function
-    uri: http://localhost:11434/v1/chat/completions
-  response:
-    headers:
-      content-length:
-      - '430'
-      content-type:
-      - application/json
-    parsed_body:
-      choices:
-      - finish_reason: tool_calls
-        index: 0
-        message:
-          content: ''
-          role: assistant
-          tool_calls:
-          - function:
-              arguments: '{"response":"B"}'
-              name: final_result
-            id: call_sun6bbyy
-            index: 0
-            type: function
-      created: 1761391187
-      id: chatcmpl-334
-      model: qwen2.5:72b
-      object: chat.completion
-      system_fingerprint: fp_ollama
-      usage:
-        completion_tokens: 20
-        prompt_tokens: 615
-        total_tokens: 635
+        prompt_tokens: 584
+        total_tokens: 604
     status:
       code: 200
       message: OK

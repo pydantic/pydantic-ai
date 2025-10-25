@@ -38,7 +38,7 @@ interactions:
           <A> vanilla </A>
           <B> toasted rice & miso caramel ice cream </B>
         role: user
-      model: qwen2.5:72b
+      model: qwen2.5:32b
       stream: false
       temperature: 0.0
       tool_choice: required
@@ -81,12 +81,12 @@ interactions:
           - function:
               arguments: '{"response":"B"}'
               name: final_result
-            id: call_x9801jnh
+            id: call_rbjmhwdl
             index: 0
             type: function
-      created: 1761389257
-      id: chatcmpl-608
-      model: qwen2.5:72b
+      created: 1761400109
+      id: chatcmpl-291
+      model: qwen2.5:32b
       object: chat.completion
       system_fingerprint: fp_ollama
       usage:
