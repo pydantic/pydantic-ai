@@ -70,6 +70,7 @@ pydantic-ai-slim = { workspace = true }
 pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
+temporalio = { git = "https://github.com/temporalio/sdk-python.git", rev = "main" }
 
 [tool.uv.workspace]
 members = [
