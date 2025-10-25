@@ -296,7 +296,7 @@ def mock_vcr_aiohttp_content(mocker: MockerFixture):
 @pytest.fixture(scope='module')
 def vcr_config():
     return {
-        'ignore_localhost': True,
+        'ignore_localhost': False,
         # Note: additional header filtering is done inside the serializer
         'filter_headers': ['authorization', 'x-api-key'],
         'decode_compressed_response': True,
