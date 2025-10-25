@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import inspect
 import types
 import warnings
 from collections.abc import Callable, Generator
@@ -163,3 +164,41 @@ else:
             warnings.filterwarnings('ignore', category=LogfireNotConfiguredWarning)
             with _logfire.span(*args, **kwargs) as span:
                 yield span
+
+
+def infer_obj_name(obj: Any, *, depth: int) -> str | None:
+    """Infer the variable name of an object from the calling frame's scope.
+
+    This function examines the call stack to find what variable name was used
+    for the given object in the calling scope. This is useful for automatic
+    naming of objects based on their variable names.
+
+    Args:
+        obj: The object whose variable name to infer.
+        depth: Number of stack frames to traverse upward from the current frame.
+
+    Returns:
+        The inferred variable name if found, None otherwise.
+
+    Example:
+        Usage should generally look like `infer_name(self, depth=2)` or similar.
+    """
+    target_frame = inspect.currentframe()
+    if target_frame is None:
+        return None  # pragma: no cover
+    for _ in range(depth):
+        target_frame = target_frame.f_back
+        if target_frame is None:
+            return None
+
+    for name, item in target_frame.f_locals.items():
+        if item is obj:
+            return name
+
+    if target_frame.f_locals != target_frame.f_globals:  # pragma: no branch
+        # if we couldn't find the agent in locals and globals are a different dict, try globals
+        for name, item in target_frame.f_globals.items():
+            if item is obj:
+                return name
+
+    return None

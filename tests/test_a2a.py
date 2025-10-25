@@ -560,11 +560,11 @@ async def test_a2a_multiple_tasks_same_context():
             task1_id = result1['id']
             context_id = result1['context_id']
 
-            # Wait for first task to complete
-            await anyio.sleep(0.1)
-            task1 = await a2a_client.get_task(task1_id)
-            assert 'result' in task1
-            assert task1['result']['status']['state'] == 'completed'
+            while task1 := await a2a_client.get_task(task1_id):  # pragma: no branch
+                if 'result' in task1 and task1['result']['status']['state'] == 'completed':
+                    result1 = task1['result']
+                    break
+                await anyio.sleep(0.1)
 
             # Verify the model received at least one message
             assert len(messages_received) == 1
@@ -668,11 +668,13 @@ async def test_a2a_thinking_response():
             task_id = result['id']
 
             # Wait for completion
-            await anyio.sleep(0.1)
-            task = await a2a_client.get_task(task_id)
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] == 'completed':
+                    result = task['result']
+                    break
+                await anyio.sleep(0.1)
 
-            assert 'result' in task
-            assert task['result'] == snapshot(
+            assert result == snapshot(
                 {
                     'id': IsStr(),
                     'context_id': IsStr(),
@@ -893,9 +895,13 @@ async def test_a2a_multiple_send_task_messages():
             task_id = result['id']
             context_id = result['context_id']
 
-            await anyio.sleep(0.1)
-            response = await a2a_client.get_task(task_id)
-            assert response.get('result') == snapshot(
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] == 'completed':
+                    result = task['result']
+                    break
+                await anyio.sleep(0.1)
+
+            assert result == snapshot(
                 {
                     'id': IsStr(),
                     'context_id': IsStr(),
@@ -958,9 +964,13 @@ async def test_a2a_multiple_send_task_messages():
                 }
             )
 
-            await anyio.sleep(0.1)
-            response = await a2a_client.get_task(task_id)
-            assert response.get('result') == snapshot(
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] == 'completed':
+                    result = task['result']
+                    break
+                await anyio.sleep(0.1)  # pragma: lax no cover
+
+            assert result == snapshot(
                 {
                     'id': IsStr(),
                     'context_id': IsStr(),

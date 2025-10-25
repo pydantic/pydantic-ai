@@ -141,7 +141,7 @@ class GroqModel(Model):
         self,
         model_name: GroqModelName,
         *,
-        provider: Literal['groq'] | Provider[AsyncGroq] = 'groq',
+        provider: Literal['groq', 'gateway'] | Provider[AsyncGroq] = 'groq',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -159,7 +159,7 @@ class GroqModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(provider)
+            provider = infer_provider('gateway/groq' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
@@ -330,7 +330,7 @@ class GroqModel(Model):
                 if call_part and return_part:  # pragma: no branch
                     items.append(call_part)
                     items.append(return_part)
-        if choice.message.content is not None:
+        if choice.message.content:
             # NOTE: The `<think>` tag is only present if `groq_reasoning_format` is set to `raw`.
             items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
         if choice.message.tool_calls is not None:
@@ -563,7 +563,7 @@ class GroqStreamedResponse(StreamedResponse):
 
                 # Handle the text part of the response
                 content = choice.delta.content
-                if content is not None:
+                if content:
                     maybe_event = self._parts_manager.handle_text_delta(
                         vendor_part_id='content',
                         content=content,

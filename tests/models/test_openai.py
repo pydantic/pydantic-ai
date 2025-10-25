@@ -583,7 +583,7 @@ async def test_stream_tool_call_with_empty_text(allow_model_requests: None):
         chunk([]),
     ]
     mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIChatModel('qwen3', provider=OllamaProvider(openai_client=mock_client))
+    m = OpenAIChatModel('gpt-oss:20b', provider=OllamaProvider(openai_client=mock_client))
     agent = Agent(m, output_type=[str, MyTypedDict])
 
     async with agent.run_stream('') as result:

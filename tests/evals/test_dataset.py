@@ -4,10 +4,11 @@ import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 import yaml
+from _pytest.python_api import RaisesContext
 from dirty_equals import HasRepr, IsNumber
 from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
@@ -963,7 +964,7 @@ async def test_from_text_failure():
         ],
         'evaluators': ['NotAnEvaluator'],
     }
-    with pytest.raises(ExceptionGroup) as exc_info:
+    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
     assert exc_info.value == HasRepr(
         repr(
@@ -993,7 +994,7 @@ async def test_from_text_failure():
         ],
         'evaluators': ['LLMJudge'],
     }
-    with pytest.raises(ExceptionGroup) as exc_info:
+    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
     assert exc_info.value == HasRepr(  # pragma: lax no cover
         repr(
@@ -1555,6 +1556,16 @@ async def test_evaluate_async_logfire(
                             'gen_ai.operation.name': {},
                             'n_cases': {},
                             'name': {},
+                            'logfire.experiment.metadata': {
+                                'type': 'object',
+                                'properties': {
+                                    'averages': {
+                                        'type': 'object',
+                                        'title': 'ReportCaseAggregate',
+                                        'x-python-datatype': 'PydanticModel',
+                                    }
+                                },
+                            },
                             'task_name': {},
                         },
                         'type': 'object',
@@ -1563,6 +1574,18 @@ async def test_evaluate_async_logfire(
                     'logfire.msg_template': 'evaluate {name}',
                     'logfire.span_type': 'span',
                     'n_cases': 2,
+                    'logfire.experiment.metadata': {
+                        'n_cases': 2,
+                        'averages': {
+                            'name': 'Averages',
+                            'scores': {'confidence': 1.0},
+                            'labels': {},
+                            'metrics': {},
+                            'assertions': 1.0,
+                            'task_duration': 1.0,
+                            'total_duration': 9.0,
+                        },
+                    },
                     'name': 'mock_async_task',
                     'task_name': 'mock_async_task',
                 },

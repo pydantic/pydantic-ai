@@ -14,15 +14,21 @@ from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers import Provider
-    from pydantic_ai.providers.gateway import gateway_provider, infer_model
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.gateway import GATEWAY_BASE_URL, gateway_provider
+    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
+
 if not imports_successful():
-    pytest.skip('OpenAI client not installed', allow_module_level=True)  # pragma: lax no cover
+    pytest.skip('Providers not installed', allow_module_level=True)  # pragma: lax no cover
 
 pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
@@ -45,7 +51,7 @@ def test_init_gateway_without_api_key_raises_error(env: TestEnv):
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Set the `PYDANTIC_AI_GATEWAY_API_KEY` environment variable or pass it via `gateway_provider(api_key=...)` to use the Pydantic AI Gateway provider.'
+            'Set the `PYDANTIC_AI_GATEWAY_API_KEY` environment variable or pass it via `gateway_provider(..., api_key=...)` to use the Pydantic AI Gateway provider.'
         ),
     ):
         gateway_provider('openai')
@@ -72,39 +78,36 @@ def vcr_config():
     }
 
 
+@patch.dict(
+    os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
+)
+@pytest.mark.parametrize(
+    'provider_name, provider_cls, path',
+    [
+        ('openai', OpenAIProvider, 'openai'),
+        ('openai-chat', OpenAIProvider, 'openai'),
+        ('openai-responses', OpenAIProvider, 'openai'),
+        ('groq', GroqProvider, 'groq'),
+        ('google-vertex', GoogleProvider, 'google-vertex'),
+        ('anthropic', AnthropicProvider, 'anthropic'),
+        ('bedrock', BedrockProvider, 'bedrock'),
+    ],
+)
+def test_gateway_provider(provider_name: str, provider_cls: type[Provider[Any]], path: str):
+    provider = gateway_provider(provider_name)
+    assert isinstance(provider, provider_cls)
+
+    # Some providers add a trailing slash, others don't
+    assert provider.base_url in (
+        f'{GATEWAY_BASE_URL}/{path}/',
+        f'{GATEWAY_BASE_URL}/{path}',
+    )
+
+
 @patch.dict(os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key'})
-def test_infer_model():
-    model = infer_model('openai/gpt-5')
-    assert isinstance(model, OpenAIChatModel)
-    assert model.model_name == 'gpt-5'
-
-    model = infer_model('openai-chat/gpt-5')
-    assert isinstance(model, OpenAIChatModel)
-    assert model.model_name == 'gpt-5'
-
-    model = infer_model('openai-responses/gpt-5')
-    assert isinstance(model, OpenAIResponsesModel)
-    assert model.model_name == 'gpt-5'
-
-    model = infer_model('groq/llama-3.3-70b-versatile')
-    assert isinstance(model, GroqModel)
-    assert model.model_name == 'llama-3.3-70b-versatile'
-
-    model = infer_model('google-vertex/gemini-1.5-flash')
-    assert isinstance(model, GoogleModel)
-    assert model.model_name == 'gemini-1.5-flash'
-    assert model.system == 'google-vertex'
-
-    model = infer_model('anthropic/claude-3-5-sonnet-latest')
-    assert isinstance(model, AnthropicModel)
-    assert model.model_name == 'claude-3-5-sonnet-latest'
-    assert model.system == 'anthropic'
-
-    with raises(snapshot('UserError: The model name "gemini-1.5-flash" is not in the format "provider/model_name".')):
-        infer_model('gemini-1.5-flash')
-
-    with raises(snapshot('UserError: Unknown upstream provider: gemini-1.5-flash')):
-        infer_model('gemini-1.5-flash/gemini-1.5-flash')
+def test_gateway_provider_unknown():
+    with raises(snapshot('UserError: Unknown upstream provider: foo')):
+        gateway_provider('foo')
 
 
 async def test_gateway_provider_with_openai(allow_model_requests: None, gateway_api_key: str):
@@ -150,3 +153,37 @@ async def test_gateway_provider_with_anthropic(allow_model_requests: None, gatew
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
+
+
+async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway_api_key: str):
+    provider = gateway_provider('bedrock', api_key=gateway_api_key, base_url='http://localhost:8787')
+    model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=provider)
+    agent = Agent(model)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot(
+        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. The city is known for its historical and architectural landmarks, including the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées. Paris plays a significant role in the global arts, fashion, research, technology, education, and entertainment scenes.'
+    )
+
+
+@patch.dict(
+    os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
+)
+async def test_model_provider_argument():
+    model = OpenAIChatModel('gpt-5', provider='gateway')
+    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+
+    model = OpenAIResponsesModel('gpt-5', provider='gateway')
+    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+
+    model = GroqModel('llama-3.3-70b-versatile', provider='gateway')
+    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+
+    model = GoogleModel('gemini-1.5-flash', provider='gateway')
+    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+
+    model = AnthropicModel('claude-3-5-sonnet-latest', provider='gateway')
+    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+
+    model = BedrockConverseModel('amazon.nova-micro-v1:0', provider='gateway')
+    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]

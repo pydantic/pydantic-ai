@@ -65,7 +65,7 @@ class SimpleStatePersistence(BaseStatePersistence[StateT, RunEndT]):
         start = perf_counter()
         try:
             yield
-        except Exception:
+        except Exception:  # pragma: no cover
             self.last_snapshot.duration = perf_counter() - start
             self.last_snapshot.status = 'error'
             raise

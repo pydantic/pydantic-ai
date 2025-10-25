@@ -38,7 +38,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfileSpec
-from ..providers import Provider, infer_provider
+from ..providers import Provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
@@ -131,7 +131,14 @@ class GeminiModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(provider)
+            if provider == 'google-gla':
+                from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
+
+                provider = GoogleGLAProvider()  # type: ignore[reportDeprecated]
+            else:
+                from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # type: ignore[reportDeprecated]
+
+                provider = GoogleVertexProvider()  # type: ignore[reportDeprecated]
         self._provider = provider
         self.client = provider.client
         self._url = str(self.client.base_url)
