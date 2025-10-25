@@ -53,6 +53,8 @@ dependencies = [
     "pydantic-ai-slim=={{ version }}",
     "anyio>=0",
     "pyyaml>=6.0.2",
+    "numpy>=1.23.0,<2.0.0",
+    "choix>=0.4.1",
 ]
 
 [project.optional-dependencies]
