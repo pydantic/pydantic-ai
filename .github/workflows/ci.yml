@@ -169,6 +169,15 @@ jobs:
 
       - run: uv run mcp-run-python example --deps=numpy
       - run: uv sync --only-dev
+
+      - name: cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            hf-${{ runner.os }}-
+
       - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
@@ -206,6 +215,15 @@ jobs:
       - run: mkdir .coverage
 
       - run: uv sync --group dev
+
+      - name: cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            hf-${{ runner.os }}-
+
       - run: uv run mcp-run-python example --deps=numpy
 
       - run: unset UV_FROZEN
@@ -238,6 +256,14 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+
+      - name: cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            hf-${{ runner.os }}-
 
       - run: uv run --all-extras python tests/import_examples.py
 

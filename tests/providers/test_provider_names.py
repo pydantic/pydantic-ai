@@ -33,6 +33,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.outlines import OutlinesProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
@@ -64,6 +65,7 @@ with try_import() as imports_successful:
         ('gateway/google-vertex', GoogleProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/anthropic', AnthropicProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/bedrock', BedrockProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
+        ('outlines', OutlinesProvider, None),
     ]
 
 if not imports_successful():
