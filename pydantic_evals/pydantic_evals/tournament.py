@@ -3,7 +3,9 @@ from __future__ import annotations as _annotations
 import math
 import random
 import textwrap
+from collections.abc import Awaitable, Callable
 from enum import Enum
+from typing import Any
 
 import choix
 import numpy as np
@@ -318,3 +320,65 @@ async def adaptive_uncertainty_strategy(
         player.score = float(scores[i])
 
     return players
+
+
+TournamentStrategy = Callable[
+    [list[EvalPlayer], EvalGame, Agent, ModelSettings],
+    Awaitable[list[EvalPlayer]],
+]
+
+
+class EvalTournament(BaseModel):
+    """Evaluation tournament running pairwise games."""
+    game: EvalGame = Field(..., description='game to be played in the tournament')
+    players: list[EvalPlayer] = Field(..., description='players participating in the tournament')
+
+    def get_player_by_idx(self, idx: int) -> EvalPlayer:
+        """Return player with unique identifier idx.
+
+        Args:
+            idx: Unique identifier of the player.
+
+        Returns:
+            Player with the specified unique identifier.
+        """
+        for player in self.players:
+            if player.idx == idx:
+                return player
+        raise ValueError(f'Player with unique identifier {idx} not found.')
+
+    async def run(
+        self,
+        agent: Agent,
+        model_settings: ModelSettings,
+        strategy: TournamentStrategy | None = None,
+        **strategy_kwargs: Any,
+    ) -> list[EvalPlayer]:
+        """Runs the evaluation tournament using the specified strategy.
+
+        The strategy function handles game sampling, game execution and scoring
+        allowing complete flexibility in the tournament algorithms.
+
+        Args:
+            agent: Agent for the evaluation game.
+            model_settings: Model settings for the evaluation game.
+            strategy: Function with the tournament algorithm.
+            **strategy_kwargs: Additional arguments passed to the strategy function.
+
+        Returns:
+            List of players with scores.
+        """
+        # Use default strategy if none provided
+        if strategy is None:
+            strategy = adaptive_uncertainty_strategy
+
+        # Run the tournament strategy (returns players with scores)
+        self.players = await strategy(
+            self.players,
+            self.game,
+            agent,
+            model_settings,
+            **strategy_kwargs,
+        )
+
+        return self.players
