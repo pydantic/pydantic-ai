@@ -9,7 +9,15 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.settings import ModelSettings
-    from pydantic_evals.tournament import EVALUATION_INSTRUCTIONS, EvalGame, EvalPlayer, GameResult
+    from pydantic_evals.tournament import (
+        EVALUATION_INSTRUCTIONS,
+        EvalGame,
+        EvalPlayer,
+        GameResult,
+        adaptive_uncertainty_strategy,
+        random_sampling_strategy,
+        round_robin_strategy,
+    )
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'),
@@ -48,6 +56,11 @@ def ice_cream_players() -> list[EvalPlayer]:
     ]
 
 
+@pytest.fixture
+def ice_cream_game() -> EvalGame:
+    """Provide an EvalGame instance for ice cream flavour comparison."""
+    return EvalGame(criterion='Which of the two ice cream flavours A or B is more creative?')
+
 
 def test_evalplayer() -> None:
     """Test the EvalPlayer class."""
@@ -62,7 +75,6 @@ def test_evalplayer() -> None:
 @pytest.mark.vcr
 async def test_evalgame(ice_cream_players: list[EvalPlayer], evaluation_agent: Agent[None, GameResult], allow_model_requests: None) -> None:
     """Test the EvalGame class."""
-
     game = EvalGame(criterion='Which of the two ice cream flavours A or B is more creative?')
     assert game.criterion == 'Which of the two ice cream flavours A or B is more creative?'
 
@@ -78,3 +90,58 @@ async def test_evalgame(ice_cream_players: list[EvalPlayer], evaluation_agent: A
     assert result[0] in {0, 4} and result[1] in {0, 4}
     assert result[0] != result[1]
     assert result[0] == 4  # Toasted rice & miso caramel ice cream flavour is more creative.
+
+
+@pytest.mark.vcr()
+async def test_random_sampling_strategy(ice_cream_players: list[EvalPlayer], ice_cream_game: EvalGame, evaluation_agent: Agent[None, GameResult], allow_model_requests: None) -> None:
+    """Test the random sampling tournament strategy."""
+    players_with_scores = await random_sampling_strategy(
+        players=ice_cream_players,
+        game=ice_cream_game,
+        agent=evaluation_agent,
+        model_settings=MODEL_SETTINGS,
+        fraction_of_games=0.3,
+    )
+    assert isinstance(players_with_scores, list)
+    for player in players_with_scores:
+        assert isinstance(player, EvalPlayer)
+        assert hasattr(player, 'score')
+        assert isinstance(player.score, float)
+        assert player.score is not None
+
+
+@pytest.mark.vcr()
+async def test_round_robin_strategy(ice_cream_players: list[EvalPlayer], ice_cream_game: EvalGame, evaluation_agent: Agent[None, GameResult], allow_model_requests: None) -> None:
+    """Test the round robin tournament strategy."""
+    players_with_scores = await round_robin_strategy(
+        players=ice_cream_players,
+        game=ice_cream_game,
+        agent=evaluation_agent,
+        model_settings=MODEL_SETTINGS,
+        number_of_rounds=1,
+    )
+    assert isinstance(players_with_scores, list)
+    for player in players_with_scores:
+        assert isinstance(player, EvalPlayer)
+        assert hasattr(player, 'score')
+        assert isinstance(player.score, float)
+        assert player.score is not None
+
+
+@pytest.mark.vcr()
+async def test_adaptive_uncertainty_strategy(ice_cream_players: list[EvalPlayer], ice_cream_game: EvalGame, evaluation_agent: Agent[None, GameResult], allow_model_requests: None) -> None:
+    """Test the adaptive uncertainty tournament strategy."""
+    players_with_scores = await adaptive_uncertainty_strategy(
+        players=ice_cream_players,
+        game=ice_cream_game,
+        agent=evaluation_agent,
+        model_settings=MODEL_SETTINGS,
+        max_standard_deviation=1.0,
+        alpha=0.01,
+    )
+    assert isinstance(players_with_scores, list)
+    for player in players_with_scores:
+        assert isinstance(player, EvalPlayer)
+        assert hasattr(player, 'score')
+        assert isinstance(player.score, float)
+        assert player.score is not None
