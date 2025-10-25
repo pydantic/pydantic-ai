@@ -77,6 +77,19 @@ brew install temporal
 temporal server start-dev
 ```
 
+And installing Pydantic AI with Temporal [open-source library](https://github.com/temporalio/sdk-python):
+
+```bash
+pip/uv-add 'pydantic-ai[temporal]'
+```
+
+Or if you're using the slim package, you can install it with the `temporal` (and `openai` in this case) optional groups:
+
+```bash
+pip/uv-add 'pydantic-ai-slim[temporal,openai]'
+```
+
+
 ```python {title="temporal_agent.py" test="skip"}
 import uuid
 
