@@ -702,9 +702,8 @@ class BedrockStreamedResponse(StreamedResponse):
                                 provider_name=self.provider_name if signature else None,
                             )
                     if text := delta.get('text'):
-                        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=index, content=text)
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                        for event in self._parts_manager.handle_text_delta(vendor_part_id=index, content=text):
+                            yield event
                     if 'toolUse' in delta:
                         tool_use = delta['toolUse']
                         maybe_event = self._parts_manager.handle_tool_call_delta(
