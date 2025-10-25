@@ -413,6 +413,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     def stream_output_sync(self, *, debounce_by: float | None = 0.1) -> Iterator[OutputDataT]:
         """Stream the output as an iterable.
 
+        This is a convenience method that wraps [`self.stream_output`][pydantic_ai.result.StreamedRunResult.stream_output] with `loop.run_until_complete(...)`.
+        You therefore can't use this method inside async code or if there's an active event loop.
+
         The pydantic validator for structured data will be called in
         [partial mode](https://docs.pydantic.dev/dev/concepts/experimental/#partial-validation)
         on each iteration.
@@ -426,7 +429,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             An iterable of the response data.
         """
         async_stream = self.stream_output(debounce_by=debounce_by)
-        yield from _lazy_async_iterator(async_stream)
+        yield from _blocking_async_iterator(async_stream)
 
     async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
@@ -457,7 +460,10 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     def stream_text_sync(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> Iterator[str]:
-        """Stream the text result as an async iterable.
+        """Stream the text result as a sync iterable.
+
+        This is a convenience method that wraps [`self.stream_text`][pydantic_ai.result.StreamedRunResult.stream_text] with `loop.run_until_complete(...)`.
+        You therefore can't use this method inside async code or if there's an active event loop.
 
         !!! note
             Result validators will NOT be called on the text result if `delta=True`.
@@ -470,7 +476,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 performing validation as each token is received.
         """
         async_stream = self.stream_text(delta=delta, debounce_by=debounce_by)
-        yield from _lazy_async_iterator(async_stream)
+        yield from _blocking_async_iterator(async_stream)
 
     @deprecated('`StreamedRunResult.stream_structured` is deprecated, use `stream_responses` instead.')
     async def stream_structured(
@@ -512,6 +518,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     ) -> Iterator[tuple[_messages.ModelResponse, bool]]:
         """Stream the response as an iterable of Structured LLM Messages.
 
+        This is a convenience method that wraps [`self.stream_responses`][pydantic_ai.result.StreamedRunResult.stream_responses] with `loop.run_until_complete(...)`.
+        You therefore can't use this method inside async code or if there's an active event loop.
+
         Args:
             debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
                 Debouncing is particularly important for long structured responses to reduce the overhead of
@@ -521,7 +530,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             An iterable of the structured response message and whether that is the last message.
         """
         async_stream = self.stream_responses(debounce_by=debounce_by)
-        yield from _lazy_async_iterator(async_stream)
+        yield from _blocking_async_iterator(async_stream)
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
@@ -537,7 +546,11 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     def get_output_sync(self) -> OutputDataT:
-        """Stream the whole response, validate and return it."""
+        """Stream the whole response, validate and return it.
+
+        This is a convenience method that wraps [`self.get_output`][pydantic_ai.result.StreamedRunResult.get_output] with `loop.run_until_complete(...)`.
+        You therefore can't use this method inside async code or if there's an active event loop.
+        """
         return get_event_loop().run_until_complete(self.get_output())
 
     @property
@@ -615,7 +628,7 @@ class FinalResult(Generic[OutputDataT]):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-def _lazy_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
+def _blocking_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
     loop = get_event_loop()
 
     while True:

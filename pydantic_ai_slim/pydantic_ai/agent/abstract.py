@@ -601,6 +601,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     ) -> Iterator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in sync streaming mode.
 
+        This is a convenience method that wraps [`self.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] with `loop.run_until_complete(...)`.
+        You therefore can't use this method inside async code or if there's an active event loop.
+
         This method builds an internal agent graph (using system prompts, tools and output schemas) and then
         runs the graph until the model produces output matching the `output_type`, for example text or structured data.
         At this point, a streaming run result object is yielded from which you can stream the output as it comes in,
