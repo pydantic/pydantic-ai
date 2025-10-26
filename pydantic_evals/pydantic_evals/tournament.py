@@ -26,7 +26,7 @@ Example 1:
 <B> Pickled Citrus Ribbon </B>
 Expected output:
 {
-    "result": "B",
+    "response": "B",
 }
 
 Example 2:
@@ -35,7 +35,7 @@ Example 2:
 <B> climate change effects </B>
 Expected output:
 {
-    "result": "A",
+    "response": "A",
 }
 
 Example 3:
@@ -44,7 +44,7 @@ Example 3:
 <B> That's an interesting perspective, though I see it differently. </B>
 Expected output:
 {
-    "result": "A",
+    "response": "A",
 }
 </EXAMPLES>
 
