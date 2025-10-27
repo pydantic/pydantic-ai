@@ -30,6 +30,7 @@ import asyncpg
 import httpx
 import logfire
 import pydantic_core
+from anyio import create_task_group
 from openai import AsyncOpenAI
 from pydantic import TypeAdapter
 from typing_extensions import AsyncGenerator
@@ -126,9 +127,9 @@ async def build_search_db():
                     await conn.execute(DB_SCHEMA)
 
         sem = asyncio.Semaphore(10)
-        async with asyncio.TaskGroup() as tg:
+        async with create_task_group() as tg:
             for section in sections:
-                tg.create_task(insert_doc_section(sem, openai, pool, section))
+                tg.start_soon(insert_doc_section, sem, openai, pool, section)
 
 
 async def insert_doc_section(

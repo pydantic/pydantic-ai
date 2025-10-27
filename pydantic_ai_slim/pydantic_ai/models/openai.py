@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import json
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -17,7 +18,7 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
@@ -109,6 +110,11 @@ Using this more broad type for the model name instead of the ChatModel definitio
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
 """
 
+MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
+"""
+Prefix for OpenAI connector IDs. OpenAI supports either a URL or a connector ID when passing MCP configuration to a model,
+by using that prefix like `x-openai-connector:<connector-id>` in a URL, you can pass a connector ID to a model.
+"""
 
 _CHAT_FINISH_REASON_MAP: dict[
     Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call'], FinishReason
@@ -285,6 +291,8 @@ class OpenAIChatModel(Model):
             'vercel',
             'litellm',
             'nebius',
+            'ovhcloud',
+            'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -314,6 +322,8 @@ class OpenAIChatModel(Model):
             'vercel',
             'litellm',
             'nebius',
+            'ovhcloud',
+            'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -342,6 +352,8 @@ class OpenAIChatModel(Model):
             'vercel',
             'litellm',
             'nebius',
+            'ovhcloud',
+            'gateway',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -363,7 +375,7 @@ class OpenAIChatModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(provider)
+            provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
@@ -559,24 +571,7 @@ class OpenAIChatModel(Model):
         # - https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
         # If you need this, please file an issue.
 
-        vendor_details: dict[str, Any] = {}
-
-        # Add logprobs to vendor_details if available
-        if choice.logprobs is not None and choice.logprobs.content:
-            # Convert logprobs to a serializable format
-            vendor_details['logprobs'] = [
-                {
-                    'token': lp.token,
-                    'bytes': lp.bytes,
-                    'logprob': lp.logprob,
-                    'top_logprobs': [
-                        {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
-                    ],
-                }
-                for lp in choice.logprobs.content
-            ]
-
-        if choice.message.content is not None:
+        if choice.message.content:
             items.extend(
                 (replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part)
                 for part in split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags)
@@ -594,13 +589,30 @@ class OpenAIChatModel(Model):
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
 
+        vendor_details: dict[str, Any] = {}
+
+        # Add logprobs to vendor_details if available
+        if choice.logprobs is not None and choice.logprobs.content:
+            # Convert logprobs to a serializable format
+            vendor_details['logprobs'] = [
+                {
+                    'token': lp.token,
+                    'bytes': lp.bytes,
+                    'logprob': lp.logprob,
+                    'top_logprobs': [
+                        {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+                    ],
+                }
+                for lp in choice.logprobs.content
+            ]
+
         raw_finish_reason = choice.finish_reason
         vendor_details['finish_reason'] = raw_finish_reason
         finish_reason = _CHAT_FINISH_REASON_MAP.get(raw_finish_reason)
 
         return ModelResponse(
             parts=items,
-            usage=_map_usage(response),
+            usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
             model_name=response.model,
             timestamp=timestamp,
             provider_details=vendor_details or None,
@@ -631,6 +643,7 @@ class OpenAIChatModel(Model):
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.created),
             _provider_name=self._provider.name,
+            _provider_url=self._provider.base_url,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -902,7 +915,18 @@ class OpenAIResponsesModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'nebius']
+        provider: Literal[
+            'openai',
+            'deepseek',
+            'azure',
+            'openrouter',
+            'grok',
+            'fireworks',
+            'together',
+            'nebius',
+            'ovhcloud',
+            'gateway',
+        ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
@@ -918,7 +942,7 @@ class OpenAIResponsesModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(provider)
+            provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
@@ -1043,13 +1067,16 @@ class OpenAIResponsesModel(Model):
             elif isinstance(item, responses.ResponseFileSearchToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the FileSearch built-in tool
                 pass
-            elif isinstance(  # pragma: no cover
-                item,
-                responses.response_output_item.McpCall
-                | responses.response_output_item.McpListTools
-                | responses.response_output_item.McpApprovalRequest,
-            ):
-                # Pydantic AI supports MCP natively
+            elif isinstance(item, responses.response_output_item.McpCall):
+                call_part, return_part = _map_mcp_call(item, self.system)
+                items.append(call_part)
+                items.append(return_part)
+            elif isinstance(item, responses.response_output_item.McpListTools):
+                call_part, return_part = _map_mcp_list_tools(item, self.system)
+                items.append(call_part)
+                items.append(return_part)
+            elif isinstance(item, responses.response_output_item.McpApprovalRequest):  # pragma: no cover
+                # Pydantic AI doesn't yet support McpApprovalRequest (explicit tool usage approval)
                 pass
 
         finish_reason: FinishReason | None = None
@@ -1061,7 +1088,7 @@ class OpenAIResponsesModel(Model):
 
         return ModelResponse(
             parts=items,
-            usage=_map_usage(response),
+            usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
             model_name=response.model,
             provider_response_id=response.id,
             timestamp=timestamp,
@@ -1088,6 +1115,7 @@ class OpenAIResponsesModel(Model):
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.response.created_at),
             _provider_name=self._provider.name,
+            _provider_url=self._provider.base_url,
         )
 
     @overload
@@ -1237,6 +1265,32 @@ class OpenAIResponsesModel(Model):
             elif isinstance(tool, CodeExecutionTool):
                 has_image_generating_tool = True
                 tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
+            elif isinstance(tool, MCPServerTool):
+                mcp_tool = responses.tool_param.Mcp(
+                    type='mcp',
+                    server_label=tool.id,
+                    require_approval='never',
+                )
+
+                if tool.authorization_token:  # pragma: no branch
+                    mcp_tool['authorization'] = tool.authorization_token
+
+                if tool.allowed_tools is not None:  # pragma: no branch
+                    mcp_tool['allowed_tools'] = tool.allowed_tools
+
+                if tool.description:  # pragma: no branch
+                    mcp_tool['server_description'] = tool.description
+
+                if tool.headers:  # pragma: no branch
+                    mcp_tool['headers'] = tool.headers
+
+                if tool.url.startswith(MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME + ':'):
+                    _, connector_id = tool.url.split(':', maxsplit=1)
+                    mcp_tool['connector_id'] = connector_id  # pyright: ignore[reportGeneralTypeIssues]
+                else:
+                    mcp_tool['server_url'] = tool.url
+
+                tools.append(mcp_tool)
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                 has_image_generating_tool = True
                 tools.append(
@@ -1377,6 +1431,8 @@ class OpenAIResponsesModel(Model):
                             call_id=call_id,
                             type='function_call',
                         )
+                        if profile.openai_responses_requires_function_call_status_none:
+                            param['status'] = None  # type: ignore[reportGeneralTypeIssues]
                         if id and send_item_ids:  # pragma: no branch
                             param['id'] = id
                         openai_messages.append(param)
@@ -1409,7 +1465,7 @@ class OpenAIResponsesModel(Model):
                                     type='web_search_call',
                                 )
                                 openai_messages.append(web_search_item)
-                            elif item.tool_name == ImageGenerationTool.kind and item.tool_call_id:  # pragma: no branch
+                            elif item.tool_name == ImageGenerationTool.kind and item.tool_call_id:
                                 # The cast is necessary because of https://github.com/openai/openai-python/issues/2648
                                 image_generation_item = cast(
                                     responses.response_input_item_param.ImageGenerationCall,
@@ -1419,6 +1475,37 @@ class OpenAIResponsesModel(Model):
                                     },
                                 )
                                 openai_messages.append(image_generation_item)
+                            elif (  # pragma: no branch
+                                item.tool_name.startswith(MCPServerTool.kind)
+                                and item.tool_call_id
+                                and (server_id := item.tool_name.split(':', 1)[1])
+                                and (args := item.args_as_dict())
+                                and (action := args.get('action'))
+                            ):
+                                if action == 'list_tools':
+                                    mcp_list_tools_item = responses.response_input_item_param.McpListTools(
+                                        id=item.tool_call_id,
+                                        type='mcp_list_tools',
+                                        server_label=server_id,
+                                        tools=[],  # These can be read server-side
+                                    )
+                                    openai_messages.append(mcp_list_tools_item)
+                                elif (  # pragma: no branch
+                                    action == 'call_tool'
+                                    and (tool_name := args.get('tool_name'))
+                                    and (tool_args := args.get('tool_args'))
+                                ):
+                                    mcp_call_item = responses.response_input_item_param.McpCall(
+                                        id=item.tool_call_id,
+                                        server_label=server_id,
+                                        name=tool_name,
+                                        arguments=to_json(tool_args).decode(),
+                                        error=None,  # These can be read server-side
+                                        output=None,  # These can be read server-side
+                                        type='mcp_call',
+                                    )
+                                    openai_messages.append(mcp_call_item)
+
                     elif isinstance(item, BuiltinToolReturnPart):
                         if item.provider_name == self.system and send_item_ids:
                             if (
@@ -1437,8 +1524,11 @@ class OpenAIResponsesModel(Model):
                                 and (status := content.get('status'))
                             ):
                                 web_search_item['status'] = status
-                            elif item.tool_name == ImageGenerationTool.kind:  # pragma: no branch
+                            elif item.tool_name == ImageGenerationTool.kind:
                                 # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
+                                pass
+                            elif item.tool_name.startswith(MCPServerTool.kind):  # pragma: no branch
+                                # MCP call result does not need to be sent back, just the fields off of `BuiltinToolCallPart`.
                                 pass
                     elif isinstance(item, FilePart):
                         # This was generated by the `ImageGenerationTool` or `CodeExecutionTool`,
@@ -1589,10 +1679,11 @@ class OpenAIStreamedResponse(StreamedResponse):
     _response: AsyncIterable[ChatCompletionChunk]
     _timestamp: datetime
     _provider_name: str
+    _provider_url: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
-            self._usage += _map_usage(chunk)
+            self._usage += _map_usage(chunk, self._provider_name, self._provider_url, self._model_name)
 
             if chunk.id:  # pragma: no branch
                 self.provider_response_id = chunk.id
@@ -1612,21 +1703,6 @@ class OpenAIStreamedResponse(StreamedResponse):
             if raw_finish_reason := choice.finish_reason:
                 self.provider_details = {'finish_reason': raw_finish_reason}
                 self.finish_reason = _CHAT_FINISH_REASON_MAP.get(raw_finish_reason)
-
-            # Handle the text part of the response
-            content = choice.delta.content
-            if content is not None:
-                maybe_event = self._parts_manager.handle_text_delta(
-                    vendor_part_id='content',
-                    content=content,
-                    thinking_tags=self._model_profile.thinking_tags,
-                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-                )
-                if maybe_event is not None:  # pragma: no branch
-                    if isinstance(maybe_event, PartStartEvent) and isinstance(maybe_event.part, ThinkingPart):
-                        maybe_event.part.id = 'content'
-                        maybe_event.part.provider_name = self.provider_name
-                    yield maybe_event
 
             # The `reasoning_content` field is only present in DeepSeek models.
             # https://api-docs.deepseek.com/guides/reasoning_model
@@ -1648,6 +1724,21 @@ class OpenAIStreamedResponse(StreamedResponse):
                     content=reasoning,
                     provider_name=self.provider_name,
                 )
+
+            # Handle the text part of the response
+            content = choice.delta.content
+            if content:
+                maybe_event = self._parts_manager.handle_text_delta(
+                    vendor_part_id='content',
+                    content=content,
+                    thinking_tags=self._model_profile.thinking_tags,
+                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                )
+                if maybe_event is not None:  # pragma: no branch
+                    if isinstance(maybe_event, PartStartEvent) and isinstance(maybe_event.part, ThinkingPart):
+                        maybe_event.part.id = 'content'
+                        maybe_event.part.provider_name = self.provider_name
+                    yield maybe_event
 
             for dtc in choice.delta.tool_calls or []:
                 maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -1683,12 +1774,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _response: AsyncIterable[responses.ResponseStreamEvent]
     _timestamp: datetime
     _provider_name: str
+    _provider_url: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for chunk in self._response:
             # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
             if isinstance(chunk, responses.ResponseCompletedEvent):
-                self._usage += _map_usage(chunk.response)
+                self._usage += self._map_usage(chunk.response)
 
                 raw_finish_reason = (
                     details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
@@ -1708,7 +1800,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     self.provider_response_id = chunk.response.id
 
             elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover
-                self._usage += _map_usage(chunk.response)
+                self._usage += self._map_usage(chunk.response)
 
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -1722,10 +1814,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
-                self._usage += _map_usage(chunk.response)
+                self._usage += self._map_usage(chunk.response)
 
             elif isinstance(chunk, responses.ResponseInProgressEvent):
-                self._usage += _map_usage(chunk.response)
+                self._usage += self._map_usage(chunk.response)
 
             elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):
                 if isinstance(chunk.item, responses.ResponseFunctionToolCall):
@@ -1751,7 +1843,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     args_json = call_part.args_as_json_str()
                     # Drop the final `"}` so that we can add code deltas
                     args_json_delta = args_json[:-2]
-                    assert args_json_delta.endswith('code":"')
+                    assert args_json_delta.endswith('"code":"'), f'Expected {args_json_delta!r} to end in `"code":"`'
 
                     yield self._parts_manager.handle_part(
                         vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
@@ -1765,7 +1857,28 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk.item, responses.response_output_item.ImageGenerationCall):
                     call_part, _, _ = _map_image_generation_tool_call(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
+                elif isinstance(chunk.item, responses.response_output_item.McpCall):
+                    call_part, _ = _map_mcp_call(chunk.item, self.provider_name)
 
+                    args_json = call_part.args_as_json_str()
+                    # Drop the final `{}}` so that we can add tool args deltas
+                    args_json_delta = args_json[:-3]
+                    assert args_json_delta.endswith('"tool_args":'), (
+                        f'Expected {args_json_delta!r} to end in `"tool_args":"`'
+                    )
+
+                    yield self._parts_manager.handle_part(
+                        vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
+                    )
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=f'{chunk.item.id}-call',
+                        args=args_json_delta,
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
+                elif isinstance(chunk.item, responses.response_output_item.McpListTools):
+                    call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
                 else:
                     warnings.warn(  # pragma: no cover
                         f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -1804,6 +1917,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     _, return_part, file_part = _map_image_generation_tool_call(chunk.item, self.provider_name)
                     if file_part:  # pragma: no branch
                         yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-file', part=file_part)
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
+
+                elif isinstance(chunk.item, responses.response_output_item.McpCall):
+                    _, return_part = _map_mcp_call(chunk.item, self.provider_name)
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
+                elif isinstance(chunk.item, responses.response_output_item.McpListTools):
+                    _, return_part = _map_mcp_list_tools(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
@@ -1900,11 +2020,48 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
                 yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item_id}-file', part=file_part)
 
+            elif isinstance(chunk, responses.ResponseMcpCallArgumentsDoneEvent):
+                maybe_event = self._parts_manager.handle_tool_call_delta(
+                    vendor_part_id=f'{chunk.item_id}-call',
+                    args='}',
+                )
+                if maybe_event is not None:  # pragma: no branch
+                    yield maybe_event
+
+            elif isinstance(chunk, responses.ResponseMcpCallArgumentsDeltaEvent):
+                maybe_event = self._parts_manager.handle_tool_call_delta(
+                    vendor_part_id=f'{chunk.item_id}-call',
+                    args=chunk.delta,
+                )
+                if maybe_event is not None:  # pragma: no branch
+                    yield maybe_event
+
+            elif isinstance(chunk, responses.ResponseMcpListToolsInProgressEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseMcpListToolsCompletedEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseMcpListToolsFailedEvent):  # pragma: no cover
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseMcpCallInProgressEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseMcpCallFailedEvent):  # pragma: no cover
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseMcpCallCompletedEvent):
+                pass  # there's nothing we need to do here
+
             else:  # pragma: no cover
                 warnings.warn(
                     f'Handling of this event type is not yet implemented. Please report on our GitHub: {chunk}',
                     UserWarning,
                 )
+
+    def _map_usage(self, response: responses.Response):
+        return _map_usage(response, self._provider_name, self._provider_url, self._model_name)
 
     @property
     def model_name(self) -> OpenAIModelName:
@@ -1922,61 +2079,50 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.Response) -> usage.RequestUsage:
+def _map_usage(
+    response: chat.ChatCompletion | ChatCompletionChunk | responses.Response,
+    provider: str,
+    provider_url: str,
+    model: str,
+) -> usage.RequestUsage:
     response_usage = response.usage
     if response_usage is None:
         return usage.RequestUsage()
-    elif isinstance(response_usage, responses.ResponseUsage):
-        details: dict[str, int] = {
-            key: value
-            for key, value in response_usage.model_dump(
-                exclude={'input_tokens', 'output_tokens', 'total_tokens'}
-            ).items()
-            if isinstance(value, int)
-        }
-        # Handle vLLM compatibility - some providers don't include token details
-        if getattr(response_usage, 'input_tokens_details', None) is not None:
-            cache_read_tokens = response_usage.input_tokens_details.cached_tokens
-        else:
-            cache_read_tokens = 0
+
+    usage_data = response_usage.model_dump(exclude_none=True)
+    details = {
+        k: v
+        for k, v in usage_data.items()
+        if k not in {'prompt_tokens', 'completion_tokens', 'input_tokens', 'output_tokens', 'total_tokens'}
+        if isinstance(v, int)
+    }
+    response_data = dict(model=model, usage=usage_data)
+    if isinstance(response_usage, responses.ResponseUsage):
+        api_flavor = 'responses'
 
         if getattr(response_usage, 'output_tokens_details', None) is not None:
             details['reasoning_tokens'] = response_usage.output_tokens_details.reasoning_tokens
         else:
             details['reasoning_tokens'] = 0
-
-        return usage.RequestUsage(
-            input_tokens=response_usage.input_tokens,
-            output_tokens=response_usage.output_tokens,
-            cache_read_tokens=cache_read_tokens,
-            details=details,
-        )
     else:
-        details = {
-            key: value
-            for key, value in response_usage.model_dump(
-                exclude_none=True, exclude={'prompt_tokens', 'completion_tokens', 'total_tokens'}
-            ).items()
-            if isinstance(value, int)
-        }
-        u = usage.RequestUsage(
-            input_tokens=response_usage.prompt_tokens,
-            output_tokens=response_usage.completion_tokens,
-            details=details,
-        )
+        api_flavor = 'chat'
+
         if response_usage.completion_tokens_details is not None:
             details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
-            u.output_audio_tokens = response_usage.completion_tokens_details.audio_tokens or 0
-        if response_usage.prompt_tokens_details is not None:
-            u.input_audio_tokens = response_usage.prompt_tokens_details.audio_tokens or 0
-            u.cache_read_tokens = response_usage.prompt_tokens_details.cached_tokens or 0
-        return u
+
+    return usage.RequestUsage.extract(
+        response_data,
+        provider=provider,
+        provider_url=provider_url,
+        provider_fallback='openai',
+        api_flavor=api_flavor,
+        details=details,
+    )
 
 
 def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
     # When reasoning, the Responses API requires the `ResponseFunctionToolCall` to be returned with both the `call_id` and `id` fields.
     # Before our `ToolCallPart` gained the `id` field alongside `tool_call_id` field, we combined the two fields into a single string stored on `tool_call_id`.
-
     if '|' in combined_id:
         call_id, id = combined_id.split('|', 1)
         return call_id, id
@@ -2016,7 +2162,7 @@ def _map_code_interpreter_tool_call(
             tool_call_id=item.id,
             args={
                 'container_id': item.container_id,
-                'code': item.code,
+                'code': item.code or '',
             },
             provider_name=provider_name,
         ),
@@ -2107,4 +2253,51 @@ def _map_image_generation_tool_call(
             provider_name=provider_name,
         ),
         file_part,
+    )
+
+
+def _map_mcp_list_tools(
+    item: responses.response_output_item.McpListTools, provider_name: str
+) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
+    tool_name = ':'.join([MCPServerTool.kind, item.server_label])
+    return (
+        BuiltinToolCallPart(
+            tool_name=tool_name,
+            tool_call_id=item.id,
+            provider_name=provider_name,
+            args={'action': 'list_tools'},
+        ),
+        BuiltinToolReturnPart(
+            tool_name=tool_name,
+            tool_call_id=item.id,
+            content=item.model_dump(mode='json', include={'tools', 'error'}),
+            provider_name=provider_name,
+        ),
+    )
+
+
+def _map_mcp_call(
+    item: responses.response_output_item.McpCall, provider_name: str
+) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
+    tool_name = ':'.join([MCPServerTool.kind, item.server_label])
+    return (
+        BuiltinToolCallPart(
+            tool_name=tool_name,
+            tool_call_id=item.id,
+            args={
+                'action': 'call_tool',
+                'tool_name': item.name,
+                'tool_args': json.loads(item.arguments) if item.arguments else {},
+            },
+            provider_name=provider_name,
+        ),
+        BuiltinToolReturnPart(
+            tool_name=tool_name,
+            tool_call_id=item.id,
+            content={
+                'output': item.output,
+                'error': item.error,
+            },
+            provider_name=provider_name,
+        ),
     )
