@@ -377,11 +377,11 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         Args:
             task: The task to evaluate. This should be a callable that takes the inputs of the case
                 and returns the output.
-            name: The name of the task being evaluated, this is used to identify the task in the report.
-                If omitted, the name of the task function will be used.
+            name: The name of the experiment being run, this is used to identify the experiment in the report.
+                If omitted, the task_name will be used; if that is not specified, the name of the task function is used.
             max_concurrency: The maximum number of concurrent evaluations of the task to allow.
                 If None, all cases will be evaluated concurrently.
-            progress: Whether to show a progress bar for the evaluation. Defaults to True.
+            progress: Whether to show a progress bar for the evaluation. Defaults to `True`.
             retry_task: Optional retry configuration for the task execution.
             retry_evaluators: Optional retry configuration for evaluator execution.
             task_name: Optional override to the name of the task being executed, otherwise the name of the task
