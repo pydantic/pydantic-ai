@@ -88,6 +88,8 @@ cli = [
 ]
 # MCP
 mcp = ["mcp>=1.12.3"]
+# FastMCP
+fastmcp = ["fastmcp>=2.12.0"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
 # A2A
