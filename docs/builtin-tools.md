@@ -38,6 +38,7 @@ making it ideal for queries that require up-to-date data.
 | Mistral | ❌ | Not supported |
 | Cohere | ❌ | Not supported |
 | HuggingFace | ❌ | Not supported |
+| Outlines | ❌ | Not supported |
 
 ### Usage
 
@@ -129,6 +130,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 | Mistral | ❌ | |
 | Cohere | ❌ | |
 | HuggingFace | ❌ | |
+| Outlines | ❌ | |
 
 ### Usage
 
@@ -321,6 +323,7 @@ allowing it to pull up-to-date information from the web.
 | Mistral | ❌ | |
 | Cohere | ❌ | |
 | HuggingFace | ❌ | |
+| Outlines | ❌ | |
 
 ### Usage
 
