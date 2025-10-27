@@ -1530,7 +1530,7 @@ async def test_evaluate_async_logfire(
             return TaskOutput(answer='Paris')
         return TaskOutput(answer='Unknown')  # pragma: no cover
 
-    await example_dataset.evaluate(mock_async_task)
+    await example_dataset.evaluate(mock_async_task, metadata={'key': 'value'})
 
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     spans.sort(key=lambda s: s['start_time'])
@@ -1556,6 +1556,7 @@ async def test_evaluate_async_logfire(
                             'gen_ai.operation.name': {},
                             'n_cases': {},
                             'name': {},
+                            'metadata': {'type': 'object'},
                             'logfire.experiment.metadata': {
                                 'type': 'object',
                                 'properties': {
@@ -1571,11 +1572,13 @@ async def test_evaluate_async_logfire(
                         'type': 'object',
                     },
                     'logfire.msg': 'evaluate mock_async_task',
+                    'metadata': {'key': 'value'},
                     'logfire.msg_template': 'evaluate {name}',
                     'logfire.span_type': 'span',
                     'n_cases': 2,
                     'logfire.experiment.metadata': {
                         'n_cases': 2,
+                        'metadata': {'key': 'value'},
                         'averages': {
                             'name': 'Averages',
                             'scores': {'confidence': 1.0},
