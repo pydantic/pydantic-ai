@@ -1,4 +1,5 @@
-from typing import Any, Literal, cast
+from dataclasses import dataclass
+from typing import Literal, cast
 
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionMessage, ChatCompletionMessageParam
@@ -6,6 +7,7 @@ from openai.types.chat.chat_completion import Choice
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
+from .. import _utils
 from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
 from ..messages import (
     ModelMessage,
@@ -272,6 +274,67 @@ class ReasoningText(BaseReasoningDetail):
 OpenRouterReasoningDetail = ReasoningSummary | ReasoningEncrypted | ReasoningText
 
 
+@dataclass(repr=False)
+class OpenRouterThinkingPart(ThinkingPart):
+    """filler."""
+
+    type: Literal['reasoning.summary', 'reasoning.encrypted', 'reasoning.text']
+    index: int
+    format: Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1']
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+    @classmethod
+    def from_reasoning_detail(cls, reasoning: OpenRouterReasoningDetail, provider_name: str):
+        if isinstance(reasoning, ReasoningText):
+            return cls(
+                id=reasoning.id,
+                content=reasoning.text,
+                signature=reasoning.signature,
+                provider_name=provider_name,
+                format=reasoning.format,
+                type=reasoning.type,
+                index=reasoning.index,
+            )
+        elif isinstance(reasoning, ReasoningSummary):
+            return cls(
+                id=reasoning.id,
+                content=reasoning.summary,
+                provider_name=provider_name,
+                format=reasoning.format,
+                type=reasoning.type,
+                index=reasoning.index,
+            )
+        else:
+            return cls(
+                id=reasoning.id,
+                content='',
+                signature=reasoning.data,
+                provider_name=provider_name,
+                format=reasoning.format,
+                type=reasoning.type,
+                index=reasoning.index,
+            )
+
+    def into_reasoning_detail(self):
+        reasoning_detail = {
+            'type': self.type,
+            'id': self.id,
+            'format': self.format,
+            'index': self.index,
+        }
+
+        if self.type == 'reasoning.summary':
+            reasoning_detail['summary'] = self.content
+        elif self.type == 'reasoning.text':
+            reasoning_detail['text'] = self.content
+            reasoning_detail['signature'] = self.signature
+        elif self.type == 'reasoning.encrypted':
+            reasoning_detail['data'] = self.signature
+
+        return reasoning_detail
+
+
 class OpenRouterCompletionMessage(ChatCompletionMessage):
     """Wrapped chat completion message with OpenRouter specific attributes."""
 
@@ -395,40 +458,10 @@ class OpenRouterModel(OpenAIChatModel):
         provider_details['native_finish_reason'] = choice.native_finish_reason
 
         if reasoning_details := choice.message.reasoning_details:
-            reasoning = reasoning_details[0]
-
-            new_parts: list[ThinkingPart] = []
-
-            if isinstance(reasoning, ReasoningText):
-                new_parts.append(
-                    ThinkingPart(
-                        id=reasoning.id,
-                        content=reasoning.text,
-                        signature=reasoning.signature,
-                        provider_name=native_response.provider,
-                    )
-                )
-            elif isinstance(reasoning, ReasoningSummary):
-                new_parts.append(
-                    ThinkingPart(
-                        id=reasoning.id,
-                        content=reasoning.summary,
-                        provider_name=native_response.provider,
-                    ),
-                )
-            else:
-                new_parts.append(
-                    ThinkingPart(
-                        id=reasoning.id,
-                        content='',
-                        signature=reasoning.data,
-                        provider_name=native_response.provider,
-                    ),
-                )
-
-            # TODO: Find a better way to store these attributes
-            new_parts[0].openrouter_type = reasoning.type
-            new_parts[0].openrouter_format = reasoning.format
+            new_parts: list[ThinkingPart] = [
+                OpenRouterThinkingPart.from_reasoning_detail(reasoning, native_response.provider)
+                for reasoning in reasoning_details
+            ]
 
             model_response.parts = [*new_parts, *model_response.parts]
 
@@ -442,24 +475,12 @@ class OpenRouterModel(OpenAIChatModel):
 
         for message, openai_message in zip(messages, openai_messages):
             if isinstance(message, ModelResponse):
+                reasoning_details = []
+
                 for part in message.parts:
-                    if isinstance(part, ThinkingPart):
-                        reasoning_detail: dict[str, Any] = {
-                            'type': part.openrouter_type,
-                            'id': part.id,
-                            'format': part.openrouter_format,
-                            'index': 0,
-                        }
+                    if isinstance(part, OpenRouterThinkingPart):
+                        reasoning_details.append(part.into_reasoning_detail())
 
-                        match part.openrouter_type:
-                            case 'reasoning.summary':
-                                reasoning_detail['summary'] = part.content
-                            case 'reasoning.text':
-                                reasoning_detail['text'] = part.content
-                                reasoning_detail['signature'] = part.signature
-                            case 'reasoning.encrypted':
-                                reasoning_detail['data'] = part.signature
-
-                        openai_message['reasoning_details'] = [reasoning_detail]
+                openai_message['reasoning_details'] = reasoning_details
 
         return openai_messages

@@ -69,31 +69,38 @@ What can I help you with today?\
 
 async def test_openrouter_with_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
+    request = ModelRequest.user_text_prompt(
+        "What was the impact of Voltaire's writings on modern french culture? Think about your answer."
+    )
+
     model = OpenRouterModel('z-ai/glm-4.6', provider=provider)
-    response = await model_request(model, [ModelRequest.user_text_prompt('Who are you')])
+    response = await model_request(model, [request])
 
     assert len(response.parts) == 2
-    assert isinstance(thinking_part := response.parts[0], ThinkingPart)
-    assert isinstance(response.parts[1], TextPart)
-    assert thinking_part.content == snapshot(
-        """\
-Let me process this query about who I am. First, I should consider what the user really wants to know - they're likely seeking to understand my identity and capabilities as an AI assistant.
 
-I need to be clear and accurate about my nature. I'm a GLM large language model developed by Zhipu AI, not a human. This distinction is fundamental to our interaction.
+    thinking_part = response.parts[0]
+    assert isinstance(thinking_part, ThinkingPart)
+    assert thinking_part.id == snapshot(None)
+    assert thinking_part.content is not None
+    assert thinking_part.signature is None
 
-Looking at my core functions, I should highlight my ability to engage in natural conversations, answer questions, and assist with various tasks. My training involves processing vast amounts of text data, which enables me to understand and generate human-like responses.
+    model = OpenRouterModel('openai/o3', provider=provider)
+    response = await model_request(model, [request])
 
-It's important to mention my commitment to being helpful, harmless, and honest. These principles guide my interactions and ensure I provide appropriate assistance.
+    assert len(response.parts) == 3
 
-I should also emphasize my continuous learning aspect. While I don't store personal data, I'm regularly updated to improve my capabilities and knowledge base.
-
-The response should be welcoming and encourage further questions about specific areas where I can help. This creates an open dialogue and shows my willingness to assist with various topics.
-
-Let me structure this information in a clear, friendly manner that addresses the user's question while inviting further interaction.\
-"""
+    thinking_summary_part = response.parts[0]
+    thinking_redacted_part = response.parts[1]
+    assert isinstance(thinking_summary_part, ThinkingPart)
+    assert isinstance(thinking_redacted_part, ThinkingPart)
+    assert thinking_summary_part.id == snapshot(None)
+    assert thinking_summary_part.content is not None
+    assert thinking_summary_part.signature is None
+    assert thinking_redacted_part.id == snapshot('rs_068633cde4ea68920168ff95bdf3d881969382f905c626cbcd')
+    assert thinking_redacted_part.content == ''
+    assert thinking_redacted_part.signature == snapshot(
+        'gAAAAABo_5XHkkwCuk-f0waWF42hzBg4R9rD9YUpiXWCgX81P6W2mXf-FLIDTmdvRxm3ctZjMD8Uw4Om_8HIu4TCVHd56avFGbdKVUHf7xNzSBJqYxlGLsp7OB3LKukXWjekw9i9dotrHHZQkXyRRt5esuDGujsquFbI8WYFhMCEhPZaAIJ-IKrnxiS2f2MJxVyGWv9eRWRzZFJmJUr8MHZpIbJS6tLumThbN1fGhn0hes-OWWxfNKfclSoZz86qego4k0Zo8PF2tYqX1uKvLOBr-SSPwplUU798j3DFxMQo6pdAZRT4pJGd-L19nMlrn8DQ5LyIFEV7hMIRD-ieJThuQ3OBei5xJaH1fmZwDFKJHQn_agcZDflY36HlCbIrt1ab-sLgsB4D0TCRq4j42cH0xc3qXC1wrMGuPUOO8CsvbDssJgdXSmTJKhrmsCMH4pPKh0PY983sFlGp_WeRT7RX--NA7JD7sUe7ZlVAWeaQdkXtNmLcvlMl8GdAUrErpUCLvvxYSgD5skISESjgY_gMKCi7NHPaOdgKvRgTc6S5aW2J_xzUyJWDGfPwzIWirVlesEjtUsloeieWRwa-C9YNDi9ZrDhSTqdoAHBW6J6sm1cDGOVN9GqtZ_SmOMGYrYVQZxkvV4nheM6lShDVUHqxh7P5IPazkWGjQBGTccje6RDFDLpBJ2x_gP9qR9aS0VWRieVN6swzpln--lDiKXNvK2RP_5sm0wiCiR14yjxsLibSudCnZWj3f3PWbqcT0xXoqJc0sERzwSrNldt9my7hN8dgWwG2q-atczccNNLSwut7dgiGSazaXHz0SsGvQRi2Gw5bAYfh2mJSyVbA0ZyRYv6nFpilNrQlpeXCoqbvBGbsDDZSfOqnO_OxfNr4yKSeP6JeJnY1-DMZ-zl6eN80ipjlTlJ60opdsJmSa3hGQxsGDVqIL2Ep3sHGT78MZXj2bPEtU5kEhfyD4f4ghfHZeKczJ5TvYKNFEfS9kUnoIbP0uiB1udDOz5mij_GwlvqeqnHSdOaaOoSxxDviPbcbPZgDTVPhADwpAGVkOK3TzysnQZjijAmOzcLp6-LpBG2LBrLatzHH4_wJUEWXFi-ORzvnxTaVGDR8Dn2UuKF4v81blN2-j14xp_2DaojIqIg2XhyDq6Q2a6s6a0rdqtnWC0QhiBC6-TCyDlBHTbENIOsGpmAykGD4_-hnx9Pp69CvfCmwjpgsRF319nNL_2awDWpQyIfxQ-smC-v_ljCF7JDwianEyKsM30tIqNsAcJwtf5_f98TUpbSHzDbw_7tGdzIZKIJQkqteMyKJXOtaZ_XxDcwCs9cswsDwutvTxdqtIXZN526l59zQ9uNYx9roLdN8n6WbhuZUSkQK7xrS-KgqdxZPlMg-ImqlwgWkDM8G8DLLcHuAzrb1r7F2tXjGjUDSDWS1zSCScg79WezPcL4bQ_zTAMDOQ0w4OMCxCJKwRye4KYY7c4QnCVdW3JiFrHByo2oVZOtknTiJOllsY6OkziVeiRrMwiRMhwgGKAisTosFcqzHILptzApWYIb8Jdx3glaJStoWbdgV80Rne_u333z3FfCajpwsfvkGM_yss5jAgcN_eNDXKBTZxx8NUu3d3Kz2u0tr_5MBOILwuItUNqWLhc1oMqkFnHrXwna874t9bgOvxR3ve552BjXL54XU7aGjTPKAGTAcWsxnvS2tx-wpTO8vZ9tsCnbDItpu9JDZnd-JqAfIr37qqeygxt0iIwPhRLz6Jlrjd4aqnpAhsFTb3CPkUX0hOeiCWYRkuTuqLXCUsycCjc_6Y5oznlPd6Pf2_IEpGBn819ob32Z8vbXsO7eTtBz3Yxc0CkuizkQQa_Efgz5kFFJoWwmzlMbl-SlArEgvNaiXv1WFWTR9jrUFZ1GRscczFbTjYWanmLawtR9NFyTj4G7XjB4Ikc4cyZIIsqEtRJH7IMd-3HVSnJX5jICyHagugShAPpwnyA_dn4_kiyXl821_nLCyWWMrQQNxQvoKA9EDKaXRLJ6RpnKWB5vaOm4el2v8rIgpE7OAhNW4wowVTdnn9lk3FcYa2arv_4415X07VY03njlmCV025HRxMNbc9ay4B6nndEBLHbP5TpfJHOzF6o57keP3LauKOzyVLN9YOsuc2Ht9vd4JZiyCuVzAaj4Z_G-ZvcSvRvXkTCS-bjyGH2FPw7MAQWDBw6ArBi-WTSYFwX4_k_bb0QjGmMjrLrbn4Vt_ClGKaapUajENwcnPBIpQ-p1yQBq0lSEQeVPwX76zIiktgiBFOD0MkJiWZSgybnwSdM3sN1kr7mP6Lph9DP7JiTHLakd-htJAyVmJbvRuT2_vpH9ywMddWpeHQiwBGhBjYxVWv0AdYUw7Gs7pVCC9ccPM1A727NGs-ecXFvxutO3lyR16zgw-e2dEt6eITYS4e1IsCe05r01WDUbR8B6IsMFl0sd7qG69X8nVLbK-m8sfURYLSrLsiXvsrmWNBaqraVfj1y6ALTKuJ657heQsF0BuNYVJldK_SgmmefTExc_t6ApkbkokWWMLZxk3J9wtCs4xrUzFkHX3AkqLpiAdi3yUyTjr-vPA5KHXLcBoDuj883w4yfwmKN_hGphWAcjv3N99_ao9UGYfNVIJmxcg7vMGlA1uEyawY3WjA5xlSrM6k--lph3PrT9Ukm8ojiZCMaMiJDVNjKORUJUyiSW8qJTcZEvKmfoju9KDuVfPbf0zT8vmQXWmAzWuH0QMi1KXjQEqtVoqgetV-YwzaZ-i7m8KPWxkRjV4t8aM1P6k71fA7DnOunbySPlEG-jNqxIrY5HNTbinDBDF_zp52JpL0saMKUfnY2EHL8gWXoXG4OguxzNFofp3tPk_uadv8rbmdno3RVPB7KrJqZFizoQ35F7MahgHCunKr9oK4uJ82sWQEa-tXgX8GI7a_rp-O5U6faibRjFSZODU-WXukzoSMhQrcJDpXT_1s5imdkJDV0wM20e-f18fjniMaSaCmgXOA3RdnPlZc26c6giZ7InttDaNRZCr-RCsDjQQVN4AKwnE5XM3yHL2usRx8ILmXZYWfTDNn-UDeueocDcuPhx9aMFf2rRMcw=='
     )
-    assert thinking_part.openrouter_type == snapshot('reasoning.text')
-    assert thinking_part.openrouter_format == snapshot('unknown')
 
 
 async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_api_key: str) -> None:
