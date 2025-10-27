@@ -1,10 +1,10 @@
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Literal, cast
 
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionMessage, ChatCompletionMessageParam
 from openai.types.chat.chat_completion import Choice
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field, TypeAdapter
 from typing_extensions import TypedDict
 
 from .. import _utils
@@ -253,21 +253,21 @@ class ReasoningSummary(BaseReasoningDetail):
     """Represents a high-level summary of the reasoning process."""
 
     type: Literal['reasoning.summary']
-    summary: str
+    summary: str = Field(validation_alias=AliasChoices('summary', 'content'))
 
 
 class ReasoningEncrypted(BaseReasoningDetail):
     """Represents encrypted reasoning data."""
 
     type: Literal['reasoning.encrypted']
-    data: str
+    data: str = Field(validation_alias=AliasChoices('data', 'signature'))
 
 
 class ReasoningText(BaseReasoningDetail):
     """Represents raw text reasoning."""
 
     type: Literal['reasoning.text']
-    text: str
+    text: str = Field(validation_alias=AliasChoices('text', 'content'))
     signature: str | None = None
 
 
@@ -276,7 +276,7 @@ OpenRouterReasoningDetail = ReasoningSummary | ReasoningEncrypted | ReasoningTex
 
 @dataclass(repr=False)
 class OpenRouterThinkingPart(ThinkingPart):
-    """filler."""
+    """A special ThinkingPart that includes reasoning attributes specific to OpenRouter."""
 
     type: Literal['reasoning.summary', 'reasoning.encrypted', 'reasoning.text']
     index: int
@@ -317,22 +317,7 @@ class OpenRouterThinkingPart(ThinkingPart):
             )
 
     def into_reasoning_detail(self):
-        reasoning_detail = {
-            'type': self.type,
-            'id': self.id,
-            'format': self.format,
-            'index': self.index,
-        }
-
-        if self.type == 'reasoning.summary':
-            reasoning_detail['summary'] = self.content
-        elif self.type == 'reasoning.text':
-            reasoning_detail['text'] = self.content
-            reasoning_detail['signature'] = self.signature
-        elif self.type == 'reasoning.encrypted':
-            reasoning_detail['data'] = self.signature
-
-        return reasoning_detail
+        return TypeAdapter(OpenRouterReasoningDetail).validate_python(asdict(self)).model_dump()
 
 
 class OpenRouterCompletionMessage(ChatCompletionMessage):
@@ -475,12 +460,8 @@ class OpenRouterModel(OpenAIChatModel):
 
         for message, openai_message in zip(messages, openai_messages):
             if isinstance(message, ModelResponse):
-                reasoning_details = []
-
-                for part in message.parts:
-                    if isinstance(part, OpenRouterThinkingPart):
-                        reasoning_details.append(part.into_reasoning_detail())
-
-                openai_message['reasoning_details'] = reasoning_details
+                openai_message['reasoning_details'] = [
+                    part.into_reasoning_detail() for part in message.parts if isinstance(part, OpenRouterThinkingPart)
+                ]
 
         return openai_messages
