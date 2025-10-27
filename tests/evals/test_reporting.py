@@ -1317,3 +1317,48 @@ async def test_evaluation_renderer_diff_with_changed_metadata(sample_report_case
 │ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
 └───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
 """)
+
+
+async def test_evaluation_renderer_diff_with_no_metadata(sample_report_case: ReportCase):
+    """Test EvaluationRenderer diff table where both reports have the same metadata."""
+
+    baseline_report = EvaluationReport(
+        cases=[sample_report_case],
+        name='baseline_report',
+    )
+
+    new_report = EvaluationReport(
+        cases=[sample_report_case],
+        name='new_report',
+    )
+
+    output = new_report.render(
+        include_input=False,
+        include_metadata=False,
+        include_expected_output=False,
+        include_output=False,
+        include_durations=True,
+        include_total_duration=False,
+        include_removed_cases=False,
+        include_averages=False,
+        include_error_stacktrace=False,
+        include_evaluator_failures=True,
+        input_config={},
+        metadata_config={},
+        output_config={},
+        score_configs={},
+        label_configs={},
+        metric_configs={},
+        duration_config={},
+        include_reasons=False,
+        baseline=baseline_report,
+        include_errors=False,  # Prevent failures table from being added
+    )
+    assert output == snapshot("""\
+                    Evaluation Diff: baseline_report → new_report
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
+└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+""")

@@ -266,7 +266,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         *,
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
-        tags: Sequence[str] | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -286,7 +285,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             task_name: Optional override to the name of the task being executed, otherwise the name of the task
                 function will be used.
             metadata: Optional dict of experiment metadata.
-            tags: Optional sequence of tags to add to the experiment span.
 
         Returns:
             A report containing the results of the evaluation.
@@ -309,7 +307,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 dataset_name=self.name,
                 n_cases=len(self.cases),
                 **extra_attributes,
-                _tags=tags,
             ) as eval_span,
             progress_bar or nullcontext(),
         ):
@@ -354,8 +351,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             full_experiment_metadata: dict[str, Any] = {'n_cases': len(self.cases)}
             if metadata is not None:
                 full_experiment_metadata['metadata'] = metadata
-            if tags is not None:
-                full_experiment_metadata['tags'] = tags
             if (averages := report.averages()) is not None:
                 full_experiment_metadata['averages'] = averages
                 if averages.assertions is not None:
@@ -374,7 +369,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         *,
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
-        tags: Sequence[str] | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -393,7 +387,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             task_name: Optional override to the name of the task being executed, otherwise the name of the task
                 function will be used.
             metadata: Optional dict of experiment metadata.
-            tags: Optional sequence of tags to add to the experiment span.
 
         Returns:
             A report containing the results of the evaluation.
@@ -408,7 +401,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 retry_evaluators=retry_evaluators,
                 task_name=task_name,
                 metadata=metadata,
-                tags=tags,
             )
         )
 
