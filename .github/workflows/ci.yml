@@ -18,7 +18,16 @@ permissions:
 
 jobs:
   lint:
+    name: lint on ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Typecheck both Python 3.10 and 3.13. We've had issues due to not checking against both.
+        python-version: ["3.10", "3.13"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+      PYRIGHT_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -129,7 +138,7 @@ jobs:
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -174,7 +183,7 @@ jobs:
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

@@ -1427,6 +1427,8 @@ class OpenAIResponsesModel(Model):
                             call_id=call_id,
                             type='function_call',
                         )
+                        if profile.openai_responses_requires_function_call_status_none:
+                            param['status'] = None  # type: ignore[reportGeneralTypeIssues]
                         if id and send_item_ids:  # pragma: no branch
                             param['id'] = id
                         openai_messages.append(param)
