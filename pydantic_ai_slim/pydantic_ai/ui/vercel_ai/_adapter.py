@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cached_property
 
@@ -56,9 +56,6 @@ except ImportError as e:  # pragma: no cover
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
     ) from e
 
-# See https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol
-VERCEL_AI_DSP_HEADERS = {'x-vercel-ai-ui-message-stream': 'v1'}
-
 
 __all__ = ['VercelAIAdapter']
 
@@ -68,19 +65,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     """TODO (DouwM): Docstring."""
 
     @classmethod
-    async def validate_request(cls, request: Request) -> RequestData:
+    async def build_run_input(cls, request: Request) -> RequestData:
         """Validate a Vercel AI request."""
         return request_data_ta.validate_json(await request.body())
 
-    def build_event_stream(
-        self, accept: str | None = None
-    ) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
-        return VercelAIEventStream(self.request, accept=accept)
-
-    @property
-    def response_headers(self) -> Mapping[str, str] | None:
-        """Get the response headers for the adapter."""
-        return VERCEL_AI_DSP_HEADERS
+    def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
+        return VercelAIEventStream(self.run_input, accept=self.accept)
 
     @cached_property
     def messages(self) -> list[ModelMessage]:
@@ -95,7 +85,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         Raises:
             ValueError: If message format is not supported.
         """
-        return self.load_messages(self.request.messages)
+        return self.load_messages(self.run_input.messages)
 
     @classmethod
     def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:  # noqa: C901

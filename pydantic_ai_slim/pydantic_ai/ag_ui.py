@@ -96,8 +96,8 @@ async def handle_ag_ui_request(
         A streaming Starlette response with AG-UI protocol events.
     """
     return await AGUIAdapter[AgentDepsT].dispatch_request(
-        agent,
         request,
+        agent=agent,
         deps=deps,
         output_type=output_type,
         message_history=message_history,
@@ -112,7 +112,7 @@ async def handle_ag_ui_request(
     )
 
 
-async def run_ag_ui(
+def run_ag_ui(
     agent: AbstractAgent[AgentDepsT, Any],
     run_input: RunAgentInput,
     accept: str = SSE_CONTENT_TYPE,
@@ -153,8 +153,8 @@ async def run_ag_ui(
     Yields:
         Streaming event chunks encoded as strings according to the accept header value.
     """
-    adapter = AGUIAdapter(agent=agent, request=run_input)
-    async for event in adapter.encode_stream(
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=accept)
+    return adapter.encode_stream(
         adapter.run_stream(
             output_type=output_type,
             message_history=message_history,
@@ -168,6 +168,4 @@ async def run_ag_ui(
             toolsets=toolsets,
             on_complete=on_complete,
         ),
-        accept=accept,
-    ):
-        yield event
+    )

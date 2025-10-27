@@ -21,5 +21,5 @@ __all__ = [
 class AGUIApp(UIApp[AgentDepsT, OutputDataT]):
     """ASGI application for running Pydantic AI agents with AG-UI protocol support."""
 
-    def __init__(self, agent: AbstractAgent[AgentDepsT, OutputDataT], **kwargs: Any) -> None:
+    def __init__(self, agent: AbstractAgent[AgentDepsT, OutputDataT], **kwargs: Any):
         super().__init__(AGUIAdapter[AgentDepsT, OutputDataT], agent, **kwargs)

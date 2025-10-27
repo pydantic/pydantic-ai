@@ -7,8 +7,8 @@ that transform Pydantic AI agent events into protocol-specific events (e.g., AG-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import Field, dataclass, replace
+from collections.abc import AsyncIterator, Sequence
+from dataclasses import KW_ONLY, Field, dataclass, replace
 from functools import cached_property
 from http import HTTPStatus
 from typing import (
@@ -23,30 +23,33 @@ from typing import (
 
 from pydantic import BaseModel, ValidationError
 
-from .. import DeferredToolRequests, DeferredToolResults
-from ..agent import AbstractAgent, AgentDepsT
-from ..builtin_tools import AbstractBuiltinTool
-from ..exceptions import UserError
-from ..messages import ModelMessage
-from ..models import KnownModelName, Model
-from ..output import OutputDataT, OutputSpec
-from ..settings import ModelSettings
-from ..toolsets import AbstractToolset
-from ..usage import RunUsage, UsageLimits
-from .event_stream import OnCompleteFunc, SourceEvent, UIEventStream
+from pydantic_ai import DeferredToolRequests, DeferredToolResults
+from pydantic_ai.agent import AbstractAgent, AgentDepsT
+from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.output import OutputDataT, OutputSpec
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.usage import RunUsage, UsageLimits
+
+from .event_stream import NativeEvent, OnCompleteFunc, UIEventStream
 
 if TYPE_CHECKING:
     from starlette.requests import Request
-    from starlette.responses import Response
+    from starlette.responses import Response, StreamingResponse
 
 
 __all__ = [
     'UIAdapter',
+    'StateHandler',
+    'StateDeps',
 ]
 
 
-RunRequestT = TypeVar('RunRequestT')
-"""Type variable for protocol-specific request types."""
+RunInputT = TypeVar('RunInputT')
+"""Type variable for protocol-specific run input types."""
 
 MessageT = TypeVar('MessageT')
 """Type variable for protocol-specific message types."""
@@ -54,8 +57,6 @@ MessageT = TypeVar('MessageT')
 EventT = TypeVar('EventT')
 """Type variable for protocol-specific event types."""
 
-
-# State management types
 
 StateT = TypeVar('StateT', bound=BaseModel)
 """Type variable for the state type, which must be a subclass of `BaseModel`."""
@@ -83,16 +84,13 @@ class StateHandler(Protocol):
 
         Args:
             state: The run state.
-
-        Raises:
-            InvalidStateError: If `state` does not match the expected model.
         """
         ...
 
 
 @dataclass
 class StateDeps(Generic[StateT]):
-    """Provides AG-UI state management.
+    """Dependency type that holds state.
 
     This class is used to manage the state of an agent run. It allows setting
     the state of the agent run with a specific type of state model, which must
@@ -107,93 +105,97 @@ class StateDeps(Generic[StateT]):
 
 
 @dataclass
-class UIAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, OutputDataT]):
+class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputDataT]):
     """TODO (DouwM): Docstring."""
 
     agent: AbstractAgent[AgentDepsT, OutputDataT]
     """The Pydantic AI agent to run."""
 
-    request: RunRequestT
-    """The protocol-specific request object."""
+    run_input: RunInputT
+    """The protocol-specific run input object."""
+
+    _: KW_ONLY
+
+    accept: str | None = None
+    """The accept header value."""
+
+    @classmethod
+    async def from_request(
+        cls, request: Request, *, agent: AbstractAgent[AgentDepsT, OutputDataT]
+    ) -> UIAdapter[RunInputT, MessageT, EventT, AgentDepsT, OutputDataT]:
+        """Create an adapter from a protocol-specific request."""
+        return cls(
+            agent=agent,
+            run_input=await cls.build_run_input(request),
+            accept=request.headers.get('accept'),
+        )
 
     @classmethod
     @abstractmethod
-    async def validate_request(cls, request: Request) -> RunRequestT:
-        """Validate the request and return the validated request."""
+    async def build_run_input(cls, request: Request) -> RunInputT:
+        """Validate the HTTP request and return the validated protocol-specific run input."""
         raise NotImplementedError
 
     @classmethod
     @abstractmethod
     def load_messages(cls, messages: Sequence[MessageT]) -> list[ModelMessage]:
-        """Load messages from the request and return the loaded messages."""
+        """Convert protocol-specific messages into Pydantic AI messages."""
         raise NotImplementedError
 
     @abstractmethod
-    def build_event_stream(
-        self, accept: str | None = None
-    ) -> UIEventStream[RunRequestT, EventT, AgentDepsT, OutputDataT]:
-        """Create an event stream for the adapter.
-
-        Args:
-            accept: The accept header value.
-
-        Returns:
-            The event stream.
-        """
+    def build_event_stream(self) -> UIEventStream[RunInputT, EventT, AgentDepsT, OutputDataT]:
+        """Create a protocol-specific event stream."""
         raise NotImplementedError
 
     @cached_property
     @abstractmethod
     def messages(self) -> list[ModelMessage]:
-        """Convert protocol messages to Pydantic AI messages.
-
-        Args:
-            messages: List of protocol-specific messages.
-
-        Returns:
-            List of Pydantic AI ModelMessage objects.
-        """
+        """Pydantic AI messages from the protocol-specific request."""
         raise NotImplementedError
 
     @cached_property
     def toolset(self) -> AbstractToolset[AgentDepsT] | None:
-        """Get the toolset for the adapter."""
+        """Toolset representing frontend tools from the protocol-specific request."""
         return None
 
     @cached_property
     def state(self) -> dict[str, Any] | None:
-        """Get the state of the agent run."""
+        """Run state from the protocol-specific request."""
         return None
 
-    @property
-    def response_headers(self) -> Mapping[str, str] | None:
-        """Get the response headers for the adapter."""
-        return None
-
-    def encode_stream(self, stream: AsyncIterator[EventT], accept: str | None = None) -> AsyncIterator[str]:
-        """Encode a stream of events as SSE strings.
-
-        Args:
-            stream: The stream of events to encode.
-            accept: The accept header value.
-        """
-        return self.build_event_stream(accept).encode_stream(stream)
-
-    async def process_stream(
+    def transform_stream(
         self,
-        stream: AsyncIterator[SourceEvent],
+        stream: AsyncIterator[NativeEvent],
         on_complete: OnCompleteFunc[EventT] | None = None,
     ) -> AsyncIterator[EventT]:
-        """Process a stream of events and return a stream of events.
+        """Transform a stream of Pydantic AI events into protocol-specific events.
 
         Args:
-            stream: The stream of events to process.
+            stream: The stream of Pydantic AI events to transform.
             on_complete: Optional callback function called when the agent run completes successfully.
         """
-        async for event in self.build_event_stream().handle_stream(stream, on_complete=on_complete):
-            yield event
+        return self.build_event_stream().transform_stream(stream, on_complete=on_complete)
 
-    async def run_stream(
+    def encode_stream(self, stream: AsyncIterator[EventT]) -> AsyncIterator[str]:
+        """Encode a stream of protocol-specific events as strings according to the accept header value.
+
+        Args:
+            stream: The stream of protocol-specific events to encode.
+        """
+        return self.build_event_stream().encode_stream(stream)
+
+    def streaming_response(self, stream: AsyncIterator[EventT]) -> StreamingResponse:
+        """Generate a streaming response from a stream of protocol-specific events.
+
+        Args:
+            stream: The stream of protocol-specific events to encode.
+
+        Returns:
+            A streaming Starlette response with encoded protocol-specific events.
+        """
+        return self.build_event_stream().streaming_response(stream)
+
+    def run_stream_native(
         self,
         *,
         output_type: OutputSpec[Any] | None = None,
@@ -207,9 +209,8 @@ class UIAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, OutputDa
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        on_complete: OnCompleteFunc[EventT] | None = None,
-    ) -> AsyncIterator[EventT]:
-        """Run the agent with the AG-UI run input and stream AG-UI protocol events.
+    ) -> AsyncIterator[NativeEvent]:
+        """Run the agent with the protocol-specific request as input and stream Pydantic AI events.
 
         Args:
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
@@ -224,11 +225,6 @@ class UIAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, OutputDa
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools to use for this run.
-            on_complete: Optional callback function called when the agent run completes successfully.
-                The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
-
-        Yields:
-            Streaming event chunks encoded as strings according to the accept header value.
         """
         message_history = [*(message_history or []), *self.messages]
 
@@ -250,9 +246,56 @@ class UIAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, OutputDa
                 f'State is provided but `deps` of type `{type(deps).__name__}` does not implement the `StateHandler` protocol: it needs to be a dataclass with a non-optional `state` field.'
             )
 
-        async for event in self.process_stream(
-            self.agent.run_stream_events(
-                user_prompt=None,
+        return self.agent.run_stream_events(
+            output_type=output_type,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+            model=model,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            builtin_tools=builtin_tools,
+        )
+
+    def run_stream(
+        self,
+        *,
+        output_type: OutputSpec[Any] | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: Model | KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: UsageLimits | None = None,
+        usage: RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        on_complete: OnCompleteFunc[EventT] | None = None,
+    ) -> AsyncIterator[EventT]:
+        """Run the agent with the protocol-specific request as input and stream protocol-specific events.
+
+        Args:
+            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
+                output validators since output validators would expect an argument that matches the agent's output type.
+            message_history: History of the conversation so far.
+            deferred_tool_results: Optional results for deferred tool calls in the message history.
+            model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            deps: Optional dependencies to use for this run.
+            model_settings: Optional settings to use for this model's request.
+            usage_limits: Optional limits on model request count or token usage.
+            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            toolsets: Optional additional toolsets for this run.
+            builtin_tools: Optional additional builtin tools to use for this run.
+            on_complete: Optional callback function called when the agent run completes successfully.
+                The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
+        """
+        return self.transform_stream(
+            self.run_stream_native(
                 output_type=output_type,
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
@@ -266,37 +309,14 @@ class UIAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, OutputDa
                 builtin_tools=builtin_tools,
             ),
             on_complete=on_complete,
-        ):
-            yield event
-
-    async def stream_response(self, stream: AsyncIterator[EventT], accept: str | None = None) -> Response:
-        """Stream a response to the client.
-
-        Args:
-            stream: The stream of events to encode.
-            accept: The accept header value.
-        """
-        try:
-            from starlette.responses import StreamingResponse
-        except ImportError as e:  # pragma: no cover
-            raise ImportError(
-                'Please install the `starlette` package to use `BaseAdapter.stream_response()` method, '
-                'you can use the `ui` optional group — `pip install "pydantic-ai-slim[ui]"`'
-            ) from e
-
-        event_stream = self.build_event_stream(accept)
-        return StreamingResponse(
-            event_stream.encode_stream(stream),
-            headers=self.response_headers,
-            media_type=event_stream.content_type,
         )
 
     @classmethod
     async def dispatch_request(
         cls,
-        agent: AbstractAgent[AgentDepsT, OutputDataT],
         request: Request,
         *,
+        agent: AbstractAgent[AgentDepsT, OutputDataT],
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
@@ -310,7 +330,7 @@ class UIAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, OutputDa
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
     ) -> Response:
-        """Handle an AG-UI request and return a streaming response.
+        """Handle an protocol-specific HTTP request by running the agent and return a streaming response of protocol-specific events.
 
         Args:
             agent: The agent to run.
@@ -331,18 +351,18 @@ class UIAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, OutputDa
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
 
         Returns:
-            A streaming Starlette response with AG-UI protocol events.
+            A streaming Starlette response with protocol-specific events encoded per the request's accept header value.
         """
         try:
             from starlette.responses import Response
         except ImportError as e:  # pragma: no cover
             raise ImportError(
-                'Please install the `starlette` package to use `BaseAdapter.dispatch_request()` method, '
+                'Please install the `starlette` package to use `dispatch_request()` method, '
                 'you can use the `ui` optional group — `pip install "pydantic-ai-slim[ui]"`'
             ) from e
 
         try:
-            request_data = await cls.validate_request(request)
+            adapter = await cls.from_request(request, agent=agent)
         except ValidationError as e:  # pragma: no cover
             return Response(
                 content=e.json(),
@@ -350,21 +370,19 @@ class UIAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, OutputDa
                 status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             )
 
-        adapter = cls(agent=agent, request=request_data)
-
-        run_stream = adapter.run_stream(
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            deps=deps,
-            output_type=output_type,
-            model=model,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            builtin_tools=builtin_tools,
-            on_complete=on_complete,
+        return adapter.streaming_response(
+            adapter.run_stream(
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                deps=deps,
+                output_type=output_type,
+                model=model,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                builtin_tools=builtin_tools,
+                on_complete=on_complete,
+            ),
         )
-
-        return await adapter.stream_response(run_stream, accept=request.headers.get('accept'))

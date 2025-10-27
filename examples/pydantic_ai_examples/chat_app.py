@@ -96,7 +96,7 @@ def options_chat():
 @app.post('/api/chat')
 async def get_chat(request: Request, database: Database = Depends(get_db)) -> Response:
     return await VercelAIAdapter[Deps].dispatch_request(
-        chat_agent, request, deps=Deps(database, 123)
+        request, agent=chat_agent, deps=Deps(database, 123)
     )
 
 

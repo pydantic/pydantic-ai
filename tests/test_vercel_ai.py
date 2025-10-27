@@ -178,7 +178,7 @@ async def test_run(allow_model_requests: None, openai_api_key: str):
         ],
     )
 
-    adapter = VercelAIAdapter(agent, request=data)
+    adapter = VercelAIAdapter(agent, run_input=data)
     assert adapter.messages == snapshot(
         [
             ModelRequest(
@@ -1311,10 +1311,10 @@ async def test_event_stream_file():
             ),
         ],
     )
-    event_stream = VercelAIEventStream(request=request)
+    event_stream = VercelAIEventStream(run_input=request)
     events = [
         '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
-        async for event in event_stream.encode_stream(event_stream.handle_stream(event_generator()))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
     ]
 
     assert events == snapshot(
@@ -1623,7 +1623,7 @@ async def test_adapter_dispatch_request():
         receive=receive,
     )
 
-    response = await VercelAIAdapter.dispatch_request(agent, starlette_request)
+    response = await VercelAIAdapter.dispatch_request(starlette_request, agent=agent)
 
     assert isinstance(response, StreamingResponse)
 

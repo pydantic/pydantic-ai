@@ -23,8 +23,8 @@ try:
     from starlette.types import ExceptionHandler, Lifespan
 except ImportError as e:  # pragma: no cover
     raise ImportError(
-        'Please install the `starlette` package to use `Agent.to_ag_ui()` method, '
-        'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
+        'Please install the `starlette` package to use `UIApp`, '
+        'you can use the `ui` optional group — `pip install "pydantic-ai-slim[ui]"`'
     ) from e
 
 
@@ -113,8 +113,8 @@ class UIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         async def run_agent(request: Request) -> Response:
             """Endpoint to run the agent with the provided input data."""
             return await adapter_type.dispatch_request(
-                agent,
                 request,
+                agent=agent,
                 output_type=output_type,
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,

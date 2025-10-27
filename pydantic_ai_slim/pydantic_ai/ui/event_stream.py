@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import inspect
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Generic, Literal, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, TypeVar, cast
 from uuid import uuid4
 
 from pydantic_ai import _utils
@@ -40,6 +40,10 @@ from ..output import OutputDataT
 from ..run import AgentRunResult, AgentRunResultEvent
 from ..tools import AgentDepsT
 
+if TYPE_CHECKING:
+    from starlette.responses import StreamingResponse
+
+
 __all__ = [
     'UIEventStream',
 ]
@@ -50,24 +54,24 @@ SSE_CONTENT_TYPE = 'text/event-stream'
 EventT = TypeVar('EventT')
 """Type variable for protocol-specific event types."""
 
-RunRequestT = TypeVar('RunRequestT')
-"""Type variable for request types."""
+RunInputT = TypeVar('RunInputT')
+"""Type variable for protocol-specific run input types."""
 
-SourceEvent = AgentStreamEvent | AgentRunResultEvent[Any]
+NativeEvent = AgentStreamEvent | AgentRunResultEvent[Any]
 
 OnCompleteFunc: TypeAlias = (
     Callable[[AgentRunResult[Any]], None]
     | Callable[[AgentRunResult[Any]], Awaitable[None]]
     | Callable[[AgentRunResult[Any]], AsyncIterator[EventT]]
 )
-"""Callback function type that receives the `AgentRunResult` of the completed run. Can be sync or async and can yield events."""
+"""Callback function type that receives the `AgentRunResult` of the completed run. Can be sync, async, or an async generator of protocol-specificevents."""
 
 
 @dataclass
-class UIEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT, OutputDataT]):
+class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     """TODO (DouwM): Docstring."""
 
-    request: RunRequestT
+    run_input: RunInputT
 
     accept: str | None = None
     """TODO (DouweM): Docstring"""
@@ -89,14 +93,16 @@ class UIEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT, OutputDataT]):
         return self.message_id
 
     @property
+    def response_headers(self) -> Mapping[str, str] | None:
+        """Response headers to return to the frontend."""
+        return None
+
+    @property
     def content_type(self) -> str:
         """Get the content type for the event stream, compatible with the accept header value.
 
         By default, this returns the SSE content type (`text/event-stream`).
         If a subclass supports other types as well, it should consider `self.accept` in `encode_event` and return the resulting content type here.
-
-        Args:
-            accept: The accept header value.
         """
         return SSE_CONTENT_TYPE
 
@@ -118,8 +124,31 @@ class UIEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT, OutputDataT]):
         async for event in stream:
             yield self.encode_event(event)
 
-    async def handle_stream(  # noqa: C901
-        self, stream: AsyncIterator[SourceEvent], on_complete: OnCompleteFunc[EventT] | None = None
+    def streaming_response(self, stream: AsyncIterator[EventT]) -> StreamingResponse:
+        """Generate a streaming response from a stream of encoded protocol-specific events.
+
+        Args:
+            stream: The stream of protocol-specific events to encode.
+
+        Returns:
+            A streaming Starlette response with encoded protocol-specific events.
+        """
+        try:
+            from starlette.responses import StreamingResponse
+        except ImportError as e:  # pragma: no cover
+            raise ImportError(
+                'Please install the `starlette` package to use the `streaming_response()` method, '
+                'you can use the `ui` optional group — `pip install "pydantic-ai-slim[ui]"`'
+            ) from e
+
+        return StreamingResponse(
+            self.encode_stream(stream),
+            headers=self.response_headers,
+            media_type=self.content_type,
+        )
+
+    async def transform_stream(  # noqa: C901
+        self, stream: AsyncIterator[NativeEvent], on_complete: OnCompleteFunc[EventT] | None = None
     ) -> AsyncIterator[EventT]:
         """Handle a stream of agent events.
 
@@ -222,7 +251,7 @@ class UIEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT, OutputDataT]):
             async for e in self.before_response():
                 yield e
 
-    async def handle_event(self, event: SourceEvent) -> AsyncIterator[EventT]:
+    async def handle_event(self, event: NativeEvent) -> AsyncIterator[EventT]:
         """Transform a Pydantic AI agent event into protocol-specific events.
 
         This method dispatches to specific `handle_*` methods based on event and part type.

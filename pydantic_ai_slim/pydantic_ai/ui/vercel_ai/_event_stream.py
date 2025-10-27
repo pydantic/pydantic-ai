@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -49,6 +49,9 @@ from ._response_types import (
 
 __all__ = ['VercelAIEventStream']
 
+# See https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol
+VERCEL_AI_DSP_HEADERS = {'x-vercel-ai-ui-message-stream': 'v1'}
+
 
 def _json_dumps(obj: Any) -> str:
     """Dump an object to JSON string."""
@@ -60,6 +63,11 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     """TODO (DouwM): Docstring."""
 
     _step_started: bool = False
+
+    @property
+    def response_headers(self) -> Mapping[str, str] | None:
+        """Get the response headers for the adapter."""
+        return VERCEL_AI_DSP_HEADERS
 
     def encode_event(self, event: BaseChunk) -> str:
         if isinstance(event, DoneChunk):

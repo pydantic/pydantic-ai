@@ -81,11 +81,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     @property
     def content_type(self) -> str:
-        """Get the content type for the event stream, compatible with the accept header value.
-
-        Args:
-            accept: The accept header value.
-        """
+        """Get the content type for the event stream, compatible with the accept header value."""
         return self._event_encoder.get_content_type()
 
     def encode_event(self, event: BaseEvent) -> str:
@@ -102,16 +98,16 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
         """Yield events before agent streaming starts."""
         yield RunStartedEvent(
-            thread_id=self.request.thread_id,
-            run_id=self.request.run_id,
+            thread_id=self.run_input.thread_id,
+            run_id=self.run_input.run_id,
         )
 
     async def after_stream(self) -> AsyncIterator[BaseEvent]:
         """Handle an AgentRunResultEvent, cleaning up any pending state."""
         if not self._error:
             yield RunFinishedEvent(
-                thread_id=self.request.thread_id,
-                run_id=self.request.run_id,
+                thread_id=self.run_input.thread_id,
+                run_id=self.run_input.run_id,
             )
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseEvent]:

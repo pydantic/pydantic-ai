@@ -47,7 +47,7 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 from pydantic_ai.ui.adapter import UIAdapter
-from pydantic_ai.ui.event_stream import SourceEvent, UIEventStream
+from pydantic_ai.ui.event_stream import NativeEvent, UIEventStream
 
 from .conftest import try_import
 
@@ -68,56 +68,55 @@ pytestmark = [
 ]
 
 
-class UIRequest(BaseModel):
+class DummyUIRunInput(BaseModel):
     messages: list[ModelMessage] = field(default_factory=list)
     tool_defs: list[ToolDefinition] = field(default_factory=list)
     state: dict[str, Any] = field(default_factory=dict)
 
 
-class UIState(BaseModel):
+class DummyUIState(BaseModel):
     country: str | None = None
 
 
 @dataclass
-class UIDeps:
-    state: UIState
+class DummyUIDeps:
+    state: DummyUIState
 
 
-class UIAdapter(UIAdapter[UIRequest, ModelMessage, str, AgentDepsT, OutputDataT]):
+class DummyUIAdapter(UIAdapter[DummyUIRunInput, ModelMessage, str, AgentDepsT, OutputDataT]):
     @classmethod
-    async def validate_request(cls, request: Request) -> UIRequest:
-        return UIRequest.model_validate(await request.json())
+    async def build_run_input(cls, request: Request) -> DummyUIRunInput:
+        return DummyUIRunInput.model_validate(await request.json())
 
     @classmethod
     def load_messages(cls, messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         return list(messages)
 
-    def build_event_stream(self, accept: str | None = None) -> UIEventStream[AgentDepsT, OutputDataT]:
-        return UIEventStream[AgentDepsT, OutputDataT](self.request, accept=accept)
+    def build_event_stream(self) -> UIEventStream[DummyUIRunInput, str, AgentDepsT, OutputDataT]:
+        return DummyUIEventStream[AgentDepsT, OutputDataT](self.run_input, accept=self.accept)
 
     @cached_property
     def messages(self) -> list[ModelMessage]:
-        return self.load_messages(self.request.messages)
+        return self.load_messages(self.run_input.messages)
 
     @cached_property
     def state(self) -> dict[str, Any] | None:
-        return self.request.state
+        return self.run_input.state
 
     @cached_property
     def toolset(self) -> AbstractToolset[AgentDepsT] | None:
-        return ExternalToolset(self.request.tool_defs) if self.request.tool_defs else None
+        return ExternalToolset(self.run_input.tool_defs) if self.run_input.tool_defs else None
 
+
+class DummyUIEventStream(UIEventStream[DummyUIRunInput, str, AgentDepsT, OutputDataT]):
     @property
     def response_headers(self) -> dict[str, str]:
         return {'x-test': 'test'}
 
-
-@dataclass(kw_only=True)
-class UIEventStream(UIEventStream[UIRequest, str, AgentDepsT, OutputDataT]):
     def encode_event(self, event: str) -> str:
         return event
 
-    async def handle_event(self, event: SourceEvent) -> AsyncIterator[str]:
+    async def handle_event(self, event: NativeEvent) -> AsyncIterator[str]:
         # yield f'[{event.event_kind}]'
         async for e in super().handle_event(event):
             yield e
@@ -224,8 +223,8 @@ async def test_run_stream_text_and_thinking():
 
     agent = Agent(model=FunctionModel(stream_function=stream_function))
 
-    request = UIRequest(messages=[ModelRequest.user_text_prompt('Tell me about Hello World')])
-    adapter = UIAdapter(agent, request)
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Tell me about Hello World')])
+    adapter = DummyUIAdapter(agent, request)
     events = [event async for event in adapter.run_stream()]
 
     assert events == snapshot(
@@ -289,8 +288,8 @@ async def test_run_stream_builtin_tool_call():
 
     agent = Agent(model=FunctionModel(stream_function=stream_function))
 
-    request = UIRequest(messages=[ModelRequest.user_text_prompt('Tell me about Hello World')])
-    adapter = UIAdapter(agent, request)
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Tell me about Hello World')])
+    adapter = DummyUIAdapter(agent, request)
     events = [event async for event in adapter.run_stream()]
 
     assert events == snapshot(
@@ -345,8 +344,8 @@ async def test_run_stream_tool_call():
             ]
         }
 
-    request = UIRequest(messages=[ModelRequest.user_text_prompt('Tell me about Hello World')])
-    adapter = UIAdapter(agent, request)
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Tell me about Hello World')])
+    adapter = DummyUIAdapter(agent, request)
     events = [event async for event in adapter.run_stream()]
 
     assert events == snapshot(
@@ -376,9 +375,9 @@ async def test_event_stream_file():
     async def event_generator():
         yield PartStartEvent(index=0, part=FilePart(content=BinaryImage(data=b'fake', media_type='image/png')))
 
-    request = UIRequest(messages=[ModelRequest.user_text_prompt('Hello')])
-    event_stream = UIEventStream(request=request)
-    events = [event async for event in event_stream.handle_stream(event_generator())]
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
 
     assert events == snapshot(
         [
@@ -394,11 +393,11 @@ async def test_event_stream_file():
 async def test_run_stream_external_tools():
     agent = Agent(model=TestModel())
 
-    request = UIRequest(
+    request = DummyUIRunInput(
         messages=[ModelRequest.user_text_prompt('Call a tool')],
         tool_defs=[ToolDefinition(name='external_tool')],
     )
-    adapter = UIAdapter(agent, request)
+    adapter = DummyUIAdapter(agent, request)
     events = [event async for event in adapter.run_stream()]
 
     assert events == snapshot(
@@ -451,8 +450,8 @@ async def test_run_stream_output_tool():
 
     agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=web_search)
 
-    request = UIRequest(messages=[ModelRequest.user_text_prompt('Tell me about Hello World')])
-    adapter = UIAdapter(agent, request)
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Tell me about Hello World')])
+    adapter = DummyUIAdapter(agent, request)
     events = [event async for event in adapter.run_stream()]
 
     assert events == snapshot(
@@ -485,8 +484,8 @@ async def test_run_stream_response_error():
 
     agent = Agent(model=FunctionModel(stream_function=stream_function))
 
-    request = UIRequest(messages=[ModelRequest.user_text_prompt('Tell me about Hello World')])
-    adapter = UIAdapter(agent, request)
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Tell me about Hello World')])
+    adapter = DummyUIAdapter(agent, request)
     events = [event async for event in adapter.run_stream()]
 
     assert events == snapshot(
@@ -517,8 +516,8 @@ async def test_run_stream_request_error():
     async def tool(query: str) -> str:
         raise ValueError('Unknown tool')
 
-    request = UIRequest(messages=[ModelRequest.user_text_prompt('Hello')])
-    adapter = UIAdapter(agent, request)
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = DummyUIAdapter(agent, request)
     events = [event async for event in adapter.run_stream()]
 
     assert events == snapshot(
@@ -540,12 +539,12 @@ async def test_run_stream_request_error():
 async def test_run_stream_on_complete_error():
     agent = Agent(model=TestModel())
 
-    request = UIRequest(messages=[ModelRequest.user_text_prompt('Hello')])
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
 
     def raise_error(run_result: AgentRunResult[Any]) -> None:
         raise ValueError('Faulty on_complete')
 
-    adapter = UIAdapter(agent, request)
+    adapter = DummyUIAdapter(agent, request)
     events = [event async for event in adapter.run_stream(on_complete=raise_error)]
 
     assert events == snapshot(
@@ -569,12 +568,12 @@ async def test_run_stream_on_complete_error():
 async def test_run_stream_on_complete():
     agent = Agent(model=TestModel())
 
-    request = UIRequest(messages=[ModelRequest.user_text_prompt('Hello')])
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
 
     async def on_complete(run_result: AgentRunResult[Any]) -> AsyncIterator[str]:
         yield '<custom>'
 
-    adapter = UIAdapter(agent, request)
+    adapter = DummyUIAdapter(agent, request)
     events = [event async for event in adapter.run_stream(on_complete=on_complete)]
 
     assert events == snapshot(
@@ -599,7 +598,7 @@ async def test_run_stream_on_complete():
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
 async def test_adapter_dispatch_request():
     agent = Agent(model=TestModel())
-    request = UIRequest(messages=[ModelRequest.user_text_prompt('Hello')])
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
 
     async def receive() -> dict[str, Any]:
         return {'type': 'http.request', 'body': request.model_dump_json().encode('utf-8')}
@@ -615,7 +614,7 @@ async def test_adapter_dispatch_request():
         receive=receive,
     )
 
-    response = await UIAdapter.dispatch_request(agent, starlette_request)
+    response = await DummyUIAdapter.dispatch_request(starlette_request, agent=agent)
 
     assert isinstance(response, StreamingResponse)
 
