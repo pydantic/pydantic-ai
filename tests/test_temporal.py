@@ -37,6 +37,8 @@ from pydantic_ai import (
     ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
+    WebSearchTool,
+    WebSearchUserLocation,
 )
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
@@ -79,7 +81,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
@@ -1169,9 +1171,8 @@ async def test_temporal_agent_run_stream_events(allow_model_requests: None):
     events = [event async for event in simple_temporal_agent.run_stream_events('What is the capital of Mexico?')]
     assert events == snapshot(
         [
-            PartStartEvent(index=0, part=TextPart(content='')),
+            PartStartEvent(index=0, part=TextPart(content='The')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='The')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' capital')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' of')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' Mexico')),
@@ -2099,3 +2100,55 @@ async def test_image_agent(allow_model_requests: None, client: Client):
                 id=ImageAgentWorkflow.__name__,
                 task_queue=TASK_QUEUE,
             )
+
+
+# Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
+web_search_model = OpenAIResponsesModel(
+    'gpt-5',
+    provider=OpenAIProvider(
+        api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key'),
+        http_client=http_client,
+    ),
+)
+
+web_search_agent = Agent(
+    web_search_model,
+    name='web_search_agent',
+    builtin_tools=[WebSearchTool(user_location=WebSearchUserLocation(city='Mexico City', country='MX'))],
+)
+
+# This needs to be done before the `TemporalAgent` is bound to the workflow.
+web_search_temporal_agent = TemporalAgent(
+    web_search_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+    model_activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=300)),
+)
+
+
+@workflow.defn
+class WebSearchAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await web_search_temporal_agent.run(prompt)
+        return result.output
+
+
+@pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
+    'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
+)
+async def test_web_search_agent_run_in_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WebSearchAgentWorkflow],
+        plugins=[AgentPlugin(web_search_temporal_agent)],
+    ):
+        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            WebSearchAgentWorkflow.run,
+            args=['In one sentence, what is the top news story in my country today?'],
+            id=WebSearchAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot(
+            'Severe floods and landslides across Veracruz, Hidalgo, and Puebla have cut off hundreds of communities and left dozens dead and many missing, prompting a major federal emergency response. ([apnews.com](https://apnews.com/article/5d036e18057361281e984b44402d3b1b?utm_source=openai))'
+        )

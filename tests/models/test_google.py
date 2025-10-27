@@ -907,7 +907,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
     )
     agent = Agent(m, instructions='You hate the world!', model_settings=settings)
 
-    with pytest.raises(UnexpectedModelBehavior, match='Safety settings triggered'):
+    with pytest.raises(UnexpectedModelBehavior, match="Content filter 'SAFETY' triggered"):
         await agent.run('Tell me a joke about a Brazilians.')
 
 
@@ -2737,7 +2737,7 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
 
 
 async def test_google_image_generation(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(m, output_type=BinaryImage)
 
     result = await agent.run('Generate an image of an axolotl.')
@@ -2778,7 +2778,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                     output_tokens=1304,
                     details={'text_prompt_tokens': 10, 'image_candidates_tokens': 1290},
                 ),
-                model_name='gemini-2.5-flash-image-preview',
+                model_name='gemini-2.5-flash-image',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
@@ -2824,7 +2824,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                     output_tokens=1304,
                     details={'text_prompt_tokens': 32, 'image_prompt_tokens': 1290, 'image_candidates_tokens': 1290},
                 ),
-                model_name='gemini-2.5-flash-image-preview',
+                model_name='gemini-2.5-flash-image',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
@@ -2836,7 +2836,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
 
 
 async def test_google_image_generation_stream(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(m, output_type=BinaryImage)
 
     async with agent.run_stream('Generate an image of an axolotl') as result:
@@ -2893,7 +2893,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                     output_tokens=1295,
                     details={'text_prompt_tokens': 10, 'image_candidates_tokens': 1290},
                 ),
-                model_name='gemini-2.5-flash-image-preview',
+                model_name='gemini-2.5-flash-image',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
@@ -2924,7 +2924,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
 
 
 async def test_google_image_generation_with_text(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(m)
 
     result = await agent.run('Generate an illustrated two-sentence story about an axolotl.')
@@ -2962,7 +2962,7 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
                     output_tokens=1335,
                     details={'text_prompt_tokens': 14, 'image_candidates_tokens': 1290},
                 ),
-                model_name='gemini-2.5-flash-image-preview',
+                model_name='gemini-2.5-flash-image',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
@@ -2974,8 +2974,8 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
 
 
 async def test_google_image_or_text_output(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
-    # ImageGenerationTool is listed here to indicate just that it doesn't cause any issues, even though it's not necessary with an image-preview model.
+    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
+    # ImageGenerationTool is listed here to indicate just that it doesn't cause any issues, even though it's not necessary with an image model.
     agent = Agent(m, output_type=str | BinaryImage, builtin_tools=[ImageGenerationTool()])
 
     result = await agent.run('Tell me a two-sentence story about an axolotl, no image please.')
@@ -2995,7 +2995,7 @@ async def test_google_image_or_text_output(allow_model_requests: None, google_pr
 
 
 async def test_google_image_and_text_output(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(m)
 
     result = await agent.run('Tell me a two-sentence story about an axolotl with an illustration.')
@@ -3019,7 +3019,7 @@ async def test_google_image_generation_with_tool_output(allow_model_requests: No
         species: str
         name: str
 
-    model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(model=model, output_type=Animal)
 
     with pytest.raises(UserError, match='Tool output is not supported by this model.'):
@@ -3031,7 +3031,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
         species: str
         name: str
 
-    model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(model=model, output_type=NativeOutput(Animal))
 
     with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
@@ -3045,7 +3045,7 @@ async def test_google_image_generation_with_prompted_output(
         species: str
         name: str
 
-    model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(model=model, output_type=PromptedOutput(Animal))
 
     with pytest.raises(UserError, match='JSON output is not supported by this model.'):
@@ -3053,7 +3053,7 @@ async def test_google_image_generation_with_prompted_output(
 
 
 async def test_google_image_generation_with_tools(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(model=model, output_type=BinaryImage)
 
     @agent.tool_plain
@@ -3076,15 +3076,20 @@ async def test_google_image_generation_tool(allow_model_requests: None, google_p
 
 
 async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):
-    model = GoogleModel('gemini-2.5-flash-image-preview', provider=vertex_provider)
+    model = GoogleModel('gemini-2.5-flash-image', provider=vertex_provider)
 
     agent = Agent(model, output_type=BinaryImage)
 
     result = await agent.run('Generate an image of an axolotl.')
-    assert result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/png',
-            identifier='f3edd8',
-        )
-    )
+    assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/png', identifier='b037a4'))
+
+
+async def test_google_httpx_client_is_not_closed(allow_model_requests: None, gemini_api_key: str):
+    # This should not raise any errors, see https://github.com/pydantic/pydantic-ai/issues/3242.
+    agent = Agent(GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key=gemini_api_key)))
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot('The capital of France is **Paris**.')
+
+    agent = Agent(GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key=gemini_api_key)))
+    result = await agent.run('What is the capital of Mexico?')
+    assert result.output == snapshot('The capital of Mexico is **Mexico City**.')

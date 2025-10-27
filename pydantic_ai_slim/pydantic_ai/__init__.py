@@ -12,6 +12,7 @@ from .agent import (
 from .builtin_tools import (
     CodeExecutionTool,
     ImageGenerationTool,
+    MCPServerTool,
     MemoryTool,
     UrlContextTool,
     WebSearchTool,
@@ -22,6 +23,7 @@ from .exceptions import (
     ApprovalRequired,
     CallDeferred,
     FallbackExceptionGroup,
+    IncompleteToolCall,
     ModelHTTPError,
     ModelRetry,
     UnexpectedModelBehavior,
@@ -125,6 +127,7 @@ __all__ = (
     'ModelRetry',
     'ModelHTTPError',
     'FallbackExceptionGroup',
+    'IncompleteToolCall',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'UserError',
@@ -213,6 +216,7 @@ __all__ = (
     'CodeExecutionTool',
     'ImageGenerationTool',
     'MemoryTool',
+    'MCPServerTool',
     # output
     'ToolOutput',
     'NativeOutput',

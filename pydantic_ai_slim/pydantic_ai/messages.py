@@ -480,7 +480,7 @@ class BinaryContent:
     """
 
     _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
-        compare=False, default=None
+        compare=False, default=None, repr=False
     )
 
     kind: Literal['binary'] = 'binary'

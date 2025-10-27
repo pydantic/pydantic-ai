@@ -208,9 +208,11 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
 
     @flow(name='test_complex_agent_run_in_flow')
     async def run_complex_agent() -> Response:
-        result = await complex_prefect_agent.run(
-            'Tell me: the capital of the country; the weather there; the product name', deps=Deps(country='Mexico')
-        )
+        # Use sequential tool calls to avoid flaky test due to non-deterministic ordering
+        with Agent.sequential_tool_calls():
+            result = await complex_prefect_agent.run(
+                'Tell me: the capital of the country; the weather there; the product name', deps=Deps(country='Mexico')
+            )
         return result.output
 
     # Prefect sets the `traceparent` header, so we explicitly disable distributed tracing for the tests to avoid the warning,
@@ -373,23 +375,6 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     content='running 2 tools',
                                     children=[
                                         BasicSpan(
-                                            content='running tool: get_product_name',
-                                            children=[
-                                                BasicSpan(content=IsStr(regex=r'Call MCP Tool: get_product_name-\w+'))
-                                            ],
-                                        ),
-                                        BasicSpan(
-                                            content=IsStr(regex=r'Handle Stream Event-\w+'),
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=2'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'\{"result":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
-                                                    )
-                                                ),
-                                            ],
-                                        ),
-                                        BasicSpan(
                                             content='running tool: get_weather',
                                             children=[
                                                 BasicSpan(
@@ -405,6 +390,23 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                                 BasicSpan(
                                                     content=IsStr(
                                                         regex=r'\{"result":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                    )
+                                                ),
+                                            ],
+                                        ),
+                                        BasicSpan(
+                                            content='running tool: get_product_name',
+                                            children=[
+                                                BasicSpan(content=IsStr(regex=r'Call MCP Tool: get_product_name-\w+'))
+                                            ],
+                                        ),
+                                        BasicSpan(
+                                            content=IsStr(regex=r'Handle Stream Event-\w+'),
+                                            children=[
+                                                BasicSpan(content='ctx.run_step=2'),
+                                                BasicSpan(
+                                                    content=IsStr(
+                                                        regex=r'\{"result":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                                     )
                                                 ),
                                             ],

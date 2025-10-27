@@ -5371,7 +5371,6 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content=''),
                     ThinkingPart(
                         content="""\
 The user requests to call the tool with non-existent parameters to test error handling. We need to call the function "get_something_by_name" with wrong parameters. The function expects a single argument object with "name". Non-existent parameters means we could provide a wrong key, or missing name. Let's provide an object with wrong key "nonexistent": "value". That should cause error. So we call the function with {"nonexistent": "test"}.
@@ -5416,7 +5415,6 @@ We need to output the call.\
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content=''),
                     ThinkingPart(content='We need to call with correct param: name. Use a placeholder name.'),
                     ToolCallPart(
                         tool_name='get_something_by_name',

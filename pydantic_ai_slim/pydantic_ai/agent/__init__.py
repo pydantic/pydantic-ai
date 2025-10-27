@@ -15,7 +15,6 @@ from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
-from pydantic_graph import Graph
 
 from .. import (
     _agent_graph,
@@ -41,7 +40,6 @@ from ..builtin_tools import AbstractBuiltinTool
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec
 from ..profiles import ModelProfile
-from ..result import FinalResult
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import (
@@ -542,6 +540,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
+
         model_used = self._get_model(model)
         del model
 
@@ -565,9 +564,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_manager = ToolManager[AgentDepsT](toolset)
 
         # Build the graph
-        graph: Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[Any]] = (
-            _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
-        )
+        graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
 
         # Build the initial state
         usage = usage or _usage.RunUsage()
@@ -607,16 +604,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             instrumentation_settings = None
             tracer = NoOpTracer()
-        if builtin_tools:
-            # Deduplicate builtin tools passed to the agent and the run based on type
-            builtin_tools = list(
-                {
-                    **({type(tool): tool for tool in self._builtin_tools or []}),
-                    **({type(tool): tool for tool in builtin_tools}),
-                }.values()
-            )
-        else:
-            builtin_tools = list(self._builtin_tools)
+
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,
             prompt=user_prompt,
@@ -629,14 +617,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_schema=output_schema,
             output_validators=output_validators,
             history_processors=self.history_processors,
-            builtin_tools=builtin_tools,
+            builtin_tools=[*self._builtin_tools, *(builtin_tools or [])],
             tool_manager=tool_manager,
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
         )
 
-        start_node = _agent_graph.UserPromptNode[AgentDepsT](
+        user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
             deferred_tool_results=deferred_tool_results,
             instructions=instructions_literal,
@@ -662,14 +650,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         try:
-            async with toolset:
-                async with graph.iter(
-                    start_node,
-                    state=state,
-                    deps=graph_deps,
-                    span=use_span(run_span) if run_span.is_recording() else None,
-                    infer_name=False,
-                ) as graph_run:
+            async with graph.iter(
+                inputs=user_prompt_node,
+                state=state,
+                deps=graph_deps,
+                span=use_span(run_span) if run_span.is_recording() else None,
+                infer_name=False,
+            ) as graph_run:
+                async with toolset:
                     agent_run = AgentRun(graph_run)
                     yield agent_run
                     if (final_result := agent_run.result) is not None and run_span.is_recording():
@@ -1029,6 +1017,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         name: str | None = None,
+        description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
@@ -1046,6 +1035,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         name: str | None = None,
+        description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
@@ -1088,6 +1078,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             func: The tool function to register.
             name: The name of the tool, defaults to the function name.
+            description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
@@ -1113,6 +1104,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 func_,
                 takes_ctx=True,
                 name=name,
+                description=description,
                 retries=retries,
                 prepare=prepare,
                 docstring_format=docstring_format,
@@ -1136,6 +1128,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         name: str | None = None,
+        description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
@@ -1153,6 +1146,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         name: str | None = None,
+        description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
@@ -1195,6 +1189,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             func: The tool function to register.
             name: The name of the tool, defaults to the function name.
+            description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
@@ -1218,6 +1213,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 func_,
                 takes_ctx=False,
                 name=name,
+                description=description,
                 retries=retries,
                 prepare=prepare,
                 docstring_format=docstring_format,

@@ -739,7 +739,7 @@ try:
 except UnexpectedModelBehavior as e:
     print(e)  # (1)!
     """
-    Safety settings triggered, body:
+    Content filter 'SAFETY' triggered, body:
     <safety settings details>
     """
 ```
