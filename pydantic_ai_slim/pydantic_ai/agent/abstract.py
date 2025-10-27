@@ -614,18 +614,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         If you want to always run the agent graph to completion and stream events and output at the same time,
         use [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] with an `event_stream_handler` or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] instead.
 
-        Example:
-        ```python
-        from pydantic_ai import Agent
-
-        agent = Agent('openai:gpt-4o')
-
-        def main():
-            with agent.run_stream_sync('What is the capital of the UK?') as response:
-                print(response.get_output_sync())
-                #> The capital of the UK is London.
-        ```
-
         Args:
             user_prompt: User input to start/continue the conversation.
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
