@@ -20,7 +20,7 @@ result = agent.run_sync(
     ]
 )
 print(result.output)
-# > This is the logo for Pydantic, a data validation and settings management library in Python.
+#> This is the logo for Pydantic, a data validation and settings management library in Python.
 ```
 
 If you have the image locally, you can also use [`BinaryContent`][pydantic_ai.BinaryContent]:
@@ -40,7 +40,7 @@ result = agent.run_sync(
     ]
 )
 print(result.output)
-# > This is the logo for Pydantic, a data validation and settings management library in Python.
+#> This is the logo for Pydantic, a data validation and settings management library in Python.
 ```
 
 1. To ensure the example is runnable we download this image from the web, but you can also use `Path().read_bytes()` to read a local file's contents.
@@ -79,7 +79,7 @@ result = agent.run_sync(
     ]
 )
 print(result.output)
-# > This document is the technical report introducing Gemini 1.5, Google's latest large language model...
+#> This document is the technical report introducing Gemini 1.5, Google's latest large language model...
 ```
 
 The supported document formats vary by model.
@@ -99,7 +99,7 @@ result = agent.run_sync(
     ]
 )
 print(result.output)
-# > The document discusses...
+#> The document discusses...
 ```
 
 ## User-side download vs. direct file URL
