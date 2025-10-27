@@ -33,8 +33,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, RunContext
 
-# Make sure to set CO_API_KEY token. Or Change the model and token based on relevant provider
-MODEL = 'cohere:command-r7b-12-2024'
+MODEL = 'openai:gpt-4.1-mini'
 
 
 # Structured Outputs
