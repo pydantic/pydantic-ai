@@ -2,7 +2,7 @@
 
 ## Install
 
-As Outlines is a library allowing you to run models from various different providers, it does not include the necessary dependencies for any provider by default. As a result, to use the [`OutlinesModel`][pydantic_ai.models.OutlinesModel], you must install `pydantic-ai-slim` with an optional group composed of outlines, a dash, and the name of the specific model provider you would use through Outlines. For instance:
+As Outlines is a library allowing you to run models from various different providers, it does not include the necessary dependencies for any provider by default. As a result, to use the [`OutlinesModel`][pydantic_ai.models.outlines.OutlinesModel], you must install `pydantic-ai-slim` with an optional group composed of outlines, a dash, and the name of the specific model provider you would use through Outlines. For instance:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[outlines-transformers]"
@@ -51,11 +51,11 @@ Alternatively, you can use some `OutlinesModel` class methods made to load a spe
 
 There are methods for the 5 Outlines models that are officially supported in the integration into Pydantic AI:
 
-- [`from_transformers`][pydantic_ai.models.OutlinesModel.from_transformers]
-- [`from_llamacpp`][pydantic_ai.models.OutlinesModel.from_llamacpp]
-- [`from_mlxlm`][pydantic_ai.models.OutlinesModel.from_mlxlm]
-- [`from_sglang`][pydantic_ai.models.OutlinesModel.from_sglang]
-- [`from_vllm_offline`][pydantic_ai.models.OutlinesModel.from_vllm_offline]
+- [`from_transformers`][pydantic_ai.models.outlines.OutlinesModel.from_transformers]
+- [`from_llamacpp`][pydantic_ai.models.outlines.OutlinesModel.from_llamacpp]
+- [`from_mlxlm`][pydantic_ai.models.outlines.OutlinesModel.from_mlxlm]
+- [`from_sglang`][pydantic_ai.models.outlines.OutlinesModel.from_sglang]
+- [`from_vllm_offline`][pydantic_ai.models.outlines.OutlinesModel.from_vllm_offline]
 
 #### Transformers
 
@@ -125,7 +125,7 @@ model = OutlinesModel.from_vllm_offline(
 
 Once you have initialized an `OutlinesModel`, you can use it with an Agent as with all other Pydantic AI models.
 
-As Outlines is focused on structured output, this provider supports the `output_type` component through the [`NativeOutput`][pydantic_ai.outputs.NativeOutput] format. There is not need to include information on the required output format in your prompt, instructions based on the `output_type` will be included automatically.
+As Outlines is focused on structured output, this provider supports the `output_type` component through the [`NativeOutput`][pydantic_ai.output.NativeOutput] format. There is not need to include information on the required output format in your prompt, instructions based on the `output_type` will be included automatically.
 
 ```python {test="skip"}
 from pydantic import BaseModel
