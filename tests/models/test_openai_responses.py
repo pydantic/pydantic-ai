@@ -6960,6 +6960,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=3,
@@ -6968,6 +6969,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                     tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
                     provider_name='openai',
                 ),
+                previous_part_kind='thinking',
             ),
             PartDeltaEvent(
                 index=3,
@@ -7075,6 +7077,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
         ]
     )

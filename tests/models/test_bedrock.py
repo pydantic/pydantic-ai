@@ -1363,8 +1363,16 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
                     content='The user just says "Hi". We need to respond appropriately, friendly greeting. No special instructions. Should be short.'
                 ),
             ),
-            PartStartEvent(index=1, part=TextPart(content='Hello! How can I help')),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='The user just says "Hi". We need to respond appropriately, friendly greeting. No special instructions. Should be short.'
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=1, part=TextPart(content='Hello! How can I help'), previous_part_kind='thinking'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you today?')),
+            PartEndEvent(index=1, part=TextPart(content='Hello! How can I help you today?')),
         ]
     )

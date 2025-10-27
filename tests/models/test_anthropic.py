@@ -3649,6 +3649,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
                     tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
                     provider_name='anthropic',
                 ),
+                previous_part_kind='thinking',
             ),
             PartDeltaEvent(
                 index=1,
@@ -3811,6 +3812,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
         ]
     )
