@@ -1355,7 +1355,7 @@ async def test_evaluation_renderer_diff_with_no_metadata(sample_report_case: Rep
         include_errors=False,  # Prevent failures table from being added
     )
     assert output == snapshot("""\
-                    Evaluation Diff: baseline_report → new_report
+                    Evaluation Diff: baseline_report → new_report                     \n\
 ┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
 ┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
