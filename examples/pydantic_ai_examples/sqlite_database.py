@@ -8,9 +8,10 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, LiteralString, ParamSpec, TypeVar
+from typing import Any, ParamSpec, TypeVar
 
 import logfire
+from typing_extensions import LiteralString
 
 P = ParamSpec('P')
 R = TypeVar('R')
