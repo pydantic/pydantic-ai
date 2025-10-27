@@ -286,7 +286,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             task_name: Optional override to the name of the task being executed, otherwise the name of the task
                 function will be used.
             metadata: Optional dict of experiment metadata.
-            tags: Optional sequence of logfire tags.
+            tags: Optional sequence of tags to add to the experiment span.
 
         Returns:
             A report containing the results of the evaluation.
@@ -308,7 +308,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 task_name=task_name,
                 dataset_name=self.name,
                 n_cases=len(self.cases),
-                metadata=metadata,
                 **extra_attributes,
                 _tags=tags,
             ) as eval_span,
@@ -372,6 +371,10 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         progress: bool = True,
         retry_task: RetryConfig | None = None,
         retry_evaluators: RetryConfig | None = None,
+        *,
+        task_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        tags: Sequence[str] | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -387,6 +390,10 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             progress: Whether to show a progress bar for the evaluation. Defaults to True.
             retry_task: Optional retry configuration for the task execution.
             retry_evaluators: Optional retry configuration for evaluator execution.
+            task_name: Optional override to the name of the task being executed, otherwise the name of the task
+                function will be used.
+            metadata: Optional dict of experiment metadata.
+            tags: Optional sequence of tags to add to the experiment span.
 
         Returns:
             A report containing the results of the evaluation.
@@ -394,11 +401,14 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         return get_event_loop().run_until_complete(
             self.evaluate(
                 task,
-                task_name=name,
+                name=name,
                 max_concurrency=max_concurrency,
                 progress=progress,
                 retry_task=retry_task,
                 retry_evaluators=retry_evaluators,
+                task_name=task_name,
+                metadata=metadata,
+                tags=tags,
             )
         )
 

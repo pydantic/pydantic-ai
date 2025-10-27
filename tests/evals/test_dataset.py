@@ -1750,3 +1750,23 @@ async def test_evaluate_async_logfire(
             ),
         ]
     )
+
+
+async def test_evaluate_with_experiment_metadata(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test that experiment metadata passed to evaluate() appears in the report."""
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query.upper())
+
+    # Pass experiment metadata to evaluate()
+    experiment_metadata = {
+        'model': 'gpt-4o',
+        'prompt_version': 'v2.1',
+        'temperature': 0.7,
+        'max_tokens': 1000,
+    }
+
+    report = await example_dataset.evaluate(task, metadata=experiment_metadata)
+
+    # Verify that the report contains the experiment metadata
+    assert report.experiment_metadata == experiment_metadata
