@@ -556,6 +556,20 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
     def mode(self) -> OutputMode:
         return 'prompted'
 
+    @classmethod
+    def build_instructions(cls, template: str, object_def: OutputObjectDefinition) -> str:
+        """Build instructions from a template and an object definition."""
+        schema = object_def.json_schema.copy()
+        if object_def.name:
+            schema['title'] = object_def.name
+        if object_def.description:
+            schema['description'] = object_def.description
+
+        if '{schema}' not in template:
+            template = '\n\n'.join([template, '{schema}'])
+
+        return template.format(schema=json.dumps(schema))
+
     def raise_if_unsupported(self, profile: ModelProfile) -> None:
         """Raise an error if the mode is not supported by this model."""
         super().raise_if_unsupported(profile)
@@ -563,18 +577,8 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
     def instructions(self, default_template: str) -> str:
         """Get instructions to tell model to output JSON matching the schema."""
         template = self.template or default_template
-
-        if '{schema}' not in template:
-            template = '\n\n'.join([template, '{schema}'])
-
         object_def = self.object_def
-        schema = object_def.json_schema.copy()
-        if object_def.name:
-            schema['title'] = object_def.name
-        if object_def.description:
-            schema['description'] = object_def.description
-
-        return template.format(schema=json.dumps(schema))
+        return self.build_instructions(template, object_def)
 
 
 @dataclass(init=False)
