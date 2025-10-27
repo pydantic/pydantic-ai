@@ -15,10 +15,6 @@ from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     ModelMessage,
-    ModelRequest,
-    ModelRequestPart,
-    ModelResponse,
-    ModelResponsePart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -43,6 +39,7 @@ try:
 
     from ..adapter import UIAdapter
     from ..event_stream import UIEventStream
+    from ..messages_builder import MessagesBuilder
     from ._event_stream import BUILTIN_TOOL_CALL_ID_PREFIX, AGUIEventStream
 except ImportError as e:  # pragma: no cover
     raise ImportError(
@@ -94,7 +91,7 @@ class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
 
 
 class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, OutputDataT]):
-    """TODO (DouwM): Docstring."""
+    """TODO (DouweM): Docstring."""
 
     @classmethod
     async def build_run_input(cls, request: Request) -> RunAgentInput:
@@ -132,31 +129,24 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     @classmethod
     def load_messages(cls, messages: Sequence[Message]) -> list[ModelMessage]:
         """Load messages from the request and return the loaded messages."""
-        result: list[ModelMessage] = []
+        builder = MessagesBuilder()
         tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
-        request_parts: list[ModelRequestPart] | None = None
-        response_parts: list[ModelResponsePart] | None = None
 
         for msg in messages:
             if isinstance(msg, UserMessage | SystemMessage | DeveloperMessage) or (
                 isinstance(msg, ToolMessage) and not msg.tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX)
             ):
-                if request_parts is None:
-                    request_parts = []
-                    result.append(ModelRequest(parts=request_parts))
-                    response_parts = None
-
                 if isinstance(msg, UserMessage):
-                    request_parts.append(UserPromptPart(content=msg.content))
+                    builder.add(UserPromptPart(content=msg.content))
                 elif isinstance(msg, SystemMessage | DeveloperMessage):
-                    request_parts.append(SystemPromptPart(content=msg.content))
+                    builder.add(SystemPromptPart(content=msg.content))
                 else:
                     tool_call_id = msg.tool_call_id
                     tool_name = tool_calls.get(tool_call_id)
                     if tool_name is None:  # pragma: no cover
                         raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
 
-                    request_parts.append(
+                    builder.add(
                         ToolReturnPart(
                             tool_name=tool_name,
                             content=msg.content,
@@ -167,14 +157,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             elif isinstance(msg, AssistantMessage) or (  # pragma: no branch
                 isinstance(msg, ToolMessage) and msg.tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX)
             ):
-                if response_parts is None:
-                    response_parts = []
-                    result.append(ModelResponse(parts=response_parts))
-                    request_parts = None
-
                 if isinstance(msg, AssistantMessage):
                     if msg.content:
-                        response_parts.append(TextPart(content=msg.content))
+                        builder.add(TextPart(content=msg.content))
 
                     if msg.tool_calls:
                         for tool_call in msg.tool_calls:
@@ -184,7 +169,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
                             if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
                                 _, provider_name, tool_call_id = tool_call_id.split('|', 2)
-                                response_parts.append(
+                                builder.add(
                                     BuiltinToolCallPart(
                                         tool_name=tool_name,
                                         args=tool_call.function.arguments,
@@ -193,7 +178,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                     )
                                 )
                             else:
-                                response_parts.append(
+                                builder.add(
                                     ToolCallPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
@@ -207,7 +192,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
                     _, provider_name, tool_call_id = tool_call_id.split('|', 2)
 
-                    response_parts.append(
+                    builder.add(
                         BuiltinToolReturnPart(
                             tool_name=tool_name,
                             content=msg.content,
@@ -216,4 +201,4 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
                     )
 
-        return result
+        return builder.messages

@@ -60,7 +60,7 @@ def _json_dumps(obj: Any) -> str:
 
 @dataclass
 class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]):
-    """TODO (DouwM): Docstring."""
+    """TODO (DouweM): Docstring."""
 
     _step_started: bool = False
 

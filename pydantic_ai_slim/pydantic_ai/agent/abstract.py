@@ -755,7 +755,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 yield message
 
         result = await task
-        # TODO (DouweM): Consider adding this to every event stream, if we're adding new events anyway
         yield AgentRunResultEvent(result)
 
     @overload

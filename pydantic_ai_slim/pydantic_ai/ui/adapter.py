@@ -106,7 +106,7 @@ class StateDeps(Generic[StateT]):
 
 @dataclass
 class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputDataT]):
-    """TODO (DouwM): Docstring."""
+    """TODO (DouweM): Docstring."""
 
     agent: AbstractAgent[AgentDepsT, OutputDataT]
     """The Pydantic AI agent to run."""
@@ -123,7 +123,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     async def from_request(
         cls, request: Request, *, agent: AbstractAgent[AgentDepsT, OutputDataT]
     ) -> UIAdapter[RunInputT, MessageT, EventT, AgentDepsT, OutputDataT]:
-        """Create an adapter from a protocol-specific request."""
+        """Create an adapter from a protocol-specific run input."""
         return cls(
             agent=agent,
             run_input=await cls.build_run_input(request),
@@ -150,17 +150,17 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     @cached_property
     @abstractmethod
     def messages(self) -> list[ModelMessage]:
-        """Pydantic AI messages from the protocol-specific request."""
+        """Pydantic AI messages from the protocol-specific run input."""
         raise NotImplementedError
 
     @cached_property
     def toolset(self) -> AbstractToolset[AgentDepsT] | None:
-        """Toolset representing frontend tools from the protocol-specific request."""
+        """Toolset representing frontend tools from the protocol-specific run input."""
         return None
 
     @cached_property
     def state(self) -> dict[str, Any] | None:
-        """Run state from the protocol-specific request."""
+        """Run state from the protocol-specific run input."""
         return None
 
     def transform_stream(
@@ -210,7 +210,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     ) -> AsyncIterator[NativeEvent]:
-        """Run the agent with the protocol-specific request as input and stream Pydantic AI events.
+        """Run the agent with the protocol-specific run input and stream Pydantic AI events.
 
         Args:
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
@@ -276,7 +276,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
     ) -> AsyncIterator[EventT]:
-        """Run the agent with the protocol-specific request as input and stream protocol-specific events.
+        """Run the agent with the protocol-specific run input and stream protocol-specific events.
 
         Args:
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
@@ -333,8 +333,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """Handle an protocol-specific HTTP request by running the agent and return a streaming response of protocol-specific events.
 
         Args:
-            agent: The agent to run.
             request: The incoming Starlette/FastAPI request.
+            agent: The agent to run.
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.

@@ -23,9 +23,8 @@ try:
     from ag_ui.core import BaseEvent
     from ag_ui.core.types import RunAgentInput
 
-    from .ui import OnCompleteFunc, StateDeps, StateHandler
+    from .ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps, StateHandler
     from .ui.ag_ui import (
-        SSE_CONTENT_TYPE,
         AGUIAdapter,
         AGUIApp,
     )

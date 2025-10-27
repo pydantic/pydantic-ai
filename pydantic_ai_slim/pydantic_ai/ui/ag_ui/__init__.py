@@ -8,12 +8,11 @@ from pydantic_ai.tools import AgentDepsT
 
 from .. import UIApp
 from ._adapter import AGUIAdapter
-from ._event_stream import SSE_CONTENT_TYPE, AGUIEventStream
+from ._event_stream import AGUIEventStream
 
 __all__ = [
     'AGUIAdapter',
     'AGUIEventStream',
-    'SSE_CONTENT_TYPE',
     'AGUIApp',
 ]
 

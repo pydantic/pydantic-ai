@@ -69,7 +69,7 @@ OnCompleteFunc: TypeAlias = (
 
 @dataclass
 class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
-    """TODO (DouwM): Docstring."""
+    """TODO (DouweM): Docstring."""
 
     run_input: RunInputT
 
@@ -164,8 +164,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         try:
             async for event in stream:
-                # TODO (DouweM): Introduce, possibly, MessageStartEvent, MessageEndEvent with ModelRequest/Response?
-                # People have requested these before. We can store Request and Response
                 if isinstance(event, PartStartEvent):
                     async for e in self._turn_to('response'):
                         yield e

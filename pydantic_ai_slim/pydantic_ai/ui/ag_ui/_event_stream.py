@@ -69,7 +69,7 @@ BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
 @dataclass
 class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]):
-    """TODO (DouwM): Docstring."""
+    """TODO (DouweM): Docstring."""
 
     _thinking_text: bool = False
     _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict)

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Generic, Self
+from typing import Any, Generic
+
+from typing_extensions import Self
 
 from .. import DeferredToolResults
 from ..agent import AbstractAgent
+from ..builtin_tools import AbstractBuiltinTool
 from ..messages import ModelMessage
 from ..models import KnownModelName, Model
 from ..output import OutputDataT, OutputSpec
@@ -12,7 +15,7 @@ from ..settings import ModelSettings
 from ..tools import AgentDepsT
 from ..toolsets import AbstractToolset
 from ..usage import RunUsage, UsageLimits
-from .adapter import UIAdapter
+from .adapter import OnCompleteFunc, UIAdapter
 
 try:
     from starlette.applications import Starlette
@@ -36,7 +39,7 @@ class UIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         adapter_type: type[UIAdapter[Any, Any, Any, AgentDepsT, OutputDataT]],
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         *,
-        # Agent.iter parameters.
+        # UIAdapter.dispatch_request parameters
         output_type: OutputSpec[Any] | None = None,
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
@@ -47,7 +50,9 @@ class UIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         usage: RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        # Starlette parameters.
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        on_complete: OnCompleteFunc[Any] | None = None,
+        # Starlette parameters
         debug: bool = False,
         routes: Sequence[BaseRoute] | None = None,
         middleware: Sequence[Middleware] | None = None,
@@ -58,12 +63,11 @@ class UIApp(Generic[AgentDepsT, OutputDataT], Starlette):
     ) -> None:
         """An ASGI application that handles every request by running the agent and streaming the response.
 
-        # TODO (DouweM): Docstring
-        Note that the `deps` will be the same for each request, with the exception of the AG-UI state that's
-        injected into the `state` field of a `deps` object that implements the [`StateHandler`][pydantic_ai.ag_ui.StateHandler] protocol.
+        Note that the `deps` will be the same for each request, with the exception of the frontend state that's
+        injected into the `state` field of a `deps` object that implements the [`StateHandler`][pydantic_ai.ui.StateHandler] protocol.
         To provide different `deps` for each request (e.g. based on the authenticated user),
-        use [`pydantic_ai.ag_ui.run_ag_ui`][pydantic_ai.ag_ui.run_ag_ui] or
-        [`pydantic_ai.ag_ui.handle_ag_ui_request`][pydantic_ai.ag_ui.handle_ag_ui_request] instead.
+        use [`UIAdapter.run_stream()`][pydantic_ai.ui.UIAdapter.run_stream] or
+        [`UIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] instead.
 
         Args:
             adapter_type: The type of the UI adapter to use.
@@ -81,6 +85,9 @@ class UIApp(Generic[AgentDepsT, OutputDataT], Starlette):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
+            builtin_tools: Optional additional builtin tools for this run.
+            on_complete: Optional callback function called when the agent run completes successfully.
+                The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
 
             debug: Boolean indicating if debug tracebacks should be returned on errors.
             routes: A list of routes to serve incoming HTTP and WebSocket requests.
@@ -125,6 +132,8 @@ class UIApp(Generic[AgentDepsT, OutputDataT], Starlette):
                 usage=usage,
                 infer_name=infer_name,
                 toolsets=toolsets,
+                builtin_tools=builtin_tools,
+                on_complete=on_complete,
             )
 
         self.router.add_route('/', run_agent, methods=['POST'])
