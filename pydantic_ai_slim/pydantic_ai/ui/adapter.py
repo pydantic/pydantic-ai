@@ -33,7 +33,7 @@ from ..output import OutputDataT, OutputSpec
 from ..settings import ModelSettings
 from ..toolsets import AbstractToolset
 from ..usage import RunUsage, UsageLimits
-from .event_stream import BaseEventStream, OnCompleteFunc, SourceEvent
+from .event_stream import OnCompleteFunc, SourceEvent, UIEventStream
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    'BaseAdapter',
+    'UIAdapter',
 ]
 
 
@@ -107,7 +107,7 @@ class StateDeps(Generic[StateT]):
 
 
 @dataclass
-class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, OutputDataT]):
+class UIAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, OutputDataT]):
     """TODO (DouwM): Docstring."""
 
     agent: AbstractAgent[AgentDepsT, OutputDataT]
@@ -131,7 +131,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, Output
     @abstractmethod
     def build_event_stream(
         self, accept: str | None = None
-    ) -> BaseEventStream[RunRequestT, EventT, AgentDepsT, OutputDataT]:
+    ) -> UIEventStream[RunRequestT, EventT, AgentDepsT, OutputDataT]:
         """Create an event stream for the adapter.
 
         Args:
@@ -235,7 +235,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, Output
         toolset = self.toolset
         if toolset:
             output_type = [output_type or self.agent.output_type, DeferredToolRequests]
-            toolsets = [*toolsets, toolset] if toolsets else [toolset]
+            toolsets = [*(toolsets or []), toolset]
 
         if isinstance(deps, StateHandler):
             raw_state = self.state or {}

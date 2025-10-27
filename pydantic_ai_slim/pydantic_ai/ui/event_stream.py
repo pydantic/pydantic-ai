@@ -41,7 +41,7 @@ from ..run import AgentRunResult, AgentRunResultEvent
 from ..tools import AgentDepsT
 
 __all__ = [
-    'BaseEventStream',
+    'UIEventStream',
 ]
 
 SSE_CONTENT_TYPE = 'text/event-stream'
@@ -64,7 +64,7 @@ OnCompleteFunc: TypeAlias = (
 
 
 @dataclass
-class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT, OutputDataT]):
+class UIEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT, OutputDataT]):
     """TODO (DouwM): Docstring."""
 
     request: RunRequestT

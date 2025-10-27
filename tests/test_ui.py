@@ -46,8 +46,8 @@ from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
-from pydantic_ai.ui.adapter import BaseAdapter
-from pydantic_ai.ui.event_stream import BaseEventStream, SourceEvent
+from pydantic_ai.ui.adapter import UIAdapter
+from pydantic_ai.ui.event_stream import SourceEvent, UIEventStream
 
 from .conftest import try_import
 
@@ -83,7 +83,7 @@ class UIDeps:
     state: UIState
 
 
-class UIAdapter(BaseAdapter[UIRequest, ModelMessage, str, AgentDepsT, OutputDataT]):
+class UIAdapter(UIAdapter[UIRequest, ModelMessage, str, AgentDepsT, OutputDataT]):
     @classmethod
     async def validate_request(cls, request: Request) -> UIRequest:
         return UIRequest.model_validate(await request.json())
@@ -113,7 +113,7 @@ class UIAdapter(BaseAdapter[UIRequest, ModelMessage, str, AgentDepsT, OutputData
 
 
 @dataclass(kw_only=True)
-class UIEventStream(BaseEventStream[UIRequest, str, AgentDepsT, OutputDataT]):
+class UIEventStream(UIEventStream[UIRequest, str, AgentDepsT, OutputDataT]):
     def encode_event(self, event: str) -> str:
         return event
 

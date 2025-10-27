@@ -41,8 +41,8 @@ try:
         UserMessage,
     )
 
-    from ..adapter import BaseAdapter
-    from ..event_stream import BaseEventStream
+    from ..adapter import UIAdapter
+    from ..event_stream import UIEventStream
     from ._event_stream import BUILTIN_TOOL_CALL_ID_PREFIX, AGUIEventStream
 except ImportError as e:  # pragma: no cover
     raise ImportError(
@@ -93,7 +93,7 @@ class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
         return 'the AG-UI frontend tools'  # pragma: no cover
 
 
-class AGUIAdapter(BaseAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, OutputDataT]):
+class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, OutputDataT]):
     """TODO (DouwM): Docstring."""
 
     @classmethod
@@ -103,7 +103,7 @@ class AGUIAdapter(BaseAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Out
 
     def build_event_stream(
         self, accept: str | None = None
-    ) -> BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]:
+    ) -> UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]:
         """Create an event stream for the adapter.
 
         Args:

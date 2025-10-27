@@ -30,8 +30,8 @@ from ...messages import (
     VideoUrl,
 )
 from ...output import OutputDataT
-from ..adapter import BaseAdapter
-from ..event_stream import BaseEventStream
+from ..adapter import UIAdapter
+from ..event_stream import UIEventStream
 from ._event_stream import VercelAIEventStream
 from ._request_types import (
     DataUIPart,
@@ -64,7 +64,7 @@ __all__ = ['VercelAIAdapter']
 
 
 @dataclass
-class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, OutputDataT]):
+class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, OutputDataT]):
     """TODO (DouwM): Docstring."""
 
     @classmethod
@@ -74,7 +74,7 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT,
 
     def build_event_stream(
         self, accept: str | None = None
-    ) -> BaseEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
+    ) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
         return VercelAIEventStream(self.request, accept=accept)
 
     @property

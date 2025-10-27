@@ -7,6 +7,13 @@ Converted to Python from:
 https://github.com/vercel/ai/blob/ai%405.0.34/packages/ai/src/ui/ui-messages.ts
 """
 
+from typing import Any
+
+from pydantic_ai.agent import AbstractAgent
+from pydantic_ai.output import OutputDataT
+from pydantic_ai.tools import AgentDepsT
+
+from .. import UIApp
 from ._adapter import VercelAIAdapter
 from ._event_stream import VercelAIEventStream
 from ._request_types import (
@@ -85,4 +92,12 @@ __all__ = [
     # Event stream and adapter
     'VercelAIEventStream',
     'VercelAIAdapter',
+    'VercelAIApp',
 ]
+
+
+class VercelAIApp(UIApp[AgentDepsT, OutputDataT]):
+    """ASGI application for running Pydantic AI agents with Vercel UI protocol support."""
+
+    def __init__(self, agent: AbstractAgent[AgentDepsT, OutputDataT], **kwargs: Any) -> None:
+        super().__init__(VercelAIAdapter[AgentDepsT, OutputDataT], agent, **kwargs)

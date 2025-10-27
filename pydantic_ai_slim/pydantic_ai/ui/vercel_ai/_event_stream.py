@@ -23,7 +23,7 @@ from ...messages import (
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT
-from .. import BaseEventStream
+from .. import UIEventStream
 from ._request_types import RequestData
 from ._response_types import (
     BaseChunk,
@@ -56,7 +56,7 @@ def _json_dumps(obj: Any) -> str:
 
 
 @dataclass
-class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]):
+class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]):
     """TODO (DouwM): Docstring."""
 
     _step_started: bool = False

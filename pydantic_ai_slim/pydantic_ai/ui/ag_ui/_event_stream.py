@@ -26,7 +26,7 @@ from ...messages import (
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT
-from .. import SSE_CONTENT_TYPE, BaseEventStream
+from .. import SSE_CONTENT_TYPE, UIEventStream
 
 try:
     from ag_ui.core import (
@@ -68,7 +68,7 @@ BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
 
 @dataclass
-class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]):
+class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]):
     """TODO (DouwM): Docstring."""
 
     _thinking_text: bool = False
