@@ -21,6 +21,7 @@ from ..messages import (
     BuiltinToolReturnPart,
     FilePart,
     FileUrl,
+    DocumentUrl,
     FinishReason,
     ModelMessage,
     ModelRequest,
@@ -91,6 +92,13 @@ except ImportError as _import_error:
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
 
+
+class Test():
+  def __init__(self, num):
+    self.num = num
+  def multiply(self):
+    return self.num * 3
+    
 LatestGoogleModelNames = Literal[
     'gemini-2.0-flash',
     'gemini-2.0-flash-lite',
@@ -567,17 +575,34 @@ class GoogleModel(Model):
                 if isinstance(item, str):
                     content.append({'text': item})
                 elif isinstance(item, BinaryContent):
-                    inline_data_dict: BlobDict = {'data': item.data, 'mime_type': item.media_type}
-                    part_dict: PartDict = {'inline_data': inline_data_dict}
-                    if item.vendor_metadata:
-                        part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
-                    content.append(part_dict)
+                    if self._is_text_like_media_type(item.media_type):
+                        content.append({'text': item.data.decode('utf-8')})
+                    else:
+                        inline_data_dict: BlobDict = {'data': item.data, 'mime_type': item.media_type}
+                        part_dict: PartDict = {'inline_data': inline_data_dict}
+                        if item.vendor_metadata:
+                            part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                        content.append(part_dict)
+
+                elif isinstance(item, DocumentUrl):
+                    if self._is_text_like_media_type(item.media_type):
+                        downloaded_text = await download_item(item, data_format='text')
+                        content.append({'text': downloaded_text['data']})
+                    else:
+                        downloaded_item = await download_item(item, data_format='bytes')
+                        inline_data_dict: BlobDict = {
+                            'data': downloaded_item['data'],
+                            'mime_type': downloaded_item['data_type'],
+                        }
+                        content.append({'inline_data': inline_data_dict})
+
                 elif isinstance(item, VideoUrl) and item.is_youtube:
                     file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
                     part_dict: PartDict = {'file_data': file_data_dict}
                     if item.vendor_metadata:  # pragma: no branch
                         part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                     content.append(part_dict)
+                
                 elif isinstance(item, FileUrl):
                     if item.force_download or (
                         # google-gla does not support passing file urls directly, except for youtube videos
@@ -596,7 +621,29 @@ class GoogleModel(Model):
                         content.append({'file_data': file_data_dict})  # pragma: lax no cover
                 else:
                     assert_never(item)
-        return content
+            
+            return content
+
+    @staticmethod
+    def _is_text_like_media_type(media_type: str) -> bool:
+        return (
+            media_type.startswith('text/')
+            or media_type == 'application/json'
+            or media_type.endswith('+json')
+            or media_type == 'application/xml'
+            or media_type.endswith('+xml')
+            or media_type in ('application/x-yaml', 'application/yaml')
+        )
+    @staticmethod
+    def _inline_text_file_part(text: str, *, media_type: str, identifier: str) -> ChatCompletionContentPartTextParam:
+        text = '\n'.join(
+            [
+                f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----',
+                text,
+                f'-----END FILE id="{identifier}"-----',
+            ]
+        )
+        return {'text': text}
 
     def _map_response_schema(self, o: OutputObjectDefinition) -> dict[str, Any]:
         response_schema = o.json_schema.copy()
