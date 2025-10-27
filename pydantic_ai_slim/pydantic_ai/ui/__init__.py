@@ -7,11 +7,12 @@ that transform Pydantic AI agent events into protocol-specific events (e.g., AG-
 from __future__ import annotations
 
 from .adapter import BaseAdapter, OnCompleteFunc, StateDeps, StateHandler
-from .event_stream import BaseEventStream
+from .event_stream import SSE_CONTENT_TYPE, BaseEventStream
 
 __all__ = [
     'BaseAdapter',
     'BaseEventStream',
+    'SSE_CONTENT_TYPE',
     'StateDeps',
     'StateHandler',
     'OnCompleteFunc',

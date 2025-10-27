@@ -101,10 +101,18 @@ class AGUIAdapter(BaseAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Out
         """Validate the request and return the validated request."""
         return RunAgentInput.model_validate(await request.json())
 
-    @property
-    def event_stream(self) -> BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]:
-        """Create an event stream for the adapter."""
-        return AGUIEventStream(self.request)
+    def build_event_stream(
+        self, accept: str | None = None
+    ) -> BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]:
+        """Create an event stream for the adapter.
+
+        Args:
+            accept: The accept header value.
+
+        Returns:
+            The event stream.
+        """
+        return AGUIEventStream(self.request, accept=accept)
 
     @cached_property
     def toolset(self) -> AbstractToolset[AgentDepsT] | None:

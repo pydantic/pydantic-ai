@@ -128,10 +128,18 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, Output
         """Load messages from the request and return the loaded messages."""
         raise NotImplementedError
 
-    @property
     @abstractmethod
-    def event_stream(self) -> BaseEventStream[RunRequestT, EventT, AgentDepsT, OutputDataT]:
-        """Create an event stream for the adapter."""
+    def build_event_stream(
+        self, accept: str | None = None
+    ) -> BaseEventStream[RunRequestT, EventT, AgentDepsT, OutputDataT]:
+        """Create an event stream for the adapter.
+
+        Args:
+            accept: The accept header value.
+
+        Returns:
+            The event stream.
+        """
         raise NotImplementedError
 
     @cached_property
@@ -167,9 +175,9 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, Output
 
         Args:
             stream: The stream of events to encode.
-            accept: The accept header value for encoding format.
+            accept: The accept header value.
         """
-        return self.event_stream.encode_stream(stream, accept)
+        return self.build_event_stream(accept).encode_stream(stream)
 
     async def process_stream(
         self,
@@ -182,7 +190,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, Output
             stream: The stream of events to process.
             on_complete: Optional callback function called when the agent run completes successfully.
         """
-        async for event in self.event_stream.handle_stream(stream, on_complete=on_complete):
+        async for event in self.build_event_stream().handle_stream(stream, on_complete=on_complete):
             yield event
 
     async def run_stream(
@@ -266,7 +274,7 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, Output
 
         Args:
             stream: The stream of events to encode.
-            accept: The accept header value for encoding format.
+            accept: The accept header value.
         """
         try:
             from starlette.responses import StreamingResponse
@@ -276,12 +284,11 @@ class BaseAdapter(ABC, Generic[RunRequestT, MessageT, EventT, AgentDepsT, Output
                 'you can use the `ui` optional group — `pip install "pydantic-ai-slim[ui]"`'
             ) from e
 
+        event_stream = self.build_event_stream(accept)
         return StreamingResponse(
-            self.encode_stream(
-                stream,
-                accept=accept,
-            ),
+            event_stream.encode_stream(stream),
             headers=self.response_headers,
+            media_type=event_stream.content_type,
         )
 
     @classmethod

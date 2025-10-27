@@ -44,6 +44,9 @@ __all__ = [
     'BaseEventStream',
 ]
 
+SSE_CONTENT_TYPE = 'text/event-stream'
+"""Content type header value for Server-Sent Events (SSE)."""
+
 EventT = TypeVar('EventT')
 """Type variable for protocol-specific event types."""
 
@@ -65,12 +68,15 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT, OutputDataT]
     """TODO (DouwM): Docstring."""
 
     request: RunRequestT
-    result: AgentRunResult[OutputDataT] | None = None
+
+    accept: str | None = None
+    """TODO (DouweM): Docstring"""
 
     message_id: str = field(default_factory=lambda: str(uuid4()))
 
     _turn: Literal['request', 'response'] | None = None
 
+    _result: AgentRunResult[OutputDataT] | None = None
     _final_result_event: FinalResultEvent | None = None
 
     def new_message_id(self) -> str:
@@ -82,25 +88,35 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT, OutputDataT]
         self.message_id = str(uuid4())
         return self.message_id
 
+    @property
+    def content_type(self) -> str:
+        """Get the content type for the event stream, compatible with the accept header value.
+
+        By default, this returns the SSE content type (`text/event-stream`).
+        If a subclass supports other types as well, it should consider `self.accept` in `encode_event` and return the resulting content type here.
+
+        Args:
+            accept: The accept header value.
+        """
+        return SSE_CONTENT_TYPE
+
     @abstractmethod
-    def encode_event(self, event: EventT, accept: str | None = None) -> str:
+    def encode_event(self, event: EventT) -> str:
         """Encode an event as a string.
 
         Args:
             event: The event to encode.
-            accept: The accept header value for encoding format.
         """
         raise NotImplementedError
 
-    async def encode_stream(self, stream: AsyncIterator[EventT], accept: str | None = None) -> AsyncIterator[str]:
+    async def encode_stream(self, stream: AsyncIterator[EventT]) -> AsyncIterator[str]:
         """Encode a stream of events as SSE strings.
 
         Args:
             stream: The stream of events to encode.
-            accept: The accept header value for encoding format.
         """
         async for event in stream:
-            yield self.encode_event(event, accept)
+            yield self.encode_event(event)
 
     async def handle_stream(  # noqa: C901
         self, stream: AsyncIterator[SourceEvent], on_complete: OnCompleteFunc[EventT] | None = None
@@ -147,19 +163,20 @@ class BaseEventStream(ABC, Generic[RunRequestT, EventT, AgentDepsT, OutputDataT]
                         async for e in self.handle_function_tool_result(output_tool_result_event):
                             yield e
 
-                    self.result = cast(AgentRunResult[OutputDataT], event.result)
+                    result = cast(AgentRunResult[OutputDataT], event.result)
+                    self._result = result
 
                     async for e in self._turn_to(None):
                         yield e
 
                     if on_complete is not None:
                         if inspect.isasyncgenfunction(on_complete):
-                            async for e in on_complete(self.result):
+                            async for e in on_complete(result):
                                 yield e
                         elif _utils.is_async_callable(on_complete):
-                            await on_complete(self.result)
+                            await on_complete(result)
                         else:
-                            await _utils.run_in_executor(on_complete, self.result)
+                            await _utils.run_in_executor(on_complete, result)
                 elif isinstance(event, FinalResultEvent):
                     self._final_result_event = event
 

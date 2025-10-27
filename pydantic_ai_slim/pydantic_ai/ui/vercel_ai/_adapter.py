@@ -72,9 +72,10 @@ class VercelAIAdapter(BaseAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT,
         """Validate a Vercel AI request."""
         return request_data_ta.validate_json(await request.body())
 
-    @property
-    def event_stream(self) -> BaseEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
-        return VercelAIEventStream(self.request)
+    def build_event_stream(
+        self, accept: str | None = None
+    ) -> BaseEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
+        return VercelAIEventStream(self.request, accept=accept)
 
     @property
     def response_headers(self) -> Mapping[str, str] | None:

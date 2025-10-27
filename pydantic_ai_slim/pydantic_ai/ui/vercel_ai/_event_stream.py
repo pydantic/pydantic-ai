@@ -61,7 +61,7 @@ class VercelAIEventStream(BaseEventStream[RequestData, BaseChunk, AgentDepsT, Ou
 
     _step_started: bool = False
 
-    def encode_event(self, event: BaseChunk, accept: str | None = None) -> str:
+    def encode_event(self, event: BaseChunk) -> str:
         if isinstance(event, DoneChunk):
             return 'data: [DONE]\n\n'
         return f'data: {event.model_dump_json(by_alias=True, exclude_none=True)}\n\n'

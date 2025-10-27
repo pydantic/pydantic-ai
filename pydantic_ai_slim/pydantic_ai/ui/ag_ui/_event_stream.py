@@ -26,7 +26,7 @@ from ...messages import (
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT
-from .. import BaseEventStream
+from .. import SSE_CONTENT_TYPE, BaseEventStream
 
 try:
     from ag_ui.core import (
@@ -64,10 +64,6 @@ __all__ = [
     'RunFinishedEvent',
 ]
 
-SSE_CONTENT_TYPE: Final[str] = 'text/event-stream'
-"""Content type header value for Server-Sent Events (SSE)."""
-
-
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
 
@@ -79,18 +75,29 @@ class AGUIEventStream(BaseEventStream[RunAgentInput, BaseEvent, AgentDepsT, Outp
     _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict)
     _error: bool = False
 
-    def encode_event(self, event: BaseEvent, accept: str | None = None) -> str:
+    @property
+    def _event_encoder(self) -> EventEncoder:
+        return EventEncoder(accept=self.accept or SSE_CONTENT_TYPE)
+
+    @property
+    def content_type(self) -> str:
+        """Get the content type for the event stream, compatible with the accept header value.
+
+        Args:
+            accept: The accept header value.
+        """
+        return self._event_encoder.get_content_type()
+
+    def encode_event(self, event: BaseEvent) -> str:
         """Encode an AG-UI event as SSE.
 
         Args:
             event: The AG-UI event to encode.
-            accept: The accept header value for encoding format.
 
         Returns:
             The SSE-formatted string.
         """
-        encoder = EventEncoder(accept=accept or SSE_CONTENT_TYPE)
-        return encoder.encode(event)
+        return self._event_encoder.encode(event)
 
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
         """Yield events before agent streaming starts."""

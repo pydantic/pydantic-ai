@@ -92,9 +92,8 @@ class UIAdapter(BaseAdapter[UIRequest, ModelMessage, str, AgentDepsT, OutputData
     def load_messages(cls, messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         return list(messages)
 
-    @property
-    def event_stream(self) -> UIEventStream[AgentDepsT, OutputDataT]:
-        return UIEventStream[AgentDepsT, OutputDataT](self.request)
+    def build_event_stream(self, accept: str | None = None) -> UIEventStream[AgentDepsT, OutputDataT]:
+        return UIEventStream[AgentDepsT, OutputDataT](self.request, accept=accept)
 
     @cached_property
     def messages(self) -> list[ModelMessage]:
@@ -115,7 +114,7 @@ class UIAdapter(BaseAdapter[UIRequest, ModelMessage, str, AgentDepsT, OutputData
 
 @dataclass(kw_only=True)
 class UIEventStream(BaseEventStream[UIRequest, str, AgentDepsT, OutputDataT]):
-    def encode_event(self, event: str, accept: str | None = None) -> str:
+    def encode_event(self, event: str) -> str:
         return event
 
     async def handle_event(self, event: SourceEvent) -> AsyncIterator[str]:
@@ -629,7 +628,11 @@ async def test_adapter_dispatch_request():
 
     assert chunks == snapshot(
         [
-            {'type': 'http.response.start', 'status': 200, 'headers': [(b'x-test', b'test')]},
+            {
+                'type': 'http.response.start',
+                'status': 200,
+                'headers': [(b'x-test', b'test'), (b'content-type', b'text/event-stream; charset=utf-8')],
+            },
             {'type': 'http.response.body', 'body': b'<stream>', 'more_body': True},
             {'type': 'http.response.body', 'body': b'<response>', 'more_body': True},
             {'type': 'http.response.body', 'body': b'<text follows_text=False>', 'more_body': True},
