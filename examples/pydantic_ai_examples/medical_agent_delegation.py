@@ -24,7 +24,7 @@ Run with:
 
 import asyncio
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -33,7 +33,8 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, RunContext
 
-MODEL = 'openai:gpt-4.1-mini'
+# MODEL = 'openai:gpt-4.1-mini'
+MODEL = 'cohere:command-r7b-12-2024'
 
 
 # Structured Outputs
@@ -220,7 +221,7 @@ class MedicalTriageSystem:
     async def handle_patient(
         self, complaint: str, patient: PatientInfo
     ) -> dict[str, str]:
-        timestamp = datetime.now(UTC).isoformat()
+        timestamp = datetime.now(tz=timezone.utc).isoformat()
         print(f'\n[{timestamp}] Processing complaint: {complaint}')
 
         triage_prompt = (
