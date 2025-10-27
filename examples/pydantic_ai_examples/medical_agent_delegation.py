@@ -33,8 +33,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, RunContext
 
-# MODEL = 'openai:gpt-4.1-mini'
-MODEL = 'cohere:command-r7b-12-2024'
+MODEL = 'openai:gpt-4.1-mini'
 
 
 # Structured Outputs
