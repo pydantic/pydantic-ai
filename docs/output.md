@@ -477,20 +477,18 @@ When [streaming responses](#streaming-model-responses), output validators are ca
 However, you can add a `partial: bool` parameter to your validator to distinguish between partial and final validation. This is useful when you want to skip expensive validation during streaming but apply full validation to the final result:
 
 ```python
-from pydantic_ai import Agent, RunContext, ModelRetry
+from pydantic_ai import Agent, ModelRetry
 
 agent = Agent('openai:gpt-4o')
 
 @agent.output_validator
-def validate_output(data: str, *, partial: bool) -> str:
+def validate_output(output: str, *, partial: bool) -> str:
     if partial:
-        # During streaming, skip expensive validation
-        return data
+        return output
     else:
-        # On final result, apply full validation
-        if 'invalid' in data:
+        if 'invalid' in output:
             raise ModelRetry('Output contains invalid content')
-        return data.strip()
+        return output
 ```
 
 The `partial` parameter must be keyword-only (note the `*` before `partial`). It works with all validator signatures:
@@ -546,8 +544,8 @@ There two main challenges with streamed results:
 2. When receiving a response, we don't know if it's the final response without starting to stream it and peeking at the content. Pydantic AI streams just enough of the response to sniff out if it's a tool call or an output, then streams the whole thing and calls tools, or returns the stream as a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult].
 
 !!! note
-    As the `run_stream()` method will consider the first output matching the `output_type` to be the final output,
-    it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
+As the `run_stream()` method will consider the first output matching the `output_type` to be the final output,
+it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
 
     If you want to always run the agent graph to completion and stream all events from the model's streaming response and the agent's execution of tools,
     use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] ([docs](agents.md#streaming-all-events)) or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] ([docs](agents.md#streaming-all-events-and-output)) instead.
@@ -605,8 +603,8 @@ async def main():
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 !!! warning "Output message not included in `messages`"
-    The final output message will **NOT** be added to result messages if you use `.stream_text(delta=True)`,
-    see [Messages and chat history](message-history.md) for more information.
+The final output message will **NOT** be added to result messages if you use `.stream_text(delta=True)`,
+see [Messages and chat history](message-history.md) for more information.
 
 ### Streaming Structured Output
 
