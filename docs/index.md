@@ -25,8 +25,8 @@ Designed to give your IDE or AI coding agent as much context as possible for aut
 5. **Powerful Evals**:
 Enables you to systematically test and [evaluate](evals.md) the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire.
 
-6. **MCP, A2A, and AG-UI**:
-Integrates the [Model Context Protocol](mcp/client.md), [Agent2Agent](a2a.md), and [AG-UI](ag-ui.md) standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication.
+6. **MCP, A2A, and UI**:
+Integrates the [Model Context Protocol](mcp/overview.md), [Agent2Agent](a2a.md), and various [UI event stream](ui/overview.md) standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication.
 
 7. **Human-in-the-Loop Tool Approval**:
 Easily lets you flag that certain tool calls [require approval](deferred-tools.md#human-in-the-loop-tool-approval) before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences.

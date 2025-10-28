@@ -53,7 +53,7 @@ from ._request_types import (
 from ._response_types import BaseChunk
 
 if TYPE_CHECKING:
-    from starlette.requests import Request
+    pass
 
 
 __all__ = ['VercelAIAdapter']
@@ -64,26 +64,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     """TODO (DouweM): Docstring."""
 
     @classmethod
-    async def build_run_input(cls, request: Request) -> RequestData:
+    def build_run_input(cls, body: bytes) -> RequestData:
         """Validate a Vercel AI request."""
-        return request_data_ta.validate_json(await request.body())
+        return request_data_ta.validate_json(body)
 
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
         return VercelAIEventStream(self.run_input, accept=self.accept)
 
     @cached_property
     def messages(self) -> list[ModelMessage]:
-        """Convert Vercel AI protocol messages to Pydantic AI messages.
-
-        Args:
-            messages: List of Vercel AI UIMessage objects.
-
-        Returns:
-            List of Pydantic AI ModelMessage objects.
-
-        Raises:
-            ValueError: If message format is not supported.
-        """
+        """Convert Vercel AI protocol messages to Pydantic AI messages."""
         return self.load_messages(self.run_input.messages)
 
     @classmethod

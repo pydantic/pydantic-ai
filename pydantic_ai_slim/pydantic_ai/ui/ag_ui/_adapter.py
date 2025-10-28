@@ -48,7 +48,7 @@ except ImportError as e:  # pragma: no cover
     ) from e
 
 if TYPE_CHECKING:
-    from starlette.requests import Request
+    pass
 
 __all__ = ['AGUIAdapter']
 
@@ -86,9 +86,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     """TODO (DouweM): Docstring."""
 
     @classmethod
-    async def build_run_input(cls, request: Request) -> RunAgentInput:
-        """Validate the request and return the validated run input."""
-        return RunAgentInput.model_validate(await request.json())
+    def build_run_input(cls, body: bytes) -> RunAgentInput:
+        """Validate the request body and return the validated run input."""
+        return RunAgentInput.model_validate_json(body)
 
     def build_event_stream(self) -> UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]:
         """Create an event stream for the adapter."""
@@ -108,14 +108,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     @cached_property
     def messages(self) -> list[ModelMessage]:
-        """Convert AG-UI messages to Pydantic AI messages.
-
-        Args:
-            messages: List of AG-UI messages.
-
-        Returns:
-            List of Pydantic AI ModelMessage objects.
-        """
+        """Convert AG-UI messages to Pydantic AI messages."""
         return self.load_messages(self.run_input.messages)
 
     @classmethod

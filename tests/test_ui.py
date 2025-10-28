@@ -85,8 +85,8 @@ class DummyUIDeps:
 
 class DummyUIAdapter(UIAdapter[DummyUIRunInput, ModelMessage, str, AgentDepsT, OutputDataT]):
     @classmethod
-    async def build_run_input(cls, request: Request) -> DummyUIRunInput:
-        return DummyUIRunInput.model_validate(await request.json())
+    def build_run_input(cls, body: bytes) -> DummyUIRunInput:
+        return DummyUIRunInput.model_validate_json(body)
 
     @classmethod
     def load_messages(cls, messages: Sequence[ModelMessage]) -> list[ModelMessage]:

@@ -1040,7 +1040,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         uvicorn app:app --host 0.0.0.0 --port 8000
         ```
 
-        See [AG-UI docs](../ag-ui.md) for more information.
+        See [AG-UI docs](../ui/ag-ui.md) for more information.
 
         Args:
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has

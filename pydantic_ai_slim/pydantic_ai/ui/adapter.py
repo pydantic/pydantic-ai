@@ -127,14 +127,14 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """Create an adapter from a protocol-specific run input."""
         return cls(
             agent=agent,
-            run_input=await cls.build_run_input(request),
+            run_input=cls.build_run_input(await request.body()),
             accept=request.headers.get('accept'),
         )
 
     @classmethod
     @abstractmethod
-    async def build_run_input(cls, request: Request) -> RunInputT:
-        """Validate the HTTP request and return the validated protocol-specific run input."""
+    def build_run_input(cls, body: bytes) -> RunInputT:
+        """Validate the request body and return the protocol-specific run input object."""
         raise NotImplementedError
 
     @classmethod
