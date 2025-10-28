@@ -760,7 +760,12 @@ async def test_dynamic_toolset():
             return {}
 
         async def call_tool(
-            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+            self,
+            name: str,
+            tool_args: dict[str, Any],
+            ctx: RunContext[None],
+            tool: ToolsetTool[None],
+            allow_partial: bool = False,
         ) -> Any:
             return None  # pragma: no cover
 

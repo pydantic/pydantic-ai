@@ -156,7 +156,7 @@ class ToolManager(Generic[AgentDepsT]):
             else:
                 args_dict = validator.validate_python(call.args or {}, allow_partial=pyd_allow_partial)
 
-            result = await self.toolset.call_tool(name, args_dict, ctx, tool)
+            result = await self.toolset.call_tool(name, args_dict, ctx, tool, allow_partial=allow_partial)
 
             return result
         except (ValidationError, ModelRetry) as e:

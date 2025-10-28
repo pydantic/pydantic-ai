@@ -311,7 +311,12 @@ class MockMCPServer(AbstractToolset[Any]):
         return {}
 
     async def call_tool(
-        self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+        self,
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[Any],
+        tool: ToolsetTool[Any],
+        allow_partial: bool = False,
     ) -> Any:
         return None  # pragma: lax no cover
 

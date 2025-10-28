@@ -84,10 +84,15 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         return all_tools
 
     async def call_tool(
-        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+        self,
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+        allow_partial: bool = False,
     ) -> Any:
         assert isinstance(tool, _CombinedToolsetTool)
-        return await tool.source_toolset.call_tool(name, tool_args, ctx, tool.source_tool)
+        return await tool.source_toolset.call_tool(name, tool_args, ctx, tool.source_tool, allow_partial=allow_partial)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         for toolset in self.toolsets:

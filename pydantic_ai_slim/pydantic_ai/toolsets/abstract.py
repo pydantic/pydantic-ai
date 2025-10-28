@@ -116,7 +116,12 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
     @abstractmethod
     async def call_tool(
-        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+        self,
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+        allow_partial: bool = False,
     ) -> Any:
         """Call a tool with the given arguments.
 
@@ -125,6 +130,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
             tool_args: The arguments to pass to the tool.
             ctx: The run context.
             tool: The tool definition returned by [`get_tools`][pydantic_ai.toolsets.AbstractToolset.get_tools] that was called.
+            allow_partial: Whether partial validation is allowed.
         """
         raise NotImplementedError()
 

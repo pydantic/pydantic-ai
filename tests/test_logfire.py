@@ -102,10 +102,15 @@ def test_logfire(
                 return await super().__aexit__(*args)
 
         async def call_tool(
-            self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+            self,
+            name: str,
+            tool_args: dict[str, Any],
+            ctx: RunContext[Any],
+            tool: ToolsetTool[Any],
+            allow_partial: bool = False,
         ) -> Any:
             with logfire.span('toolset_call_tool {name}', name=name):  # pyright: ignore[reportPossiblyUnboundVariable]
-                return await super().call_tool(name, tool_args, ctx, tool)
+                return await super().call_tool(name, tool_args, ctx, tool, allow_partial=allow_partial)
 
     toolset = FunctionToolset()
 

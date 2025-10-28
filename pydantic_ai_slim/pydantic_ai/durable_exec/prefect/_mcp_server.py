@@ -53,6 +53,7 @@ class PrefectMCPServer(PrefectWrapperToolset[AgentDepsT], ABC):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
+        allow_partial: bool = False,
     ) -> ToolResult:
         """Call an MCP tool, wrapped as a Prefect task with a descriptive name."""
         return await self._call_tool_task.with_options(name=f'Call MCP Tool: {name}', **self._task_config)(

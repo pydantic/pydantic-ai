@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator, to_json
-from typing_extensions import Self, TypedDict, TypeVar, assert_never
+from typing_extensions import Self, TypeAlias, TypedDict, TypeVar, assert_never
 
 from pydantic_ai._instrumentation import InstrumentationNames
 
@@ -53,19 +53,23 @@ At some point, it may make sense to change the input to OutputValidatorFunc to b
 resolve these potential variance issues.
 """
 
-OutputValidatorFunc = (
-    Callable[[RunContext[AgentDepsT], OutputDataT_inv], OutputDataT_inv]
-    | Callable[[RunContext[AgentDepsT], OutputDataT_inv], Awaitable[OutputDataT_inv]]
-    | Callable[[OutputDataT_inv], OutputDataT_inv]
-    | Callable[[OutputDataT_inv], Awaitable[OutputDataT_inv]]
-)
+OutputValidatorFunc: TypeAlias = Callable[..., Any] | Callable[..., Awaitable[Any]]
 """
-A function that always takes and returns the same type of data (which is the result type of an agent run), and:
+A function that takes and returns the same type of data (which is the result type of an agent run), and:
 
 * may or may not take [`RunContext`][pydantic_ai.tools.RunContext] as a first argument
+* may or may not take a keyword-only `partial: bool` parameter (e.g., `def validator(data: T, *, partial: bool)`)
 * may or may not be async
 
 Usage `OutputValidatorFunc[AgentDepsT, T]`.
+
+The function signature is introspected at runtime to determine which parameters it accepts.
+Supported signatures:
+- `(data: T) -> T`
+- `(data: T, *, partial: bool) -> T`
+- `(ctx: RunContext[Deps], data: T) -> T`
+- `(ctx: RunContext[Deps], data: T, *, partial: bool) -> T`
+- Async variants of all above
 """
 
 
@@ -160,12 +164,35 @@ async def execute_traced_output_function(
 
 @dataclass
 class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
-    function: OutputValidatorFunc[AgentDepsT, OutputDataT_inv]
+    function: OutputValidatorFunc
     _takes_ctx: bool = field(init=False)
+    _takes_partial: bool = field(init=False)
     _is_async: bool = field(init=False)
 
     def __post_init__(self):
-        self._takes_ctx = len(inspect.signature(self.function).parameters) > 1
+        sig = inspect.signature(self.function)
+
+        # Check if partial parameter exists and is keyword-only
+        if 'partial' in sig.parameters:
+            partial_param = sig.parameters['partial']
+            if partial_param.kind != inspect.Parameter.KEYWORD_ONLY:
+                raise ValueError(
+                    f'Output validator {self.function.__name__!r} has a `partial` parameter that is not keyword-only. '
+                    'The `partial` parameter must be keyword-only (e.g., `def validator(data: str, *, partial: bool)`).'
+                )
+            self._takes_partial = True
+        else:
+            self._takes_partial = False
+
+        # Count positional parameters (excluding keyword-only like partial)
+        # to determine if RunContext is the first parameter
+        positional_params = [
+            p
+            for p in sig.parameters.values()
+            if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        ]
+        self._takes_ctx = len(positional_params) > 1
+
         self._is_async = _utils.is_async_callable(self.function)
 
     async def validate(
@@ -173,6 +200,7 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
         result: T,
         run_context: RunContext[AgentDepsT],
         wrap_validation_errors: bool = True,
+        allow_partial: bool = False,
     ) -> T:
         """Validate a result but calling the function.
 
@@ -180,6 +208,7 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
             result: The result data after Pydantic validation the message content.
             run_context: The current run context.
             wrap_validation_errors: If true, wrap the validation errors in a retry message.
+            allow_partial: Whether partial validation is allowed (passed to validator if it accepts it).
 
         Returns:
             Result of either the validated result data (ok) or a retry message (Err).
@@ -189,13 +218,18 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
         else:
             args = (result,)
 
+        if self._takes_partial:
+            kwargs = {'partial': allow_partial}
+        else:
+            kwargs = {}
+
         try:
             if self._is_async:
                 function = cast(Callable[[Any], Awaitable[T]], self.function)
-                result_data = await function(*args)
+                result_data = await function(*args, **kwargs)
             else:
                 function = cast(Callable[[Any], T], self.function)
-                result_data = await _utils.run_in_executor(function, *args)
+                result_data = await _utils.run_in_executor(function, *args, **kwargs)
         except ModelRetry as r:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
@@ -1064,11 +1098,16 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         }
 
     async def call_tool(
-        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+        self,
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+        allow_partial: bool = False,
     ) -> Any:
         output = await self.processors[name].call(tool_args, ctx, wrap_validation_errors=False)
         for validator in self.output_validators:
-            output = await validator.validate(output, ctx, wrap_validation_errors=False)
+            output = await validator.validate(output, ctx, wrap_validation_errors=False, allow_partial=allow_partial)
         return output
 
 

@@ -86,5 +86,6 @@ class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
+        allow_partial: bool = False,
     ) -> ToolResult:
         return await self._dbos_wrapped_call_tool_step(name, tool_args, ctx, tool)
