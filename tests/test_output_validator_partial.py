@@ -8,8 +8,8 @@ from pydantic_ai.models.test import TestModel
 
 def test_output_validator_with_partial_no_ctx():
     """Test output validator with partial parameter but no RunContext."""
-    partial_calls = []
-    final_calls = []
+    partial_calls: list[str] = []
+    final_calls: list[str] = []
 
     m = TestModel(custom_output_text='test')
     agent = Agent(m)
@@ -33,8 +33,8 @@ def test_output_validator_with_partial_no_ctx():
 
 def test_output_validator_with_partial_and_ctx():
     """Test output validator with both RunContext and partial parameter."""
-    partial_calls = []
-    final_calls = []
+    partial_calls: list[tuple[str, str]] = []
+    final_calls: list[tuple[str, str]] = []
 
     m = TestModel(custom_output_text='test')
     agent = Agent(m, deps_type=str)
@@ -56,7 +56,7 @@ def test_output_validator_with_partial_and_ctx():
 
 def test_output_validator_without_partial_still_works():
     """Test that validators without partial parameter continue to work."""
-    calls = []
+    calls: list[str] = []
 
     m = TestModel(custom_output_text='test')
     agent = Agent(m)
@@ -73,7 +73,7 @@ def test_output_validator_without_partial_still_works():
 
 def test_output_validator_with_ctx_no_partial_still_works():
     """Test that validators with RunContext but no partial parameter continue to work."""
-    calls = []
+    calls: list[tuple[str, str]] = []
 
     m = TestModel(custom_output_text='test')
     agent = Agent(m, deps_type=str)
@@ -92,8 +92,8 @@ async def test_output_validator_streaming_with_partial():
     """Test output validator receives partial=True during streaming."""
     from pydantic_ai.models.test import TestModel
 
-    partial_calls = []
-    final_calls = []
+    partial_calls: list[str] = []
+    final_calls: list[str] = []
 
     # Create a model that streams multiple chunks
     m = TestModel(seed=0)
@@ -108,7 +108,7 @@ async def test_output_validator_streaming_with_partial():
         return data
 
     async with agent.run_stream('test') as run:
-        chunks = []
+        chunks: list[str] = []
         async for chunk in run.stream_text(delta=False):
             chunks.append(chunk)
 
@@ -122,11 +122,11 @@ async def test_output_validator_structured_with_partial():
     """Test output validator with structured output and partial parameter."""
     from pydantic import BaseModel
 
-    partial_calls = []
-    final_calls = []
-
     class OutputType(BaseModel):
         value: str
+
+    partial_calls: list[OutputType] = []
+    final_calls: list[OutputType] = []
 
     m = TestModel()
     agent = Agent(m, output_type=OutputType)
@@ -140,7 +140,7 @@ async def test_output_validator_structured_with_partial():
         return data
 
     async with agent.run_stream('test') as run:
-        chunks = []
+        chunks: list[OutputType] = []
         async for chunk in run.stream_output():
             chunks.append(chunk)
 
