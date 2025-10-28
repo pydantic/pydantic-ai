@@ -80,19 +80,15 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     async def before_response(self) -> AsyncIterator[BaseChunk]:
         """Yield events before the request is processed."""
+        if self._step_started:
+            yield FinishStepChunk()
+
         self._step_started = True
         yield StartStepChunk()
 
-    async def after_request(self) -> AsyncIterator[BaseChunk]:
-        """Yield events after the response is processed."""
-        if self._step_started:  # TODO (DouweM): coverage
-            yield FinishStepChunk()
-            self._step_started = False
-
     async def after_stream(self) -> AsyncIterator[BaseChunk]:
         """Yield events after agent streaming completes."""
-        if self._step_started:  # TODO (DouweM): coverage branch
-            yield FinishStepChunk()
+        yield FinishStepChunk()
 
         yield FinishChunk()
         yield DoneChunk()
@@ -104,22 +100,22 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseChunk]:
         """Handle a TextPart at start."""
         if follows_text:
-            message_id = self.message_id  # TODO (DouweM): coverage
+            message_id = self.message_id
         else:
             message_id = self.new_message_id()
             yield TextStartChunk(id=message_id)
 
-        if part.content:  # TODO (DouweM): coverage branch
+        if part.content:
             yield TextDeltaChunk(id=message_id, delta=part.content)
 
     async def handle_text_delta(self, delta: TextPartDelta) -> AsyncIterator[BaseChunk]:
         """Handle a TextPartDelta."""
-        if delta.content_delta:  # TODO (DouweM): coverage branch
+        if delta.content_delta:  # pragma: no branch
             yield TextDeltaChunk(id=self.message_id, delta=delta.content_delta)
 
     async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[BaseChunk]:
         """Handle a TextPart at end."""
-        if not followed_by_text:  # TODO (DouweM): coverage branch
+        if not followed_by_text:
             yield TextEndChunk(id=self.message_id)
 
     async def handle_thinking_start(
@@ -129,11 +125,11 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         message_id = self.new_message_id()
         yield ReasoningStartChunk(id=message_id)
         if part.content:
-            yield ReasoningDeltaChunk(id=message_id, delta=part.content)  # TODO (DouweM): coverage
+            yield ReasoningDeltaChunk(id=message_id, delta=part.content)
 
     async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[BaseChunk]:
         """Handle a ThinkingPartDelta."""
-        if delta.content_delta:  # TODO (DouweM): coverage
+        if delta.content_delta:  # pragma: no branch
             yield ReasoningDeltaChunk(id=self.message_id, delta=delta.content_delta)
 
     async def handle_thinking_end(
@@ -164,9 +160,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             provider_executed=provider_executed,
         )
         if part.args:
-            yield ToolInputDeltaChunk(
-                tool_call_id=tool_call_id, input_text_delta=part.args_as_json_str()
-            )  # TODO (DouweM): coverage
+            yield ToolInputDeltaChunk(tool_call_id=tool_call_id, input_text_delta=part.args_as_json_str())
 
     async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[BaseChunk]:
         """Handle a ToolCallPartDelta."""
@@ -179,9 +173,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseChunk]:
         """Handle a ToolCallPart at end."""
-        yield ToolInputAvailableChunk(
-            tool_call_id=part.tool_call_id, tool_name=part.tool_name, input=part.args
-        )  # TODO (DouweM): coverage
+        yield ToolInputAvailableChunk(tool_call_id=part.tool_call_id, tool_name=part.tool_name, input=part.args)
 
     async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
         """Handle a BuiltinToolCallPart at end."""
@@ -204,11 +196,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_file(self, part: FilePart) -> AsyncIterator[BaseChunk]:
         """Handle a FilePart."""
         file = part.content
-        yield FileChunk(url=file.data_uri, media_type=file.media_type)  # TODO (DouweM): coverage
+        yield FileChunk(url=file.data_uri, media_type=file.media_type)
 
-    async def handle_function_tool_result(
-        self, event: FunctionToolResultEvent
-    ) -> AsyncIterator[BaseChunk]:  # TODO (DouweM): coverage
+    async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
         """Handle a FunctionToolResultEvent, emitting tool result events."""
         result = event.result
         if isinstance(result, RetryPromptPart):

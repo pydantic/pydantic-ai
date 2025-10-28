@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
@@ -22,8 +22,12 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
     SystemPromptPart,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -66,14 +70,18 @@ with try_import() as imports_successful:
         UserMessage,
     )
     from ag_ui.encoder import EventEncoder
+    from starlette.requests import Request
+    from starlette.responses import StreamingResponse
 
     from pydantic_ai.ag_ui import (
         SSE_CONTENT_TYPE,
         AGUIAdapter,
         OnCompleteFunc,
         StateDeps,
+        handle_ag_ui_request,
         run_ag_ui,
     )
+    from pydantic_ai.ui.ag_ui import AGUIEventStream
 
 
 pytestmark = [
@@ -1594,5 +1602,164 @@ async def test_builtin_tool_call() -> None:
                 'threadId': thread_id,
                 'runId': run_id,
             },
+        ]
+    )
+
+
+async def test_event_stream_back_to_back_text():
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello world'), next_part_kind='text')
+        yield PartStartEvent(index=1, part=TextPart(content='Goodbye'), previous_part_kind='text')
+        yield PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' world'))
+        yield PartEndEvent(index=1, part=TextPart(content='Goodbye world'))
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Tell me about Hello World',
+        ),
+    )
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'Hello'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': ' world'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'Goodbye'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': ' world'},
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+    )
+
+
+async def test_handle_ag_ui_request():
+    agent = Agent(model=TestModel())
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Tell me about Hello World',
+        ),
+    )
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [
+                (b'content-type', b'application/json'),
+            ],
+        },
+        receive=receive,
+    )
+
+    response = await handle_ag_ui_request(agent, starlette_request)
+
+    assert isinstance(response, StreamingResponse)
+
+    chunks: list[MutableMapping[str, Any]] = []
+
+    async def send(data: MutableMapping[str, Any]) -> None:
+        if body := data.get('body'):
+            data['body'] = json.loads(body.decode('utf-8').removeprefix('data: '))
+        chunks.append(data)
+
+    await response.stream_response(send)
+
+    assert chunks == snapshot(
+        [
+            {
+                'type': 'http.response.start',
+                'status': 200,
+                'headers': [(b'content-type', b'text/event-stream; charset=utf-8')],
+            },
+            {
+                'type': 'http.response.body',
+                'body': {
+                    'type': 'RUN_STARTED',
+                    'threadId': (thread_id := IsSameStr()),
+                    'runId': (run_id := IsSameStr()),
+                },
+                'more_body': True,
+            },
+            {
+                'type': 'http.response.body',
+                'body': {
+                    'type': 'TEXT_MESSAGE_START',
+                    'messageId': (message_id := IsSameStr()),
+                    'role': 'assistant',
+                },
+                'more_body': True,
+            },
+            {
+                'type': 'http.response.body',
+                'body': {
+                    'type': 'TEXT_MESSAGE_CONTENT',
+                    'messageId': message_id,
+                    'delta': 'success ',
+                },
+                'more_body': True,
+            },
+            {
+                'type': 'http.response.body',
+                'body': {
+                    'type': 'TEXT_MESSAGE_CONTENT',
+                    'messageId': message_id,
+                    'delta': '(no ',
+                },
+                'more_body': True,
+            },
+            {
+                'type': 'http.response.body',
+                'body': {
+                    'type': 'TEXT_MESSAGE_CONTENT',
+                    'messageId': message_id,
+                    'delta': 'tool ',
+                },
+                'more_body': True,
+            },
+            {
+                'type': 'http.response.body',
+                'body': {
+                    'type': 'TEXT_MESSAGE_CONTENT',
+                    'messageId': message_id,
+                    'delta': 'calls)',
+                },
+                'more_body': True,
+            },
+            {
+                'type': 'http.response.body',
+                'body': {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+                'more_body': True,
+            },
+            {
+                'type': 'http.response.body',
+                'body': {
+                    'type': 'RUN_FINISHED',
+                    'threadId': thread_id,
+                    'runId': run_id,
+                },
+                'more_body': True,
+            },
+            {'type': 'http.response.body', 'body': b'', 'more_body': False},
         ]
     )

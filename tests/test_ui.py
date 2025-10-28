@@ -251,6 +251,35 @@ async def test_run_stream_text_and_thinking():
     )
 
 
+async def test_event_stream_back_to_back_text():
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello world'), next_part_kind='text')
+        yield PartStartEvent(index=1, part=TextPart(content='Goodbye'), previous_part_kind='text')
+        yield PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' world'))
+        yield PartEndEvent(index=1, part=TextPart(content='Goodbye world'))
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>Hello',
+            ' world',
+            '</text followed_by_text=True>',
+            '<text follows_text=True>Goodbye',
+            ' world',
+            '</text followed_by_text=False>',
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
 async def test_run_stream_builtin_tool_call():
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -421,22 +450,19 @@ async def test_run_stream_output_tool():
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls | str]:
-        if len(messages) == 1:
-            yield {
-                0: DeltaToolCall(
-                    name='final_result',
-                    json_args='{"query":',
-                    tool_call_id='search_1',
-                )
-            }
-            yield {
-                0: DeltaToolCall(
-                    json_args='"Hello world"}',
-                    tool_call_id='search_1',
-                )
-            }
-        else:
-            yield 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". '
+        yield {
+            0: DeltaToolCall(
+                name='final_result',
+                json_args='{"query":',
+                tool_call_id='search_1',
+            )
+        }
+        yield {
+            0: DeltaToolCall(
+                json_args='"Hello world"}',
+                tool_call_id='search_1',
+            )
+        }
 
     def web_search(query: str) -> dict[str, list[dict[str, str]]]:
         return {

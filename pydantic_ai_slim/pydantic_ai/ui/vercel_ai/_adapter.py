@@ -6,7 +6,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cached_property
 
-from ...agent import AgentDepsT
+from typing_extensions import assert_never
+
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -22,10 +23,12 @@ from ...messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
     VideoUrl,
 )
 from ...output import OutputDataT
+from ...tools import AgentDepsT
 from ..adapter import UIAdapter
 from ..event_stream import UIEventStream
 from ..messages_builder import MessagesBuilder
@@ -36,6 +39,9 @@ from ._request_types import (
     FileUIPart,
     ReasoningUIPart,
     RequestData,
+    SourceDocumentUIPart,
+    SourceUrlUIPart,
+    StepStartUIPart,
     TextUIPart,
     ToolOutputAvailablePart,
     ToolOutputErrorPart,
@@ -90,14 +96,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         builder = MessagesBuilder()
 
         for msg in messages:
-            if msg.role in ('system', 'user'):
+            if msg.role == 'system':
+                for part in msg.parts:
+                    if isinstance(part, TextUIPart):  # pragma: no branch
+                        builder.add(SystemPromptPart(content=part.text))
+            elif msg.role == 'user':
+                user_prompt_content: str | list[UserContent] = []
                 for part in msg.parts:
                     if isinstance(part, TextUIPart):
-                        if msg.role == 'system':
-                            builder.add(SystemPromptPart(content=part.text))  # TODO (DouweM): coverage
-                        else:
-                            builder.add(UserPromptPart(content=part.text))
-                    elif isinstance(part, FileUIPart):  # TODO (DouweM): coverage
+                        user_prompt_content.append(part.text)
+                    elif isinstance(part, FileUIPart):
                         try:
                             file = BinaryContent.from_data_uri(part.url)
                         except ValueError:
@@ -111,28 +119,30 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     file = AudioUrl(url=part.url, media_type=part.media_type)
                                 case _:
                                     file = DocumentUrl(url=part.url, media_type=part.media_type)
-                        builder.add(UserPromptPart(content=[file]))
+                        user_prompt_content.append(file)
 
-            elif msg.role == 'assistant':  # TODO (DouweM): coverage branch
+                if user_prompt_content:  # pragma: no branch
+                    if len(user_prompt_content) == 1 and isinstance(user_prompt_content[0], str):
+                        user_prompt_content = user_prompt_content[0]
+                    builder.add(UserPromptPart(content=user_prompt_content))
+
+            elif msg.role == 'assistant':
                 for part in msg.parts:
                     if isinstance(part, TextUIPart):
                         builder.add(TextPart(content=part.text))
                     elif isinstance(part, ReasoningUIPart):
-                        builder.add(ThinkingPart(content=part.text))  # TODO (DouweM): coverage
-                    elif isinstance(part, FileUIPart):  # TODO (DouweM): coverage
+                        builder.add(ThinkingPart(content=part.text))
+                    elif isinstance(part, FileUIPart):
                         try:
                             file = BinaryContent.from_data_uri(part.url)
-                        except ValueError as e:
+                        except ValueError as e:  # pragma: no cover
                             # We don't yet handle non-data-URI file URLs returned by assistants, as no Pydantic AI models do this.
                             raise ValueError(
                                 'Vercel AI integration can currently only handle assistant file parts with data URIs.'
                             ) from e
                         builder.add(FilePart(content=file))
-                    elif isinstance(part, DataUIPart):
-                        # Not currently supported
-                        pass
-                    elif isinstance(part, ToolUIPart | DynamicToolUIPart):  # TODO (DouweM): coverage branch
-                        if isinstance(part, DynamicToolUIPart):  # TODO (DouweM): coverage
+                    elif isinstance(part, ToolUIPart | DynamicToolUIPart):
+                        if isinstance(part, DynamicToolUIPart):
                             tool_name = part.tool_name
                             builtin_tool = False
                         else:
@@ -142,7 +152,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         tool_call_id = part.tool_call_id
                         args = part.input
 
-                        if builtin_tool:  # TODO (DouweM): coverage
+                        if builtin_tool:
                             call_part = BuiltinToolCallPart(tool_name=tool_name, tool_call_id=tool_call_id, args=args)
                             builder.add(call_part)
 
@@ -150,7 +160,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 if part.state == 'output-available':
                                     output = part.output
                                 else:
-                                    output = part.error_text
+                                    output = {'error_text': part.error_text, 'is_error': True}
 
                                 provider_name = (
                                     (part.call_provider_metadata or {}).get('pydantic_ai', {}).get('provider_name')
@@ -172,11 +182,27 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 builder.add(
                                     ToolReturnPart(tool_name=tool_name, tool_call_id=tool_call_id, content=part.output)
                                 )
-                            elif part.state == 'output-error':  # TODO (DouweM): coverage
+                            elif part.state == 'output-error':
                                 builder.add(
                                     RetryPromptPart(
                                         tool_name=tool_name, tool_call_id=tool_call_id, content=part.error_text
                                     )
                                 )
+                    elif isinstance(part, DataUIPart):
+                        # Contains custom data that shouldn't be sent to the model
+                        pass
+                    elif isinstance(part, SourceUrlUIPart):
+                        # TODO: Once we support citations: https://github.com/pydantic/pydantic-ai/issues/3126
+                        pass
+                    elif isinstance(part, SourceDocumentUIPart):
+                        # TODO: Once we support citations: https://github.com/pydantic/pydantic-ai/issues/3126
+                        pass
+                    elif isinstance(part, StepStartUIPart):
+                        # Nothing to do here
+                        pass
+                    else:
+                        assert_never(part)
+            else:
+                assert_never(msg.role)
 
         return builder.messages

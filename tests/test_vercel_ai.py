@@ -2,26 +2,40 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, MutableMapping
+from http import HTTPStatus
 from typing import Any, cast
 
+import httpx
 import pytest
+from asgi_lifespan import LifespanManager
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
+    AudioUrl,
+    BinaryContent,
     BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    DocumentUrl,
     FilePart,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
+    RetryPromptPart,
+    SystemPromptPart,
     TextPart,
+    TextPartDelta,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models.function import (
     AgentInfo,
@@ -34,16 +48,22 @@ from pydantic_ai.models.function import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
+from pydantic_ai.ui import SSE_CONTENT_TYPE
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIApp, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai._request_types import (
+    DynamicToolOutputAvailablePart,
+    FileUIPart,
+    ReasoningUIPart,
     SubmitMessage,
     TextUIPart,
+    ToolInputAvailablePart,
     ToolOutputAvailablePart,
+    ToolOutputErrorPart,
     UIMessage,
 )
 from pydantic_ai.ui.vercel_ai._response_types import BaseChunk, DataChunk
 
-from .conftest import IsDatetime, IsStr, try_import
+from .conftest import IsDatetime, IsSameStr, IsStr, try_import
 
 with try_import() as starlette_import_successful:
     from starlette.requests import Request
@@ -78,25 +98,19 @@ async def test_run(allow_model_requests: None, openai_api_key: str):
             UIMessage(
                 id='BeuwNtYIjJuniHbR',
                 role='user',
-                metadata=None,
                 parts=[
                     TextUIPart(
-                        type='text',
                         text="""Use a tool
 
     """,
-                        state=None,
-                        provider_metadata=None,
                     )
                 ],
             ),
             UIMessage(
                 id='bylfKVeyoR901rax',
                 role='assistant',
-                metadata=None,
                 parts=[
                     TextUIPart(
-                        type='text',
                         text='''I\'d be happy to help you use a tool! However, I need more information about what you\'d like to do. I have access to tools for searching and retrieving documentation for two products:
 
     1. **Pydantic AI** (pydantic-ai) - an open source agent framework library
@@ -113,26 +127,21 @@ async def test_run(allow_model_requests: None, openai_api_key: str):
 
     For example, you could ask something like "How do I get started with Pydantic AI?" or "Show me the table of contents for Logfire documentation."''',
                         state='streaming',
-                        provider_metadata=None,
                     )
                 ],
             ),
             UIMessage(
                 id='MTdh4Ie641kDuIRh',
                 role='user',
-                metadata=None,
                 parts=[TextUIPart(type='text', text='Give me the ToCs', state=None, provider_metadata=None)],
             ),
             UIMessage(
                 id='3XlOBgFwaf7GsS4l',
                 role='assistant',
-                metadata=None,
                 parts=[
                     TextUIPart(
-                        type='text',
                         text="I'll get the table of contents for both repositories.",
                         state='streaming',
-                        provider_metadata=None,
                     ),
                     ToolOutputAvailablePart(
                         type='tool-get_table_of_contents',
@@ -140,9 +149,6 @@ async def test_run(allow_model_requests: None, openai_api_key: str):
                         state='output-available',
                         input={'repo': 'pydantic-ai'},
                         output="[Scrubbed due to 'API Key']",
-                        provider_executed=None,
-                        call_provider_metadata=None,
-                        preliminary=None,
                     ),
                     ToolOutputAvailablePart(
                         type='tool-get_table_of_contents',
@@ -150,28 +156,19 @@ async def test_run(allow_model_requests: None, openai_api_key: str):
                         state='output-available',
                         input={'repo': 'logfire'},
                         output="[Scrubbed due to 'Auth']",
-                        provider_executed=None,
-                        call_provider_metadata=None,
-                        preliminary=None,
                     ),
                     TextUIPart(
-                        type='text',
                         text="""Here are the Table of Contents for both repositories:... Both products are designed to work together - Pydantic AI for building AI agents and Logfire for observing and monitoring them in production.""",
                         state='streaming',
-                        provider_metadata=None,
                     ),
                 ],
             ),
             UIMessage(
                 id='QVypsUU4swQ1Loxq',
                 role='user',
-                metadata=None,
                 parts=[
                     TextUIPart(
-                        type='text',
                         text='How do I get FastAPI instrumentation to include the HTTP request and response',
-                        state=None,
-                        provider_metadata=None,
                     )
                 ],
             ),
@@ -1111,6 +1108,48 @@ async def test_run_stream_text_and_thinking():
     )
 
 
+async def test_event_stream_back_to_back_text():
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello world'), next_part_kind='text')
+        yield PartStartEvent(index=1, part=TextPart(content='Goodbye'), previous_part_kind='text')
+        yield PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' world'))
+        yield PartEndEvent(index=1, part=TextPart(content='Goodbye world'))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': (message_id := IsSameStr())},
+            {'type': 'text-delta', 'delta': 'Hello', 'id': message_id},
+            {'type': 'text-delta', 'delta': ' world', 'id': message_id},
+            {'type': 'text-delta', 'delta': 'Goodbye', 'id': message_id},
+            {'type': 'text-delta', 'delta': ' world', 'id': message_id},
+            {'type': 'text-end', 'id': message_id},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
 async def test_run_stream_builtin_tool_call():
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -1333,22 +1372,19 @@ async def test_run_stream_output_tool():
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls | str]:
-        if len(messages) == 1:
-            yield {
-                0: DeltaToolCall(
-                    name='final_result',
-                    json_args='{"query":',
-                    tool_call_id='search_1',
-                )
-            }
-            yield {
-                0: DeltaToolCall(
-                    json_args='"Hello world"}',
-                    tool_call_id='search_1',
-                )
-            }
-        else:
-            yield 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". '
+        yield {
+            0: DeltaToolCall(
+                name='final_result',
+                json_args='{"query":',
+                tool_call_id='search_1',
+            )
+        }
+        yield {
+            0: DeltaToolCall(
+                json_args='"Hello world"}',
+                tool_call_id='search_1',
+            )
+        }
 
     def web_search(query: str) -> dict[str, list[dict[str, str]]]:
         return {
@@ -1653,5 +1689,330 @@ async def test_adapter_dispatch_request():
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',
+        ]
+    )
+
+
+async def test_app():
+    agent = Agent(model=TestModel())
+
+    run_input = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    app = VercelAIApp(agent)
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as client:
+            client.base_url = 'http://localhost:8000'
+            async with client.stream(
+                'POST',
+                '/',
+                content=run_input.model_dump_json(),
+                headers={'Content-Type': 'application/json', 'Accept': SSE_CONTENT_TYPE},
+            ) as response:
+                assert response.status_code == HTTPStatus.OK, f'Unexpected status code: {response.status_code}'
+                events: list[str | dict[str, Any]] = []
+                async for event in response.aiter_lines():
+                    if event:
+                        events.append('[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: ')))
+
+            assert events == snapshot(
+                [
+                    {'type': 'start'},
+                    {'type': 'start-step'},
+                    {'type': 'text-start', 'id': IsStr()},
+                    {'type': 'text-delta', 'delta': 'success ', 'id': IsStr()},
+                    {'type': 'text-delta', 'delta': '(no ', 'id': IsStr()},
+                    {'type': 'text-delta', 'delta': 'tool ', 'id': IsStr()},
+                    {'type': 'text-delta', 'delta': 'calls)', 'id': IsStr()},
+                    {'type': 'text-end', 'id': IsStr()},
+                    {'type': 'finish-step'},
+                    {'type': 'finish'},
+                    '[DONE]',
+                ]
+            )
+
+
+async def test_adapter_load_messages():
+    data = SubmitMessage(
+        trigger='submit-message',
+        id='bvQXcnrJ4OA2iRKU',
+        messages=[
+            UIMessage(
+                id='foobar',
+                role='system',
+                parts=[
+                    TextUIPart(
+                        text='You are a helpful assistant.',
+                    ),
+                ],
+            ),
+            UIMessage(
+                id='BeuwNtYIjJuniHbR',
+                role='user',
+                parts=[
+                    TextUIPart(
+                        text='Here are some files:',
+                    ),
+                    FileUIPart(
+                        media_type='image/png',
+                        url='data:image/png;base64,ZmFrZQ==',
+                    ),
+                    FileUIPart(
+                        media_type='image/png',
+                        url='https://example.com/image.png',
+                    ),
+                    FileUIPart(
+                        media_type='video/mp4',
+                        url='https://example.com/video.mp4',
+                    ),
+                    FileUIPart(
+                        media_type='audio/mpeg',
+                        url='https://example.com/audio.mp3',
+                    ),
+                    FileUIPart(
+                        media_type='application/pdf',
+                        url='https://example.com/document.pdf',
+                    ),
+                ],
+            ),
+            UIMessage(
+                id='bylfKVeyoR901rax',
+                role='assistant',
+                parts=[
+                    ReasoningUIPart(
+                        text='I should tell the user how nice those files are and share another one',
+                    ),
+                    TextUIPart(
+                        text='Nice files, here is another one:',
+                        state='streaming',
+                    ),
+                    FileUIPart(
+                        media_type='image/png',
+                        url='data:image/png;base64,ZmFrZQ==',
+                    ),
+                ],
+            ),
+            UIMessage(
+                id='MTdh4Ie641kDuIRh',
+                role='user',
+                parts=[TextUIPart(type='text', text='Give me the ToCs', state=None, provider_metadata=None)],
+            ),
+            UIMessage(
+                id='3XlOBgFwaf7GsS4l',
+                role='assistant',
+                parts=[
+                    TextUIPart(
+                        text="I'll get the table of contents for both repositories.",
+                        state='streaming',
+                    ),
+                    ToolOutputAvailablePart(
+                        type='tool-get_table_of_contents',
+                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
+                        input={'repo': 'pydantic'},
+                        output="[Scrubbed due to 'API Key']",
+                    ),
+                    DynamicToolOutputAvailablePart(
+                        tool_name='get_table_of_contents',
+                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoY',
+                        input={'repo': 'pydantic-ai'},
+                        output="[Scrubbed due to 'API Key']",
+                    ),
+                    ToolOutputErrorPart(
+                        type='tool-get_table_of_contents',
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
+                        input={'repo': 'logfire'},
+                        error_text="Can't do that",
+                    ),
+                    ToolOutputAvailablePart(
+                        type='tool-web_search',
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4s',
+                        input={'query': 'What is Logfire?'},
+                        output="[Scrubbed due to 'Auth']",
+                        provider_executed=True,
+                        call_provider_metadata={'pydantic_ai': {'provider_name': 'openai'}},
+                    ),
+                    ToolOutputErrorPart(
+                        type='tool-web_search',
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2z',
+                        input={'query': 'What is Logfire?'},
+                        error_text="Can't do that",
+                        provider_executed=True,
+                        call_provider_metadata={'pydantic_ai': {'provider_name': 'openai'}},
+                    ),
+                    TextUIPart(
+                        text="""Here are the Table of Contents for both repositories:... Both products are designed to work together - Pydantic AI for building AI agents and Logfire for observing and monitoring them in production.""",
+                        state='streaming',
+                    ),
+                    FileUIPart(
+                        media_type='application/pdf',
+                        url='data:application/pdf;base64,ZmFrZQ==',
+                    ),
+                    ToolInputAvailablePart(
+                        type='tool-get_table_of_contents',
+                        tool_call_id='toolu_01XX3rjFfG77h',
+                        input={'repo': 'pydantic'},
+                    ),
+                    ToolInputAvailablePart(
+                        type='tool-web_search',
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4s',
+                        input={'query': 'What is Logfire?'},
+                        provider_executed=True,
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    messages = VercelAIAdapter.load_messages(data.messages)
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful assistant.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'Here are some files:',
+                            BinaryImage(data=b'fake', media_type='image/png'),
+                            ImageUrl(url='https://example.com/image.png', _media_type='image/png'),
+                            VideoUrl(url='https://example.com/video.mp4', _media_type='video/mp4'),
+                            AudioUrl(url='https://example.com/audio.mp3', _media_type='audio/mpeg'),
+                            DocumentUrl(url='https://example.com/document.pdf', _media_type='application/pdf'),
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content='I should tell the user how nice those files are and share another one'),
+                    TextPart(content='Nice files, here is another one:'),
+                    FilePart(content=BinaryImage(data=b'fake', media_type='image/png')),
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Give me the ToCs',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content="I'll get the table of contents for both repositories."),
+                    ToolCallPart(
+                        tool_name='get_table_of_contents',
+                        args={'repo': 'pydantic'},
+                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
+                    ),
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_table_of_contents',
+                        content="[Scrubbed due to 'API Key']",
+                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_table_of_contents',
+                        args={'repo': 'pydantic-ai'},
+                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoY',
+                    )
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_table_of_contents',
+                        content="[Scrubbed due to 'API Key']",
+                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoY',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_table_of_contents',
+                        args={'repo': 'logfire'},
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
+                    )
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content="Can't do that",
+                        tool_name='get_table_of_contents',
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'What is Logfire?'},
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4s',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content="[Scrubbed due to 'Auth']",
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4s',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'What is Logfire?'},
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2z',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content={'error_text': "Can't do that", 'is_error': True},
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2z',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content='Here are the Table of Contents for both repositories:... Both products are designed to work together - Pydantic AI for building AI agents and Logfire for observing and monitoring them in production.'
+                    ),
+                    FilePart(content=BinaryContent(data=b'fake', media_type='application/pdf')),
+                    ToolCallPart(
+                        tool_name='get_table_of_contents', args={'repo': 'pydantic'}, tool_call_id='toolu_01XX3rjFfG77h'
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'What is Logfire?'},
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4s',
+                    ),
+                ],
+                timestamp=IsDatetime(),
+            ),
         ]
     )

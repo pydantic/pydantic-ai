@@ -523,7 +523,7 @@ class BinaryContent:
         if not data_uri.startswith(prefix):
             raise ValueError('Data URI must start with "data:"')  # pragma: no cover
         media_type, data = data_uri[len(prefix) :].split(';base64,', 1)
-        return cls(data=base64.b64decode(data), media_type=media_type)
+        return cls.narrow_type(cls(data=base64.b64decode(data), media_type=media_type))
 
     @pydantic.computed_field
     @property
