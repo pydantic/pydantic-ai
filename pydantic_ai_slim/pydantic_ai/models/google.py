@@ -91,13 +91,6 @@ except ImportError as _import_error:
         'Please install `google-genai` to use the Google model, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
-
-
-class Test():
-  def __init__(self, num):
-    self.num = num
-  def multiply(self):
-    return self.num * 3
     
 LatestGoogleModelNames = Literal[
     'gemini-2.0-flash',
@@ -634,16 +627,6 @@ class GoogleModel(Model):
             or media_type.endswith('+xml')
             or media_type in ('application/x-yaml', 'application/yaml')
         )
-    @staticmethod
-    def _inline_text_file_part(text: str, *, media_type: str, identifier: str) -> ChatCompletionContentPartTextParam:
-        text = '\n'.join(
-            [
-                f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----',
-                text,
-                f'-----END FILE id="{identifier}"-----',
-            ]
-        )
-        return {'text': text}
 
     def _map_response_schema(self, o: OutputObjectDefinition) -> dict[str, Any]:
         response_schema = o.json_schema.copy()
