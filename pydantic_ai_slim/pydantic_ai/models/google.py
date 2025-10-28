@@ -569,7 +569,13 @@ class GoogleModel(Model):
                     content.append({'text': item})
                 elif isinstance(item, BinaryContent):
                     if self._is_text_like_media_type(item.media_type):
-                        content.append({'text': item.data.decode('utf-8')})
+                        content.append(
+                            self._inline_text_file_part(
+                                item.data.decode('utf-8'),
+                                media_type=item.media_type,
+                                identifier=item.identifier,
+                            )
+                        )                    
                     else:
                         inline_data_dict: BlobDict = {'data': item.data, 'mime_type': item.media_type}
                         part_dict: PartDict = {'inline_data': inline_data_dict}
@@ -580,7 +586,13 @@ class GoogleModel(Model):
                 elif isinstance(item, DocumentUrl):
                     if self._is_text_like_media_type(item.media_type):
                         downloaded_text = await download_item(item, data_format='text')
-                        content.append({'text': downloaded_text['data']})
+                        content.append(
+                            self._inline_text_file_part(
+                                downloaded_text['data'],
+                                media_type=item.media_type,
+                                identifier=item.identifier,
+                            )
+                        )
                     else:
                         downloaded_item = await download_item(item, data_format='bytes')
                         inline_data_dict: BlobDict = {
@@ -627,6 +639,17 @@ class GoogleModel(Model):
             or media_type.endswith('+xml')
             or media_type in ('application/x-yaml', 'application/yaml')
         )
+
+    @staticmethod
+    def _inline_text_file_part(text: str, *, media_type: str, identifier: str) -> ChatCompletionContentPartTextParam:
+        text = '\n'.join(
+            [
+                f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----',
+                text,
+                f'-----END FILE id="{identifier}"-----',
+            ]
+        )
+        return {"text": text}
 
     def _map_response_schema(self, o: OutputObjectDefinition) -> dict[str, Any]:
         response_schema = o.json_schema.copy()
