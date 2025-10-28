@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import cast
 
 import pytest
@@ -6,6 +7,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import (
     Agent,
     ModelHTTPError,
+    ModelMessage,
     ModelRequest,
     TextPart,
     ThinkingPart,
@@ -89,15 +91,16 @@ async def test_openrouter_preserve_reasoning_block(allow_model_requests: None, o
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('openai/o3', provider=provider)
 
-    messages = [
+    messages: Sequence[ModelMessage] = []
+    messages.append(
         ModelRequest.user_text_prompt(
             "What was the impact of Voltaire's writings on modern french culture? Think about your answer."
         )
-    ]
+    )
     response = await model_request(model, messages)
     messages.append(response)
 
-    openai_messages = await model._map_messages(messages)
+    openai_messages = await model._map_messages(messages)  # type: ignore[reportPrivateUsage]
 
     assistant_message = openai_messages[1]
     assert 'reasoning_details' in assistant_message

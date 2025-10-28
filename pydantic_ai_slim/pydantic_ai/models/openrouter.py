@@ -1,5 +1,5 @@
 from dataclasses import asdict, dataclass
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionMessage, ChatCompletionMessageParam
@@ -272,6 +272,7 @@ class ReasoningText(BaseReasoningDetail):
 
 
 OpenRouterReasoningDetail = ReasoningSummary | ReasoningEncrypted | ReasoningText
+_reasoning_detail_adapter: TypeAdapter[OpenRouterReasoningDetail] = TypeAdapter(OpenRouterReasoningDetail)
 
 
 @dataclass(repr=False)
@@ -279,7 +280,7 @@ class OpenRouterThinkingPart(ThinkingPart):
     """A special ThinkingPart that includes reasoning attributes specific to OpenRouter."""
 
     type: Literal['reasoning.summary', 'reasoning.encrypted', 'reasoning.text']
-    index: int
+    index: int | None
     format: Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1']
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -317,7 +318,7 @@ class OpenRouterThinkingPart(ThinkingPart):
             )
 
     def into_reasoning_detail(self):
-        return TypeAdapter(OpenRouterReasoningDetail).validate_python(asdict(self)).model_dump()
+        return _reasoning_detail_adapter.validate_python(asdict(self)).model_dump()
 
 
 class OpenRouterCompletionMessage(ChatCompletionMessage):
@@ -368,7 +369,7 @@ def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSetti
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
     """
-    extra_body = model_settings.get('extra_body', {})
+    extra_body = cast(dict[str, Any], model_settings.get('extra_body', {}))
 
     if models := model_settings.pop('openrouter_models', None):
         extra_body['models'] = models
@@ -379,7 +380,9 @@ def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSetti
     if transforms := model_settings.pop('openrouter_transforms', None):
         extra_body['transforms'] = transforms
 
-    return OpenAIChatModelSettings(**model_settings, extra_body=extra_body)
+    model_settings['extra_body'] = extra_body
+
+    return OpenAIChatModelSettings(**model_settings)  # type: ignore[reportCallIssue]
 
 
 class OpenRouterModel(OpenAIChatModel):
@@ -463,6 +466,6 @@ class OpenRouterModel(OpenAIChatModel):
                 if reasoning_details := [
                     part.into_reasoning_detail() for part in message.parts if isinstance(part, OpenRouterThinkingPart)
                 ]:
-                    openai_message['reasoning_details'] = reasoning_details
+                    openai_message['reasoning_details'] = reasoning_details  # type: ignore[reportGeneralTypeIssues]
 
         return openai_messages
