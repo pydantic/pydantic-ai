@@ -7,7 +7,6 @@ that transform Pydantic AI agent events into protocol-specific events (e.g., AG-
 from __future__ import annotations
 
 from .adapter import OnCompleteFunc, StateDeps, StateHandler, UIAdapter
-from .app import UIApp
 from .event_stream import SSE_CONTENT_TYPE, UIEventStream
 from .messages_builder import MessagesBuilder
 
@@ -18,6 +17,5 @@ __all__ = [
     'StateDeps',
     'StateHandler',
     'OnCompleteFunc',
-    'UIApp',
     'MessagesBuilder',
 ]

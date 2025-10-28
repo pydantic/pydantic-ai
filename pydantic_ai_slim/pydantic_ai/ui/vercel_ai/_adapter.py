@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cached_property
+from typing import TYPE_CHECKING
 
 from typing_extensions import assert_never
 
@@ -51,13 +52,8 @@ from ._request_types import (
 )
 from ._response_types import BaseChunk
 
-try:
+if TYPE_CHECKING:
     from starlette.requests import Request
-except ImportError as e:  # pragma: no cover
-    raise ImportError(
-        'Please install the `starlette` package to use `Agent.to_ag_ui()` method, '
-        'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
-    ) from e
 
 
 __all__ = ['VercelAIAdapter']
@@ -98,8 +94,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         for msg in messages:
             if msg.role == 'system':
                 for part in msg.parts:
-                    if isinstance(part, TextUIPart):  # pragma: no branch
+                    if isinstance(part, TextUIPart):
                         builder.add(SystemPromptPart(content=part.text))
+                    else:  # pragma: no cover
+                        raise ValueError(f'Unsupported system message part type: {type(part)}')
             elif msg.role == 'user':
                 user_prompt_content: str | list[UserContent] = []
                 for part in msg.parts:
@@ -120,6 +118,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 case _:
                                     file = DocumentUrl(url=part.url, media_type=part.media_type)
                         user_prompt_content.append(file)
+                    else:  # pragma: no cover
+                        raise ValueError(f'Unsupported user message part type: {type(part)}')
 
                 if user_prompt_content:  # pragma: no branch
                     if len(user_prompt_content) == 1 and isinstance(user_prompt_content[0], str):
@@ -188,16 +188,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         tool_name=tool_name, tool_call_id=tool_call_id, content=part.error_text
                                     )
                                 )
-                    elif isinstance(part, DataUIPart):
+                    elif isinstance(part, DataUIPart):  # pragma: no cover
                         # Contains custom data that shouldn't be sent to the model
                         pass
-                    elif isinstance(part, SourceUrlUIPart):
+                    elif isinstance(part, SourceUrlUIPart):  # pragma: no cover
                         # TODO: Once we support citations: https://github.com/pydantic/pydantic-ai/issues/3126
                         pass
-                    elif isinstance(part, SourceDocumentUIPart):
+                    elif isinstance(part, SourceDocumentUIPart):  # pragma: no cover
                         # TODO: Once we support citations: https://github.com/pydantic/pydantic-ai/issues/3126
                         pass
-                    elif isinstance(part, StepStartUIPart):
+                    elif isinstance(part, StepStartUIPart):  # pragma: no cover
                         # Nothing to do here
                         pass
                     else:

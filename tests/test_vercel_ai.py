@@ -49,7 +49,7 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.ui import SSE_CONTENT_TYPE
-from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIApp, VercelAIEventStream
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai._request_types import (
     DynamicToolOutputAvailablePart,
     FileUIPart,
@@ -62,6 +62,7 @@ from pydantic_ai.ui.vercel_ai._request_types import (
     UIMessage,
 )
 from pydantic_ai.ui.vercel_ai._response_types import BaseChunk, DataChunk
+from pydantic_ai.ui.vercel_ai.app import VercelAIApp
 
 from .conftest import IsDatetime, IsSameStr, IsStr, try_import
 

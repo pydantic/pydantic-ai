@@ -4,6 +4,8 @@ This package provides seamless integration between pydantic-ai agents and ag-ui
 for building interactive AI applications with streaming event-based communication.
 """
 
+# TODO (v2): Remove this module in favor of `pydantic_ai.ui.ag_ui`
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
@@ -22,24 +24,15 @@ from .usage import RunUsage, UsageLimits
 try:
     from ag_ui.core import BaseEvent
     from ag_ui.core.types import RunAgentInput
-
-    from .ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps, StateHandler
-    from .ui.ag_ui import (
-        AGUIAdapter,
-        AGUIApp,
-    )
-except ImportError as e:  # pragma: no cover
-    raise ImportError(
-        'Please install the `ag-ui-protocol` package to use `Agent.to_ag_ui()` method, '
-        'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
-    ) from e
-
-try:
     from starlette.requests import Request
     from starlette.responses import Response
+
+    from .ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps, StateHandler
+    from .ui.ag_ui import AGUIAdapter
+    from .ui.ag_ui.app import AGUIApp
 except ImportError as e:  # pragma: no cover
     raise ImportError(
-        'Please install the `starlette` package to use `Agent.to_ag_ui()` method, '
+        'Please install the `ag-ui-protocol` and `starlette` packages to use `AGUIAdapter`, '
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
     ) from e
 

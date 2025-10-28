@@ -10,7 +10,6 @@ from typing import (
 )
 
 from ... import ExternalToolset, ToolDefinition
-from ...agent import AgentDepsT
 from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -22,6 +21,7 @@ from ...messages import (
     UserPromptPart,
 )
 from ...output import OutputDataT
+from ...tools import AgentDepsT
 from ...toolsets import AbstractToolset
 
 try:
@@ -47,16 +47,8 @@ except ImportError as e:  # pragma: no cover
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
     ) from e
 
-try:
-    from starlette.requests import Request
-except ImportError as e:  # pragma: no cover
-    raise ImportError(
-        'Please install the `starlette` package to use `Agent.to_ag_ui()` method, '
-        'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
-    ) from e
-
 if TYPE_CHECKING:
-    pass
+    from starlette.requests import Request
 
 __all__ = ['AGUIAdapter']
 

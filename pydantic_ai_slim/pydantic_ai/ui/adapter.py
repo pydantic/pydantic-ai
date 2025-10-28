@@ -24,13 +24,14 @@ from typing import (
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults
-from pydantic_ai.agent import AbstractAgent, AgentDepsT
+from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 

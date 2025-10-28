@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from starlette.routing import BaseRoute, Route
     from starlette.types import ExceptionHandler, Lifespan
 
-    from ..ag_ui import AGUIApp
+    from pydantic_ai.ui.ag_ui.app import AGUIApp
 
 
 T = TypeVar('T')
@@ -1077,7 +1077,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             An ASGI application for running Pydantic AI agents with AG-UI protocol support.
         """
-        from ..ag_ui import AGUIApp
+        from pydantic_ai.ui.ag_ui.app import AGUIApp
 
         return AGUIApp(
             agent=self,
