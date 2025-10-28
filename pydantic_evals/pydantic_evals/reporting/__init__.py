@@ -234,7 +234,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         metric_configs: dict[str, RenderNumberConfig] | None = None,
         duration_config: RenderNumberConfig | None = None,
         include_reasons: bool = False,
-    ) -> str:  # pragma: no cover
+    ) -> str:
         """Render this report to a nicely-formatted string, optionally comparing it to a baseline report.
 
         If you want more control over the output, use `console_table` instead and pass it to `rich.Console.print`.
@@ -390,7 +390,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         )
         if baseline is None:
             return renderer.build_table(self, with_title=with_title)
-        else:  # pragma: no cover
+        else:
             return renderer.build_diff_table(self, baseline, with_title=with_title)
 
     def _metadata_panel(
