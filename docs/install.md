@@ -51,10 +51,16 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `cohere` - installs `cohere` [PyPI ↗](https://pypi.org/project/cohere){:target="_blank"}
 * `bedrock` - installs `boto3` [PyPI ↗](https://pypi.org/project/boto3){:target="_blank"}
 * `huggingface` - installs `huggingface-hub[inference]` [PyPI ↗](https://pypi.org/project/huggingface-hub){:target="_blank"}
+* `outlines-transformers` - installs `outlines[transformers]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
+* `outlines-llamacpp` - installs `outlines[llamacpp]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
+* `outlines-mlxlm` - installs `outlines[mlxlm]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
+* `outlines-sglang` - installs `outlines[sglang]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
+* `outlines-vllm-offline` - installs `outlines[vllm-offline]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
 * `duckduckgo` - installs `ddgs` [PyPI ↗](https://pypi.org/project/ddgs){:target="_blank"}
 * `tavily` - installs `tavily-python` [PyPI ↗](https://pypi.org/project/tavily-python){:target="_blank"}
 * `cli` - installs `rich` [PyPI ↗](https://pypi.org/project/rich){:target="_blank"}, `prompt-toolkit` [PyPI ↗](https://pypi.org/project/prompt-toolkit){:target="_blank"}, and `argcomplete` [PyPI ↗](https://pypi.org/project/argcomplete){:target="_blank"}
 * `mcp` - installs `mcp` [PyPI ↗](https://pypi.org/project/mcp){:target="_blank"}
+* `fastmcp` - installs `fastmcp` [PyPI ↗](https://pypi.org/project/fastmcp){:target="_blank"}
 * `a2a` - installs `fasta2a` [PyPI ↗](https://pypi.org/project/fasta2a){:target="_blank"}
 * `ag-ui` - installs `ag-ui-protocol` [PyPI ↗](https://pypi.org/project/ag-ui-protocol){:target="_blank"} and `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
 * `dbos` - installs [`dbos`](durable_execution/dbos.md) [PyPI ↗](https://pypi.org/project/dbos){:target="_blank"}

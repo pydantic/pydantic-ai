@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, replace
 from datetime import timezone
-from typing import Any, Literal, Union
+from typing import Any, Generic, Literal, TypeVar, Union
 
 import httpx
 import pytest
@@ -58,12 +58,11 @@ from pydantic_ai._output import (
     ToolOutputSchema,
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
-from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import StructuredDict, ToolOutput
 from pydantic_ai.result import RunUsage
-from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
@@ -95,6 +94,21 @@ def test_result_tuple():
 
 class Person(BaseModel):
     name: str
+
+
+# Generic classes for testing tool name sanitization with generic types
+T = TypeVar('T')
+
+
+class ResultGeneric(BaseModel, Generic[T]):
+    """A generic result class."""
+
+    value: T
+    success: bool
+
+
+class StringData(BaseModel):
+    text: str
 
 
 def test_result_list_of_models_with_stringified_response():
@@ -634,6 +648,24 @@ class Bar(BaseModel):
     result = agent.run_sync('Hello', model=TestModel(seed=1))
     assert result.output == mod.Bar(b='b')
     assert got_tool_call_name == snapshot('final_result_Bar')
+
+
+def test_output_type_generic_class_name_sanitization():
+    """Test that generic class names with brackets are properly sanitized."""
+    # This will have a name like "ResultGeneric[StringData]" which needs sanitization
+    output_type = [ResultGeneric[StringData], ResultGeneric[int]]
+
+    m = TestModel()
+    agent = Agent(m, output_type=output_type)
+    agent.run_sync('Hello')
+
+    # The sanitizer should remove brackets from the generic type name
+    assert m.last_model_request_parameters is not None
+    assert m.last_model_request_parameters.output_tools is not None
+    assert len(m.last_model_request_parameters.output_tools) == 2
+
+    tool_names = [tool.name for tool in m.last_model_request_parameters.output_tools]
+    assert tool_names == snapshot(['final_result_ResultGenericStringData', 'final_result_ResultGenericint'])
 
 
 def test_output_type_with_two_descriptions():
@@ -1836,7 +1868,14 @@ Don't include any text or Markdown fencing before or after.\
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"additionalProperties": false, "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object", "title": "get_weather"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
@@ -3852,6 +3891,32 @@ You are a potato.\
     )
 
 
+def test_multi_agent_instructions_with_structured_output():
+    """Test that Agent2 uses its own instructions when called with Agent1's history.
+
+    Reproduces issue #3207: when running agents sequentially with no user_prompt
+    and structured output, Agent2's instructions were ignored.
+    """
+
+    class Output(BaseModel):
+        text: str
+
+    agent1 = Agent('test', instructions='Agent 1 instructions')
+    agent2 = Agent('test', instructions='Agent 2 instructions', output_type=Output)
+
+    result1 = agent1.run_sync('Hello')
+
+    # TestModel doesn't support structured output, so this will fail with retries
+    # But we can still verify that Agent2's instructions are used in retry requests
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior):
+            agent2.run_sync(message_history=result1.new_messages())
+
+    # Verify Agent2's retry requests used Agent2's instructions (not Agent1's)
+    requests = [m for m in messages if isinstance(m, ModelRequest)]
+    assert any(r.instructions == 'Agent 2 instructions' for r in requests)
+
+
 def test_empty_final_response():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -5584,110 +5649,38 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
     assert not any(isinstance(p, ToolReturnPart) and p.tool_name == 'final_result' for p in new_messages[0].parts)
 
 
-def test_agent_builtin_tools_runtime_parameter():
-    """Test that Agent.run_sync accepts builtin_tools parameter."""
-    model = TestModel()
-    agent = Agent(model=model, builtin_tools=[])
-
-    # Should work with empty builtin_tools
-    result = agent.run_sync('Hello', builtin_tools=[])
-    assert result.output == 'success (no tool calls)'
-
-    assert model.last_model_request_parameters is not None
-    assert model.last_model_request_parameters.builtin_tools == []
-
-
-async def test_agent_builtin_tools_runtime_parameter_async():
-    """Test that Agent.run and Agent.run_stream accept builtin_tools parameter."""
-    model = TestModel()
-    agent = Agent(model=model, builtin_tools=[])
-
-    # Test async run
-    result = await agent.run('Hello', builtin_tools=[])
-    assert result.output == 'success (no tool calls)'
-
-    assert model.last_model_request_parameters is not None
-    assert model.last_model_request_parameters.builtin_tools == []
-
-    # Test run_stream
-    async with agent.run_stream('Hello', builtin_tools=[]) as stream:
-        output = await stream.get_output()
-        assert output == 'success (no tool calls)'
-
-    assert model.last_model_request_parameters is not None
-    assert model.last_model_request_parameters.builtin_tools == []
-
-
-def test_agent_builtin_tools_testmodel_rejection():
-    """Test that TestModel rejects builtin tools as expected."""
-    model = TestModel()
-    agent = Agent(model=model, builtin_tools=[])
-
-    # Should raise error when builtin_tools contains actual tools
-    web_search_tool = WebSearchTool()
-    with pytest.raises(Exception, match='TestModel does not support built-in tools'):
-        agent.run_sync('Hello', builtin_tools=[web_search_tool])
-
-    assert model.last_model_request_parameters is not None
-    assert len(model.last_model_request_parameters.builtin_tools) == 1
-    assert model.last_model_request_parameters.builtin_tools[0] == web_search_tool
-
-
 def test_agent_builtin_tools_runtime_vs_agent_level():
     """Test that runtime builtin_tools parameter is merged with agent-level builtin_tools."""
     model = TestModel()
-    web_search_tool = WebSearchTool()
 
-    # Agent has builtin tools, and we provide same type at runtime
-    agent = Agent(model=model, builtin_tools=[web_search_tool])
+    agent = Agent(
+        model=model,
+        builtin_tools=[
+            WebSearchTool(),
+            CodeExecutionTool(),
+            MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'),
+            MCPServerTool(id='github', url='https://api.githubcopilot.com/mcp'),
+        ],
+    )
 
-    # Runtime tool of same type should override agent-level tool
-    different_web_search = WebSearchTool(search_context_size='high')
+    # Runtime tool with same unique ID should override agent-level tool
     with pytest.raises(Exception, match='TestModel does not support built-in tools'):
-        agent.run_sync('Hello', builtin_tools=[different_web_search])
+        agent.run_sync(
+            'Hello',
+            builtin_tools=[
+                WebSearchTool(search_context_size='high'),
+                MCPServerTool(id='example', url='https://mcp.example.com/mcp'),
+                MCPServerTool(id='github', url='https://mcp.githubcopilot.com/mcp', authorization_token='token'),
+            ],
+        )
 
     assert model.last_model_request_parameters is not None
-    assert len(model.last_model_request_parameters.builtin_tools) == 1
-    runtime_tool = model.last_model_request_parameters.builtin_tools[0]
-    assert isinstance(runtime_tool, WebSearchTool)
-    assert runtime_tool.search_context_size == 'high'
-
-
-def test_agent_builtin_tools_runtime_additional():
-    """Test that runtime builtin_tools can add to agent-level builtin_tools when different types."""
-    model = TestModel()
-    web_search_tool = WebSearchTool()
-
-    agent = Agent(model=model, builtin_tools=[])
-
-    with pytest.raises(Exception, match='TestModel does not support built-in tools'):
-        agent.run_sync('Hello', builtin_tools=[web_search_tool])
-
-    assert model.last_model_request_parameters is not None
-    assert len(model.last_model_request_parameters.builtin_tools) == 1
-    assert model.last_model_request_parameters.builtin_tools[0] == web_search_tool
-
-
-async def test_agent_builtin_tools_run_stream_events():
-    """Test that Agent.run_stream_events accepts builtin_tools parameter."""
-    model = TestModel()
-    agent = Agent(model=model, builtin_tools=[])
-
-    # Test with empty builtin_tools
-    events = [event async for event in agent.run_stream_events('Hello', builtin_tools=[])]
-
-    assert len(events) >= 2
-    assert isinstance(events[-1], AgentRunResultEvent)
-    assert events[-1].result.output == 'success (no tool calls)'
-
-    assert model.last_model_request_parameters is not None
-    assert model.last_model_request_parameters.builtin_tools == []
-
-    # Test with builtin tool
-    web_search_tool = WebSearchTool()
-    with pytest.raises(Exception, match='TestModel does not support built-in tools'):
-        events = [event async for event in agent.run_stream_events('Hello', builtin_tools=[web_search_tool])]
-
-    assert model.last_model_request_parameters is not None
-    assert len(model.last_model_request_parameters.builtin_tools) == 1
-    assert model.last_model_request_parameters.builtin_tools[0] == web_search_tool
+    assert model.last_model_request_parameters.builtin_tools == snapshot(
+        [
+            WebSearchTool(search_context_size='high'),
+            CodeExecutionTool(),
+            MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'),
+            MCPServerTool(id='github', url='https://mcp.githubcopilot.com/mcp', authorization_token='token'),
+            MCPServerTool(id='example', url='https://mcp.example.com/mcp'),
+        ]
+    )

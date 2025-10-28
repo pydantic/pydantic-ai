@@ -289,12 +289,12 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         metric_configs: dict[str, RenderNumberConfig] | None = None,
         duration_config: RenderNumberConfig | None = None,
         include_reasons: bool = False,
-    ) -> None:  # pragma: no cover
+    ) -> None:
         """Print this report to the console, optionally comparing it to a baseline report.
 
         If you want more control over the output, use `console_table` instead and pass it to `rich.Console.print`.
         """
-        if console is None:
+        if console is None:  # pragma: no branch
             console = Console(width=width)
 
         table = self.console_table(
@@ -318,7 +318,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             include_reasons=include_reasons,
         )
         console.print(table)
-        if include_errors and self.failures:
+        if include_errors and self.failures:  # pragma: no cover
             failures_table = self.failures_table(
                 include_input=include_input,
                 include_metadata=include_metadata,

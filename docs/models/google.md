@@ -140,7 +140,7 @@ agent = Agent(model)
 
 #### Customizing Location or Project
 
-You can specify the location and/or projectwhen using Vertex AI:
+You can specify the location and/or project when using Vertex AI:
 
 ```python {title="google_model_location.py" test="skip"}
 from pydantic_ai import Agent
