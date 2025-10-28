@@ -84,22 +84,46 @@ async def test_openrouter_with_reasoning(allow_model_requests: None, openrouter_
     assert thinking_part.content is not None
     assert thinking_part.signature is None
 
+
+async def test_openrouter_preserve_reasoning_block(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('openai/o3', provider=provider)
-    response = await model_request(model, [request])
 
-    assert len(response.parts) == 3
+    messages = [
+        ModelRequest.user_text_prompt(
+            "What was the impact of Voltaire's writings on modern french culture? Think about your answer."
+        )
+    ]
+    response = await model_request(model, messages)
+    messages.append(response)
 
-    thinking_summary_part = response.parts[0]
-    thinking_redacted_part = response.parts[1]
-    assert isinstance(thinking_summary_part, ThinkingPart)
-    assert isinstance(thinking_redacted_part, ThinkingPart)
-    assert thinking_summary_part.id == snapshot(None)
-    assert thinking_summary_part.content is not None
-    assert thinking_summary_part.signature is None
-    assert thinking_redacted_part.id == snapshot('rs_068633cde4ea68920168ff95bdf3d881969382f905c626cbcd')
-    assert thinking_redacted_part.content == ''
-    assert thinking_redacted_part.signature == snapshot(
-        'gAAAAABo_5XHkkwCuk-f0waWF42hzBg4R9rD9YUpiXWCgX81P6W2mXf-FLIDTmdvRxm3ctZjMD8Uw4Om_8HIu4TCVHd56avFGbdKVUHf7xNzSBJqYxlGLsp7OB3LKukXWjekw9i9dotrHHZQkXyRRt5esuDGujsquFbI8WYFhMCEhPZaAIJ-IKrnxiS2f2MJxVyGWv9eRWRzZFJmJUr8MHZpIbJS6tLumThbN1fGhn0hes-OWWxfNKfclSoZz86qego4k0Zo8PF2tYqX1uKvLOBr-SSPwplUU798j3DFxMQo6pdAZRT4pJGd-L19nMlrn8DQ5LyIFEV7hMIRD-ieJThuQ3OBei5xJaH1fmZwDFKJHQn_agcZDflY36HlCbIrt1ab-sLgsB4D0TCRq4j42cH0xc3qXC1wrMGuPUOO8CsvbDssJgdXSmTJKhrmsCMH4pPKh0PY983sFlGp_WeRT7RX--NA7JD7sUe7ZlVAWeaQdkXtNmLcvlMl8GdAUrErpUCLvvxYSgD5skISESjgY_gMKCi7NHPaOdgKvRgTc6S5aW2J_xzUyJWDGfPwzIWirVlesEjtUsloeieWRwa-C9YNDi9ZrDhSTqdoAHBW6J6sm1cDGOVN9GqtZ_SmOMGYrYVQZxkvV4nheM6lShDVUHqxh7P5IPazkWGjQBGTccje6RDFDLpBJ2x_gP9qR9aS0VWRieVN6swzpln--lDiKXNvK2RP_5sm0wiCiR14yjxsLibSudCnZWj3f3PWbqcT0xXoqJc0sERzwSrNldt9my7hN8dgWwG2q-atczccNNLSwut7dgiGSazaXHz0SsGvQRi2Gw5bAYfh2mJSyVbA0ZyRYv6nFpilNrQlpeXCoqbvBGbsDDZSfOqnO_OxfNr4yKSeP6JeJnY1-DMZ-zl6eN80ipjlTlJ60opdsJmSa3hGQxsGDVqIL2Ep3sHGT78MZXj2bPEtU5kEhfyD4f4ghfHZeKczJ5TvYKNFEfS9kUnoIbP0uiB1udDOz5mij_GwlvqeqnHSdOaaOoSxxDviPbcbPZgDTVPhADwpAGVkOK3TzysnQZjijAmOzcLp6-LpBG2LBrLatzHH4_wJUEWXFi-ORzvnxTaVGDR8Dn2UuKF4v81blN2-j14xp_2DaojIqIg2XhyDq6Q2a6s6a0rdqtnWC0QhiBC6-TCyDlBHTbENIOsGpmAykGD4_-hnx9Pp69CvfCmwjpgsRF319nNL_2awDWpQyIfxQ-smC-v_ljCF7JDwianEyKsM30tIqNsAcJwtf5_f98TUpbSHzDbw_7tGdzIZKIJQkqteMyKJXOtaZ_XxDcwCs9cswsDwutvTxdqtIXZN526l59zQ9uNYx9roLdN8n6WbhuZUSkQK7xrS-KgqdxZPlMg-ImqlwgWkDM8G8DLLcHuAzrb1r7F2tXjGjUDSDWS1zSCScg79WezPcL4bQ_zTAMDOQ0w4OMCxCJKwRye4KYY7c4QnCVdW3JiFrHByo2oVZOtknTiJOllsY6OkziVeiRrMwiRMhwgGKAisTosFcqzHILptzApWYIb8Jdx3glaJStoWbdgV80Rne_u333z3FfCajpwsfvkGM_yss5jAgcN_eNDXKBTZxx8NUu3d3Kz2u0tr_5MBOILwuItUNqWLhc1oMqkFnHrXwna874t9bgOvxR3ve552BjXL54XU7aGjTPKAGTAcWsxnvS2tx-wpTO8vZ9tsCnbDItpu9JDZnd-JqAfIr37qqeygxt0iIwPhRLz6Jlrjd4aqnpAhsFTb3CPkUX0hOeiCWYRkuTuqLXCUsycCjc_6Y5oznlPd6Pf2_IEpGBn819ob32Z8vbXsO7eTtBz3Yxc0CkuizkQQa_Efgz5kFFJoWwmzlMbl-SlArEgvNaiXv1WFWTR9jrUFZ1GRscczFbTjYWanmLawtR9NFyTj4G7XjB4Ikc4cyZIIsqEtRJH7IMd-3HVSnJX5jICyHagugShAPpwnyA_dn4_kiyXl821_nLCyWWMrQQNxQvoKA9EDKaXRLJ6RpnKWB5vaOm4el2v8rIgpE7OAhNW4wowVTdnn9lk3FcYa2arv_4415X07VY03njlmCV025HRxMNbc9ay4B6nndEBLHbP5TpfJHOzF6o57keP3LauKOzyVLN9YOsuc2Ht9vd4JZiyCuVzAaj4Z_G-ZvcSvRvXkTCS-bjyGH2FPw7MAQWDBw6ArBi-WTSYFwX4_k_bb0QjGmMjrLrbn4Vt_ClGKaapUajENwcnPBIpQ-p1yQBq0lSEQeVPwX76zIiktgiBFOD0MkJiWZSgybnwSdM3sN1kr7mP6Lph9DP7JiTHLakd-htJAyVmJbvRuT2_vpH9ywMddWpeHQiwBGhBjYxVWv0AdYUw7Gs7pVCC9ccPM1A727NGs-ecXFvxutO3lyR16zgw-e2dEt6eITYS4e1IsCe05r01WDUbR8B6IsMFl0sd7qG69X8nVLbK-m8sfURYLSrLsiXvsrmWNBaqraVfj1y6ALTKuJ657heQsF0BuNYVJldK_SgmmefTExc_t6ApkbkokWWMLZxk3J9wtCs4xrUzFkHX3AkqLpiAdi3yUyTjr-vPA5KHXLcBoDuj883w4yfwmKN_hGphWAcjv3N99_ao9UGYfNVIJmxcg7vMGlA1uEyawY3WjA5xlSrM6k--lph3PrT9Ukm8ojiZCMaMiJDVNjKORUJUyiSW8qJTcZEvKmfoju9KDuVfPbf0zT8vmQXWmAzWuH0QMi1KXjQEqtVoqgetV-YwzaZ-i7m8KPWxkRjV4t8aM1P6k71fA7DnOunbySPlEG-jNqxIrY5HNTbinDBDF_zp52JpL0saMKUfnY2EHL8gWXoXG4OguxzNFofp3tPk_uadv8rbmdno3RVPB7KrJqZFizoQ35F7MahgHCunKr9oK4uJ82sWQEa-tXgX8GI7a_rp-O5U6faibRjFSZODU-WXukzoSMhQrcJDpXT_1s5imdkJDV0wM20e-f18fjniMaSaCmgXOA3RdnPlZc26c6giZ7InttDaNRZCr-RCsDjQQVN4AKwnE5XM3yHL2usRx8ILmXZYWfTDNn-UDeueocDcuPhx9aMFf2rRMcw=='
+    openai_messages = await model._map_messages(messages)
+
+    assistant_message = openai_messages[1]
+    assert 'reasoning_details' in assistant_message
+    assert assistant_message['reasoning_details'] == snapshot(
+        [
+            {
+                'id': None,
+                'format': 'openai-responses-v1',
+                'index': 0,
+                'type': 'reasoning.summary',
+                'summary': """\
+**Exploring Voltaire's impact**
+
+The user seeks a thoughtful answer about Voltaire's influence on modern French culture. I should summarize his significance by discussing Enlightenment values like liberté and human rights, his role in shaping French Revolution ideas, and his distinctive use of satire. It’s also important to address his anti-clerical stance that encouraged secularism, the promotion of freedom of speech, his legacy in literature, and presence in institutions. Finally, I want to touch on his enduring impact on contemporary discussions around laïcité and cultural narrative.**Structuring the response**
+
+I’m thinking about how to organize the response. I want to start with an introduction that highlights Voltaire as a central figure of the Enlightenment, noting how his writings shaped essential French values like rationality, secularism, and tolerance. After that, I should break the discussion into categories such as political thought, secularism, literature, education, and popular culture. I aim to develop this into a thoughtful answer of around 800 to 1000 words, which will cover all these important aspects.\
+""",
+            },
+            {
+                'id': 'rs_06569cab051e4c78016900b1eb409c81909668d636e3a424f9',
+                'format': 'openai-responses-v1',
+                'index': 0,
+                'type': 'reasoning.encrypted',
+                'data': 'gAAAAABpALH0SrlqG_JSYqQT07H5yKQO7GcmENK5_dmCbkx_o6J5Qg7kZHHNvKynIDieAzknNQwmLf4SB96VU59uasmIK5oOyInBjdpczoYyFEoN8zKWVOolEaCLXSMJfybQb6U_CKEYmPrh_B4CsGDuLzKq7ak6ERC0qFb0vh6ctchIyzWN7MztgnrNt85TReEN3yPmox0suv_kjEc4K5nB6L8C5NOK8ZG4Y3X88feoIvteZq0u2AapGPAYJ-tqWqbwYBBBocX7nYfOw3mVGgHb1Ku7pqf13IoWtgR-hz0lmgsLuzGucmjaBKE881oodwUGKUkDWuUbIiFIxGLH5V6cR53XttM91wAKoUgizg0HuFHS_TEYeP2rJhVBv-8OpUmdKFs-lIrCqVBlJDeIwQS_jGSaY4_z-6Prjh797X3_mSDtXBNqaiAgRQkMHHytW6mrVfZVA-cXikTLX5CRc266KNY6MkaJRAS7-tOKxjMwE-IyvmrIIMW4YTdnoaTfVcZhE5YpbrqilZllTW2RtU4lLFh4DFmBRplJsh2F4the_VXm1LITRYrZlrkLB3qTkA_oPslxFxGk_BApWRmbpCxs9mNgwzqqDCsYyvkGqUNAqCTdgPZMApWwJyRNURu_s8yHo-wcLS42zgPvC64E2GvNaO5G5xPFApbHyN950seaSiivqLc-TysXpk6RxNwKm2l1EJDPvMk0G6sZnLlQVPSXQQsCcSfZmJFSHUNSk7u99o5JsuHWsW5oco2cD111Ghd2EAujdimTRGbhjhTTt1SOGl0DL7EgYVWFiYXxgB7XsXy6PgzuIXBuJkJRn4qpk6VeRHpHujbntbVlxlt5ah-lcvRqka8JEew5NXv4qL5zuMQiSIhmHdw_zVucZv7TqknUPJSovsFte40pYwVIeQP23HMekTqsAwEjc4S28Kg300IchGuEi9ihEL9-5_kgrFTgGOOQhNYo28ftnTD7LtoS5m3Av9CraHdbK9Y4bs1u7-qFfCopcamLXJPQe1ZQ0xqR3_zGQJtK24N_oi2Et5g4o_flqzyVwrd83B5nrcbUuayJL3C9SQg4NR2VD8eS96c3qIl_FxCsD6SoTQu22VbrRngvkM_WP1EtvBSKwMtYHnHlQSufV1bkv4E3JXfHg2UJZdvJ0MtfNMTY9qx39YlI1A1Ds4ctMjCF4qAS2XPkUvvgIpwFq4JzH3v2d-f57itMmqamINLmxP2Pv1J69kj7M_shl_FWTJrWn_MtKLsS77Awxc3NdhXhvA2ketiLp_wOE8CED-o4j_Yh0NKy2AVNqeQcmZvJ3FK2vysB2oAjRqTemcad_B2fHkdceoMvSqAYk26gGm8Nvu8GK_atpKOfi1akGKQBRoERZmPT2wyDpXXS4GdVMyC8m5MUa7xJHwUsRDn4ucW792Pt_5skKrBK_So2pGhmoZa8nJYZ8x7O9ZNEXF6a4OIRgbGKnkVpP95YzlQAsVxR31YXkE1pcdM4nRqCpPjdoQjZ0Twr0ute5v4J6Lhb1F3FsNrg3Sm9YRkJ9h-yfUfvyt1bK1V4nFMtRFt120WjfIvlZZ-1qyenToySK8doSSUZ6VOQWG_ieBkf-IRAN3eONC0n6BfGogsVlPXhXHLznouLnzapC4pGWWBIDsGlTvZj_o7UpHMPr_20PDC5d2jSGGtXf6kJvtfsAnJjtQPHs41VfDLyT-yQIlnUd8QvdwUlQ22A79I-rg38C8BWJNqg3sbOtzMMpt6R8Cvyp4dmB1ksS24tpiEZZ42aH8JIgoqs1sRbFPsC1v3kDPd3XRbbKpliQxseR_xWMNZkGj2F8q9HH1lgLkkCod_97OYrYBROxn9K79wlkZBUFjrNXA3EuiBf-IDOvQeKtDRypAaTKnHybIEOIypTNOWjhGT6oQutKSFswfvSeJGA0fF26FAgxnVmzFS7eAyzSHDqygQfhB7Yp7N2yEbD0eFLUs8qgete-eDIn6eM5E5eMnT1JeP6LD8ku5iR30sDdU8O6BrsGvUypMSID-hoBDytF1_GS6yOhMsU4pXZHTJ4yYNUOFyMH3ReE3SeAuFFohR9aXTpUA5YeLy6-Xo0_ZA9FuFMDVK4Bp1F5f-2BJ3FXRc1aqtyROpMdBtY4ehEqm-FKqbYd4VlaIMb9adG1LnOgWpnWCr9ciOP-c75rxX885yZLXO8rHJ_wbg04JzobGFnKdZHPtCYiTgkpnFavesiy9iI_bRO0Mu7SaDwXne6u4NY4YIHGRRCKR7o98lvSCOw7PT3SgWPoHEML6Na0QnycJeiPayB7megnFGfQZn_lSzDDeAiKgOBJ42LJZf3ysH1Dueqb7icX6xn4HlrMJdDLhMCgvwry4QQkrgrsIhyrTFNt2j--0IO7hX4RbwU5v5yudb0QRQovbmjoPRk4qeZKOyH-YSW-J1lu2MJcrk9Z-Sc4d875cZ6B3HxUuJFYQWqMoJ6EkZjNRLpp3XBkFEu5ip4md7yu_FYK7SInsuVI0igMVRx5i9vURIiGnVf60yBfWpqJac0Jp_7V3ftXsdXk3pSE4_GF9QgKM4l9chXH-frUEExxXS13BRQJP1b29-0B7ciG-48c18uSktRItBmXv2_baSiyo7_nvnPWVUgpig9qOuiFFmVPPvFRGTQS6jh8dPZR8PCFnpxuMhVrrJDJUNu8wmVGdVDMZP6kO2PYhNpz35RrX25SSgzjbl6V4uFDb7KQdWQAv-78QkLibUeB7w47I_2G47TGxbUsmnTt_sss1LW0peGrmCMKncgSQKro8rSBQ==',
+            },
+        ]
     )
 
 

@@ -460,8 +460,9 @@ class OpenRouterModel(OpenAIChatModel):
 
         for message, openai_message in zip(messages, openai_messages):
             if isinstance(message, ModelResponse):
-                openai_message['reasoning_details'] = [
+                if reasoning_details := [
                     part.into_reasoning_detail() for part in message.parts if isinstance(part, OpenRouterThinkingPart)
-                ]
+                ]:
+                    openai_message['reasoning_details'] = reasoning_details
 
         return openai_messages

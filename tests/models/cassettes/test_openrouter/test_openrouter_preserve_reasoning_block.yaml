@@ -1,0 +1,132 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '171'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What was the impact of Voltaire's writings on modern french culture? Think about your answer.
+        role: user
+      model: openai/o3
+      stream: false
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      content-length:
+      - '11648'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: "Impact of Voltaire’s Writings on Modern French Culture\n\n1. A civic vocabulary of liberty and tolerance\n•
+            “Écrasez l’infâme” (Crush the infamous thing) and “Il faut cultiver notre jardin” (We must cultivate our garden)
+            are still quoted by politicians, journalists and schoolchildren.  \n• His defense of minor-religion victims (Calas,
+            Sirven, La Barre) supplied iconic cases that taught the French the meaning of liberté de conscience.  \n• Concepts
+            central to the Revolution (droits de l’homme, liberté d’expression, égalité civile) were first popularized not
+            by legal texts but by Voltaire’s pamphlets, letters and contes philosophiques.  When the Déclaration des droits
+            de l’homme et du citoyen (1789) was drafted, deputies openly cited him.\n\n2. Laïcité as a cultural reflex\n•
+            Voltaire’s relentless criticism of clerical power helped dissociate “being French” from “being Catholic.”  \n•
+            The 1905 law separating Church and State and the contemporary consensus that religion is a private matter (laïcité)
+            both rest on an attitude—skepticism toward organized religion—that Voltaire normalized.  \n• His nickname l’Athée
+            de la Sorbonne is still invoked in current debates about headscarves, bio-ethics or blasphemy; op-ed writers speak
+            of a “Voltaire moment” whenever satire confronts religion (Charlie Hebdo, exhibitions, plays, etc.).\n\n3. Freedom
+            of speech as a near-sacred principle\n• Voltaire’s legendary—if apocryphal—phrase “I disapprove of what you say,
+            but I will defend to the death your right to say it,” regularly appears in parliamentary debates, media codes
+            of ethics and lycée textbooks.  \n• Modern defamation and press-liberty laws (1881 and after) were drafted in
+            a climate steeped in Voltairian skepticism toward censorship.\n\n4. The French taste for “esprit” and satire\n•
+            Candide, Lettres philosophiques, and Dictionnaire philosophique established the short, witty, corrosive form as
+            a French ideal of prose.  \n• Newspapers like Le Canard enchaîné, TV programs such as “Les Guignols,” and graphic
+            novels by Luz or Jul draw directly on the Voltairian strategy: humor plus moral indignation.  \n• Even serious
+            political commentary in France prizes the mot d’esprit and the reductive punch line—an unwritten stylistic legacy
+            of Voltaire.\n\n5. Educational canon and cultural literacy\n• Voltaire is compulsory reading in collège and lycée;
+            exam questions on Candide are perennial.  \n• His letters model the “dissertation française” structure (thèse,
+            antithèse, synthèse) taught nationwide.  \n• The annual “Prix Voltaire” (CLEMI) rewards high-school press clubs
+            that fight censorship, rooting his ideals in adolescent civic training.\n\n6. Influence on French legal and political
+            institutions\n• The Council of State and the Constitutional Council frequently cite “liberté de penser” (Voltaire,
+            Traité sur la tolérance) when striking down laws that restrict expression.  \n• The secular “Journée de la laïcité,”
+            celebrated each 9 December, uses excerpts from Traité sur la tolérance in official posters distributed to town
+            halls.\n\n7. Literary forms and genres\n• The conte philosophique (Candide, Zadig, Micromégas) paved the way for
+            the modern nouvelle, the hybrid “essay-novel” of Sartre, Camus, Yourcenar, and for the philosophical BD (Sfar’s
+            Le chat du rabbin).  \n• Voltaire’s mixing of reportage, satire, philosophy and fiction prefigured the essayistic
+            style of today’s “livres de société” by writers such as Houellebecq or Mona Chollet.\n\n8. Language: a living
+            imprint\n• “Voltairien/Voltairienne” denotes caustic wit; “voltairisme” means sharp, secular critique.  \n• His
+            aphorisms—“Le mieux est l’ennemi du bien,” “Les hommes naissent égaux” —crop up in talk-shows and business seminars
+            alike.\n\n9. National memory\n• Burial in the Panthéon (1791) created the template for the République’s secular
+            sanctuaries.  \n• Libraries, streets, Lycée Voltaire (Paris, Orléans, Wingles) and the high-speed train “TGV 220
+            Voltaire” embed him in daily geography.  \n• Bicentenary celebrations in 1978 and the 2014 republication of Traité
+            sur la tolérance (after the Charlie Hebdo attacks) both caused nationwide spikes in sales, proving enduring resonance.\n\n10.
+            A benchmark for intellectual engagement\n• When French public intellectuals sign manifestos (from Zola’s “J’accuse”
+            to the recent petitions on climate or pensions), the very act echoes Voltaire’s pamphlet warfare: use the pen
+            to influence power.  \n• The Académie française and PEN International invoke him as the patron saint of the “écrivain
+            engagé,” a figure central to modern French self-understanding.\n\nIn short, Voltaire’s writings did more than
+            enrich French literature; they installed reflexes—skepticism, satire, secularism, and the primacy of individual
+            rights—that continue to structure French laws, education, media tone, and collective identity. Modern France’s
+            attachment to laïcité, its bawdy political humor, its fierce defense of free expression, and even the way essays
+            are written in lycée classrooms all carry a Voltairian fingerprint."
+          reasoning: |-
+            **Exploring Voltaire's impact**
+
+            The user seeks a thoughtful answer about Voltaire's influence on modern French culture. I should summarize his significance by discussing Enlightenment values like liberté and human rights, his role in shaping French Revolution ideas, and his distinctive use of satire. It’s also important to address his anti-clerical stance that encouraged secularism, the promotion of freedom of speech, his legacy in literature, and presence in institutions. Finally, I want to touch on his enduring impact on contemporary discussions around laïcité and cultural narrative.**Structuring the response**
+
+            I’m thinking about how to organize the response. I want to start with an introduction that highlights Voltaire as a central figure of the Enlightenment, noting how his writings shaped essential French values like rationality, secularism, and tolerance. After that, I should break the discussion into categories such as political thought, secularism, literature, education, and popular culture. I aim to develop this into a thoughtful answer of around 800 to 1000 words, which will cover all these important aspects.
+          reasoning_details:
+          - format: openai-responses-v1
+            index: 0
+            summary: |-
+              **Exploring Voltaire's impact**
+
+              The user seeks a thoughtful answer about Voltaire's influence on modern French culture. I should summarize his significance by discussing Enlightenment values like liberté and human rights, his role in shaping French Revolution ideas, and his distinctive use of satire. It’s also important to address his anti-clerical stance that encouraged secularism, the promotion of freedom of speech, his legacy in literature, and presence in institutions. Finally, I want to touch on his enduring impact on contemporary discussions around laïcité and cultural narrative.**Structuring the response**
+
+              I’m thinking about how to organize the response. I want to start with an introduction that highlights Voltaire as a central figure of the Enlightenment, noting how his writings shaped essential French values like rationality, secularism, and tolerance. After that, I should break the discussion into categories such as political thought, secularism, literature, education, and popular culture. I aim to develop this into a thoughtful answer of around 800 to 1000 words, which will cover all these important aspects.
+            type: reasoning.summary
+          - data: gAAAAABpALH0SrlqG_JSYqQT07H5yKQO7GcmENK5_dmCbkx_o6J5Qg7kZHHNvKynIDieAzknNQwmLf4SB96VU59uasmIK5oOyInBjdpczoYyFEoN8zKWVOolEaCLXSMJfybQb6U_CKEYmPrh_B4CsGDuLzKq7ak6ERC0qFb0vh6ctchIyzWN7MztgnrNt85TReEN3yPmox0suv_kjEc4K5nB6L8C5NOK8ZG4Y3X88feoIvteZq0u2AapGPAYJ-tqWqbwYBBBocX7nYfOw3mVGgHb1Ku7pqf13IoWtgR-hz0lmgsLuzGucmjaBKE881oodwUGKUkDWuUbIiFIxGLH5V6cR53XttM91wAKoUgizg0HuFHS_TEYeP2rJhVBv-8OpUmdKFs-lIrCqVBlJDeIwQS_jGSaY4_z-6Prjh797X3_mSDtXBNqaiAgRQkMHHytW6mrVfZVA-cXikTLX5CRc266KNY6MkaJRAS7-tOKxjMwE-IyvmrIIMW4YTdnoaTfVcZhE5YpbrqilZllTW2RtU4lLFh4DFmBRplJsh2F4the_VXm1LITRYrZlrkLB3qTkA_oPslxFxGk_BApWRmbpCxs9mNgwzqqDCsYyvkGqUNAqCTdgPZMApWwJyRNURu_s8yHo-wcLS42zgPvC64E2GvNaO5G5xPFApbHyN950seaSiivqLc-TysXpk6RxNwKm2l1EJDPvMk0G6sZnLlQVPSXQQsCcSfZmJFSHUNSk7u99o5JsuHWsW5oco2cD111Ghd2EAujdimTRGbhjhTTt1SOGl0DL7EgYVWFiYXxgB7XsXy6PgzuIXBuJkJRn4qpk6VeRHpHujbntbVlxlt5ah-lcvRqka8JEew5NXv4qL5zuMQiSIhmHdw_zVucZv7TqknUPJSovsFte40pYwVIeQP23HMekTqsAwEjc4S28Kg300IchGuEi9ihEL9-5_kgrFTgGOOQhNYo28ftnTD7LtoS5m3Av9CraHdbK9Y4bs1u7-qFfCopcamLXJPQe1ZQ0xqR3_zGQJtK24N_oi2Et5g4o_flqzyVwrd83B5nrcbUuayJL3C9SQg4NR2VD8eS96c3qIl_FxCsD6SoTQu22VbrRngvkM_WP1EtvBSKwMtYHnHlQSufV1bkv4E3JXfHg2UJZdvJ0MtfNMTY9qx39YlI1A1Ds4ctMjCF4qAS2XPkUvvgIpwFq4JzH3v2d-f57itMmqamINLmxP2Pv1J69kj7M_shl_FWTJrWn_MtKLsS77Awxc3NdhXhvA2ketiLp_wOE8CED-o4j_Yh0NKy2AVNqeQcmZvJ3FK2vysB2oAjRqTemcad_B2fHkdceoMvSqAYk26gGm8Nvu8GK_atpKOfi1akGKQBRoERZmPT2wyDpXXS4GdVMyC8m5MUa7xJHwUsRDn4ucW792Pt_5skKrBK_So2pGhmoZa8nJYZ8x7O9ZNEXF6a4OIRgbGKnkVpP95YzlQAsVxR31YXkE1pcdM4nRqCpPjdoQjZ0Twr0ute5v4J6Lhb1F3FsNrg3Sm9YRkJ9h-yfUfvyt1bK1V4nFMtRFt120WjfIvlZZ-1qyenToySK8doSSUZ6VOQWG_ieBkf-IRAN3eONC0n6BfGogsVlPXhXHLznouLnzapC4pGWWBIDsGlTvZj_o7UpHMPr_20PDC5d2jSGGtXf6kJvtfsAnJjtQPHs41VfDLyT-yQIlnUd8QvdwUlQ22A79I-rg38C8BWJNqg3sbOtzMMpt6R8Cvyp4dmB1ksS24tpiEZZ42aH8JIgoqs1sRbFPsC1v3kDPd3XRbbKpliQxseR_xWMNZkGj2F8q9HH1lgLkkCod_97OYrYBROxn9K79wlkZBUFjrNXA3EuiBf-IDOvQeKtDRypAaTKnHybIEOIypTNOWjhGT6oQutKSFswfvSeJGA0fF26FAgxnVmzFS7eAyzSHDqygQfhB7Yp7N2yEbD0eFLUs8qgete-eDIn6eM5E5eMnT1JeP6LD8ku5iR30sDdU8O6BrsGvUypMSID-hoBDytF1_GS6yOhMsU4pXZHTJ4yYNUOFyMH3ReE3SeAuFFohR9aXTpUA5YeLy6-Xo0_ZA9FuFMDVK4Bp1F5f-2BJ3FXRc1aqtyROpMdBtY4ehEqm-FKqbYd4VlaIMb9adG1LnOgWpnWCr9ciOP-c75rxX885yZLXO8rHJ_wbg04JzobGFnKdZHPtCYiTgkpnFavesiy9iI_bRO0Mu7SaDwXne6u4NY4YIHGRRCKR7o98lvSCOw7PT3SgWPoHEML6Na0QnycJeiPayB7megnFGfQZn_lSzDDeAiKgOBJ42LJZf3ysH1Dueqb7icX6xn4HlrMJdDLhMCgvwry4QQkrgrsIhyrTFNt2j--0IO7hX4RbwU5v5yudb0QRQovbmjoPRk4qeZKOyH-YSW-J1lu2MJcrk9Z-Sc4d875cZ6B3HxUuJFYQWqMoJ6EkZjNRLpp3XBkFEu5ip4md7yu_FYK7SInsuVI0igMVRx5i9vURIiGnVf60yBfWpqJac0Jp_7V3ftXsdXk3pSE4_GF9QgKM4l9chXH-frUEExxXS13BRQJP1b29-0B7ciG-48c18uSktRItBmXv2_baSiyo7_nvnPWVUgpig9qOuiFFmVPPvFRGTQS6jh8dPZR8PCFnpxuMhVrrJDJUNu8wmVGdVDMZP6kO2PYhNpz35RrX25SSgzjbl6V4uFDb7KQdWQAv-78QkLibUeB7w47I_2G47TGxbUsmnTt_sss1LW0peGrmCMKncgSQKro8rSBQ==
+            format: openai-responses-v1
+            id: rs_06569cab051e4c78016900b1eb409c81909668d636e3a424f9
+            index: 0
+            type: reasoning.encrypted
+          refusal: null
+          role: assistant
+        native_finish_reason: completed
+      created: 1761653226
+      id: gen-1761653226-LJcHbeILDwsw5Tlqupp9
+      model: openai/o3
+      object: chat.completion
+      provider: OpenAI
+      usage:
+        completion_tokens: 1431
+        completion_tokens_details:
+          reasoning_tokens: 256
+        prompt_tokens: 25
+        total_tokens: 1456
+    status:
+      code: 200
+      message: OK
+version: 1
