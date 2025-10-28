@@ -172,20 +172,17 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
     def __post_init__(self):
         sig = inspect.signature(self.function)
 
-        # Check if partial parameter exists and is keyword-only
         if 'partial' in sig.parameters:
             partial_param = sig.parameters['partial']
             if partial_param.kind != inspect.Parameter.KEYWORD_ONLY:
                 raise ValueError(
                     f'Output validator {self.function.__name__!r} has a `partial` parameter that is not keyword-only. '
-                    'The `partial` parameter must be keyword-only (e.g., `def validator(data: str, *, partial: bool)`).'
+                    'The `partial` parameter must be keyword-only (e.g., `def validator(output: str, *, partial: bool)`).'
                 )
             self._takes_partial = True
         else:
             self._takes_partial = False
 
-        # Count positional parameters (excluding keyword-only like partial)
-        # to determine if RunContext is the first parameter
         positional_params = [
             p
             for p in sig.parameters.values()
