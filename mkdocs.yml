@@ -92,7 +92,10 @@ nav:
         - Temporal: durable_execution/temporal.md
         - DBOS: durable_execution/dbos.md
         - Prefect: durable_execution/prefect.md
-      - Agent-User Interaction (AG-UI): ag-ui.md
+      - UI Event Streams:
+        - Overview: ui/overview.md
+        - AG-UI: ui/ag-ui.md
+        - Vercel AI: ui/vercel-ai.md
       - Agent2Agent (A2A): a2a.md
 
   - Related Packages:
@@ -123,7 +126,6 @@ nav:
 
   - API Reference:
       - pydantic_ai:
-          - api/ag_ui.md
           - api/agent.md
           - api/tools.md
           - api/toolsets.md
@@ -160,6 +162,10 @@ nav:
           - api/providers.md
           - api/retries.md
           - api/run.md
+          - api/ag_ui.md
+          - api/ui/base.md
+          - api/ui/ag_ui.md
+          - api/ui/vercel_ai.md
       - pydantic_evals:
           - api/pydantic_evals/dataset.md
           - api/pydantic_evals/evaluators.md
