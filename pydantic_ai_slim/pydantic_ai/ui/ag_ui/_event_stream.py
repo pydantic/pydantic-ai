@@ -69,7 +69,7 @@ BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
 @dataclass
 class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]):
-    """TODO (DouweM): Docstring."""
+    """UI event stream transformer for the Agent-User Interaction (AG-UI) protocol."""
 
     _thinking_text: bool = False
     _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict)
@@ -81,29 +81,18 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     @property
     def content_type(self) -> str:
-        """Get the content type for the event stream, compatible with the accept header value."""
         return self._event_encoder.get_content_type()
 
     def encode_event(self, event: BaseEvent) -> str:
-        """Encode an AG-UI event as SSE.
-
-        Args:
-            event: The AG-UI event to encode.
-
-        Returns:
-            The SSE-formatted string.
-        """
         return self._event_encoder.encode(event)
 
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
-        """Yield events before agent streaming starts."""
         yield RunStartedEvent(
             thread_id=self.run_input.thread_id,
             run_id=self.run_input.run_id,
         )
 
     async def after_stream(self) -> AsyncIterator[BaseEvent]:
-        """Handle an AgentRunResultEvent, cleaning up any pending state."""
         if not self._error:
             yield RunFinishedEvent(
                 thread_id=self.run_input.thread_id,
@@ -111,12 +100,10 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             )
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseEvent]:
-        """Handle errors during streaming."""
         self._error = True
         yield RunErrorEvent(message=str(error))
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseEvent]:
-        """Handle a TextPart at start."""
         if follows_text:
             message_id = self.message_id
         else:
@@ -127,19 +114,16 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             yield TextMessageContentEvent(message_id=message_id, delta=part.content)
 
     async def handle_text_delta(self, delta: TextPartDelta) -> AsyncIterator[BaseEvent]:
-        """Handle a TextPartDelta."""
         if delta.content_delta:  # pragma: no branch
             yield TextMessageContentEvent(message_id=self.message_id, delta=delta.content_delta)
 
     async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[BaseEvent]:
-        """Handle a TextPart at end."""
         if not followed_by_text:
             yield TextMessageEndEvent(message_id=self.message_id)
 
     async def handle_thinking_start(
         self, part: ThinkingPart, follows_thinking: bool = False
     ) -> AsyncIterator[BaseEvent]:
-        """Handle a ThinkingPart at start."""
         if not follows_thinking:
             yield ThinkingStartEvent(type=EventType.THINKING_START)
 
@@ -149,7 +133,6 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             self._thinking_text = True
 
     async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[BaseEvent]:
-        """Handle a ThinkingPartDelta."""
         if not delta.content_delta:
             return  # pragma: no cover
 
@@ -162,7 +145,6 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_thinking_end(
         self, part: ThinkingPart, followed_by_thinking: bool = False
     ) -> AsyncIterator[BaseEvent]:
-        """Handle a ThinkingPart at end."""
         if self._thinking_text:
             yield ThinkingTextMessageEndEvent(type=EventType.THINKING_TEXT_MESSAGE_END)
             self._thinking_text = False
@@ -171,11 +153,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             yield ThinkingEndEvent(type=EventType.THINKING_END)
 
     def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
-        """Handle a ToolCallPart or BuiltinToolCallPart at start."""
         return self._handle_tool_call_start(part)
 
     def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
-        """Handle a BuiltinToolCallPart at start."""
         tool_call_id = part.tool_call_id
         builtin_tool_call_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', tool_call_id])
         self._builtin_tool_call_ids[tool_call_id] = builtin_tool_call_id
@@ -186,7 +166,6 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def _handle_tool_call_start(
         self, part: ToolCallPart | BuiltinToolCallPart, tool_call_id: str | None = None
     ) -> AsyncIterator[BaseEvent]:
-        """Handle a ToolCallPart or BuiltinToolCallPart at start."""
         tool_call_id = tool_call_id or part.tool_call_id
         message_id = self.message_id or self.new_message_id()
 
@@ -195,7 +174,6 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             yield ToolCallArgsEvent(tool_call_id=tool_call_id, delta=part.args_as_json_str())
 
     async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[BaseEvent]:
-        """Handle a ToolCallPartDelta."""
         tool_call_id = delta.tool_call_id
         assert tool_call_id, '`ToolCallPartDelta.tool_call_id` must be set'
         if tool_call_id in self._builtin_tool_call_ids:
@@ -206,15 +184,12 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         )
 
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseEvent]:
-        """Handle a ToolCallPart at end."""
         yield ToolCallEndEvent(tool_call_id=part.tool_call_id)
 
     async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
-        """Handle a BuiltinToolCallPart at end."""
         yield ToolCallEndEvent(tool_call_id=self._builtin_tool_call_ids[part.tool_call_id])
 
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseEvent]:
-        """Handle a BuiltinToolReturnPart."""
         tool_call_id = self._builtin_tool_call_ids[part.tool_call_id]
         yield ToolCallResultEvent(
             message_id=self.new_message_id(),
@@ -225,7 +200,6 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         )
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseEvent]:
-        """Handle a FunctionToolResultEvent, emitting tool result events."""
         result = event.result
         output = result.model_response() if isinstance(result, RetryPromptPart) else result.model_response_str()
 

@@ -46,7 +46,7 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
-from pydantic_ai.ui.vercel_ai._request_types import (
+from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolOutputAvailablePart,
     FileUIPart,
     ReasoningUIPart,
@@ -57,7 +57,7 @@ from pydantic_ai.ui.vercel_ai._request_types import (
     ToolOutputErrorPart,
     UIMessage,
 )
-from pydantic_ai.ui.vercel_ai._response_types import BaseChunk, DataChunk
+from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk
 
 from .conftest import IsDatetime, IsSameStr, IsStr, try_import
 

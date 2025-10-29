@@ -1,45 +1,27 @@
 """Vercel AI response types (SSE chunks).
 
 Converted to Python from:
-https://github.com/vercel/ai/blob/ai%405.0.59/packages/ai/src/ui/ui-messages.ts
+https://github.com/vercel/ai/blob/ai%405.0.59/packages/ai/src/ui-message-stream/ui-message-chunks.ts
 """
 
+from abc import ABC
 from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
-from ._utils import CamelBaseModel, ProviderMetadata
+from ._utils import CamelBaseModel
 
-__all__ = [
-    'BaseChunk',
-    'TextStartChunk',
-    'TextDeltaChunk',
-    'TextEndChunk',
-    'ReasoningStartChunk',
-    'ReasoningDeltaChunk',
-    'ReasoningEndChunk',
-    'ErrorChunk',
-    'ToolInputStartChunk',
-    'ToolInputDeltaChunk',
-    'ToolInputAvailableChunk',
-    'ToolInputErrorChunk',
-    'ToolOutputAvailableChunk',
-    'ToolOutputErrorChunk',
-    'SourceUrlChunk',
-    'SourceDocumentChunk',
-    'FileChunk',
-    'DataChunk',
-    'StartStepChunk',
-    'FinishStepChunk',
-    'StartChunk',
-    'FinishChunk',
-    'AbortChunk',
-    'MessageMetadataChunk',
-]
+# Technically this is recursive union of JSON types; for simplicity, we call it Any
+JSONValue = Any
+ProviderMetadata = dict[str, dict[str, JSONValue]]
+"""Provider metadata."""
 
 
-class BaseChunk(CamelBaseModel):
+class BaseChunk(CamelBaseModel, ABC):
     """Abstract base class for response SSE events."""
+
+    def encode(self) -> str:
+        return self.model_dump_json(by_alias=True, exclude_none=True)
 
 
 class TextStartChunk(BaseChunk):
@@ -243,3 +225,6 @@ class DoneChunk(BaseChunk):
     """Done chunk."""
 
     type: Literal['done'] = 'done'
+
+    def encode(self) -> str:
+        return '[DONE]'

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING
 
+from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
 from ...messages import (
@@ -32,7 +33,7 @@ from ...output import OutputDataT
 from ...tools import AgentDepsT
 from .. import MessagesBuilder, UIAdapter, UIEventStream
 from ._event_stream import VercelAIEventStream
-from ._request_types import (
+from .request_types import (
     DataUIPart,
     DynamicToolUIPart,
     FileUIPart,
@@ -46,9 +47,8 @@ from ._request_types import (
     ToolOutputErrorPart,
     ToolUIPart,
     UIMessage,
-    request_data_ta,
 )
-from ._response_types import BaseChunk
+from .response_types import BaseChunk
 
 if TYPE_CHECKING:
     pass
@@ -56,14 +56,15 @@ if TYPE_CHECKING:
 
 __all__ = ['VercelAIAdapter']
 
+request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
+
 
 @dataclass
 class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, OutputDataT]):
-    """TODO (DouweM): Docstring."""
+    """UI adapter for the Vercel AI protocol."""
 
     @classmethod
     def build_run_input(cls, body: bytes) -> RequestData:
-        """Validate a Vercel AI request."""
         return request_data_ta.validate_json(body)
 
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
@@ -71,12 +72,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
     @cached_property
     def messages(self) -> list[ModelMessage]:
-        """Convert Vercel AI protocol messages to Pydantic AI messages."""
         return self.load_messages(self.run_input.messages)
 
     @classmethod
     def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:  # noqa: C901
-        """Load messages from the request and return the loaded messages."""
         builder = MessagesBuilder()
 
         for msg in messages:

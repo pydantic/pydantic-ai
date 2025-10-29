@@ -81,37 +81,31 @@ class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
 
 
 class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, OutputDataT]):
-    """TODO (DouweM): Docstring."""
+    """UI adapter for the Agent-User Interaction (AG-UI) protocol."""
 
     @classmethod
     def build_run_input(cls, body: bytes) -> RunAgentInput:
-        """Validate the request body and return the validated run input."""
         return RunAgentInput.model_validate_json(body)
 
     def build_event_stream(self) -> UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]:
-        """Create an event stream for the adapter."""
         return AGUIEventStream(self.run_input, accept=self.accept)
 
     @cached_property
     def toolset(self) -> AbstractToolset[AgentDepsT] | None:
-        """Get the toolset for the adapter."""
         if self.run_input.tools:
             return _AGUIFrontendToolset[AgentDepsT](self.run_input.tools)
         return None
 
     @cached_property
     def state(self) -> dict[str, Any] | None:
-        """Get the state of the agent run."""
         return self.run_input.state
 
     @cached_property
     def messages(self) -> list[ModelMessage]:
-        """Convert AG-UI messages to Pydantic AI messages."""
         return self.load_messages(self.run_input.messages)
 
     @classmethod
     def load_messages(cls, messages: Sequence[Message]) -> list[ModelMessage]:
-        """Load messages from the request and return the loaded messages."""
         builder = MessagesBuilder()
         tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
 

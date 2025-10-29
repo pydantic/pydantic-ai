@@ -4,14 +4,24 @@ Converted to Python from:
 https://github.com/vercel/ai/blob/ai%405.0.59/packages/ai/src/ui/ui-messages.ts
 """
 
+from abc import ABC
 from typing import Annotated, Any, Literal
 
-from pydantic import Discriminator, Field, TypeAdapter
+from pydantic import Discriminator, Field
 
-from ._utils import CamelBaseModel, ProviderMetadata
+from ._utils import CamelBaseModel
+
+# Technically this is recursive union of JSON types; for simplicity, we call it Any
+JSONValue = Any
+ProviderMetadata = dict[str, dict[str, JSONValue]]
+"""Provider metadata."""
 
 
-class TextUIPart(CamelBaseModel):
+class BaseUIPart(CamelBaseModel, ABC):
+    """Abstract base class for all UI parts."""
+
+
+class TextUIPart(BaseUIPart):
     """A text part of a message."""
 
     type: Literal['text'] = 'text'
@@ -26,7 +36,7 @@ class TextUIPart(CamelBaseModel):
     """The provider metadata."""
 
 
-class ReasoningUIPart(CamelBaseModel):
+class ReasoningUIPart(BaseUIPart):
     """A reasoning part of a message."""
 
     type: Literal['reasoning'] = 'reasoning'
@@ -41,7 +51,7 @@ class ReasoningUIPart(CamelBaseModel):
     """The provider metadata."""
 
 
-class SourceUrlUIPart(CamelBaseModel):
+class SourceUrlUIPart(BaseUIPart):
     """A source part of a message."""
 
     type: Literal['source-url'] = 'source-url'
@@ -51,7 +61,7 @@ class SourceUrlUIPart(CamelBaseModel):
     provider_metadata: ProviderMetadata | None = None
 
 
-class SourceDocumentUIPart(CamelBaseModel):
+class SourceDocumentUIPart(BaseUIPart):
     """A document source part of a message."""
 
     type: Literal['source-document'] = 'source-document'
@@ -62,7 +72,7 @@ class SourceDocumentUIPart(CamelBaseModel):
     provider_metadata: ProviderMetadata | None = None
 
 
-class FileUIPart(CamelBaseModel):
+class FileUIPart(BaseUIPart):
     """A file part of a message."""
 
     type: Literal['file'] = 'file'
@@ -86,13 +96,13 @@ class FileUIPart(CamelBaseModel):
     """The provider metadata."""
 
 
-class StepStartUIPart(CamelBaseModel):
+class StepStartUIPart(BaseUIPart):
     """A step boundary part of a message."""
 
     type: Literal['step-start'] = 'step-start'
 
 
-class DataUIPart(CamelBaseModel):
+class DataUIPart(BaseUIPart):
     """Data part with dynamic type based on data name."""
 
     type: Annotated[str, Field(pattern=r'^data-')]
@@ -101,7 +111,7 @@ class DataUIPart(CamelBaseModel):
 
 
 # Tool part states as separate models
-class ToolInputStreamingPart(CamelBaseModel):
+class ToolInputStreamingPart(BaseUIPart):
     """Tool part in input-streaming state."""
 
     type: Annotated[str, Field(pattern=r'^tool-')]
@@ -111,7 +121,7 @@ class ToolInputStreamingPart(CamelBaseModel):
     provider_executed: bool | None = None
 
 
-class ToolInputAvailablePart(CamelBaseModel):
+class ToolInputAvailablePart(BaseUIPart):
     """Tool part in input-available state."""
 
     type: Annotated[str, Field(pattern=r'^tool-')]
@@ -122,7 +132,7 @@ class ToolInputAvailablePart(CamelBaseModel):
     call_provider_metadata: ProviderMetadata | None = None
 
 
-class ToolOutputAvailablePart(CamelBaseModel):
+class ToolOutputAvailablePart(BaseUIPart):
     """Tool part in output-available state."""
 
     type: Annotated[str, Field(pattern=r'^tool-')]
@@ -135,7 +145,7 @@ class ToolOutputAvailablePart(CamelBaseModel):
     preliminary: bool | None = None
 
 
-class ToolOutputErrorPart(CamelBaseModel):
+class ToolOutputErrorPart(BaseUIPart):
     """Tool part in output-error state."""
 
     type: Annotated[str, Field(pattern=r'^tool-')]
@@ -148,12 +158,12 @@ class ToolOutputErrorPart(CamelBaseModel):
     call_provider_metadata: ProviderMetadata | None = None
 
 
-# Union of all tool part states
 ToolUIPart = ToolInputStreamingPart | ToolInputAvailablePart | ToolOutputAvailablePart | ToolOutputErrorPart
+"""Union of all tool part types."""
 
 
 # Dynamic tool part states as separate models
-class DynamicToolInputStreamingPart(CamelBaseModel):
+class DynamicToolInputStreamingPart(BaseUIPart):
     """Dynamic tool part in input-streaming state."""
 
     type: Literal['dynamic-tool'] = 'dynamic-tool'
@@ -163,7 +173,7 @@ class DynamicToolInputStreamingPart(CamelBaseModel):
     input: Any | None = None
 
 
-class DynamicToolInputAvailablePart(CamelBaseModel):
+class DynamicToolInputAvailablePart(BaseUIPart):
     """Dynamic tool part in input-available state."""
 
     type: Literal['dynamic-tool'] = 'dynamic-tool'
@@ -174,7 +184,7 @@ class DynamicToolInputAvailablePart(CamelBaseModel):
     call_provider_metadata: ProviderMetadata | None = None
 
 
-class DynamicToolOutputAvailablePart(CamelBaseModel):
+class DynamicToolOutputAvailablePart(BaseUIPart):
     """Dynamic tool part in output-available state."""
 
     type: Literal['dynamic-tool'] = 'dynamic-tool'
@@ -187,7 +197,7 @@ class DynamicToolOutputAvailablePart(CamelBaseModel):
     preliminary: bool | None = None
 
 
-class DynamicToolOutputErrorPart(CamelBaseModel):
+class DynamicToolOutputErrorPart(BaseUIPart):
     """Dynamic tool part in output-error state."""
 
     type: Literal['dynamic-tool'] = 'dynamic-tool'
@@ -199,13 +209,13 @@ class DynamicToolOutputErrorPart(CamelBaseModel):
     call_provider_metadata: ProviderMetadata | None = None
 
 
-# Union of all dynamic tool part states
 DynamicToolUIPart = (
     DynamicToolInputStreamingPart
     | DynamicToolInputAvailablePart
     | DynamicToolOutputAvailablePart
     | DynamicToolOutputErrorPart
 )
+"""Union of all dynamic tool part types."""
 
 
 UIMessagePart = (
@@ -262,6 +272,4 @@ class RegenerateMessage(CamelBaseModel, extra='allow'):
 
 
 RequestData = Annotated[SubmitMessage | RegenerateMessage, Discriminator('trigger')]
-
-# Type adapter for parsing requests
-request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
+"""Union of all request data types."""

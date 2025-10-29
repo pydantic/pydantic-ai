@@ -126,7 +126,6 @@ nav:
 
   - API Reference:
       - pydantic_ai:
-          - api/ag_ui.md
           - api/agent.md
           - api/tools.md
           - api/toolsets.md
@@ -163,7 +162,10 @@ nav:
           - api/providers.md
           - api/retries.md
           - api/run.md
-          - api/ui.md
+          - api/ag_ui.md
+          - api/ui/base.md
+          - api/ui/ag_ui.md
+          - api/ui/vercel_ai.md
       - pydantic_evals:
           - api/pydantic_evals/dataset.md
           - api/pydantic_evals/evaluators.md

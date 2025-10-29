@@ -1,9 +1,3 @@
-"""Base classes for UI event stream protocols.
-
-This module provides abstract base classes for implementing UI event stream adapters
-that transform Pydantic AI agent events into protocol-specific events (e.g., AG-UI, Vercel AI).
-"""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -107,7 +101,12 @@ class StateDeps(Generic[StateT]):
 
 @dataclass
 class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputDataT]):
-    """TODO (DouweM): Docstring."""
+    """Base class for UI adapters.
+
+    This class is responsible for transforming agent run input received from the frontend into arguments for [`Agent.run_stream_events()`][pydantic_ai.Agent.run_stream_events], running the agent, and then transforming Pydantic AI events into protocol-specific events.
+
+    The event stream transformation is handled by a protocol-specific [`UIEventStream`][pydantic_ai.ui.UIEventStream] subclass.
+    """
 
     agent: AbstractAgent[AgentDepsT, OutputDataT]
     """The Pydantic AI agent to run."""
@@ -118,13 +117,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     _: KW_ONLY
 
     accept: str | None = None
-    """The accept header value."""
+    """The `Accept` header value of the request, used to determine how to encode the protocol-specific events for the streaming response."""
 
     @classmethod
     async def from_request(
         cls, request: Request, *, agent: AbstractAgent[AgentDepsT, OutputDataT]
     ) -> UIAdapter[RunInputT, MessageT, EventT, AgentDepsT, OutputDataT]:
-        """Create an adapter from a protocol-specific run input."""
+        """Create an adapter from a request."""
         return cls(
             agent=agent,
             run_input=cls.build_run_input(await request.body()),
@@ -134,18 +133,18 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     @classmethod
     @abstractmethod
     def build_run_input(cls, body: bytes) -> RunInputT:
-        """Validate the request body and return the protocol-specific run input object."""
+        """Build a protocol-specific run input object from the request body."""
         raise NotImplementedError
 
     @classmethod
     @abstractmethod
     def load_messages(cls, messages: Sequence[MessageT]) -> list[ModelMessage]:
-        """Convert protocol-specific messages into Pydantic AI messages."""
+        """Transform protocol-specific messages into Pydantic AI messages."""
         raise NotImplementedError
 
     @abstractmethod
     def build_event_stream(self) -> UIEventStream[RunInputT, EventT, AgentDepsT, OutputDataT]:
-        """Create a protocol-specific event stream."""
+        """Build a protocol-specific event stream."""
         raise NotImplementedError
 
     @cached_property
@@ -161,7 +160,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
     @cached_property
     def state(self) -> dict[str, Any] | None:
-        """Run state from the protocol-specific run input."""
+        """Frontend state from the protocol-specific run input."""
         return None
 
     def transform_stream(
@@ -174,11 +173,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         Args:
             stream: The stream of Pydantic AI events to transform.
             on_complete: Optional callback function called when the agent run completes successfully.
+                The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
         """
         return self.build_event_stream().transform_stream(stream, on_complete=on_complete)
 
     def encode_stream(self, stream: AsyncIterator[EventT]) -> AsyncIterator[str]:
-        """Encode a stream of protocol-specific events as strings according to the accept header value.
+        """Encode a stream of protocol-specific events as strings according to the `Accept` header value.
 
         Args:
             stream: The stream of protocol-specific events to encode.
@@ -190,9 +190,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
         Args:
             stream: The stream of protocol-specific events to encode.
-
-        Returns:
-            A streaming Starlette response with encoded protocol-specific events.
         """
         return self.build_event_stream().streaming_response(stream)
 
@@ -293,7 +290,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools to use for this run.
             on_complete: Optional callback function called when the agent run completes successfully.
-                The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
+                The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
         """
         return self.transform_stream(
             self.run_stream_native(
@@ -331,7 +328,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
     ) -> Response:
-        """Handle an protocol-specific HTTP request by running the agent and return a streaming response of protocol-specific events.
+        """Handle a protocol-specific HTTP request by running the agent and returning a streaming response of protocol-specific events.
 
         Args:
             request: The incoming Starlette/FastAPI request.
@@ -349,10 +346,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools to use for this run.
             on_complete: Optional callback function called when the agent run completes successfully.
-                The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
+                The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
 
         Returns:
-            A streaming Starlette response with protocol-specific events encoded per the request's accept header value.
+            A streaming Starlette response with protocol-specific events encoded per the request's `Accept` header value.
         """
         try:
             from starlette.responses import Response

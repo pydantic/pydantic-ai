@@ -1,6 +1,6 @@
-# Agent User Interaction (AG-UI) Protocol
+# Agent-User Interaction (AG-UI) Protocol
 
-The [Agent User Interaction (AG-UI) Protocol](https://docs.ag-ui.com/introduction) is an open standard introduced by the
+The [Agent-User Interaction (AG-UI) Protocol](https://docs.ag-ui.com/introduction) is an open standard introduced by the
 [CopilotKit](https://webflow.copilotkit.ai/blog/introducing-ag-ui-the-protocol-where-agents-meet-users)
 team that standardises how frontend applications communicate with AI agents, with support for streaming, frontend tools, shared state, and custom events.
 

@@ -121,7 +121,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
 
         async def run_agent(request: Request) -> Response:
             """Endpoint to run the agent with the provided input data."""
-            return await AGUIAdapter.dispatch_request(
+            return await AGUIAdapter[AgentDepsT, OutputDataT].dispatch_request(
                 request,
                 agent=agent,
                 output_type=output_type,

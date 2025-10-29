@@ -1615,7 +1615,10 @@ class PartStartEvent:
     previous_part_kind: (
         Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
     ) = None
-    """The kind of the previous part, if known."""
+    """The kind of the previous part, if any.
+
+    This is useful for UI event streams to know whether to group parts of the same kind together when emitting events.
+    """
 
     event_kind: Literal['part_start'] = 'part_start'
     """Event type identifier, used as a discriminator."""
@@ -1652,7 +1655,10 @@ class PartEndEvent:
     next_part_kind: (
         Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
     ) = None
-    """The kind of the next part, if known."""
+    """The kind of the next part, if any.
+
+    This is useful for UI event streams to know whether to group parts of the same kind together when emitting events.
+    """
 
     event_kind: Literal['part_end'] = 'part_end'
     """Event type identifier, used as a discriminator."""
