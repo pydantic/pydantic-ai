@@ -269,7 +269,7 @@ from pydantic_evals.evaluators import LLMJudge
 
 LLMJudge(
     rubric='Response is accurate and helpful',
-    model='openai:gpt-4o',
+    model='openai:gpt-5',
     include_input=False,
     include_expected_output=False,
     model_settings=None,
@@ -329,7 +329,7 @@ dataset = Dataset(
         # Quality score with different model
         LLMJudge(
             rubric='Overall response quality',
-            model='anthropic:claude-3-7-sonnet-latest',
+            model='anthropic:claude-sonnet-4-5',
             score={'evaluation_name': 'quality', 'include_reason': False},
             assertion=False,
         ),

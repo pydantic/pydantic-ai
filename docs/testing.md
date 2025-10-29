@@ -37,7 +37,7 @@ from fake_database import DatabaseConn  # (1)!
 from weather_service import WeatherService  # (2)!
 
 weather_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=WeatherService,
     system_prompt='Providing a weather forecast at the locations the user provides.',
 )
