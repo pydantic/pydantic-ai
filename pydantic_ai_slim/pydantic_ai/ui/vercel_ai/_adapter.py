@@ -65,17 +65,21 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
     @classmethod
     def build_run_input(cls, body: bytes) -> RequestData:
+        """Build a Vercel AI run input object from the request body."""
         return request_data_ta.validate_json(body)
 
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
+        """Build a Vercel AI event stream transformer."""
         return VercelAIEventStream(self.run_input, accept=self.accept)
 
     @cached_property
     def messages(self) -> list[ModelMessage]:
+        """Pydantic AI messages from the Vercel AI run input."""
         return self.load_messages(self.run_input.messages)
 
     @classmethod
     def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:  # noqa: C901
+        """Transform Vercel AI messages into Pydantic AI messages."""
         builder = MessagesBuilder()
 
         for msg in messages:

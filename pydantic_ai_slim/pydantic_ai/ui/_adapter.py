@@ -144,7 +144,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
     @abstractmethod
     def build_event_stream(self) -> UIEventStream[RunInputT, EventT, AgentDepsT, OutputDataT]:
-        """Build a protocol-specific event stream."""
+        """Build a protocol-specific event stream transformer."""
         raise NotImplementedError
 
     @cached_property

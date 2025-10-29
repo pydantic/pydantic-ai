@@ -85,27 +85,33 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     @classmethod
     def build_run_input(cls, body: bytes) -> RunAgentInput:
+        """Build an AG-UI run input object from the request body."""
         return RunAgentInput.model_validate_json(body)
 
     def build_event_stream(self) -> UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]:
+        """Build an AG-UI event stream transformer."""
         return AGUIEventStream(self.run_input, accept=self.accept)
 
     @cached_property
+    def messages(self) -> list[ModelMessage]:
+        """Pydantic AI messages from the AG-UI run input."""
+        return self.load_messages(self.run_input.messages)
+
+    @cached_property
     def toolset(self) -> AbstractToolset[AgentDepsT] | None:
+        """Toolset representing frontend tools from the AG-UI run input."""
         if self.run_input.tools:
             return _AGUIFrontendToolset[AgentDepsT](self.run_input.tools)
         return None
 
     @cached_property
     def state(self) -> dict[str, Any] | None:
+        """Frontend state from the AG-UI run input."""
         return self.run_input.state
-
-    @cached_property
-    def messages(self) -> list[ModelMessage]:
-        return self.load_messages(self.run_input.messages)
 
     @classmethod
     def load_messages(cls, messages: Sequence[Message]) -> list[ModelMessage]:
+        """Transform AG-UI messages into Pydantic AI messages."""
         builder = MessagesBuilder()
         tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
 

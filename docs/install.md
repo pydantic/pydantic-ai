@@ -43,7 +43,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `logfire` — installs [Pydantic Logfire](logfire.md) dependency `logfire` [PyPI ↗](https://pypi.org/project/logfire){:target="_blank"}
 * `evals` — installs [Pydantic Evals](evals.md) dependency `pydantic-evals` [PyPI ↗](https://pypi.org/project/pydantic-evals){:target="_blank"}
 * `openai` — installs [OpenAI Model](models/openai.md) dependency `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
-* `vertexai` — installs [Google Vertex AI Model](models/google.md#vertex-ai) dependencies `google-auth` [PyPI ↗](https://pypi.org/project/google-auth){:target="_blank"} and `requests` [PyPI ↗](https://pypi.org/project/requests){:target="_blank"}
+* `vertexai` — installs `GoogleVertexProvider` dependencies `google-auth` [PyPI ↗](https://pypi.org/project/google-auth){:target="_blank"} and `requests` [PyPI ↗](https://pypi.org/project/requests){:target="_blank"}
 * `google` — installs [Google Model](models/google.md) dependency `google-genai` [PyPI ↗](https://pypi.org/project/google-genai){:target="_blank"}
 * `anthropic` — installs [Anthropic Model](models/anthropic.md) dependency `anthropic` [PyPI ↗](https://pypi.org/project/anthropic){:target="_blank"}
 * `groq` — installs [Groq Model](models/groq.md) dependency `groq` [PyPI ↗](https://pypi.org/project/groq){:target="_blank"}
