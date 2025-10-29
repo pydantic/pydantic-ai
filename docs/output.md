@@ -477,7 +477,7 @@ When [streaming responses](#streaming-model-responses), output validators are ca
 However, you can add a `partial: bool` parameter as the last argument to your validator to distinguish between partial and final validation. This is useful when you want to skip expensive validation during streaming but apply full validation to the final result:
 
 ```python
-from pydantic_ai import Agent, ModelRetry
+from pydantic_ai import Agent, ModelRetry, RunContext
 
 agent = Agent('openai:gpt-4o')
 
