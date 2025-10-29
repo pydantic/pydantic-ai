@@ -514,14 +514,14 @@ class BinaryContent:
                 vendor_metadata=bc.vendor_metadata,
             )
         else:
-            return bc  # pragma: no cover
+            return bc
 
     @classmethod
     def from_data_uri(cls, data_uri: str) -> BinaryContent:
         """Create a `BinaryContent` from a data URI."""
         prefix = 'data:'
         if not data_uri.startswith(prefix):
-            raise ValueError('Data URI must start with "data:"')  # pragma: no cover
+            raise ValueError('Data URI must start with "data:"')
         media_type, data = data_uri[len(prefix) :].split(';base64,', 1)
         return cls.narrow_type(cls(data=base64.b64decode(data), media_type=media_type))
 
