@@ -1,0 +1,7 @@
+fastapi==0.104.1
+uvicorn==0.24.0
+pydantic-ai==0.0.14
+python-telegram-bot==20.7
+supabase==2.3.0
+python-dotenv==1.0.0
+httpx==0.25.2
