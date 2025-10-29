@@ -105,11 +105,6 @@ dev = [
     "pip>=25.2",
     "genai-prices>=0.0.28",
     "mcp-run-python>=0.0.20",
-    # Needed to test Outlines (not included in the default installation)
-    "pydantic-ai-slim[outlines-transformers]",
-    "pydantic-ai-slim[outlines-llamacpp]",
-    "pydantic-ai-slim[outlines-mlxlm]",
-    "pydantic-ai-slim[outlines-sglang]",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [
