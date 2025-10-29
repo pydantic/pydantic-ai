@@ -1825,7 +1825,7 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
             parts=[
                 TextPart(content='Open sesame! What would you like to unlock?'),
             ],
-            model_name='claude-3-5-sonnet-latest',
+            model_name='claude-sonnet-4-5',
             provider_name='anthropic',
             provider_response_id='msg_01XUQuedGz9gusk4xZm4gWJj',
         ),
@@ -1847,7 +1847,7 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
             ModelResponse(
                 parts=[TextPart(content='Open sesame! What would you like to unlock?')],
                 usage=RequestUsage(),
-                model_name='claude-3-5-sonnet-latest',
+                model_name='claude-sonnet-4-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_response_id='msg_01XUQuedGz9gusk4xZm4gWJj',

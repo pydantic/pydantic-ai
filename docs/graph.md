@@ -383,7 +383,7 @@ class State:
 
 
 email_writer_agent = Agent(
-    'google-gla:gemini-1.5-pro',
+    'google-gla:gemini-2.5-pro',
     output_type=Email,
     system_prompt='Write a welcome email to our tech blog.',
 )
@@ -423,7 +423,7 @@ class EmailOk(BaseModel):
 
 
 feedback_agent = Agent[None, EmailRequiresWrite | EmailOk](
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=EmailRequiresWrite | EmailOk,  # type: ignore
     system_prompt=(
         'Review the email and provide feedback, email must reference the users specific interests.'
@@ -663,7 +663,7 @@ from pydantic_graph import (
 from pydantic_ai import Agent, format_as_xml
 from pydantic_ai import ModelMessage
 
-ask_agent = Agent('openai:gpt-4o', output_type=str, instrument=True)
+ask_agent = Agent('openai:gpt-5', output_type=str, instrument=True)
 
 
 @dataclass
@@ -675,7 +675,7 @@ class QuestionState:
 
 @dataclass
 class Ask(BaseNode[QuestionState]):
-    """Generate question using GPT-4o."""
+    """Generate question using GPT-5."""
     docstring_notes = True
     async def run(
         self, ctx: GraphRunContext[QuestionState]
@@ -706,7 +706,7 @@ class EvaluationResult(BaseModel, use_attribute_docstrings=True):
 
 
 evaluate_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=EvaluationResult,
     system_prompt='Given a question and answer, evaluate if the answer is correct.',
 )
@@ -906,7 +906,7 @@ from typing import Annotated
 
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext, Edge
 
-ask_agent = Agent('openai:gpt-4o', output_type=str, instrument=True)
+ask_agent = Agent('openai:gpt-5', output_type=str, instrument=True)
 
 
 @dataclass
@@ -918,7 +918,7 @@ class QuestionState:
 
 @dataclass
 class Ask(BaseNode[QuestionState]):
-    """Generate question using GPT-4o."""
+    """Generate question using GPT-5."""
     docstring_notes = True
     async def run(
         self, ctx: GraphRunContext[QuestionState]
@@ -949,7 +949,7 @@ class EvaluationResult(BaseModel, use_attribute_docstrings=True):
 
 
 evaluate_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=EvaluationResult,
     system_prompt='Given a question and answer, evaluate if the answer is correct.',
 )
