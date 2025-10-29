@@ -683,6 +683,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             An async iterable of stream events `AgentStreamEvent` and finally a `AgentRunResultEvent` with the final
             run result.
         """
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+
         # unfortunately this hack of returning a generator rather than defining it right here is
         # required to allow overloads of this method to work in python's typing system, or at least with pyright
         # or at least I couldn't make it work without
@@ -696,7 +699,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings=model_settings,
             usage_limits=usage_limits,
             usage=usage,
-            infer_name=infer_name,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
         )
@@ -713,7 +715,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
-        infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
@@ -739,7 +740,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     model_settings=model_settings,
                     usage_limits=usage_limits,
                     usage=usage,
-                    infer_name=infer_name,
+                    infer_name=False,
                     toolsets=toolsets,
                     builtin_tools=builtin_tools,
                     event_stream_handler=event_stream_handler,
