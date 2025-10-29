@@ -47,8 +47,8 @@ Pydantic AI uses a few key terms to describe how it interacts with different LLM
   vendor-SDK-agnostic API, ensuring a single Pydantic AI agent is portable to different LLM vendors without
   any other code changes just by swapping out the Model it uses. Model classes are named
   roughly in the format `<VendorSdk>Model`, for example, we have `OpenAIChatModel`, `AnthropicModel`, `GoogleModel`,
-  etc. When using a Model class, you specify the actual LLM model name (e.g., `gpt-4o`,
-  `claude-3-5-sonnet-latest`, `gemini-1.5-flash`) as a parameter.
+  etc. When using a Model class, you specify the actual LLM model name (e.g., `gpt-5`,
+  `claude-sonnet-4-5`, `gemini-2.5-flash`) as a parameter.
 - **Provider**: This refers to provider-specific classes which handle the authentication and connections
   to an LLM vendor. Passing a non-default _Provider_ as a parameter to a Model is how you can ensure
   that your agent will make requests to a specific endpoint, or make use of a specific approach to
@@ -61,7 +61,7 @@ Pydantic AI uses a few key terms to describe how it interacts with different LLM
   and the same schema transformer needs to be used for Gemini models whether you're using `GoogleModel`
   with model name `gemini-2.5-pro-preview`, or `OpenAIChatModel` with `OpenRouterProvider` and model name `google/gemini-2.5-pro-preview`.
 
-When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted as `<provider>:<model>`, e.g. `openai:gpt-4o` or `openrouter:google/gemini-2.5-pro-preview`,
+When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted as `<provider>:<model>`, e.g. `openai:gpt-5` or `openrouter:google/gemini-2.5-pro-preview`,
 Pydantic AI will automatically select the appropriate model class, provider, and profile.
 If you want to use a different provider or profile, you can instantiate a model class directly and pass in `provider` and/or `profile` arguments.
 
@@ -97,8 +97,8 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel
 
-openai_model = OpenAIChatModel('gpt-4o')
-anthropic_model = AnthropicModel('claude-3-5-sonnet-latest')
+openai_model = OpenAIChatModel('gpt-5')
+anthropic_model = AnthropicModel('claude-sonnet-4-5')
 fallback_model = FallbackModel(openai_model, anthropic_model)
 
 agent = Agent(fallback_model)
@@ -121,7 +121,7 @@ print(response.all_messages())
     ),
     ModelResponse(
         parts=[TextPart(content='Paris', part_kind='text')],
-        model_name='claude-3-5-sonnet-latest',
+        model_name='claude-sonnet-4-5',
         timestamp=datetime.datetime(...),
         kind='response',
         provider_response_id=None,
@@ -147,11 +147,11 @@ from pydantic_ai.models.openai import OpenAIChatModel
 
 # Configure each model with provider-specific optimal settings
 openai_model = OpenAIChatModel(
-    'gpt-4o',
+    'gpt-5',
     settings=ModelSettings(temperature=0.7, max_tokens=1000)  # Higher creativity for OpenAI
 )
 anthropic_model = AnthropicModel(
-    'claude-3-5-sonnet-latest',
+    'claude-sonnet-4-5',
     settings=ModelSettings(temperature=0.2, max_tokens=1000)  # Lower temperature for consistency
 )
 
@@ -179,8 +179,8 @@ contains all the exceptions encountered during the `run` execution.
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIChatModel
 
-    openai_model = OpenAIChatModel('gpt-4o')
-    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest')
+    openai_model = OpenAIChatModel('gpt-5')
+    anthropic_model = AnthropicModel('claude-sonnet-4-5')
     fallback_model = FallbackModel(openai_model, anthropic_model)
 
     agent = Agent(fallback_model)
@@ -211,8 +211,8 @@ contains all the exceptions encountered during the `run` execution.
             print(exc)
 
 
-    openai_model = OpenAIChatModel('gpt-4o')
-    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest')
+    openai_model = OpenAIChatModel('gpt-5')
+    anthropic_model = AnthropicModel('claude-sonnet-4-5')
     fallback_model = FallbackModel(openai_model, anthropic_model)
 
     agent = Agent(fallback_model)

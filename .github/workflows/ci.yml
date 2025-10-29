@@ -26,14 +26,15 @@ jobs:
         # Typecheck both Python 3.10 and 3.13. We've had issues due to not checking against both.
         python-version: ["3.10", "3.13"]
     env:
-      UV_PYTHON: ${{ matrix.python-version }}
       PYRIGHT_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v5
         with:
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
+          cache-suffix: lint
 
       - name: Install dependencies
         run: uv sync --all-extras --all-packages --group lint
@@ -56,6 +57,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: mypy
 
       - name: Install dependencies
         run: uv sync --no-dev --group lint
@@ -70,6 +72,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: docs
 
       - run: uv sync --group docs
 
@@ -107,6 +110,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: live
 
       - uses: pydantic/ollama-action@v3
         with:
@@ -151,7 +155,6 @@ jobs:
           - name: all-extras
             command: "--all-extras"
     env:
-      UV_PYTHON: ${{ matrix.python-version }}
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
     steps:
@@ -159,8 +162,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
         with:
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
-          prune-cache: false
+          cache-suffix: ${{ matrix.install.name }}
 
       - uses: denoland/setup-deno@v2
         with:
@@ -168,8 +172,9 @@ jobs:
 
       - run: mkdir .coverage
 
-      - run: uv run mcp-run-python example --deps=numpy
       - run: uv sync --only-dev
+
+      - run: uv run mcp-run-python example --deps=numpy
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
@@ -199,7 +204,6 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
     env:
-      UV_PYTHON: ${{ matrix.python-version }}
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
     steps:
@@ -207,8 +211,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
         with:
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
-          prune-cache: false
+          cache-suffix: lowest-versions
 
       - uses: denoland/setup-deno@v2
         with:
@@ -218,6 +223,8 @@ jobs:
 
       - run: uv sync --group dev
 
+      - run: uv run mcp-run-python example --deps=numpy
+
       - name: cache HuggingFace models
         uses: actions/cache@v4
         with:
@@ -225,8 +232,6 @@ jobs:
           key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
           restore-keys: |
             hf-${{ runner.os }}-
-
-      - run: uv run mcp-run-python example --deps=numpy
 
       - run: unset UV_FROZEN
 
@@ -250,15 +255,15 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     env:
-      UV_PYTHON: ${{ matrix.python-version }}
       CI: true
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v5
         with:
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
-          prune-cache: false
+          cache-suffix: all-extras
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
@@ -288,6 +293,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: dev
 
       - run: uv sync --group dev
       - run: uv run coverage combine
@@ -343,6 +349,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: docs-upload
 
       - uses: actions/download-artifact@v4
         with:
@@ -384,6 +391,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: deploy-docs-preview
 
       - uses: actions/download-artifact@v4
         with:
@@ -431,6 +439,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: release
 
       - run: uv build --all-packages
 
@@ -464,12 +473,7 @@ jobs:
           import os
           import tweepy
 
-          client = tweepy.Client(
-              access_token=os.getenv("TWITTER_ACCESS_TOKEN"),
-              access_token_secret=os.getenv("TWITTER_ACCESS_TOKEN_SECRET"),
-              consumer_key=os.getenv("TWITTER_CONSUMER_KEY"),
-              consumer_secret=os.getenv("TWITTER_CONSUMER_SECRET"),
-          )
+          client = tweepy.Client(os.getenv("TWITTER_ACCESS_TOKEN"))
           version = os.getenv("VERSION").strip('"')
           tweet = os.getenv("TWEET").format(version=version)
           client.create_tweet(text=tweet)
@@ -479,7 +483,4 @@ jobs:
             Pydantic AI version {version} is out! 🎉
 
             https://github.com/pydantic/pydantic-ai/releases/tag/v{version}
-          TWITTER_CONSUMER_KEY: ${{ secrets.TWITTER_CONSUMER_KEY }}
-          TWITTER_CONSUMER_SECRET: ${{ secrets.TWITTER_CONSUMER_SECRET }}
           TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
-          TWITTER_ACCESS_TOKEN_SECRET: ${{ secrets.TWITTER_ACCESS_TOKEN_SECRET }}

@@ -55,7 +55,7 @@ from pydantic import ValidationError
 from pydantic_ai import Agent
 from pydantic_ai.ag_ui import SSE_CONTENT_TYPE, run_ag_ui
 
-agent = Agent('openai:gpt-4.1', instructions='Be fun!')
+agent = Agent('openai:gpt-5', instructions='Be fun!')
 
 app = FastAPI()
 
@@ -97,7 +97,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ag_ui import handle_ag_ui_request
 
-agent = Agent('openai:gpt-4.1', instructions='Be fun!')
+agent = Agent('openai:gpt-5', instructions='Be fun!')
 
 app = FastAPI()
 
@@ -121,7 +121,7 @@ This example uses [`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui]
 ```py {title="agent_to_ag_ui.py" hl_lines="4"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4.1', instructions='Be fun!')
+agent = Agent('openai:gpt-5', instructions='Be fun!')
 app = agent.to_ag_ui()
 ```
 
@@ -184,7 +184,7 @@ class DocumentState(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-4.1',
+    'openai:gpt-5',
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
@@ -224,7 +224,7 @@ class DocumentState(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-4.1',
+    'openai:gpt-5',
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )

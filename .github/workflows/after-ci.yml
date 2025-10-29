@@ -16,7 +16,6 @@ jobs:
     steps:
       - uses: astral-sh/setup-uv@v5
         with:
-          enable-cache: true
           python-version: "3.12"
 
       - uses: dawidd6/action-download-artifact@v6
@@ -54,8 +53,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
         with:
-          enable-cache: true
           python-version: "3.12"
+          enable-cache: true
+          cache-suffix: deploy-docs-preview
 
       - uses: dawidd6/action-download-artifact@v6
         with:

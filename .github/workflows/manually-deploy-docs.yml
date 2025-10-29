@@ -13,6 +13,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: docs
 
       - run: uv sync --group docs
 
@@ -54,6 +55,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: docs-upload
 
       - uses: actions/download-artifact@v4
         with:

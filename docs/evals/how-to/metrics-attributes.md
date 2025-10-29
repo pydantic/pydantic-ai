@@ -62,7 +62,7 @@ def process(inputs: str) -> str:
 
 def my_task(inputs: str) -> str:
     # Record which model was used
-    set_eval_attribute('model', 'gpt-4o')
+    set_eval_attribute('model', 'gpt-5')
 
     # Record feature flags
     set_eval_attribute('used_cache', True)
@@ -168,7 +168,7 @@ from pydantic_ai import Agent
 
 logfire.configure(send_to_logfire='if-token-present')
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 
 async def ai_task(inputs: str) -> str:
@@ -279,7 +279,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_evals import increment_eval_metric, set_eval_attribute
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 
 def search(query: str) -> str:
@@ -684,7 +684,7 @@ dataset = Dataset(cases=[case])
 async def task(inputs):
     # These are recorded during execution for each case
     increment_eval_metric('tokens', 100)
-    set_eval_attribute('model', 'gpt-4o')
+    set_eval_attribute('model', 'gpt-5')
     return f'Result: {inputs}'
 
 

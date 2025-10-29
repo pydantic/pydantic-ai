@@ -92,7 +92,7 @@ class InvalidRequest(BaseModel):
 
 Response: TypeAlias = Success | InvalidRequest
 agent = Agent[Deps, Response](
-    'google-gla:gemini-1.5-flash',
+    'google-gla:gemini-2.5-flash',
     # Type ignore while we wait for PEP-0747, nonetheless unions will work fine everywhere else
     output_type=Response,  # type: ignore
     deps_type=Deps,
