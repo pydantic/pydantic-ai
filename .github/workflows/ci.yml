@@ -164,7 +164,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-          prune-cache: false
           cache-suffix: ${{ matrix.install.name }}
 
       - uses: denoland/setup-deno@v2
@@ -173,8 +172,9 @@ jobs:
 
       - run: mkdir .coverage
 
-      - run: uv run mcp-run-python example --deps=numpy
       - run: uv sync --only-dev
+
+      - run: uv run mcp-run-python example --deps=numpy
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
@@ -213,7 +213,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-          prune-cache: false
           cache-suffix: lowest-versions
 
       - uses: denoland/setup-deno@v2
@@ -224,6 +223,8 @@ jobs:
 
       - run: uv sync --group dev
 
+      - run: uv run mcp-run-python example --deps=numpy
+
       - name: cache HuggingFace models
         uses: actions/cache@v4
         with:
@@ -231,8 +232,6 @@ jobs:
           key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
           restore-keys: |
             hf-${{ runner.os }}-
-
-      - run: uv run mcp-run-python example --deps=numpy
 
       - run: unset UV_FROZEN
 
@@ -264,7 +263,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-          prune-cache: false
           cache-suffix: all-extras
 
       - name: cache HuggingFace models
