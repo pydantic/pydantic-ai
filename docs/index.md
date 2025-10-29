@@ -201,7 +201,7 @@ logfire.instrument_asyncpg()  # (3)!
 ...
 
 support_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=SupportDependencies,
     output_type=SupportOutput,
     system_prompt=(

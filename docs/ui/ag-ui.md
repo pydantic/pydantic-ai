@@ -55,7 +55,7 @@ from pydantic_ai import Agent
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-4.1', instructions='Be fun!')
+agent = Agent('openai:gpt-5', instructions='Be fun!')
 
 app = FastAPI()
 
@@ -103,7 +103,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-4.1', instructions='Be fun!')
+agent = Agent('openai:gpt-5', instructions='Be fun!')
 
 app = FastAPI()
 
@@ -130,7 +130,7 @@ This example uses [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] to turn the agen
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui.app import AGUIApp
 
-agent = Agent('openai:gpt-4.1', instructions='Be fun!')
+agent = Agent('openai:gpt-5', instructions='Be fun!')
 app = AGUIApp(agent)
 ```
 
@@ -194,7 +194,7 @@ class DocumentState(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-4.1',
+    'openai:gpt-5',
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
@@ -235,7 +235,7 @@ class DocumentState(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-4.1',
+    'openai:gpt-5',
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )

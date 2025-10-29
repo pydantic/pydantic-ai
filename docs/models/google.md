@@ -103,7 +103,7 @@ credentials = service_account.Credentials.from_service_account_file(
     scopes=['https://www.googleapis.com/auth/cloud-platform'],
 )
 provider = GoogleProvider(credentials=credentials, project='your-project-id')
-model = GoogleModel('gemini-1.5-flash', provider=provider)
+model = GoogleModel('gemini-2.5-flash', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -222,7 +222,7 @@ settings = GoogleModelSettings(
         }
     ]
 )
-model = GoogleModel('gemini-1.5-flash')
+model = GoogleModel('gemini-2.5-flash')
 agent = Agent(model, model_settings=settings)
 ...
 ```
@@ -236,7 +236,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
 model_settings = GoogleModelSettings(google_thinking_config={'thinking_budget': 0})
-model = GoogleModel('gemini-2.0-flash')
+model = GoogleModel('gemini-2.5-flash')
 agent = Agent(model, model_settings=model_settings)
 ...
 ```
@@ -261,7 +261,7 @@ model_settings = GoogleModelSettings(
         }
     ]
 )
-model = GoogleModel('gemini-2.0-flash')
+model = GoogleModel('gemini-2.5-flash')
 agent = Agent(model, model_settings=model_settings)
 ...
 ```

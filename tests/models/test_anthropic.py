@@ -119,10 +119,10 @@ T = TypeVar('T')
 
 
 def test_init():
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key='foobar'))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='foobar'))
     assert isinstance(m.client, AsyncAnthropic)
     assert m.client.api_key == 'foobar'
-    assert m.model_name == 'claude-3-5-haiku-latest'
+    assert m.model_name == 'claude-haiku-4-5'
     assert m.system == 'anthropic'
     assert m.base_url == 'https://api.anthropic.com'
 
@@ -193,7 +193,7 @@ def completion_message(content: list[BetaContentBlock], usage: BetaUsage) -> Bet
 async def test_sync_request_text_response(allow_model_requests: None):
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('hello')
@@ -258,7 +258,7 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
         ),
     )
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('hello')
@@ -289,7 +289,7 @@ async def test_async_request_text_response(allow_model_requests: None):
         usage=BetaUsage(input_tokens=3, output_tokens=5),
     )
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('hello')
@@ -310,7 +310,7 @@ async def test_request_structured_response(allow_model_requests: None):
         usage=BetaUsage(input_tokens=3, output_tokens=5),
     )
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, output_type=list[int])
 
     result = await agent.run('hello')
@@ -365,7 +365,7 @@ async def test_request_tool_call(allow_model_requests: None):
     ]
 
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.tool_plain
@@ -472,7 +472,7 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
     ]
 
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=ModelSettings(parallel_tool_calls=parallel_tool_calls))
 
     @agent.tool_plain
@@ -510,7 +510,7 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
     # However, we do want to use the environment variable if present when rewriting VCR cassettes.
     api_key = os.getenv('ANTHROPIC_API_KEY', 'mock-value')
     agent = Agent(
-        AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=api_key)),
+        AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=api_key)),
         system_prompt=system_prompt,
         tools=[retrieve_entity_info],
     )
@@ -584,7 +584,7 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
 async def test_anthropic_specific_metadata(allow_model_requests: None) -> None:
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_metadata={'user_id': '123'}))
@@ -679,7 +679,7 @@ async def test_stream_structured(allow_model_requests: None):
     ]
 
     mock_client = MockAnthropic.create_stream_mock([stream, done_stream])
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     tool_called = False
@@ -725,7 +725,7 @@ async def test_stream_structured(allow_model_requests: None):
 
 
 async def test_image_url_input(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     result = await agent.run(
@@ -741,7 +741,7 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
 
 async def test_extra_headers(allow_model_requests: None, anthropic_api_key: str):
     # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         m,
         model_settings=AnthropicModelSettings(
@@ -752,7 +752,7 @@ async def test_extra_headers(allow_model_requests: None, anthropic_api_key: str)
 
 
 async def test_image_url_input_invalid_mime_type(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     result = await agent.run(
@@ -771,7 +771,7 @@ async def test_image_url_input_invalid_mime_type(allow_model_requests: None, ant
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, anthropic_api_key: str, image_content: BinaryContent
 ):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -804,7 +804,7 @@ async def test_image_as_binary_content_tool_response(
                         'output_tokens': 49,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'tool_use'},
@@ -844,7 +844,7 @@ async def test_image_as_binary_content_tool_response(
                         'output_tokens': 81,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
@@ -859,7 +859,7 @@ async def test_image_as_binary_content_tool_response(
 async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     base64_content = b'//uQZ'
@@ -876,19 +876,19 @@ def test_model_status_error(allow_model_requests: None) -> None:
             body={'error': 'test error'},
         )
     )
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     assert str(exc_info.value) == snapshot(
-        "status_code: 500, model_name: claude-3-5-sonnet-latest, body: {'error': 'test error'}"
+        "status_code: 500, model_name: claude-sonnet-4-5, body: {'error': 'test error'}"
     )
 
 
 async def test_document_binary_content_input(
     allow_model_requests: None, anthropic_api_key: str, document_content: BinaryContent
 ):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     result = await agent.run(['What is the main content on this document?', document_content])
@@ -898,7 +898,7 @@ async def test_document_binary_content_input(
 
 
 async def test_document_url_input(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     document_url = DocumentUrl(url='https://pdfobject.com/pdf/sample.pdf')
@@ -910,7 +910,7 @@ async def test_document_url_input(allow_model_requests: None, anthropic_api_key:
 
 
 async def test_text_document_url_input(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     text_document_url = DocumentUrl(url='https://example-files.online-convert.com/document/txt/example.txt')
@@ -980,7 +980,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
 
 
 async def test_anthropic_model_thinking_part(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-7-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
     agent = Agent(m, model_settings=settings)
 
@@ -1019,7 +1019,7 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
                         'output_tokens': 363,
                     },
                 ),
-                model_name='claude-3-7-sonnet-20250219',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
@@ -1074,7 +1074,7 @@ I'll keep the format similar to my street-crossing response for consistency.\
                         'output_tokens': 471,
                     },
                 ),
-                model_name='claude-3-7-sonnet-20250219',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
@@ -1086,7 +1086,7 @@ I'll keep the format similar to my street-crossing response for consistency.\
 
 
 async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-7-sonnet-20250219', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5-20250929', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
     agent = Agent(m, model_settings=settings)
 
@@ -1123,7 +1123,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'output_tokens': 196,
                     },
                 ),
-                model_name='claude-3-7-sonnet-20250219',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
@@ -1167,7 +1167,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'output_tokens': 232,
                     },
                 ),
-                model_name='claude-3-7-sonnet-20250219',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
@@ -1179,7 +1179,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
 
 
 async def test_anthropic_model_thinking_part_redacted_stream(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-7-sonnet-20250219', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5-20250929', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
     agent = Agent(m, model_settings=settings)
 
@@ -1230,7 +1230,7 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                         'output_tokens': 189,
                     },
                 ),
-                model_name='claude-3-7-sonnet-20250219',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
@@ -1478,7 +1478,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                         'output_tokens': 419,
                     },
                 ),
-                model_name='claude-3-7-sonnet-20250219',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
@@ -1752,7 +1752,7 @@ Is there a specific situation or type of street crossing you're concerned about?
 async def test_multiple_system_prompt_formatting(allow_model_requests: None):
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic().create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.system_prompt
@@ -1769,7 +1769,7 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
     return BetaMessage(
         id='x',
         content=[],
-        model='claude-3-7-sonnet-latest',
+        model='claude-sonnet-4-5',
         role='assistant',
         type='message',
         usage=usage,
@@ -1834,7 +1834,7 @@ async def test_anthropic_model_empty_message_on_history(allow_model_requests: No
 
     Check <https://github.com/pydantic/pydantic-ai/pull/1027> for more details.
     """
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     result = await agent.run(
@@ -4550,7 +4550,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
     from pydantic_ai.providers.openai import OpenAIProvider
 
     openai_model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
-    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    anthropic_model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()])
 
     result = await agent.run('What day is today?')
@@ -4623,7 +4623,7 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
 
     # Initialize model for all tests
     env.set('ANTHROPIC_API_KEY', 'test-key')
-    model = AnthropicModel('claude-3-5-sonnet-latest', provider='anthropic')
+    model = AnthropicModel('claude-sonnet-4-5', provider='anthropic')
 
     # Test _map_message with empty string in user prompt
     messages_empty_string: list[ModelMessage] = [
@@ -4660,7 +4660,7 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
 
 
 async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     class CityLocation(BaseModel):
         city: str
@@ -4699,7 +4699,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         'output_tokens': 23,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'tool_use'},
@@ -4734,7 +4734,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         'output_tokens': 56,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'tool_use'},
@@ -4756,7 +4756,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
 
 
 async def test_anthropic_text_output_function(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     def upcase(text: str) -> str:
         return text.upper()
@@ -4801,7 +4801,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                         'output_tokens': 65,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'tool_use'},
@@ -4834,7 +4834,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                         'output_tokens': 91,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
@@ -4846,7 +4846,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
 
 
 async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     class CityLocation(BaseModel):
         city: str
@@ -4894,7 +4894,7 @@ Don't include any text or Markdown fencing before or after.\
                         'output_tokens': 38,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'tool_use'},
@@ -4930,7 +4930,7 @@ Don't include any text or Markdown fencing before or after.\
                         'output_tokens': 17,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
@@ -4942,7 +4942,7 @@ Don't include any text or Markdown fencing before or after.\
 
 
 async def test_anthropic_prompted_output_multiple(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     class CityLocation(BaseModel):
         city: str
@@ -4990,7 +4990,7 @@ Don't include any text or Markdown fencing before or after.\
                         'output_tokens': 31,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
@@ -5002,7 +5002,7 @@ Don't include any text or Markdown fencing before or after.\
 
 
 async def test_anthropic_native_output(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     class CityLocation(BaseModel):
         city: str
@@ -5093,7 +5093,7 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
     )
 
     mock_client = MockAnthropic.create_mock([first_response, second_response])
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
 
     # First run to get server tool history
@@ -5145,7 +5145,7 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
     )
 
     mock_client = MockAnthropic.create_mock([first_response, second_response])
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
     # First run to get server tool history
@@ -5876,7 +5876,7 @@ These stories represent major international diplomatic developments, significant
 async def test_anthropic_text_parts_ahead_of_built_in_tool_call(allow_model_requests: None, anthropic_api_key: str):
     # Verify that text parts ahead of the built-in tool call are not included in the output
 
-    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    anthropic_model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()], instructions='Be very concise.')
 
     result = await agent.run('Briefly mention 1 event that happened today in history?')
