@@ -45,7 +45,14 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, try_import
-from .mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
+from .mock_openai import (
+    MockOpenAI,
+    MockOpenAIResponses,
+    completion_message,
+    get_mock_chat_completion_kwargs,
+    get_mock_responses_kwargs,
+    response_message,
+)
 
 with try_import() as imports_successful:
     from openai import APIStatusError, AsyncOpenAI
@@ -2976,6 +2983,25 @@ async def test_tool_choice_fallback(allow_model_requests: None) -> None:
     )
 
     assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == 'auto'
+
+
+async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> None:
+    """Ensure tool_choice falls back to 'auto' for Responses API when 'required' unsupported."""
+    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
+
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('openai/gpt-oss', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=False)
+
+    await model._responses_create(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        stream=False,
+        model_settings={},
+        model_request_parameters=params,
+    )
+
+    assert get_mock_responses_kwargs(mock_client)[0]['tool_choice'] == 'auto'
 
 
 async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_requests: None, openai_api_key: str):
