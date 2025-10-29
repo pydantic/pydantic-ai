@@ -474,7 +474,7 @@ _(This example is complete, it can be run "as is")_
 
 When [streaming responses](#streaming-model-responses), output validators are called multiple times - once for each partial response and once for the final response. By default, validators receive `allow_partial=False`, meaning they treat all responses the same way.
 
-However, you can add a `partial: bool` parameter to your validator to distinguish between partial and final validation. This is useful when you want to skip expensive validation during streaming but apply full validation to the final result:
+However, you can add a `partial: bool` parameter as the last argument to your validator to distinguish between partial and final validation. This is useful when you want to skip expensive validation during streaming but apply full validation to the final result:
 
 ```python
 from pydantic_ai import Agent, ModelRetry
@@ -482,7 +482,7 @@ from pydantic_ai import Agent, ModelRetry
 agent = Agent('openai:gpt-4o')
 
 @agent.output_validator
-def validate_output(output: str, *, partial: bool) -> str:
+def validate_output(ctx: RunContext, output: str, partial: bool) -> str:
     if partial:
         return output
     else:
@@ -490,13 +490,6 @@ def validate_output(output: str, *, partial: bool) -> str:
             raise ModelRetry('Output contains invalid content')
         return output
 ```
-
-The `partial` parameter must be keyword-only (note the `*` before `partial`). It works with all validator signatures:
-
-- `(data: T) -> T` - simple validator, no partial awareness
-- `(data: T, *, partial: bool) -> T` - validator with partial parameter
-- `(ctx: RunContext[Deps], data: T) -> T` - validator with context
-- `(ctx: RunContext[Deps], data: T, *, partial: bool) -> T` - validator with context and partial
 
 ## Image output
 

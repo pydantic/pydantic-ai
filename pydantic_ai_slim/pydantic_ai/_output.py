@@ -53,23 +53,20 @@ At some point, it may make sense to change the input to OutputValidatorFunc to b
 resolve these potential variance issues.
 """
 
-OutputValidatorFunc: TypeAlias = Callable[..., Any] | Callable[..., Awaitable[Any]]
+OutputValidatorFunc = (
+    Callable[[RunContext[AgentDepsT], OutputDataT_inv, bool], OutputDataT_inv]
+    | Callable[[RunContext[AgentDepsT], OutputDataT_inv, bool], Awaitable[OutputDataT_inv]]
+    | Callable[[RunContext[AgentDepsT], OutputDataT_inv], OutputDataT_inv]
+    | Callable[[RunContext[AgentDepsT], OutputDataT_inv], Awaitable[OutputDataT_inv]]
+    | Callable[[OutputDataT_inv], OutputDataT_inv]
+    | Callable[[OutputDataT_inv], Awaitable[OutputDataT_inv]]
+)
 """
-A function that takes and returns the same type of data (which is the result type of an agent run), and:
+A function that always takes and returns the same type of data (which is the result type of an agent run), and:
 
 * may or may not take [`RunContext`][pydantic_ai.tools.RunContext] as a first argument
-* may or may not take a keyword-only `partial: bool` parameter (e.g., `def validator(data: T, *, partial: bool)`)
+* may or may not take a `partial: bool` parameter as a last argument
 * may or may not be async
-
-Usage `OutputValidatorFunc[AgentDepsT, T]`.
-
-The function signature is introspected at runtime to determine which parameters it accepts.
-Supported signatures:
-- `(data: T) -> T`
-- `(data: T, *, partial: bool) -> T`
-- `(ctx: RunContext[Deps], data: T) -> T`
-- `(ctx: RunContext[Deps], data: T, *, partial: bool) -> T`
-- Async variants of all above
 """
 
 
@@ -171,25 +168,8 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
 
     def __post_init__(self):
         sig = inspect.signature(self.function)
-
-        if 'partial' in sig.parameters:
-            partial_param = sig.parameters['partial']
-            if partial_param.kind != inspect.Parameter.KEYWORD_ONLY:
-                raise ValueError(
-                    f'Output validator {self.function.__name__!r} has a `partial` parameter that is not keyword-only. '
-                    'The `partial` parameter must be keyword-only (e.g., `def validator(output: str, *, partial: bool)`).'
-                )
-            self._takes_partial = True
-        else:
-            self._takes_partial = False
-
-        positional_params = [
-            p
-            for p in sig.parameters.values()
-            if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-        ]
-        self._takes_ctx = len(positional_params) > 1
-
+        self._takes_ctx = len(sig.parameters) > 1
+        self._takes_partial = len(sig.parameters) > 2
         self._is_async = _utils.is_async_callable(self.function)
 
     async def validate(
@@ -216,17 +196,15 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
             args = (result,)
 
         if self._takes_partial:
-            kwargs = {'partial': allow_partial}
-        else:
-            kwargs = {}
+            args = (*args, allow_partial)
 
         try:
             if self._is_async:
                 function = cast(Callable[[Any], Awaitable[T]], self.function)
-                result_data = await function(*args, **kwargs)
+                result_data = await function(*args)
             else:
                 function = cast(Callable[[Any], T], self.function)
-                result_data = await _utils.run_in_executor(function, *args, **kwargs)
+                result_data = await _utils.run_in_executor(function, *args)
         except ModelRetry as r:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(

@@ -951,7 +951,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._system_prompt_functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](func, dynamic=dynamic))
             return func
 
-    # Without partial parameter
+    @overload
+    def output_validator(
+        self, func: Callable[[RunContext[AgentDepsT], OutputDataT, bool], OutputDataT], /
+    ) -> Callable[[RunContext[AgentDepsT], OutputDataT, bool], OutputDataT]: ...
+
+    @overload
+    def output_validator(
+        self, func: Callable[[RunContext[AgentDepsT], OutputDataT, bool], Awaitable[OutputDataT]], /
+    ) -> Callable[[RunContext[AgentDepsT], OutputDataT, bool], Awaitable[OutputDataT]]: ...
+
     @overload
     def output_validator(
         self, func: Callable[[RunContext[AgentDepsT], OutputDataT], OutputDataT], /
@@ -972,13 +981,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self, func: Callable[[OutputDataT], Awaitable[OutputDataT]], /
     ) -> Callable[[OutputDataT], Awaitable[OutputDataT]]: ...
 
-    # With partial parameter (these use Any to bypass Callable's limitation with keyword-only params)
-    @overload
-    def output_validator(self, func: Any, /) -> Any: ...
-
     def output_validator(
-        self, func: _output.OutputValidatorFunc, /
-    ) -> _output.OutputValidatorFunc:
+        self, func: _output.OutputValidatorFunc[AgentDepsT, OutputDataT], /
+    ) -> _output.OutputValidatorFunc[AgentDepsT, OutputDataT]:
         """Decorator to register an output validator function.
 
         Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
