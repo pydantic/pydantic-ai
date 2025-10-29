@@ -5334,6 +5334,21 @@ dbos = [
 examples = [
     { name = "pydantic-ai-examples" },
 ]
+outlines-llamacpp = [
+    { name = "pydantic-ai-slim", extra = ["outlines-llamacpp"] },
+]
+outlines-mlxlm = [
+    { name = "pydantic-ai-slim", extra = ["outlines-mlxlm"] },
+]
+outlines-sglang = [
+    { name = "pydantic-ai-slim", extra = ["outlines-sglang"] },
+]
+outlines-transformers = [
+    { name = "pydantic-ai-slim", extra = ["outlines-transformers"] },
+]
+outlines-vllm-offline = [
+    { name = "pydantic-ai-slim", extra = ["outlines-vllm-offline"] },
+]
 prefect = [
     { name = "pydantic-ai-slim", extra = ["prefect"] },
 ]
@@ -5352,7 +5367,6 @@ dev = [
     { name = "inline-snapshot" },
     { name = "mcp-run-python" },
     { name = "pip" },
-    { name = "pydantic-ai-slim", extra = ["outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers"] },
     { name = "pytest" },
     { name = "pytest-examples" },
     { name = "pytest-mock" },
@@ -5388,9 +5402,14 @@ requires-dist = [
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
     { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "temporal", "vertexai"], editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["dbos"], marker = "extra == 'dbos'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["outlines-llamacpp"], marker = "extra == 'outlines-llamacpp'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["outlines-mlxlm"], marker = "extra == 'outlines-mlxlm'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["outlines-sglang"], marker = "extra == 'outlines-sglang'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["outlines-transformers"], marker = "extra == 'outlines-transformers'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["outlines-vllm-offline"], marker = "extra == 'outlines-vllm-offline'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["prefect"], marker = "extra == 'prefect'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["a2a", "dbos", "examples", "prefect"]
+provides-extras = ["a2a", "dbos", "examples", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -5406,10 +5425,6 @@ dev = [
     { name = "inline-snapshot", specifier = ">=0.19.3" },
     { name = "mcp-run-python", specifier = ">=0.0.20" },
     { name = "pip", specifier = ">=25.2" },
-    { name = "pydantic-ai-slim", extras = ["outlines-llamacpp"], editable = "pydantic_ai_slim" },
-    { name = "pydantic-ai-slim", extras = ["outlines-mlxlm"], editable = "pydantic_ai_slim" },
-    { name = "pydantic-ai-slim", extras = ["outlines-sglang"], editable = "pydantic_ai_slim" },
-    { name = "pydantic-ai-slim", extras = ["outlines-transformers"], editable = "pydantic_ai_slim" },
     { name = "pytest", specifier = ">=8.3.3" },
     { name = "pytest-examples", specifier = ">=0.0.18" },
     { name = "pytest-mock", specifier = ">=3.14.0" },

@@ -263,7 +263,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-          cache-suffix: all-extras
+          cache-suffix: examples
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
