@@ -472,9 +472,9 @@ _(This example is complete, it can be run "as is")_
 
 #### Partial validation during streaming {#partial-validation}
 
-When [streaming responses](#streaming-model-responses), output validators are called multiple times - once for each partial response and once for the final response. By default, validators receive `allow_partial=False`, meaning they treat all responses the same way.
+When [streaming responses](#streaming-model-responses), you can pass allow_partial=True to validate_response_output to make Pydantic output validators use partial validation.
 
-However, you can add a `partial: bool` parameter as the last argument to your validator to distinguish between partial and final validation. This is useful when you want to skip expensive validation during streaming but apply full validation to the final result:
+By adding a `partial: bool` parameter as the last argument, you can access this information within output validator functions as well.
 
 ```python
 from pydantic_ai import Agent, ModelRetry, RunContext
