@@ -472,7 +472,7 @@ class OpenRouterModel(OpenAIChatModel):
                     openai_message['reasoning_details'] = reasoning_details  # type: ignore[reportGeneralTypeIssues]
 
             if openai_message['role'] == 'assistant' and isinstance(
-                contents := openai_message['content'], str
+                contents := openai_message.get('content'), str
             ):  # pragma: lax no cover
                 openai_message['content'] = re.sub(r'<think>.*?</think>\s*', '', contents, flags=re.DOTALL).strip()
 
