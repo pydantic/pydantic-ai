@@ -21,7 +21,7 @@ interactions:
         - text: How do I cross the street?
           type: text
         role: user
-      model: claude-3-7-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
       thinking:
         budget_tokens: 1024
@@ -82,7 +82,7 @@ interactions:
           Would you like me to explain any of these steps in more detail?
         type: text
       id: msg_01BnZvs3naGorn93wjjCDwbd
-      model: claude-3-7-sonnet-20250219
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
       stop_sequence: null
@@ -167,7 +167,7 @@ interactions:
         - text: Considering the way to cross the street, analogously, how do I cross the river?
           type: text
         role: user
-      model: claude-3-7-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
       thinking:
         budget_tokens: 1024
@@ -235,7 +235,7 @@ interactions:
           Is there a specific river crossing scenario you're curious about?
         type: text
       id: msg_019Z9a1qnqUCxd7Fj6PuuetE
-      model: claude-3-7-sonnet-20250219
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
       stop_sequence: null

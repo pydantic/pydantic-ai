@@ -148,7 +148,7 @@ async def test_gateway_provider_with_google_vertex(allow_model_requests: None, g
 
 async def test_gateway_provider_with_anthropic(allow_model_requests: None, gateway_api_key: str):
     provider = gateway_provider('anthropic', api_key=gateway_api_key, base_url='http://localhost:8787')
-    model = AnthropicModel('claude-3-5-sonnet-latest', provider=provider)
+    model = AnthropicModel('claude-sonnet-4-5', provider=provider)
     agent = Agent(model)
 
     result = await agent.run('What is the capital of France?')
@@ -182,7 +182,7 @@ async def test_model_provider_argument():
     model = GoogleModel('gemini-1.5-flash', provider='gateway')
     assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
 
-    model = AnthropicModel('claude-3-5-sonnet-latest', provider='gateway')
+    model = AnthropicModel('claude-sonnet-4-5', provider='gateway')
     assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
 
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider='gateway')

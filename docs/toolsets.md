@@ -474,7 +474,7 @@ class PersonalizedGreeting(BaseModel):
     language_code: str
 
 
-agent = Agent('openai:gpt-4o', toolsets=[toolset], output_type=PersonalizedGreeting)
+agent = Agent('openai:gpt-5', toolsets=[toolset], output_type=PersonalizedGreeting)
 
 result = agent.run_sync('Greet the user in a personalized way')
 print(repr(result.output))
@@ -681,7 +681,7 @@ from pydantic_ai.ext.langchain import LangChainToolset
 toolkit = SlackToolkit()
 toolset = LangChainToolset(toolkit.get_tools())
 
-agent = Agent('openai:gpt-4o', toolsets=[toolset])
+agent = Agent('openai:gpt-5', toolsets=[toolset])
 # ...
 ```
 
@@ -705,5 +705,5 @@ toolset = ACIToolset(
     linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
 )
 
-agent = Agent('openai:gpt-4o', toolsets=[toolset])
+agent = Agent('openai:gpt-5', toolsets=[toolset])
 ```
