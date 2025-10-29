@@ -214,7 +214,7 @@ client = create_network_resilient_client()
 
 ```python {title="custom_retry_logic.py"}
 import httpx
-from tenacity import stop_after_attempt, wait_exponential
+from tenacity import retry_if_exception, stop_after_attempt, wait_exponential
 
 from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
 
