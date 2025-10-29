@@ -142,7 +142,7 @@ jobs:
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -198,7 +198,7 @@ jobs:
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -263,7 +263,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-          cache-suffix: all-extras
+          cache-suffix: examples
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
