@@ -230,7 +230,7 @@ def create_custom_retry_client():
 
     transport = AsyncTenacityTransport(
         config=RetryConfig(
-            retry=custom_retry_condition,
+            retry=retry_if_exception(custom_retry_condition),
             # Use wait_retry_after for smart waiting on rate limits,
             # with custom exponential backoff as fallback
             wait=wait_retry_after(
