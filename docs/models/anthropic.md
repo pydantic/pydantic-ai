@@ -27,7 +27,7 @@ You can then use `AnthropicModel` by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('anthropic:claude-3-5-sonnet-latest')
+agent = Agent('anthropic:claude-sonnet-4-5')
 ...
 ```
 
@@ -37,7 +37,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 
-model = AnthropicModel('claude-3-5-sonnet-latest')
+model = AnthropicModel('claude-sonnet-4-5')
 agent = Agent(model)
 ...
 ```
@@ -52,7 +52,7 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
 model = AnthropicModel(
-    'claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key='your-api-key')
+    'claude-sonnet-4-5', provider=AnthropicProvider(api_key='your-api-key')
 )
 agent = Agent(model)
 ...
@@ -71,7 +71,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 
 custom_http_client = AsyncClient(timeout=30)
 model = AnthropicModel(
-    'claude-3-5-sonnet-latest',
+    'claude-sonnet-4-5',
     provider=AnthropicProvider(api_key='your-api-key', http_client=custom_http_client),
 )
 agent = Agent(model)

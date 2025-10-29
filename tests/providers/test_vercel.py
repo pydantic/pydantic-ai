@@ -79,14 +79,14 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     # Test anthropic provider
-    profile = provider.model_profile('anthropic/claude-3-sonnet')
-    anthropic_mock.assert_called_with('claude-3-sonnet')
+    profile = provider.model_profile('anthropic/claude-sonnet-4-5')
+    anthropic_mock.assert_called_with('claude-sonnet-4-5')
     assert profile is not None
     assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     # Test bedrock provider
-    profile = provider.model_profile('bedrock/anthropic.claude-3-sonnet')
-    amazon_mock.assert_called_with('anthropic.claude-3-sonnet')
+    profile = provider.model_profile('bedrock/anthropic.claude-sonnet-4-5')
+    amazon_mock.assert_called_with('anthropic.claude-sonnet-4-5')
     assert profile is not None
     assert profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
