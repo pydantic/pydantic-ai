@@ -401,12 +401,12 @@ from prepared_toolset import prepared_toolset
 LOG = []
 
 class LoggingToolset(WrapperToolset):
-    async def call_tool(self, name: str, tool_args: dict[str, Any], ctx: RunContext, tool: ToolsetTool) -> Any:
+    async def call_tool(self, name: str, tool_args: dict[str, Any], ctx: RunContext, tool: ToolsetTool, allow_partial: bool = False) -> Any:
         LOG.append(f'Calling tool {name!r} with args: {tool_args!r}')
         try:
             await asyncio.sleep(0.1 * len(LOG)) # (1)!
 
-            result = await super().call_tool(name, tool_args, ctx, tool)
+            result = await super().call_tool(name, tool_args, ctx, tool, allow_partial=allow_partial)
             LOG.append(f'Finished calling tool {name!r} with result: {result!r}')
         except Exception as e:
             LOG.append(f'Error calling tool {name!r}: {e}')
