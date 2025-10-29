@@ -1,3 +1,4 @@
+import re
 from dataclasses import asdict, dataclass
 from typing import Any, Literal, cast
 
@@ -286,7 +287,8 @@ class OpenRouterThinkingPart(ThinkingPart):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
     @classmethod
-    def from_reasoning_detail(cls, reasoning: OpenRouterReasoningDetail, provider_name: str):
+    def from_reasoning_detail(cls, reasoning: OpenRouterReasoningDetail):
+        provider_name = 'openrouter'
         if isinstance(reasoning, ReasoningText):
             return cls(
                 id=reasoning.id,
@@ -447,8 +449,7 @@ class OpenRouterModel(OpenAIChatModel):
 
         if reasoning_details := choice.message.reasoning_details:
             new_parts: list[ThinkingPart] = [
-                OpenRouterThinkingPart.from_reasoning_detail(reasoning, native_response.provider)
-                for reasoning in reasoning_details
+                OpenRouterThinkingPart.from_reasoning_detail(reasoning) for reasoning in reasoning_details
             ]
 
             model_response.parts = [*new_parts, *model_response.parts]
@@ -464,8 +465,15 @@ class OpenRouterModel(OpenAIChatModel):
         for message, openai_message in zip(messages, openai_messages):
             if isinstance(message, ModelResponse):
                 if reasoning_details := [
-                    part.into_reasoning_detail() for part in message.parts if isinstance(part, OpenRouterThinkingPart)
+                    part.into_reasoning_detail()
+                    for part in message.parts
+                    if isinstance(part, OpenRouterThinkingPart) and part.provider_name == self.system
                 ]:
                     openai_message['reasoning_details'] = reasoning_details  # type: ignore[reportGeneralTypeIssues]
+
+            if openai_message['role'] == 'assistant' and isinstance(
+                contents := openai_message['content'], str
+            ):  # pragma: lax no cover
+                openai_message['content'] = re.sub(r'<think>.*?</think>\s*', '', contents, flags=re.DOTALL).strip()
 
         return openai_messages

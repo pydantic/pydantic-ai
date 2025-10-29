@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '171'
+      - '92'
       content-type:
       - application/json
       host:
@@ -16,9 +16,9 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: What was the impact of Voltaire's writings on modern french culture? Think about your answer.
+      - content: Hello!
         role: user
-      model: openai/o3
+      model: openai/gpt-5-mini
       stream: false
     uri: https://openrouter.ai/api/v1/chat/completions
   response:
@@ -28,7 +28,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '11648'
+      - '2824'
       content-type:
       - application/json
       permissions-policy:
@@ -46,86 +46,140 @@ interactions:
         index: 0
         logprobs: null
         message:
-          content: "Impact of Voltaire’s Writings on Modern French Culture\n\n1. A civic vocabulary of liberty and tolerance\n•
-            “Écrasez l’infâme” (Crush the infamous thing) and “Il faut cultiver notre jardin” (We must cultivate our garden)
-            are still quoted by politicians, journalists and schoolchildren.  \n• His defense of minor-religion victims (Calas,
-            Sirven, La Barre) supplied iconic cases that taught the French the meaning of liberté de conscience.  \n• Concepts
-            central to the Revolution (droits de l’homme, liberté d’expression, égalité civile) were first popularized not
-            by legal texts but by Voltaire’s pamphlets, letters and contes philosophiques.  When the Déclaration des droits
-            de l’homme et du citoyen (1789) was drafted, deputies openly cited him.\n\n2. Laïcité as a cultural reflex\n•
-            Voltaire’s relentless criticism of clerical power helped dissociate “being French” from “being Catholic.”  \n•
-            The 1905 law separating Church and State and the contemporary consensus that religion is a private matter (laïcité)
-            both rest on an attitude—skepticism toward organized religion—that Voltaire normalized.  \n• His nickname l’Athée
-            de la Sorbonne is still invoked in current debates about headscarves, bio-ethics or blasphemy; op-ed writers speak
-            of a “Voltaire moment” whenever satire confronts religion (Charlie Hebdo, exhibitions, plays, etc.).\n\n3. Freedom
-            of speech as a near-sacred principle\n• Voltaire’s legendary—if apocryphal—phrase “I disapprove of what you say,
-            but I will defend to the death your right to say it,” regularly appears in parliamentary debates, media codes
-            of ethics and lycée textbooks.  \n• Modern defamation and press-liberty laws (1881 and after) were drafted in
-            a climate steeped in Voltairian skepticism toward censorship.\n\n4. The French taste for “esprit” and satire\n•
-            Candide, Lettres philosophiques, and Dictionnaire philosophique established the short, witty, corrosive form as
-            a French ideal of prose.  \n• Newspapers like Le Canard enchaîné, TV programs such as “Les Guignols,” and graphic
-            novels by Luz or Jul draw directly on the Voltairian strategy: humor plus moral indignation.  \n• Even serious
-            political commentary in France prizes the mot d’esprit and the reductive punch line—an unwritten stylistic legacy
-            of Voltaire.\n\n5. Educational canon and cultural literacy\n• Voltaire is compulsory reading in collège and lycée;
-            exam questions on Candide are perennial.  \n• His letters model the “dissertation française” structure (thèse,
-            antithèse, synthèse) taught nationwide.  \n• The annual “Prix Voltaire” (CLEMI) rewards high-school press clubs
-            that fight censorship, rooting his ideals in adolescent civic training.\n\n6. Influence on French legal and political
-            institutions\n• The Council of State and the Constitutional Council frequently cite “liberté de penser” (Voltaire,
-            Traité sur la tolérance) when striking down laws that restrict expression.  \n• The secular “Journée de la laïcité,”
-            celebrated each 9 December, uses excerpts from Traité sur la tolérance in official posters distributed to town
-            halls.\n\n7. Literary forms and genres\n• The conte philosophique (Candide, Zadig, Micromégas) paved the way for
-            the modern nouvelle, the hybrid “essay-novel” of Sartre, Camus, Yourcenar, and for the philosophical BD (Sfar’s
-            Le chat du rabbin).  \n• Voltaire’s mixing of reportage, satire, philosophy and fiction prefigured the essayistic
-            style of today’s “livres de société” by writers such as Houellebecq or Mona Chollet.\n\n8. Language: a living
-            imprint\n• “Voltairien/Voltairienne” denotes caustic wit; “voltairisme” means sharp, secular critique.  \n• His
-            aphorisms—“Le mieux est l’ennemi du bien,” “Les hommes naissent égaux” —crop up in talk-shows and business seminars
-            alike.\n\n9. National memory\n• Burial in the Panthéon (1791) created the template for the République’s secular
-            sanctuaries.  \n• Libraries, streets, Lycée Voltaire (Paris, Orléans, Wingles) and the high-speed train “TGV 220
-            Voltaire” embed him in daily geography.  \n• Bicentenary celebrations in 1978 and the 2014 republication of Traité
-            sur la tolérance (after the Charlie Hebdo attacks) both caused nationwide spikes in sales, proving enduring resonance.\n\n10.
-            A benchmark for intellectual engagement\n• When French public intellectuals sign manifestos (from Zola’s “J’accuse”
-            to the recent petitions on climate or pensions), the very act echoes Voltaire’s pamphlet warfare: use the pen
-            to influence power.  \n• The Académie française and PEN International invoke him as the patron saint of the “écrivain
-            engagé,” a figure central to modern French self-understanding.\n\nIn short, Voltaire’s writings did more than
-            enrich French literature; they installed reflexes—skepticism, satire, secularism, and the primacy of individual
-            rights—that continue to structure French laws, education, media tone, and collective identity. Modern France’s
-            attachment to laïcité, its bawdy political humor, its fierce defense of free expression, and even the way essays
-            are written in lycée classrooms all carry a Voltairian fingerprint."
+          content: Hello! How can I help you today?
+          refusal: null
+          role: assistant
+        native_finish_reason: completed
+      created: 1761751488
+      id: gen-1761751488-sw4FP5A0ecwISVPjA4ec
+      model: openai/gpt-5-mini
+      object: chat.completion
+      provider: OpenAI
+      usage:
+        completion_tokens: 15
+        completion_tokens_details:
+          reasoning_tokens: 0
+        prompt_tokens: 8
+        total_tokens: 23
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2107'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Hello!
+        role: user
+      - content: Hello! How can I help you today?
+        role: assistant
+      - content: What was the impact of Voltaire's writings on modern french culture?
+        role: user
+      model: openai/gpt-5-mini
+      stream: false
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      content-length:
+      - '11808'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: |-
+            Short answer: Very large. Voltaire’s writings helped shape the core values, public culture, and intellectual practices of modern France — especially skepticism of religious authority, commitment to freedom of expression, secular public institutions, and the model of the engaged public intellectual — while also leaving a lasting mark on French literature and satire.
+
+            Key impacts
+
+            - Secularism and anti-clericalism: Voltaire’s relentless attacks on superstition, clerical power and intolerance (e.g., Traité sur la tolérance, his campaign in the Calas affair, his slogan “écrasez l’infâme”) fed the anti‑clerical currents that culminated in revolutionary and 19th‑century reforms and, ultimately, the laïcité regime formalized in 1905. He helped normalize the idea that religious authority must be questioned in public life.
+
+            - Freedom of thought and speech: Through polemics, pamphlets and the Dictionnaire philosophique, Voltaire popularized the ideal of free enquiry and the right to criticize rulers and institutions. That ethos is central to modern French republican self‑understanding and the role of public debate.
+
+            - Humanitarian and legal reform impulses: Voltaire’s advocacy in specific cases (notably the campaign to clear Jean Calas) brought public attention to miscarriages of justice and influenced later penal and judicial reforms. His writings helped make legal equality and protections against religiously motivated persecution part of the public agenda.
+
+            - Political culture and republican values: While Voltaire was not a democrat in the modern sense (he often favored enlightened monarchy), his critique of arbitrary power, privilege and superstition contributed to the intellectual background of the Revolution and to contemporary French commitments to liberté, égalité and civic criticism.
+
+            - Literary influence and the public sphere: Voltaire’s style (wit, irony, concise prose), his use of satire (most famously Candide), and his role in the book trade and salon culture helped create a lively literate public sphere. The model of the “littérateur engagé” — an intellectual who intervenes in public affairs — is a direct cultural inheritance.
+
+            - Influence on education and culture: Voltaire championed science, reason and history; these priorities influenced modern curricula and cultural institutions that prize critical thinking, secular instruction and the canon of Enlightenment literature in France.
+
+            Nuance and limits
+
+            - Not an ideological ancestor of all modern French values: Voltaire advocated religious tolerance but was sometimes elitist, anti-democratic, and even expressed prejudiced opinions by modern standards. His support for enlightened despotism (at times) and skepticism about popular rule complicate simplistic portrayals.
+
+            - Part of a broader movement: Voltaire was one of several Enlightenment figures (Rousseau, Montesquieu, Diderot, etc.) whose ideas intersected and sometimes conflicted. Modern French culture is the product of that whole discourse and subsequent political struggles.
+
+            Concrete legacy today
+
+            - Laïcité and a strong public secular culture that tolerates religious practice but restricts religious influence on the state.
+            - A national reverence for free debate and the intellectual’s role in society — newspapers, op‑eds and public intellectuals remain central to French politics.
+            - Candide and other works are staples of school curricula; Voltaire’s phrases and arguments appear in political rhetoric and public memory.
+            - Legal and human‑rights traditions that trace part of their genealogy to Enlightenment critiques of theology and absolutism.
+
+            If you’d like, I can:
+            - Give short passages from Voltaire that illustrate these themes,
+            - Trace his influence more precisely on a particular French institution (e.g., laïcité or the legal code),
+            - Or recommend readable books or articles for deeper study.
           reasoning: |-
-            **Exploring Voltaire's impact**
+            **Structuring Voltaire’s Impact**
 
-            The user seeks a thoughtful answer about Voltaire's influence on modern French culture. I should summarize his significance by discussing Enlightenment values like liberté and human rights, his role in shaping French Revolution ideas, and his distinctive use of satire. It’s also important to address his anti-clerical stance that encouraged secularism, the promotion of freedom of speech, his legacy in literature, and presence in institutions. Finally, I want to touch on his enduring impact on contemporary discussions around laïcité and cultural narrative.**Structuring the response**
-
-            I’m thinking about how to organize the response. I want to start with an introduction that highlights Voltaire as a central figure of the Enlightenment, noting how his writings shaped essential French values like rationality, secularism, and tolerance. After that, I should break the discussion into categories such as political thought, secularism, literature, education, and popular culture. I aim to develop this into a thoughtful answer of around 800 to 1000 words, which will cover all these important aspects.
+            I’m thinking about creating a structured answer that includes an overview introduction and then dives into main impacts with explanations. I’ll mention his notable works like "Candide", "Lettres philosophiques", and "Traité sur la tolérance," plus his criticism of religious fanaticism in "Mahomet." I'll also highlight his phrase "Écrasez l'infâme" and his influence on laïcité, shaping the French tradition of public intellectuals. To wrap up, I’ll suggest further reading, including biographies about him for a well-rounded exploration.
           reasoning_details:
           - format: openai-responses-v1
             index: 0
             summary: |-
-              **Exploring Voltaire's impact**
+              **Structuring Voltaire’s Impact**
 
-              The user seeks a thoughtful answer about Voltaire's influence on modern French culture. I should summarize his significance by discussing Enlightenment values like liberté and human rights, his role in shaping French Revolution ideas, and his distinctive use of satire. It’s also important to address his anti-clerical stance that encouraged secularism, the promotion of freedom of speech, his legacy in literature, and presence in institutions. Finally, I want to touch on his enduring impact on contemporary discussions around laïcité and cultural narrative.**Structuring the response**
-
-              I’m thinking about how to organize the response. I want to start with an introduction that highlights Voltaire as a central figure of the Enlightenment, noting how his writings shaped essential French values like rationality, secularism, and tolerance. After that, I should break the discussion into categories such as political thought, secularism, literature, education, and popular culture. I aim to develop this into a thoughtful answer of around 800 to 1000 words, which will cover all these important aspects.
+              I’m thinking about creating a structured answer that includes an overview introduction and then dives into main impacts with explanations. I’ll mention his notable works like "Candide", "Lettres philosophiques", and "Traité sur la tolérance," plus his criticism of religious fanaticism in "Mahomet." I'll also highlight his phrase "Écrasez l'infâme" and his influence on laïcité, shaping the French tradition of public intellectuals. To wrap up, I’ll suggest further reading, including biographies about him for a well-rounded exploration.
             type: reasoning.summary
-          - data: gAAAAABpALH0SrlqG_JSYqQT07H5yKQO7GcmENK5_dmCbkx_o6J5Qg7kZHHNvKynIDieAzknNQwmLf4SB96VU59uasmIK5oOyInBjdpczoYyFEoN8zKWVOolEaCLXSMJfybQb6U_CKEYmPrh_B4CsGDuLzKq7ak6ERC0qFb0vh6ctchIyzWN7MztgnrNt85TReEN3yPmox0suv_kjEc4K5nB6L8C5NOK8ZG4Y3X88feoIvteZq0u2AapGPAYJ-tqWqbwYBBBocX7nYfOw3mVGgHb1Ku7pqf13IoWtgR-hz0lmgsLuzGucmjaBKE881oodwUGKUkDWuUbIiFIxGLH5V6cR53XttM91wAKoUgizg0HuFHS_TEYeP2rJhVBv-8OpUmdKFs-lIrCqVBlJDeIwQS_jGSaY4_z-6Prjh797X3_mSDtXBNqaiAgRQkMHHytW6mrVfZVA-cXikTLX5CRc266KNY6MkaJRAS7-tOKxjMwE-IyvmrIIMW4YTdnoaTfVcZhE5YpbrqilZllTW2RtU4lLFh4DFmBRplJsh2F4the_VXm1LITRYrZlrkLB3qTkA_oPslxFxGk_BApWRmbpCxs9mNgwzqqDCsYyvkGqUNAqCTdgPZMApWwJyRNURu_s8yHo-wcLS42zgPvC64E2GvNaO5G5xPFApbHyN950seaSiivqLc-TysXpk6RxNwKm2l1EJDPvMk0G6sZnLlQVPSXQQsCcSfZmJFSHUNSk7u99o5JsuHWsW5oco2cD111Ghd2EAujdimTRGbhjhTTt1SOGl0DL7EgYVWFiYXxgB7XsXy6PgzuIXBuJkJRn4qpk6VeRHpHujbntbVlxlt5ah-lcvRqka8JEew5NXv4qL5zuMQiSIhmHdw_zVucZv7TqknUPJSovsFte40pYwVIeQP23HMekTqsAwEjc4S28Kg300IchGuEi9ihEL9-5_kgrFTgGOOQhNYo28ftnTD7LtoS5m3Av9CraHdbK9Y4bs1u7-qFfCopcamLXJPQe1ZQ0xqR3_zGQJtK24N_oi2Et5g4o_flqzyVwrd83B5nrcbUuayJL3C9SQg4NR2VD8eS96c3qIl_FxCsD6SoTQu22VbrRngvkM_WP1EtvBSKwMtYHnHlQSufV1bkv4E3JXfHg2UJZdvJ0MtfNMTY9qx39YlI1A1Ds4ctMjCF4qAS2XPkUvvgIpwFq4JzH3v2d-f57itMmqamINLmxP2Pv1J69kj7M_shl_FWTJrWn_MtKLsS77Awxc3NdhXhvA2ketiLp_wOE8CED-o4j_Yh0NKy2AVNqeQcmZvJ3FK2vysB2oAjRqTemcad_B2fHkdceoMvSqAYk26gGm8Nvu8GK_atpKOfi1akGKQBRoERZmPT2wyDpXXS4GdVMyC8m5MUa7xJHwUsRDn4ucW792Pt_5skKrBK_So2pGhmoZa8nJYZ8x7O9ZNEXF6a4OIRgbGKnkVpP95YzlQAsVxR31YXkE1pcdM4nRqCpPjdoQjZ0Twr0ute5v4J6Lhb1F3FsNrg3Sm9YRkJ9h-yfUfvyt1bK1V4nFMtRFt120WjfIvlZZ-1qyenToySK8doSSUZ6VOQWG_ieBkf-IRAN3eONC0n6BfGogsVlPXhXHLznouLnzapC4pGWWBIDsGlTvZj_o7UpHMPr_20PDC5d2jSGGtXf6kJvtfsAnJjtQPHs41VfDLyT-yQIlnUd8QvdwUlQ22A79I-rg38C8BWJNqg3sbOtzMMpt6R8Cvyp4dmB1ksS24tpiEZZ42aH8JIgoqs1sRbFPsC1v3kDPd3XRbbKpliQxseR_xWMNZkGj2F8q9HH1lgLkkCod_97OYrYBROxn9K79wlkZBUFjrNXA3EuiBf-IDOvQeKtDRypAaTKnHybIEOIypTNOWjhGT6oQutKSFswfvSeJGA0fF26FAgxnVmzFS7eAyzSHDqygQfhB7Yp7N2yEbD0eFLUs8qgete-eDIn6eM5E5eMnT1JeP6LD8ku5iR30sDdU8O6BrsGvUypMSID-hoBDytF1_GS6yOhMsU4pXZHTJ4yYNUOFyMH3ReE3SeAuFFohR9aXTpUA5YeLy6-Xo0_ZA9FuFMDVK4Bp1F5f-2BJ3FXRc1aqtyROpMdBtY4ehEqm-FKqbYd4VlaIMb9adG1LnOgWpnWCr9ciOP-c75rxX885yZLXO8rHJ_wbg04JzobGFnKdZHPtCYiTgkpnFavesiy9iI_bRO0Mu7SaDwXne6u4NY4YIHGRRCKR7o98lvSCOw7PT3SgWPoHEML6Na0QnycJeiPayB7megnFGfQZn_lSzDDeAiKgOBJ42LJZf3ysH1Dueqb7icX6xn4HlrMJdDLhMCgvwry4QQkrgrsIhyrTFNt2j--0IO7hX4RbwU5v5yudb0QRQovbmjoPRk4qeZKOyH-YSW-J1lu2MJcrk9Z-Sc4d875cZ6B3HxUuJFYQWqMoJ6EkZjNRLpp3XBkFEu5ip4md7yu_FYK7SInsuVI0igMVRx5i9vURIiGnVf60yBfWpqJac0Jp_7V3ftXsdXk3pSE4_GF9QgKM4l9chXH-frUEExxXS13BRQJP1b29-0B7ciG-48c18uSktRItBmXv2_baSiyo7_nvnPWVUgpig9qOuiFFmVPPvFRGTQS6jh8dPZR8PCFnpxuMhVrrJDJUNu8wmVGdVDMZP6kO2PYhNpz35RrX25SSgzjbl6V4uFDb7KQdWQAv-78QkLibUeB7w47I_2G47TGxbUsmnTt_sss1LW0peGrmCMKncgSQKro8rSBQ==
+          - data: gAAAAABpAjHR-iS0FxMStS_v-8ZA-bqfQViKFq_Z7ZRd0AvUM9A63Luvm1kIAusn73GmlLEvagOa9Ckvab0NseO538_gxhT7jdQAqvTHgHfVLcwr0p-BRJxILXeGeX2gZgJ2l6QLFXai6I9UBTTMD6T3nVOVGP1rhjO6fVaHO13B4P_z717CRiEULGDgLPeHsVs2VzXbO_TupyfATqy7HVcLNm7SsTbT0O7zNCBYXIOFq1SrFQzvgkVCnH2Q5qmc29Ha7hyAH2WBN8yRwS9bx7fMEqs-NTH3zCMdl_OU3OhkxFpYUnW0V5HgF041SZkLId3DnK1vcjtLeUd3jdtc9cOl4GxBzbSXPo7hNmsk62V_ryyHcxpEPHm-sqARRX94C8Z61Hj2OlFFRGdFRlyO8ddVXUtxT6LPawFPOuJ9fRixoAYb1704_NriJtArPGJfEAhMIMzMNExCzzbf1SA9TxXHc1_RMgSeBHPe6wJibAQ2Cw1rRXJPUppSO-5izQCN3mGRMmsXk5-FOCRfiFLpBqQg0fSTmXWD3jkh_0JeWDY2_YELKOLcTr88PVN39pZKF14GcoplOsCi6ry6_iojV4lpPxXDno6m0nMu2jzTehv1v1reQioUtY9my4UyGUCaCJer1MtKYgyCbQIXSkKRAQmbXi7mE32dzDif8gwXy1X8GK_ViRng_ep3uKjIiBSiAE2uGuKW5sHyQ80h-C_wvEn8Hn3-B7Czntqeh3rHm5gJnZl1YMAhS5PpVWY9JfmVdxlJOtKl_T_z5CsL-Dcg4K9OFXNl5SHVFZ3fw-M0b7ftk0dHskE7GF0pxWVbhSOemQl0HDygYCp6r3QUl4YKNX5XNnovJfM5EhLMXdos6ePWvGOZF-GvHAd4QrgvluawTXdlUti0dpfOTk9Bb5_UL_j9kAVAvCqcXxAX_GQBpp-YWfNZS-3NDHJPIWro1wWZsBJR8ZC07uPiq5HDnWiaunBZgGoncpLUQSvAa9LFRaLULxcA-vCJOzgyD8x5gJxVKM-wxKHf5KhAXTIJQb_qimoZTwGRicJxUiyiyCZTBDN5LLt-UumGWa0UTjQeg8lb5ZQwYD7I8Md9enO84chdyDXpDIHIaCarbe6EIJqc4Itv-aG7sH5XLNxJRQEdzxZc9mt5-GYUNIk3iBJ8g0WBOIyS608UYWPTqJa4M4xofLgBH0ZX4b7TX5MIA50EKuPPzjKgCedIbtarLoRWd9iNPU-xG8VaxTjF1NFk6bk0dOVnnB8G1WDXz6cBDpJHUngcu9aKsPKSl9mOJZOV5pDFBBJzLcXuduzQ43A5yhuAbnPpJMXSpHE917e_iA_lpewmCQjE67VSIo9FdPWELJFvTgCrCYYeY3imAdWqVXjIeKxIV4yblaqugrMwEx86-nL3RxoFP3oT78FTRA7x9vy8LhBSRqHQyFQuA9hUj8QClRDuEHYHPKhCZgNdiIRG72iYnERC7_mKawc4ZG92qYgCu1qm19QWCWt6defgfCbIziaynRe--DoJBlrdRypwFJG8mojmwCcGF6x4N_YadGoMQIbsNARv65YPGX-5yU5CTMfgtD1vPAeIg4gfFyb6FrlFoIYfe3537wZBF6zXTMwmxwcx-Z6GRv-m1Va79dJtq67WegpOaK3J5oTfYNgZ_hRQ6b5VGxEfdgLBk7k6iZ8j_a8Yk8DT-HB0hdRyv-DRX_JnBVpmHPR8-OJjamfTyvg16supZLjZYfrzpU8QaPFQNuZ5fiuNchdYbBkmGDswHjr_H-2uNjS-JGNkJoBL1Z24x72Lwu06W1-m79pN8ZJUvcmNTi4yXIUHYWxAfnAmZBNRSeBlj0wxkJ0z6KNqS23h8XjC8B0FcpmFU-QzGJZUZHQ6YHIoHtIkdfVnImVMh_DYVyBF9Xt-XEP651_SGu9vBeK7VAiaD8owzfKyMJ0Gw6FBVfmRZIKN54uNfvBdDZOnbyhfoXfXrjEKjkME9WMRhikdrJfRlyH-50skdJjLRnBr5TZhUBHb5J-e1Ta3JwJ2u_3t3Il_ycLL8WXKTs9e9DUGg8w-qNO781AlzjPc9W3RftmI5QbN3Ozdxf5HD1yBxmqMX70manOzkzKJUIG5yjgPVR3t2E4FB7pJ-cyPuaJJAdSUVlXQ33E3LLrQJHClbdv8KDaR5ECubNU1l3Uwl4yJYuJKeE348tiedH7tBuPR0FIrhuqxyuVkVj8O2TP73GZCm5iscMaMmHIDlFfLP0dSE9NoXTZpdYGMbpX9MAPztgnLR_cxAAAaKWdHV6XKyuK6T3WFnCop0xmpJZu5naKHFlQvTWryQLoI-PFuJYwe-fE9B3TfPloDheGBsKWPU29zk89SX5t0aHJSd0z45NkPIfSXCT_HK_W10k86KduSc3LVMfxUdRQOdtBt58l9Ct4nAbsK3cIK-inNpu7D6hPcLcIttDWsAIH030max9HnnYe258K3cIAthTo6zEiT87ftB6S7tFZ8xRMJHmBcZWE1PZZ0j6Ubnx1xRPJ5ZaQps5hsrxkkfiok0kHAcwAtLwaBN8QjV7vmcH-S9Ysybu7aykR2Fpn3y2YImEi96lw1d3r8RteUhIRHGYJLtStp5EnGifxnFdO28W7DUlAdIWFSFWxzK_iQDp-ldY2g2dlvteV-w_NzMl-VhZr-uijQQYkLYuFIGkqkMF9tJpsr2ojMSplIhi00bnaF8FW_W_GN_3lkCmxsAjNBXypFzEWHeDlvysn7NVP8riGRC5sVMBNxi4r7CPUizSiuoGs5C1fTy_dsNwFiSjvAMLKKxSj8Op8_WCgPZb73vun4vCtRbyjL420WY8psVMy-LXFPejVqdZsmpT7s699CVFhEwwAZsOoz8i0Y7SSsH2h5VBSvkBbVFrJ-bCSvwVEHaJoJK9sgf_gKSHtWtnjysRF1SZe6WFblC8VGlYtQOK8NYfMQH37ABKlU8ND2ijcVm6UgHvvAoiAoUFRRGewk2MD5QFxKfJ4gJQmWMqXRXA8NaMWzjhLFOnUa0ncXi73KGjWQPZjZtXzY2dbJHdIRU6JGHTBJNPYi-nnj39m4k3gKhImGqKgIBLxphUN5LzdmdsZIsYnun1-H3V7KAqZQClBtAzw4bofdX1ZqtFBlj4WdDp-YdF6hgjDKyXqCQT7B1QqoiH2Pt2kwCidw0PZNEBq9aqXuTzziPFfE3yodepfeAfmWAZEESmdLXMJ1LhGMqMLbJeiXPn0zdMrSZVa6P3LZfs_jw2olbnKVlVgCph3MvhxtVfb6afSeqKPjj6yUql-LsUEbrjoepFASHzOGXlreyky2vu5bDuKMbW7jzUTmXKsvxNurNIoZqL5dHL_YvyegHr4VuymrsaVzWBd22xOW84RmYen_ZXvIpa1hxsK4W285AxsSouvWLfp9ixnmqUq8x_FKvPkqkzHs7trcPFFsVYKPquVxhUKsVm3nYalT3K-cBCH2T8UOYNls2kNJf9uVWPVMjLai3fkdPuGGlIh6YtWwBH7X2lLTmJLYH7uu1fKZawfu9eSTHgDla8JmMmnQz6lF6Aa2J5_kI-PRWEdgStidUH8vOpJaVqYH6T463HVCL8mYlvNFaOMXS9bStfcOzcOV2nHtrLCFrgU4W4MxX-2BFgSlDcBNH--rYauiaiiTQzu5fr7HQii1C1xdn16ngt2z48E1nMbj_x_FR3Vvu95cBlwKgxF1V2lrnWbTgwS_znfdVYL53o7TYvU0fls0usTtU6y0krKcMzvNNNQXRJN2thDVwwKMclt0NafHSO3ZPGLhcrjm_pK4yRKN6t7sR_JdNbT76YuAkMOf-8k5lmOljFnnnD5n24j3p-31zLIhzt0V555ngi4DmEX4w3s-h4KGWpqeu0zEN9c0YtXuzabWWxQYykkgWFcfC63biloqsrMzhunDSQVG8P-BHxXTOy8_-Q-hX-tM0cLb6TEcj26dKAZwJPMKLWPFtCiTNaagN3bxUDFge0Grps1slsAK_0s66uPV0cIyOLu2vXyDZm99uhCuH72g1LuE5Zl70HspSmP59RlUUX2HB_EDi4Q26Jaza6Ag2cjInNZF-77nABZzjWnWnuSLbBbEf26PcTthnuX2SbcZouZRgVDuJEt98Xly27HSR0Put05pf7VBsT6UvB2GLjOcg-mY7Ym_kc4L-rkjWTzQIMY5pQ5piWo2lwkXQpiTWA9TRcVS996luXV5xBh5830odmXDGQAKsVCp1avzuGF704qwboAnh_rsOBZ4-ZA_yWrorqQD-1lupTAdCSeomvpNVofb0znIfpCT_tDrLeZUWt2P7GcUiTLFgNtt6EJIcEmVfBZ-o7-lHy6wXFbodxoROwVPnz1uT8QZBNAzknBQlmMr5Xk3GmZlL7AlbySHV9fM7cXslqoyre25N3V9KQ8yKVSgoMNcoxnymmN4hS0bfBpxgP2llVt2fvm5ST4cOt4WWtYJXYmc5wk4tkHEi92p1XHtG3HPYIxooZTUov0O7ntFqtgb95-g1DOPvbsKJUbCFLU4K8sNkYU9aUwHslm4umJPdNAI6jhz717cy463w9gm-dBtcxzOeS5gSz3ZLVB7Eo-c-4r3OI_cNTEkQAP8kmwStlrApYMNLSbrqfw0TNzQTkcEh5dBEaqCIO3sfNbJqQzU-hD6C0LJOvzWD077YLkqieBrZcW5K_PuHAPB9_CoeMp-PYfk5ovcM1_Q_BMW-vEkrq9hN2PNJnoi6Ya76Q8ecpvFKue8Cfzms3aqt5ulBdKCF-FKcfRGLxAH-TyXrfq1TbOSqZgabnqUcKLXjNn-nrvSo8Qmyavt0RI3Co8Dr3ZtuQwj52V3KsE5nvXl3Tlthw0zcg4EpkYz7kVfcbcjXHsEX7N-85Mhd7lAKqje-K4HLcXMjx9F9eyuBZ_Wfr1iZFgCojhoyEsNjh8UcVnBYNECRwa5rj-cim0NvE93Xn0C8VzS7dexy1wKx6BGTqhMb_ng3kBWT9tl2qNM6DsHsibVLJ3XUCF_kJDSVUBcRjG_xBuGOeMxpo3GzAYgXxHTrt4dBj4nmO7mCcMTj3veZkLVL0dtFvyeRggnWCi-qgvYecIaA44xJyTzNSt8lo8oYzpvb3VtET7zmi6TSGb5xgv9IsJZ_Aea8UDKGfL4cKYs4vErGkXEF6OEyUUhP6kHrsNRb2wXt_nYshkxyM0pC20iRyncso14gNh4YDuUemoJcM5bPZBHRW4-urDOT0NlpcLaOUdowQPb1VEZg-ylWzTbnV5y698SIekHFXkz9d_MjtdX5U9bxuuV-7YKfAxxKiBxK-x19-5R_LUIFkKXhrehnPcQ5x8Okbk1K1HPep_ufUGigSVpQS0xOc9c7IxciKOj2sD6RE_6pivdfJ5xcEarGP9utp70DiAiVvesYZTiTEN7rdmnOGfBjhlgyg==
             format: openai-responses-v1
-            id: rs_06569cab051e4c78016900b1eb409c81909668d636e3a424f9
+            id: rs_0e67143e70e2c03a01690231c4b7c08195b5bfcc5c216e88b2
             index: 0
             type: reasoning.encrypted
           refusal: null
           role: assistant
         native_finish_reason: completed
-      created: 1761653226
-      id: gen-1761653226-LJcHbeILDwsw5Tlqupp9
-      model: openai/o3
+      created: 1761751492
+      id: gen-1761751492-aqUa1mlCAz0HhuH0IC5P
+      model: openai/gpt-5-mini
       object: chat.completion
       provider: OpenAI
       usage:
-        completion_tokens: 1431
+        completion_tokens: 1457
         completion_tokens_details:
-          reasoning_tokens: 256
-        prompt_tokens: 25
-        total_tokens: 1456
+          reasoning_tokens: 704
+        prompt_tokens: 41
+        total_tokens: 1498
     status:
       code: 200
       message: OK

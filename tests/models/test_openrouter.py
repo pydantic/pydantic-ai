@@ -89,45 +89,40 @@ async def test_openrouter_with_reasoning(allow_model_requests: None, openrouter_
 
 async def test_openrouter_preserve_reasoning_block(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/o3', provider=provider)
+    model = OpenRouterModel('openai/gpt-5-mini', provider=provider)
 
     messages: Sequence[ModelMessage] = []
+    messages.append(ModelRequest.user_text_prompt('Hello!'))
+    messages.append(await model_request(model, messages))
     messages.append(
-        ModelRequest.user_text_prompt(
-            "What was the impact of Voltaire's writings on modern french culture? Think about your answer."
-        )
+        ModelRequest.user_text_prompt("What was the impact of Voltaire's writings on modern french culture?")
     )
-    response = await model_request(model, messages)
-    messages.append(response)
+    messages.append(await model_request(model, messages))
 
     openai_messages = await model._map_messages(messages)  # type: ignore[reportPrivateUsage]
 
     assistant_message = openai_messages[1]
+    assert assistant_message['role'] == 'assistant'
+    assert 'reasoning_details' not in assistant_message
+
+    assistant_message = openai_messages[3]
+    assert assistant_message['role'] == 'assistant'
     assert 'reasoning_details' in assistant_message
-    assert assistant_message['reasoning_details'] == snapshot(
-        [
-            {
-                'id': None,
-                'format': 'openai-responses-v1',
-                'index': 0,
-                'type': 'reasoning.summary',
-                'summary': """\
-**Exploring Voltaire's impact**
 
-The user seeks a thoughtful answer about Voltaire's influence on modern French culture. I should summarize his significance by discussing Enlightenment values like liberté and human rights, his role in shaping French Revolution ideas, and his distinctive use of satire. It’s also important to address his anti-clerical stance that encouraged secularism, the promotion of freedom of speech, his legacy in literature, and presence in institutions. Finally, I want to touch on his enduring impact on contemporary discussions around laïcité and cultural narrative.**Structuring the response**
+    reasoning_details = assistant_message['reasoning_details']
+    assert len(reasoning_details) == 2
 
-I’m thinking about how to organize the response. I want to start with an introduction that highlights Voltaire as a central figure of the Enlightenment, noting how his writings shaped essential French values like rationality, secularism, and tolerance. After that, I should break the discussion into categories such as political thought, secularism, literature, education, and popular culture. I aim to develop this into a thoughtful answer of around 800 to 1000 words, which will cover all these important aspects.\
-""",
-            },
-            {
-                'id': 'rs_06569cab051e4c78016900b1eb409c81909668d636e3a424f9',
-                'format': 'openai-responses-v1',
-                'index': 0,
-                'type': 'reasoning.encrypted',
-                'data': 'gAAAAABpALH0SrlqG_JSYqQT07H5yKQO7GcmENK5_dmCbkx_o6J5Qg7kZHHNvKynIDieAzknNQwmLf4SB96VU59uasmIK5oOyInBjdpczoYyFEoN8zKWVOolEaCLXSMJfybQb6U_CKEYmPrh_B4CsGDuLzKq7ak6ERC0qFb0vh6ctchIyzWN7MztgnrNt85TReEN3yPmox0suv_kjEc4K5nB6L8C5NOK8ZG4Y3X88feoIvteZq0u2AapGPAYJ-tqWqbwYBBBocX7nYfOw3mVGgHb1Ku7pqf13IoWtgR-hz0lmgsLuzGucmjaBKE881oodwUGKUkDWuUbIiFIxGLH5V6cR53XttM91wAKoUgizg0HuFHS_TEYeP2rJhVBv-8OpUmdKFs-lIrCqVBlJDeIwQS_jGSaY4_z-6Prjh797X3_mSDtXBNqaiAgRQkMHHytW6mrVfZVA-cXikTLX5CRc266KNY6MkaJRAS7-tOKxjMwE-IyvmrIIMW4YTdnoaTfVcZhE5YpbrqilZllTW2RtU4lLFh4DFmBRplJsh2F4the_VXm1LITRYrZlrkLB3qTkA_oPslxFxGk_BApWRmbpCxs9mNgwzqqDCsYyvkGqUNAqCTdgPZMApWwJyRNURu_s8yHo-wcLS42zgPvC64E2GvNaO5G5xPFApbHyN950seaSiivqLc-TysXpk6RxNwKm2l1EJDPvMk0G6sZnLlQVPSXQQsCcSfZmJFSHUNSk7u99o5JsuHWsW5oco2cD111Ghd2EAujdimTRGbhjhTTt1SOGl0DL7EgYVWFiYXxgB7XsXy6PgzuIXBuJkJRn4qpk6VeRHpHujbntbVlxlt5ah-lcvRqka8JEew5NXv4qL5zuMQiSIhmHdw_zVucZv7TqknUPJSovsFte40pYwVIeQP23HMekTqsAwEjc4S28Kg300IchGuEi9ihEL9-5_kgrFTgGOOQhNYo28ftnTD7LtoS5m3Av9CraHdbK9Y4bs1u7-qFfCopcamLXJPQe1ZQ0xqR3_zGQJtK24N_oi2Et5g4o_flqzyVwrd83B5nrcbUuayJL3C9SQg4NR2VD8eS96c3qIl_FxCsD6SoTQu22VbrRngvkM_WP1EtvBSKwMtYHnHlQSufV1bkv4E3JXfHg2UJZdvJ0MtfNMTY9qx39YlI1A1Ds4ctMjCF4qAS2XPkUvvgIpwFq4JzH3v2d-f57itMmqamINLmxP2Pv1J69kj7M_shl_FWTJrWn_MtKLsS77Awxc3NdhXhvA2ketiLp_wOE8CED-o4j_Yh0NKy2AVNqeQcmZvJ3FK2vysB2oAjRqTemcad_B2fHkdceoMvSqAYk26gGm8Nvu8GK_atpKOfi1akGKQBRoERZmPT2wyDpXXS4GdVMyC8m5MUa7xJHwUsRDn4ucW792Pt_5skKrBK_So2pGhmoZa8nJYZ8x7O9ZNEXF6a4OIRgbGKnkVpP95YzlQAsVxR31YXkE1pcdM4nRqCpPjdoQjZ0Twr0ute5v4J6Lhb1F3FsNrg3Sm9YRkJ9h-yfUfvyt1bK1V4nFMtRFt120WjfIvlZZ-1qyenToySK8doSSUZ6VOQWG_ieBkf-IRAN3eONC0n6BfGogsVlPXhXHLznouLnzapC4pGWWBIDsGlTvZj_o7UpHMPr_20PDC5d2jSGGtXf6kJvtfsAnJjtQPHs41VfDLyT-yQIlnUd8QvdwUlQ22A79I-rg38C8BWJNqg3sbOtzMMpt6R8Cvyp4dmB1ksS24tpiEZZ42aH8JIgoqs1sRbFPsC1v3kDPd3XRbbKpliQxseR_xWMNZkGj2F8q9HH1lgLkkCod_97OYrYBROxn9K79wlkZBUFjrNXA3EuiBf-IDOvQeKtDRypAaTKnHybIEOIypTNOWjhGT6oQutKSFswfvSeJGA0fF26FAgxnVmzFS7eAyzSHDqygQfhB7Yp7N2yEbD0eFLUs8qgete-eDIn6eM5E5eMnT1JeP6LD8ku5iR30sDdU8O6BrsGvUypMSID-hoBDytF1_GS6yOhMsU4pXZHTJ4yYNUOFyMH3ReE3SeAuFFohR9aXTpUA5YeLy6-Xo0_ZA9FuFMDVK4Bp1F5f-2BJ3FXRc1aqtyROpMdBtY4ehEqm-FKqbYd4VlaIMb9adG1LnOgWpnWCr9ciOP-c75rxX885yZLXO8rHJ_wbg04JzobGFnKdZHPtCYiTgkpnFavesiy9iI_bRO0Mu7SaDwXne6u4NY4YIHGRRCKR7o98lvSCOw7PT3SgWPoHEML6Na0QnycJeiPayB7megnFGfQZn_lSzDDeAiKgOBJ42LJZf3ysH1Dueqb7icX6xn4HlrMJdDLhMCgvwry4QQkrgrsIhyrTFNt2j--0IO7hX4RbwU5v5yudb0QRQovbmjoPRk4qeZKOyH-YSW-J1lu2MJcrk9Z-Sc4d875cZ6B3HxUuJFYQWqMoJ6EkZjNRLpp3XBkFEu5ip4md7yu_FYK7SInsuVI0igMVRx5i9vURIiGnVf60yBfWpqJac0Jp_7V3ftXsdXk3pSE4_GF9QgKM4l9chXH-frUEExxXS13BRQJP1b29-0B7ciG-48c18uSktRItBmXv2_baSiyo7_nvnPWVUgpig9qOuiFFmVPPvFRGTQS6jh8dPZR8PCFnpxuMhVrrJDJUNu8wmVGdVDMZP6kO2PYhNpz35RrX25SSgzjbl6V4uFDb7KQdWQAv-78QkLibUeB7w47I_2G47TGxbUsmnTt_sss1LW0peGrmCMKncgSQKro8rSBQ==',
-            },
-        ]
-    )
+    reasoning_summary = reasoning_details[0]
+
+    assert 'summary' in reasoning_summary
+    assert reasoning_summary['type'] == 'reasoning.summary'
+    assert reasoning_summary['format'] == 'openai-responses-v1'
+
+    reasoning_encrypted = reasoning_details[1]
+
+    assert 'data' in reasoning_encrypted
+    assert reasoning_encrypted['type'] == 'reasoning.encrypted'
+    assert reasoning_encrypted['format'] == 'openai-responses-v1'
 
 
 async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_api_key: str) -> None:
