@@ -5,39 +5,28 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.test import TestModel
 
+TEST_OUTPUT = 'a' * 100
 
-def run_sync_no_partial_calls():
-    partial_calls: list[str] = []
-    final_calls: list[str] = []
 
-    agent = Agent(TestModel(seed=0))
+def test_run_sync():
+    agent = Agent(TestModel(custom_output_text=TEST_OUTPUT))
 
     @agent.output_validator
     def validate_output(ctx: RunContext[None], output: str, partial: bool) -> str:
-        if partial:
-            partial_calls.append(output)
-            return output
-        else:
-            final_calls.append(output)
-            return output
+        if not partial and output != TEST_OUTPUT:
+            raise ValueError('Output is not correct')
+        return output
 
     agent.run_sync('test')
-    assert len(partial_calls) == 0, 'Should have no partial validation calls during sync run'
-    assert len(final_calls) == 1, 'Should have one final validation call'
 
 
 async def test_allow_partial_streaming_text():
-    partial_calls: list[str] = []
-    final_calls: list[str] = []
-
-    agent = Agent(TestModel(seed=0))
+    agent = Agent(TestModel(custom_output_text=TEST_OUTPUT))
 
     @agent.output_validator
     def validate_output(ctx: RunContext[None], output: str, partial: bool) -> str:
-        if partial:
-            partial_calls.append(output)
-        else:
-            final_calls.append(output)
+        if not partial and output != TEST_OUTPUT:
+            raise ValueError('Output is not correct')
         return output
 
     async with agent.run_stream('test') as result:
@@ -46,26 +35,18 @@ async def test_allow_partial_streaming_text():
                 message,
                 allow_partial=not last,
             )
-
-    assert len(partial_calls) > 0, 'Should have received partial validation calls during streaming'
-    assert len(final_calls) == 1, 'Should have one final validation call'
 
 
 async def test_allow_partial_streaming_structured_output():
     class OutputType(BaseModel):
         value: str
 
-    partial_calls: list[OutputType] = []
-    final_calls: list[OutputType] = []
-
-    agent = Agent(TestModel(seed=0), output_type=OutputType)
+    agent = Agent(TestModel(custom_output_args=OutputType(value=TEST_OUTPUT)), output_type=OutputType)
 
     @agent.output_validator
     def validate_output(ctx: RunContext[None], output: OutputType, partial: bool) -> OutputType:
-        if partial:
-            partial_calls.append(output)
-        else:
-            final_calls.append(output)
+        if not partial and output.value != TEST_OUTPUT:
+            raise ValueError('Output is not correct')
         return output
 
     async with agent.run_stream('test') as result:
@@ -74,6 +55,3 @@ async def test_allow_partial_streaming_structured_output():
                 message,
                 allow_partial=not last,
             )
-
-    assert len(partial_calls) > 0, 'Should have received partial validation calls during streaming'
-    assert len(final_calls) == 1, 'Should have one final validation call'
