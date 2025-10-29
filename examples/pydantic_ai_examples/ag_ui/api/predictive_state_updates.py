@@ -17,7 +17,7 @@ class DocumentState(BaseModel):
     document: str = ''
 
 
-agent = Agent('openai:gpt-4o-mini', deps_type=StateDeps[DocumentState])
+agent = Agent('openai:gpt-5-mini', deps_type=StateDeps[DocumentState])
 
 
 # Tools which return AG-UI events will be sent to the client as part of the

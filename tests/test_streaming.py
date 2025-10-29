@@ -1817,6 +1817,7 @@ async def test_run_stream_events():
         return f'{x}-apple'
 
     events = [event async for event in test_agent.run_stream_events('Hello')]
+    assert test_agent.name == 'test_agent'
 
     assert events == snapshot(
         [

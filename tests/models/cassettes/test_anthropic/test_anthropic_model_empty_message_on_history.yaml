@@ -25,7 +25,7 @@ interactions:
         - text: I need a potato!
           type: text
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
       system: |+
         You are a helpful assistant.
@@ -56,7 +56,7 @@ interactions:
           What specific information about potatoes would be most helpful to you?
         type: text
       id: msg_01PAZFa5ciacA9ptgEDMbkZM
-      model: claude-3-5-sonnet-20241022
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
       stop_sequence: null
