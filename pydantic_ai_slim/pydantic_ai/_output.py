@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator, to_json
-from typing_extensions import Self, TypeAlias, TypedDict, TypeVar, assert_never
+from typing_extensions import Self, TypedDict, TypeVar, assert_never
 
 from pydantic_ai._instrumentation import InstrumentationNames
 
@@ -67,6 +67,8 @@ A function that always takes and returns the same type of data (which is the res
 * may or may not take [`RunContext`][pydantic_ai.tools.RunContext] as a first argument
 * may or may not take a `partial: bool` parameter as a last argument
 * may or may not be async
+
+Usage `OutputValidatorFunc[AgentDepsT, T]`.
 """
 
 
@@ -161,7 +163,7 @@ async def execute_traced_output_function(
 
 @dataclass
 class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
-    function: OutputValidatorFunc
+    function: OutputValidatorFunc[AgentDepsT, OutputDataT_inv]
     _takes_ctx: bool = field(init=False)
     _takes_partial: bool = field(init=False)
     _is_async: bool = field(init=False)
