@@ -48,7 +48,7 @@ class JSONPatchOp(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-4o-mini',
+    'openai:gpt-5-mini',
     instructions=dedent(
         """
         When planning use tools only, without any other messages.

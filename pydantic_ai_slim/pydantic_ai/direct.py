@@ -50,7 +50,7 @@ async def model_request(
 
     async def main():
         model_response = await model_request(
-            'anthropic:claude-3-5-haiku-latest',
+            'anthropic:claude-haiku-4-5',
             [ModelRequest.user_text_prompt('What is the capital of France?')]  # (1)!
         )
         print(model_response)
@@ -58,7 +58,7 @@ async def model_request(
         ModelResponse(
             parts=[TextPart(content='The capital of France is Paris.')],
             usage=RequestUsage(input_tokens=56, output_tokens=7),
-            model_name='claude-3-5-haiku-latest',
+            model_name='claude-haiku-4-5',
             timestamp=datetime.datetime(...),
         )
         '''
@@ -103,7 +103,7 @@ def model_request_sync(
     from pydantic_ai.direct import model_request_sync
 
     model_response = model_request_sync(
-        'anthropic:claude-3-5-haiku-latest',
+        'anthropic:claude-haiku-4-5',
         [ModelRequest.user_text_prompt('What is the capital of France?')]  # (1)!
     )
     print(model_response)
@@ -111,7 +111,7 @@ def model_request_sync(
     ModelResponse(
         parts=[TextPart(content='The capital of France is Paris.')],
         usage=RequestUsage(input_tokens=56, output_tokens=7),
-        model_name='claude-3-5-haiku-latest',
+        model_name='claude-haiku-4-5',
         timestamp=datetime.datetime(...),
     )
     '''
