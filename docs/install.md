@@ -51,11 +51,11 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `cohere` - installs [Cohere Model](models/cohere.md) dependency `cohere` [PyPI ↗](https://pypi.org/project/cohere){:target="_blank"}
 * `bedrock` - installs [Bedrock Model](models/bedrock.md) dependency `boto3` [PyPI ↗](https://pypi.org/project/boto3){:target="_blank"}
 * `huggingface` - installs [Hugging Face Model](models/huggingface.md) dependency `huggingface-hub[inference]` [PyPI ↗](https://pypi.org/project/huggingface-hub){:target="_blank"}
-* `outlines-transformers` - installs [Outlines Model](outlines.md) dependency `outlines[transformers]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
-* `outlines-llamacpp` - installs [Outlines Model](outlines.md) dependency `outlines[llamacpp]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
+* `outlines-transformers` - installs [Outlines Model](models/outlines.md) dependency `outlines[transformers]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
+* `outlines-llamacpp` - installs [Outlines Model](models/outlines.md) dependency `outlines[llamacpp]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
 * `outlines-mlxlm` - installs [Outlines Model](models/outlines.md) dependency `outlines[mlxlm]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
 * `outlines-sglang` - installs [Outlines Model](models/outlines.md) dependency `outlines[sglang]` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"}
-* `outlines-vllm-offline` - installs [Outlines Model](outlines.md) dependencies `outlines` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"} and `vllm` [PyPI ↗](https://pypi.org/project/vllm){:target="_blank"}
+* `outlines-vllm-offline` - installs [Outlines Model](models/outlines.md) dependencies `outlines` [PyPI ↗](https://pypi.org/project/outlines){:target="_blank"} and `vllm` [PyPI ↗](https://pypi.org/project/vllm){:target="_blank"}
 * `duckduckgo` - installs [DuckDuckGo Search Tool](common-tools.md#duckduckgo-search-tool) dependency `ddgs` [PyPI ↗](https://pypi.org/project/ddgs){:target="_blank"}
 * `tavily` - installs [Tavily Search Tool](common-tools.md#tavily-search-tool) dependency `tavily-python` [PyPI ↗](https://pypi.org/project/tavily-python){:target="_blank"}
 * `cli` - installs [CLI](cli.md) dependencies `rich` [PyPI ↗](https://pypi.org/project/rich){:target="_blank"}, `prompt-toolkit` [PyPI ↗](https://pypi.org/project/prompt-toolkit){:target="_blank"}, and `argcomplete` [PyPI ↗](https://pypi.org/project/argcomplete){:target="_blank"}
