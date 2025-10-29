@@ -21,7 +21,7 @@ interactions:
         - text: What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.
           type: text
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
       tool_choice:
         type: auto
@@ -55,7 +55,7 @@ interactions:
         name: get_user_country
         type: tool_use
       id: msg_01MsqUB7ZyhjGkvepS1tCXp3
-      model: claude-3-5-sonnet-20241022
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
       stop_sequence: null
@@ -109,7 +109,7 @@ interactions:
           tool_use_id: toolu_01JJ8TequDsrEU2pv1QFRWAK
           type: tool_result
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
       tool_choice:
         type: auto
@@ -141,7 +141,7 @@ interactions:
           city in Mexico but also one of the largest cities in the world.
         type: text
       id: msg_0142umg4diSckrDtV9vAmmPL
-      model: claude-3-5-sonnet-20241022
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
       stop_sequence: null
