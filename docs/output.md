@@ -43,7 +43,7 @@ If the output type schema is not of type `"object"` (e.g. it's `int` or `list[in
 Structured outputs (like tools) use Pydantic to build the JSON schema used for the tool, and to validate the data returned by the model.
 
 !!! note "Type checking considerations"
-The Agent class is generic in its output type, and this type is carried through to `AgentRunResult.output` and `StreamedRunResult.output` so that your IDE or static type checker can warn you when your code doesn't properly take into account all the possible values those outputs could have.
+    The Agent class is generic in its output type, and this type is carried through to `AgentRunResult.output` and `StreamedRunResult.output` so that your IDE or static type checker can warn you when your code doesn't properly take into account all the possible values those outputs could have.
 
     Static type checkers like pyright and mypy will do their best to infer the agent's output type from the `output_type` you've specified, but they're not always able to do so correctly when you provide functions or multiple types in a union or list, even though Pydantic AI will behave correctly. When this happens, your type checker will complain even when you're confident you've passed a valid `output_type`, and you'll need to help the type checker by explicitly specifying the generic parameters on the `Agent` constructor. This is shown in the second example below and the output functions example further down.
 
@@ -544,8 +544,8 @@ There two main challenges with streamed results:
 2. When receiving a response, we don't know if it's the final response without starting to stream it and peeking at the content. Pydantic AI streams just enough of the response to sniff out if it's a tool call or an output, then streams the whole thing and calls tools, or returns the stream as a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult].
 
 !!! note
-As the `run_stream()` method will consider the first output matching the `output_type` to be the final output,
-it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
+    As the `run_stream()` method will consider the first output matching the `output_type` to be the final output,
+    it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
 
     If you want to always run the agent graph to completion and stream all events from the model's streaming response and the agent's execution of tools,
     use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] ([docs](agents.md#streaming-all-events)) or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] ([docs](agents.md#streaming-all-events-and-output)) instead.
@@ -603,8 +603,8 @@ async def main():
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 !!! warning "Output message not included in `messages`"
-The final output message will **NOT** be added to result messages if you use `.stream_text(delta=True)`,
-see [Messages and chat history](message-history.md) for more information.
+    The final output message will **NOT** be added to result messages if you use `.stream_text(delta=True)`,
+    see [Messages and chat history](message-history.md) for more information.
 
 ### Streaming Structured Output
 
