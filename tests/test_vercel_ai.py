@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, MutableMapping
-from http import HTTPStatus
 from typing import Any, cast
 
-import httpx
 import pytest
-from asgi_lifespan import LifespanManager
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
@@ -48,7 +45,6 @@ from pydantic_ai.models.function import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 from pydantic_ai.ui.vercel_ai._request_types import (
     DynamicToolOutputAvailablePart,
@@ -62,7 +58,6 @@ from pydantic_ai.ui.vercel_ai._request_types import (
     UIMessage,
 )
 from pydantic_ai.ui.vercel_ai._response_types import BaseChunk, DataChunk
-from pydantic_ai.ui.vercel_ai.app import VercelAIApp
 
 from .conftest import IsDatetime, IsSameStr, IsStr, try_import
 
@@ -1692,54 +1687,6 @@ async def test_adapter_dispatch_request():
             '[DONE]',
         ]
     )
-
-
-async def test_app():
-    agent = Agent(model=TestModel())
-
-    run_input = SubmitMessage(
-        id='foo',
-        messages=[
-            UIMessage(
-                id='bar',
-                role='user',
-                parts=[TextUIPart(text='Hello')],
-            ),
-        ],
-    )
-
-    app = VercelAIApp(agent)
-    async with LifespanManager(app):
-        transport = httpx.ASGITransport(app)
-        async with httpx.AsyncClient(transport=transport) as client:
-            client.base_url = 'http://localhost:8000'
-            async with client.stream(
-                'POST',
-                '/',
-                content=run_input.model_dump_json(),
-                headers={'Content-Type': 'application/json', 'Accept': SSE_CONTENT_TYPE},
-            ) as response:
-                assert response.status_code == HTTPStatus.OK, f'Unexpected status code: {response.status_code}'
-                events: list[str | dict[str, Any]] = []
-                async for event in response.aiter_lines():
-                    if event:
-                        events.append('[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: ')))
-
-            assert events == snapshot(
-                [
-                    {'type': 'start'},
-                    {'type': 'start-step'},
-                    {'type': 'text-start', 'id': IsStr()},
-                    {'type': 'text-delta', 'delta': 'success ', 'id': IsStr()},
-                    {'type': 'text-delta', 'delta': '(no ', 'id': IsStr()},
-                    {'type': 'text-delta', 'delta': 'tool ', 'id': IsStr()},
-                    {'type': 'text-delta', 'delta': 'calls)', 'id': IsStr()},
-                    {'type': 'text-end', 'id': IsStr()},
-                    {'type': 'finish-step'},
-                    {'type': 'finish'},
-                    '[DONE]',
-                ]
-            )
 
 
 async def test_adapter_load_messages():

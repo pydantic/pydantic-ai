@@ -7,7 +7,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, M
 
 @dataclass
 class MessagesBuilder:
-    """Helper class to build Pydantic AI messages from protocol-specific messages."""
+    """Helper class to build Pydantic AI messages from request/response parts."""
 
     messages: list[ModelMessage] = field(default_factory=list)
 

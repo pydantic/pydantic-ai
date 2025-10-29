@@ -30,9 +30,7 @@ from ...messages import (
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT
-from ..adapter import UIAdapter
-from ..event_stream import UIEventStream
-from ..messages_builder import MessagesBuilder
+from .. import MessagesBuilder, UIAdapter, UIEventStream
 from ._event_stream import VercelAIEventStream
 from ._request_types import (
     DataUIPart,

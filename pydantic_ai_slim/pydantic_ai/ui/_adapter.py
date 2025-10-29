@@ -35,7 +35,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 
-from .event_stream import NativeEvent, OnCompleteFunc, UIEventStream
+from ._event_stream import NativeEvent, OnCompleteFunc, UIEventStream
 
 if TYPE_CHECKING:
     from starlette.requests import Request

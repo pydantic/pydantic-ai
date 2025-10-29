@@ -57,7 +57,8 @@ EventT = TypeVar('EventT')
 RunInputT = TypeVar('RunInputT')
 """Type variable for protocol-specific run input types."""
 
-NativeEvent = AgentStreamEvent | AgentRunResultEvent[Any]
+NativeEvent: TypeAlias = AgentStreamEvent | AgentRunResultEvent[Any]
+"""Type alias for the native event type, which is either an `AgentStreamEvent` or an `AgentRunResultEvent`."""
 
 OnCompleteFunc: TypeAlias = (
     Callable[[AgentRunResult[Any]], None]

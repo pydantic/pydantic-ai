@@ -46,8 +46,7 @@ from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
-from pydantic_ai.ui.adapter import UIAdapter
-from pydantic_ai.ui.event_stream import NativeEvent, UIEventStream
+from pydantic_ai.ui import NativeEvent, UIAdapter, UIEventStream
 
 from .conftest import try_import
 

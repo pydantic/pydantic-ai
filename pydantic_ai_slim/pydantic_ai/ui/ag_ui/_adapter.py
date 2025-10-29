@@ -37,9 +37,7 @@ try:
         UserMessage,
     )
 
-    from ..adapter import UIAdapter
-    from ..event_stream import UIEventStream
-    from ..messages_builder import MessagesBuilder
+    from .. import MessagesBuilder, UIAdapter, UIEventStream
     from ._event_stream import BUILTIN_TOOL_CALL_ID_PREFIX, AGUIEventStream
 except ImportError as e:  # pragma: no cover
     raise ImportError(
