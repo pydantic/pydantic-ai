@@ -1,6 +1,6 @@
-# Agent User Interaction (AG-UI) Protocol
+# Agent-User Interaction (AG-UI) Protocol
 
-The [Agent User Interaction (AG-UI) Protocol](https://docs.ag-ui.com/introduction) is an open standard introduced by the
+The [Agent-User Interaction (AG-UI) Protocol](https://docs.ag-ui.com/introduction) is an open standard introduced by the
 [CopilotKit](https://webflow.copilotkit.ai/blog/introducing-ag-ui-the-protocol-where-agents-meet-users)
 team that standardises how frontend applications communicate with AI agents, with support for streaming, frontend tools, shared state, and custom events.
 
@@ -33,27 +33,27 @@ pip/uv-add uvicorn
 
 There are three ways to run a Pydantic AI agent based on AG-UI run input with streamed AG-UI events as output, from most to least flexible. If you're using a Starlette-based web framework like FastAPI, you'll typically want to use the second method.
 
-1. [`run_ag_ui()`][pydantic_ai.ag_ui.run_ag_ui] takes an agent and an AG-UI [`RunAgentInput`](https://docs.ag-ui.com/sdk/python/core/types#runagentinput) object, and returns a stream of AG-UI events encoded as strings. It also takes optional [`Agent.iter()`][pydantic_ai.Agent.iter] arguments including `deps`. Use this if you're using a web framework not based on Starlette (e.g. Django or Flask) or want to modify the input or output some way.
-2. [`handle_ag_ui_request()`][pydantic_ai.ag_ui.handle_ag_ui_request] takes an agent and a Starlette request (e.g. from FastAPI) coming from an AG-UI frontend, and returns a streaming Starlette response of AG-UI events that you can return directly from your endpoint. It also takes optional [`Agent.iter()`][pydantic_ai.Agent.iter] arguments including `deps`, that you can vary for each request (e.g. based on the authenticated user).
-3. [`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui] returns an ASGI application that handles every AG-UI request by running the agent. It also takes optional [`Agent.iter()`][pydantic_ai.Agent.iter] arguments including `deps`, but these will be the same for each request, with the exception of the AG-UI state that's injected as described under [state management](#state-management). This ASGI app can be [mounted](https://fastapi.tiangolo.com/advanced/sub-applications/) at a given path in an existing FastAPI app.
+1. The [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] method, when called on an [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] instantiated with an agent and an AG-UI [`RunAgentInput`](https://docs.ag-ui.com/sdk/python/core/types#runagentinput) object, will run the agent and return a stream of AG-UI events. It also takes optional [`Agent.iter()`][pydantic_ai.Agent.iter] arguments including `deps`. Use this if you're using a web framework not based on Starlette (e.g. Django or Flask) or want to modify the input or output some way.
+2. The [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] class method takes an agent and a Starlette request (e.g. from FastAPI) coming from an AG-UI frontend, and returns a streaming Starlette response of AG-UI events that you can return directly from your endpoint. It also takes optional [`Agent.iter()`][pydantic_ai.Agent.iter] arguments including `deps`, that you can vary for each request (e.g. based on the authenticated user). This is a convenience method that combines [`AGUIAdapter.from_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.from_request], [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream], and [`AGUIAdapter.streaming_response()`][pydantic_ai.ui.ag_ui.AGUIAdapter.streaming_response].
+3. [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] represents an ASGI application that handles every AG-UI request by running the agent. It also takes optional [`Agent.iter()`][pydantic_ai.Agent.iter] arguments including `deps`, but these will be the same for each request, with the exception of the AG-UI state that's injected as described under [state management](#state-management). This ASGI app can be [mounted](https://fastapi.tiangolo.com/advanced/sub-applications/) at a given path in an existing FastAPI app.
 
 ### Handle run input and output directly
 
-This example uses [`run_ag_ui()`][pydantic_ai.ag_ui.run_ag_ui] and performs its own request parsing and response generation.
+This example uses [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] and performs its own request parsing and response generation.
 This can be modified to work with any web framework.
 
 ```py {title="run_ag_ui.py"}
 import json
 from http import HTTPStatus
 
-from ag_ui.core import RunAgentInput
 from fastapi import FastAPI
 from fastapi.requests import Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import ValidationError
 
 from pydantic_ai import Agent
-from pydantic_ai.ag_ui import SSE_CONTENT_TYPE, run_ag_ui
+from pydantic_ai.ui import SSE_CONTENT_TYPE
+from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 agent = Agent('openai:gpt-5', instructions='Be fun!')
 
@@ -64,18 +64,24 @@ app = FastAPI()
 async def run_agent(request: Request) -> Response:
     accept = request.headers.get('accept', SSE_CONTENT_TYPE)
     try:
-        run_input = RunAgentInput.model_validate(await request.json())
-    except ValidationError as e:  # pragma: no cover
+        run_input = AGUIAdapter.build_run_input(await request.body())  # (1)
+    except ValidationError as e:
         return Response(
             content=json.dumps(e.json()),
             media_type='application/json',
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         )
 
-    event_stream = run_ag_ui(agent, run_input, accept=accept)
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=accept)
+    event_stream = adapter.run_stream() # (2)
 
-    return StreamingResponse(event_stream, media_type=accept)
+    sse_event_stream = adapter.encode_stream(event_stream)
+    return StreamingResponse(sse_event_stream, media_type=accept) # (3)
 ```
+
+1. [`AGUIAdapter.build_run_input()`][pydantic_ai.ui.ag_ui.AGUIAdapter.build_run_input] takes the request body as bytes and returns an AG-UI [`RunAgentInput`](https://docs.ag-ui.com/sdk/python/core/types#runagentinput) object. You can also use the [`AGUIAdapter.from_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.from_request] class method to build an adapter directly from a request.
+2. [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] runs the agent and returns a stream of AG-UI events. It supports the same optional arguments as [`Agent.run_stream_events()`](../agents.md#running-agents), including `deps`. You can also use [`AGUIAdapter.run_stream_native()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream_native] to run the agent and return a stream of Pydantic AI events instead, which can then be transformed into AG-UI events using [`AGUIAdapter.transform_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.transform_stream].
+3. [`AGUIAdapter.encode_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.encode_stream] encodes the stream of AG-UI events as strings according to the accept header value. You can also use [`AGUIAdapter.streaming_response()`][pydantic_ai.ui.ag_ui.AGUIAdapter.streaming_response] to generate a streaming response directly from the AG-UI event stream returned by `run_stream()`.
 
 Since `app` is an ASGI application, it can be used with any ASGI server:
 
@@ -87,7 +93,7 @@ This will expose the agent as an AG-UI server, and your frontend can start sendi
 
 ### Handle a Starlette request
 
-This example uses [`handle_ag_ui_request()`][pydantic_ai.ag_ui.run_ag_ui] to directly handle a FastAPI request and return a response. Something analogous to this will work with any Starlette-based web framework.
+This example uses [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] to directly handle a FastAPI request and return a response. Something analogous to this will work with any Starlette-based web framework.
 
 ```py {title="handle_ag_ui_request.py"}
 from fastapi import FastAPI
@@ -95,7 +101,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from pydantic_ai import Agent
-from pydantic_ai.ag_ui import handle_ag_ui_request
+from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 agent = Agent('openai:gpt-5', instructions='Be fun!')
 
@@ -103,8 +109,10 @@ app = FastAPI()
 
 @app.post('/')
 async def run_agent(request: Request) -> Response:
-    return await handle_ag_ui_request(agent, request)
+    return await AGUIAdapter.dispatch_request(request, agent=agent) # (1)
 ```
+
+1. This method essentially does the same as the previous example, but it's more convenient to use when you're already using a Starlette/FastAPI app.
 
 Since `app` is an ASGI application, it can be used with any ASGI server:
 
@@ -116,19 +124,20 @@ This will expose the agent as an AG-UI server, and your frontend can start sendi
 
 ### Stand-alone ASGI app
 
-This example uses [`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui] to turn the agent into a stand-alone ASGI application:
+This example uses [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] to turn the agent into a stand-alone ASGI application:
 
-```py {title="agent_to_ag_ui.py" hl_lines="4"}
+```py {title="ag_ui_app.py" hl_lines="4"}
 from pydantic_ai import Agent
+from pydantic_ai.ui.ag_ui.app import AGUIApp
 
 agent = Agent('openai:gpt-5', instructions='Be fun!')
-app = agent.to_ag_ui()
+app = AGUIApp(agent)
 ```
 
 Since `app` is an ASGI application, it can be used with any ASGI server:
 
 ```shell
-uvicorn agent_to_ag_ui:app
+uvicorn ag_ui_app:app
 ```
 
 This will expose the agent as an AG-UI server, and your frontend can start sending requests to it.
@@ -160,7 +169,7 @@ The integration provides full support for
 real-time synchronization between agents and frontend applications.
 
 In the example below we have document state which is shared between the UI and
-server using the [`StateDeps`][pydantic_ai.ag_ui.StateDeps] [dependencies type](./dependencies.md) that can be used to automatically
+server using the [`StateDeps`][pydantic_ai.ag_ui.StateDeps] [dependencies type](../dependencies.md) that can be used to automatically
 validate state contained in [`RunAgentInput.state`](https://docs.ag-ui.com/sdk/js/core/types#runagentinput) using a Pydantic `BaseModel` specified as a generic parameter.
 
 !!! note "Custom dependencies type with AG-UI state"
@@ -174,7 +183,8 @@ validate state contained in [`RunAgentInput.state`](https://docs.ag-ui.com/sdk/j
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.ag_ui import StateDeps
+from pydantic_ai.ui import StateDeps
+from pydantic_ai.ui.ag_ui.app import AGUIApp
 
 
 class DocumentState(BaseModel):
@@ -188,7 +198,7 @@ agent = Agent(
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
-app = agent.to_ag_ui(deps=StateDeps(DocumentState()))
+app = AGUIApp(agent, deps=StateDeps(DocumentState()))
 ```
 
 Since `app` is an ASGI application, it can be used with any ASGI server:
@@ -205,7 +215,7 @@ user experiences with frontend user interfaces.
 ### Events
 
 Pydantic AI tools can send [AG-UI events](https://docs.ag-ui.com/concepts/events) simply by returning a
-[`ToolReturn`](tools-advanced.md#advanced-tool-returns) object with a
+[`ToolReturn`](../tools-advanced.md#advanced-tool-returns) object with a
 [`BaseEvent`](https://docs.ag-ui.com/sdk/python/core/events#baseevent) (or a list of events) as `metadata`,
 which allows for custom events and state updates.
 
@@ -214,7 +224,8 @@ from ag_ui.core import CustomEvent, EventType, StateSnapshotEvent
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext, ToolReturn
-from pydantic_ai.ag_ui import StateDeps
+from pydantic_ai.ui import StateDeps
+from pydantic_ai.ui.ag_ui.app import AGUIApp
 
 
 class DocumentState(BaseModel):
@@ -228,7 +239,7 @@ agent = Agent(
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
-app = agent.to_ag_ui(deps=StateDeps(DocumentState()))
+app = AGUIApp(agent, deps=StateDeps(DocumentState()))
 
 
 @agent.tool
@@ -271,7 +282,7 @@ uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
 
 ## Examples
 
-For more examples of how to use [`to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui] see
+For more examples of how to use [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] see
 [`pydantic_ai_examples.ag_ui`](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_examples/ag_ui),
 which includes a server for use with the
 [AG-UI Dojo](https://docs.ag-ui.com/tutorials/debugging#the-ag-ui-dojo).

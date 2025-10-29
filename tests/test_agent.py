@@ -3696,6 +3696,7 @@ def test_tool_returning_binary_content_with_identifier():
                         BinaryContent(
                             data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82',
                             media_type='image/png',
+                            _identifier='image_id_1',
                             identifier='image_id_1',
                         ),
                     ],
@@ -3740,13 +3741,15 @@ def test_tool_returning_file_url_with_identifier():
                 UserPromptPart(
                     content=[
                         'This is file img_001:',
-                        ImageUrl(url='https://example.com/image.jpg', identifier='img_001'),
+                        ImageUrl(url='https://example.com/image.jpg', _identifier='img_001', identifier='img_001'),
                         'This is file vid_002:',
-                        VideoUrl(url='https://example.com/video.mp4', identifier='vid_002'),
+                        VideoUrl(url='https://example.com/video.mp4', _identifier='vid_002', identifier='vid_002'),
                         'This is file aud_003:',
-                        AudioUrl(url='https://example.com/audio.mp3', identifier='aud_003'),
+                        AudioUrl(url='https://example.com/audio.mp3', _identifier='aud_003', identifier='aud_003'),
                         'This is file doc_004:',
-                        DocumentUrl(url='https://example.com/document.pdf', identifier='doc_004'),
+                        DocumentUrl(
+                            url='https://example.com/document.pdf', _identifier='doc_004', identifier='doc_004'
+                        ),
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -4670,7 +4673,7 @@ def test_parallel_mcp_calls():
 
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     agent = Agent(FunctionModel(call_tools_parallel), toolsets=[server])
-    result = agent.run_sync()
+    result = agent.run_sync('call tools in parallel')
     assert result.output == snapshot('finished')
 
 
@@ -4728,11 +4731,13 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
         FunctionModel(call_tools_sequential), toolsets=[sequential_toolset], output_type=[str, DeferredToolRequests]
     )
 
+    user_prompt = 'call a lot of tools'
+
     if mode == 'contextmanager':
         with agent.sequential_tool_calls():
-            result = agent.run_sync()
+            result = agent.run_sync(user_prompt)
     else:
-        result = agent.run_sync()
+        result = agent.run_sync(user_prompt)
 
     assert result.output == snapshot(
         DeferredToolRequests(approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())])
