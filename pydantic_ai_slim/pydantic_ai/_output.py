@@ -60,6 +60,8 @@ OutputValidatorFunc = (
     | Callable[[RunContext[AgentDepsT], OutputDataT_inv], Awaitable[OutputDataT_inv]]
     | Callable[[OutputDataT_inv], OutputDataT_inv]
     | Callable[[OutputDataT_inv], Awaitable[OutputDataT_inv]]
+    | Callable[[OutputDataT_inv, bool], OutputDataT_inv]
+    | Callable[[OutputDataT_inv, bool], Awaitable[OutputDataT_inv]]
 )
 """
 A function that always takes and returns the same type of data (which is the result type of an agent run), and:
@@ -169,9 +171,15 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
     _is_async: bool = field(init=False)
 
     def __post_init__(self):
-        sig = inspect.signature(self.function)
-        self._takes_ctx = len(sig.parameters) > 1
-        self._takes_partial = len(sig.parameters) > 2
+        params = list(inspect.signature(self.function).parameters.values())
+        if params:
+            first_param = params[0]
+            annotation = first_param.annotation
+            self._takes_ctx = 'RunContext' in annotation
+
+        expected_partial_index = 2 if self._takes_ctx else 1
+        self._takes_partial = len(params) > expected_partial_index
+
         self._is_async = _utils.is_async_callable(self.function)
 
     async def validate(
