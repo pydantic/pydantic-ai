@@ -1895,7 +1895,6 @@ I've identified the core user intent: to learn safe street-crossing. Now, I'm fo
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartEndEvent(
                 index=1,
                 part=TextPart(
@@ -3082,13 +3081,7 @@ async def test_google_vertexai_image_generation(allow_model_requests: None, vert
     agent = Agent(model, output_type=BinaryImage)
 
     result = await agent.run('Generate an image of an axolotl.')
-    assert result.output == snapshot(
-        BinaryImage(
-            data=IsBytes(),
-            media_type='image/png',
-            identifier='f3edd8',
-        )
-    )
+    assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/png', identifier='b037a4'))
 
 
 async def test_google_httpx_client_is_not_closed(allow_model_requests: None, gemini_api_key: str):
