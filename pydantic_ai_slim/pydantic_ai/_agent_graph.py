@@ -20,7 +20,8 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_graph import BaseNode, Graph, GraphRunContext
+from pydantic_graph import BaseNode, GraphRunContext
+from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
 
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
@@ -265,6 +266,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             next_message = _messages.ModelRequest(parts=parts)
 
         next_message.instructions = await ctx.deps.get_instructions(run_context)
+
+        if not messages and not next_message.parts and not next_message.instructions:
+            raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
         return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
 
@@ -1162,22 +1166,32 @@ def build_agent_graph(
     name: str | None,
     deps_type: type[DepsT],
     output_type: OutputSpec[OutputT],
-) -> Graph[GraphAgentState, GraphAgentDeps[DepsT, result.FinalResult[OutputT]], result.FinalResult[OutputT]]:
+) -> Graph[
+    GraphAgentState,
+    GraphAgentDeps[DepsT, OutputT],
+    UserPromptNode[DepsT, OutputT],
+    result.FinalResult[OutputT],
+]:
     """Build the execution [Graph][pydantic_graph.Graph] for a given agent."""
-    nodes = (
-        UserPromptNode[DepsT],
-        ModelRequestNode[DepsT],
-        CallToolsNode[DepsT],
-        SetFinalResult[DepsT],
-    )
-    graph = Graph[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[OutputT]](
-        nodes=nodes,
+    g = GraphBuilder(
         name=name or 'Agent',
         state_type=GraphAgentState,
-        run_end_type=result.FinalResult[OutputT],
+        deps_type=GraphAgentDeps[DepsT, OutputT],
+        input_type=UserPromptNode[DepsT, OutputT],
+        output_type=result.FinalResult[OutputT],
         auto_instrument=False,
     )
-    return graph
+
+    g.add(
+        g.edge_from(g.start_node).to(UserPromptNode[DepsT, OutputT]),
+        g.node(UserPromptNode[DepsT, OutputT]),
+        g.node(ModelRequestNode[DepsT, OutputT]),
+        g.node(CallToolsNode[DepsT, OutputT]),
+        g.node(
+            SetFinalResult[DepsT, OutputT],
+        ),
+    )
+    return g.build(validate_graph_structure=False)
 
 
 async def _process_message_history(

@@ -27,6 +27,7 @@ from .._run_context import RunContext
 from ..builtin_tools import AbstractBuiltinTool
 from ..exceptions import UserError
 from ..messages import (
+    BaseToolCallPart,
     BinaryImage,
     FilePart,
     FileUrl,
@@ -35,9 +36,12 @@ from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     ModelResponseStreamEvent,
+    PartEndEvent,
     PartStartEvent,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     VideoUrl,
 )
@@ -410,9 +414,17 @@ class Model(ABC):
         they need to customize the preparation flow further, but most implementations should simply call
         ``self.prepare_request(...)`` at the start of their ``request`` (and related) methods.
         """
-        merged_settings = merge_model_settings(self.settings, model_settings)
-        customized_parameters = self.customize_request_parameters(model_request_parameters)
-        return merged_settings, customized_parameters
+        model_settings = merge_model_settings(self.settings, model_settings)
+
+        if builtin_tools := model_request_parameters.builtin_tools:
+            # Deduplicate builtin tools
+            model_request_parameters = replace(
+                model_request_parameters,
+                builtin_tools=list({tool.unique_id: tool for tool in builtin_tools}.values()),
+            )
+
+        model_request_parameters = self.customize_request_parameters(model_request_parameters)
+        return model_settings, model_request_parameters
 
     @property
     @abstractmethod
@@ -535,7 +547,44 @@ class StreamedResponse(ABC):
                 async for event in iterator:
                     yield event
 
-            self._event_iterator = iterator_with_final_event(self._get_event_iterator())
+            async def iterator_with_part_end(
+                iterator: AsyncIterator[ModelResponseStreamEvent],
+            ) -> AsyncIterator[ModelResponseStreamEvent]:
+                last_start_event: PartStartEvent | None = None
+
+                def part_end_event(next_part: ModelResponsePart | None = None) -> PartEndEvent | None:
+                    if not last_start_event:
+                        return None
+
+                    index = last_start_event.index
+                    part = self._parts_manager.get_parts()[index]
+                    if not isinstance(part, TextPart | ThinkingPart | BaseToolCallPart):
+                        # Parts other than these 3 don't have deltas, so don't need an end part.
+                        return None
+
+                    return PartEndEvent(
+                        index=index,
+                        part=part,
+                        next_part_kind=next_part.part_kind if next_part else None,
+                    )
+
+                async for event in iterator:
+                    if isinstance(event, PartStartEvent):
+                        if last_start_event:
+                            end_event = part_end_event(event.part)
+                            if end_event:
+                                yield end_event
+
+                            event.previous_part_kind = last_start_event.part.part_kind
+                        last_start_event = event
+
+                    yield event
+
+                end_event = part_end_event()
+                if end_event:
+                    yield end_event
+
+            self._event_iterator = iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
         return self._event_iterator
 
     @abstractmethod

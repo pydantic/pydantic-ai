@@ -126,6 +126,8 @@ _FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
     GoogleFinishReason.MALFORMED_FUNCTION_CALL: 'error',
     GoogleFinishReason.IMAGE_SAFETY: 'content_filter',
     GoogleFinishReason.UNEXPECTED_TOOL_CALL: 'error',
+    GoogleFinishReason.IMAGE_PROHIBITED_CONTENT: 'content_filter',
+    GoogleFinishReason.NO_IMAGE: 'error',
 }
 
 
@@ -453,22 +455,27 @@ class GoogleModel(Model):
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
         if not response.candidates:
             raise UnexpectedModelBehavior('Expected at least one candidate in Gemini response')  # pragma: no cover
+
         candidate = response.candidates[0]
-        if candidate.content is None or candidate.content.parts is None:
-            if candidate.finish_reason == 'SAFETY':
-                raise UnexpectedModelBehavior('Safety settings triggered', str(response))
-            else:
-                raise UnexpectedModelBehavior(
-                    'Content field missing from Gemini response', str(response)
-                )  # pragma: no cover
-        parts = candidate.content.parts or []
 
         vendor_id = response.response_id
         vendor_details: dict[str, Any] | None = None
         finish_reason: FinishReason | None = None
-        if raw_finish_reason := candidate.finish_reason:  # pragma: no branch
+        raw_finish_reason = candidate.finish_reason
+        if raw_finish_reason:  # pragma: no branch
             vendor_details = {'finish_reason': raw_finish_reason.value}
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
+        if candidate.content is None or candidate.content.parts is None:
+            if finish_reason == 'content_filter' and raw_finish_reason:
+                raise UnexpectedModelBehavior(
+                    f'Content filter {raw_finish_reason.value!r} triggered', response.model_dump_json()
+                )
+            else:
+                raise UnexpectedModelBehavior(
+                    'Content field missing from Gemini response', response.model_dump_json()
+                )  # pragma: no cover
+        parts = candidate.content.parts or []
 
         usage = _metadata_as_usage(response)
         return _process_response_from_parts(
@@ -623,7 +630,8 @@ class GeminiStreamedResponse(StreamedResponse):
             if chunk.response_id:  # pragma: no branch
                 self.provider_response_id = chunk.response_id
 
-            if raw_finish_reason := candidate.finish_reason:
+            raw_finish_reason = candidate.finish_reason
+            if raw_finish_reason:
                 self.provider_details = {'finish_reason': raw_finish_reason.value}
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
@@ -641,13 +649,17 @@ class GeminiStreamedResponse(StreamedResponse):
             #     )
 
             if candidate.content is None or candidate.content.parts is None:
-                if candidate.finish_reason == 'STOP':  # pragma: no cover
+                if self.finish_reason == 'stop':  # pragma: no cover
                     # Normal completion - skip this chunk
                     continue
-                elif candidate.finish_reason == 'SAFETY':  # pragma: no cover
-                    raise UnexpectedModelBehavior('Safety settings triggered', str(chunk))
+                elif self.finish_reason == 'content_filter' and raw_finish_reason:  # pragma: no cover
+                    raise UnexpectedModelBehavior(
+                        f'Content filter {raw_finish_reason.value!r} triggered', chunk.model_dump_json()
+                    )
                 else:  # pragma: no cover
-                    raise UnexpectedModelBehavior('Content field missing from streaming Gemini response', str(chunk))
+                    raise UnexpectedModelBehavior(
+                        'Content field missing from streaming Gemini response', chunk.model_dump_json()
+                    )
 
             parts = candidate.content.parts
             if not parts:

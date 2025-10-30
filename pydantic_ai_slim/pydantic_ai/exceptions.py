@@ -159,7 +159,7 @@ class ModelHTTPError(AgentRunError):
         super().__init__(message)
 
 
-class FallbackExceptionGroup(ExceptionGroup):
+class FallbackExceptionGroup(ExceptionGroup[Any]):
     """A group of exceptions that can be raised when all fallback models fail."""
 
 

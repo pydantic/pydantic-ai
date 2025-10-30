@@ -44,11 +44,14 @@ class _WrappedTextOutput:
     value: str | None
 
 
-@dataclass
+@dataclass(init=False)
 class _WrappedToolOutput:
     """A wrapper class to tag an output that came from the custom_output_args field."""
 
-    value: Any | None
+    value: dict[str, Any] | None
+
+    def __init__(self, value: Any | None):
+        self.value = pydantic_core.to_jsonable_python(value)
 
 
 @dataclass(init=False)
@@ -362,7 +365,7 @@ class _JsonSchemaTestData:
         self.defs = schema.get('$defs', {})
         self.seed = seed
 
-    def generate(self) -> Any:
+    def generate(self) -> dict[str, Any]:
         """Generate data for the JSON schema."""
         return self._gen_any(self.schema)
 

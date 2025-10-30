@@ -37,6 +37,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: claude-code
 
       - uses: denoland/setup-deno@v2
         with:
