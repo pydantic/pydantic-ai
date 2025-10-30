@@ -453,11 +453,14 @@ class GoogleModel(Model):
         if candidate.content is None or candidate.content.parts is None:
             if candidate.finish_reason == 'SAFETY':
                 raise UnexpectedModelBehavior('Safety settings triggered', str(response))
+            elif candidate.finish_reason == 'MALFORMED_FUNCTION_CALL':
+                parts = []
             else:
                 raise UnexpectedModelBehavior(
                     'Content field missing from Gemini response', str(response)
                 )  # pragma: no cover
-        parts = candidate.content.parts or []
+        else:
+            parts = candidate.content.parts or []
 
         vendor_id = response.response_id
         vendor_details: dict[str, Any] | None = None

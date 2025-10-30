@@ -2943,21 +2943,32 @@ async def test_google_model_stream_malformed_function_call_continue(
 
     mock_stream = AsyncMock()
 
+    class _FinishReason(str):
+        """Mock finish reason with value attribute."""
+
+        @property
+        def value(self):
+            return str(self)
+
     def create_mock_response(**kwargs):
         mock = MagicMock(spec=GenerateContentResponse)
         for key, value in kwargs.items():
             setattr(mock, key, value)
-        mock.model_version = 'gemini-1.5-flash'
+        mock.model_version = 'gemini-2.5-flash'
         mock.create_time = None
         mock.response_id = 'test-response-id'
+        mock.usage_metadata = None
         return mock
 
     def create_mock_candidate(**kwargs):
         mock = MagicMock(spec=Candidate)
+        # Convert string finish_reason to our mock enum
+        if 'finish_reason' in kwargs and isinstance(kwargs['finish_reason'], str):
+            kwargs['finish_reason'] = _FinishReason(kwargs['finish_reason'])
         for key, value in kwargs.items():
             setattr(mock, key, value)
         return mock
-    
+
     def create_mock_content(*parts):
         mock = MagicMock(spec=Content)
         mock.parts = list(parts)
@@ -2967,6 +2978,12 @@ async def test_google_model_stream_malformed_function_call_continue(
         mock = MagicMock(spec=Part)
         mock.text = None
         mock.function_call = None
+        mock.thought_signature = None
+        mock.thought = None
+        mock.inline_data = None
+        mock.executable_code = None
+        mock.code_execution_result = None
+        mock.function_response = None
         for key, value in kwargs.items():
             setattr(mock, key, value)
         return mock
@@ -2989,7 +3006,7 @@ async def test_google_model_stream_malformed_function_call_continue(
         yield create_mock_response(
             candidates=[create_mock_candidate(content=None, finish_reason='MALFORMED_FUNCTION_CALL')]
         )
-        
+
         yield create_mock_response(
             candidates=[
                 create_mock_candidate(
@@ -3001,7 +3018,7 @@ async def test_google_model_stream_malformed_function_call_continue(
         yield create_mock_response(candidates=[create_mock_candidate(content=None, finish_reason='STOP')])
 
     mock_stream.return_value = mock_stream_iterator()
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     monkeypatch.setattr(model.client.aio.models, 'generate_content_stream', mock_stream)
 
     agent = Agent(model)
@@ -3028,21 +3045,32 @@ async def test_google_model_stream_malformed_function_call_retry(
 
     mock_stream = AsyncMock()
 
+    class _FinishReason(str):
+        """Mock finish reason with value attribute."""
+
+        @property
+        def value(self):
+            return str(self)
+
     def create_mock_response(**kwargs):
         mock = MagicMock(spec=GenerateContentResponse)
         for key, value in kwargs.items():
             setattr(mock, key, value)
-        mock.model_version = 'gemini-1.5-flash'
+        mock.model_version = 'gemini-2.5-flash'
         mock.create_time = None
         mock.response_id = 'test-response-id'
+        mock.usage_metadata = None
         return mock
 
     def create_mock_candidate(**kwargs):
         mock = MagicMock(spec=Candidate)
+        # Convert string finish_reason to our mock enum
+        if 'finish_reason' in kwargs and isinstance(kwargs['finish_reason'], str):
+            kwargs['finish_reason'] = _FinishReason(kwargs['finish_reason'])
         for key, value in kwargs.items():
             setattr(mock, key, value)
         return mock
-    
+
     def create_mock_content(*parts):
         mock = MagicMock(spec=Content)
         mock.parts = list(parts)
@@ -3051,6 +3079,13 @@ async def test_google_model_stream_malformed_function_call_retry(
     def create_mock_part(**kwargs):
         mock = MagicMock(spec=Part)
         mock.text = None
+        mock.function_call = None
+        mock.thought_signature = None
+        mock.thought = None
+        mock.inline_data = None
+        mock.executable_code = None
+        mock.code_execution_result = None
+        mock.function_response = None
         for key, value in kwargs.items():
             setattr(mock, key, value)
         return mock
@@ -3072,7 +3107,7 @@ async def test_google_model_stream_malformed_function_call_retry(
 
     mock_stream.side_effect = [first_call_iterator(), second_call_iterator()]
 
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     monkeypatch.setattr(model.client.aio.models, 'generate_content_stream', mock_stream)
 
     agent = Agent(model, retries=1)
@@ -3082,3 +3117,84 @@ async def test_google_model_stream_malformed_function_call_retry(
 
     assert data == 'Successful response'
     assert mock_stream.call_count == 2
+
+
+async def test_google_model_malformed_function_call_retry(
+    allow_model_requests: None, google_provider: GoogleProvider, monkeypatch: pytest.MonkeyPatch
+):
+    """Test that the model retries when non-streamed response contains a malformed function call."""
+    from unittest.mock import MagicMock
+
+    from google.genai.types import Candidate, Content, GenerateContentResponse, Part
+
+    mock_generate = AsyncMock()
+
+    class _FinishReason(str):
+        """Mock finish reason with value attribute."""
+
+        @property
+        def value(self):
+            return str(self)
+
+    def create_mock_response(**kwargs):
+        mock = MagicMock(spec=GenerateContentResponse)
+        for key, value in kwargs.items():
+            setattr(mock, key, value)
+        mock.model_version = 'gemini-2.5-flash'
+        mock.create_time = None
+        mock.response_id = 'test-response-id'
+        mock.usage_metadata = None
+        return mock
+
+    def create_mock_candidate(**kwargs):
+        mock = MagicMock(spec=Candidate)
+        # Convert string finish_reason to our mock enum
+        if 'finish_reason' in kwargs and isinstance(kwargs['finish_reason'], str):
+            kwargs['finish_reason'] = _FinishReason(kwargs['finish_reason'])
+        mock.grounding_metadata = None
+        for key, value in kwargs.items():
+            setattr(mock, key, value)
+        return mock
+
+    def create_mock_content(*parts):
+        mock = MagicMock(spec=Content)
+        mock.parts = list(parts)
+        return mock
+
+    def create_mock_part(**kwargs):
+        mock = MagicMock(spec=Part)
+        mock.text = None
+        mock.function_call = None
+        mock.thought_signature = None
+        mock.thought = None
+        mock.inline_data = None
+        mock.executable_code = None
+        mock.code_execution_result = None
+        mock.function_response = None
+        for key, value in kwargs.items():
+            setattr(mock, key, value)
+        return mock
+
+    first_response = create_mock_response(
+        candidates=[create_mock_candidate(content=None, finish_reason='MALFORMED_FUNCTION_CALL')]
+    )
+
+    second_response = create_mock_response(
+        candidates=[
+            create_mock_candidate(
+                content=create_mock_content(create_mock_part(text='Successful response')), finish_reason='STOP'
+            )
+        ]
+    )
+
+    mock_generate.side_effect = [first_response, second_response]
+
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    monkeypatch.setattr(model.client.aio.models, 'generate_content', mock_generate)
+
+    agent = Agent(model, retries=1)
+
+    result = await agent.run('Some prompt')
+
+    assert result.output == 'Successful response'
+    assert mock_generate.call_count == 2
