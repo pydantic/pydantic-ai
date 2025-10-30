@@ -27,6 +27,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
     RunContext,
@@ -180,7 +181,7 @@ async def test_structured_response_iter():
             response_data = await result.validate_response_output(structured_response, allow_partial=not last)
             chunks.append(response_data)
 
-    assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4]])
+    assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]])
 
     async with agent.run_stream('Hello') as result:
         with pytest.raises(UserError, match=r'stream_text\(\) can only be used with text responses'):
@@ -204,7 +205,7 @@ async def test_streamed_text_stream():
         # typehint to test (via static typing) that the stream type is correctly inferred
         chunks: list[str] = [c async for c in result.stream_output()]
         # two chunks with `stream()` due to not-final vs. final
-        assert chunks == snapshot(['The cat sat on the mat.', 'The cat sat on the mat.'])
+        assert chunks == snapshot(['The cat sat on the mat.'])
         assert result.is_complete
 
     async with agent.run_stream('Hello') as result:
@@ -235,15 +236,7 @@ async def test_streamed_text_stream():
 
     async with agent.run_stream('Hello', output_type=TextOutput(upcase)) as result:
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                'THE ',
-                'THE CAT ',
-                'THE CAT SAT ',
-                'THE CAT SAT ON ',
-                'THE CAT SAT ON THE ',
-                'THE CAT SAT ON THE MAT.',
-                'THE CAT SAT ON THE MAT.',
-            ]
+            ['THE ', 'THE CAT ', 'THE CAT SAT ', 'THE CAT SAT ON ', 'THE CAT SAT ON THE ', 'THE CAT SAT ON THE MAT.']
         )
 
     async with agent.run_stream('Hello') as result:
@@ -296,6 +289,13 @@ async def test_streamed_text_stream():
                     usage=RequestUsage(input_tokens=51, output_tokens=7),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The cat sat on the mat.')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=7),
+                    model_name='test',
+                    timestamp=IsDatetime(),
                     provider_name='test',
                 ),
             ]
@@ -1126,16 +1126,17 @@ async def test_iter_stream_output():
     assert run.next_node == End(data=FinalResult(output='The bat sat on the mat.', tool_name=None, tool_call_id=None))
     assert run.usage() == stream_usage == RunUsage(requests=1, input_tokens=51, output_tokens=7)
 
-    assert messages == [
-        '',
-        'The ',
-        'The cat ',
-        'The bat sat ',
-        'The bat sat on ',
-        'The bat sat on the ',
-        'The bat sat on the mat.',
-        'The bat sat on the mat.',
-    ]
+    assert messages == snapshot(
+        [
+            '',
+            'The ',
+            'The cat ',
+            'The bat sat ',
+            'The bat sat on ',
+            'The bat sat on the ',
+            'The bat sat on the mat.',
+        ]
+    )
 
 
 async def test_iter_stream_responses():
@@ -1176,6 +1177,7 @@ async def test_iter_stream_responses():
             'The cat sat on ',
             'The cat sat on the ',
             'The cat sat on the mat.',
+            'The cat sat on the mat.',
         ]
     ]
 
@@ -1202,7 +1204,7 @@ async def test_stream_iter_structured_validator() -> None:
                 async with node.stream(run.ctx) as stream:
                     async for output in stream.stream_output(debounce_by=None):
                         outputs.append(output)
-    assert outputs == [OutputType(value='a (validated)'), OutputType(value='a (validated)')]
+    assert outputs == snapshot([OutputType(value='a (validated)')])
 
 
 async def test_unknown_tool_call_events():
@@ -1340,7 +1342,6 @@ async def test_stream_structured_output():
                 CityLocation(city='Mexico City'),
                 CityLocation(city='Mexico City'),
                 CityLocation(city='Mexico City', country='Mexico'),
-                CityLocation(city='Mexico City', country='Mexico'),
             ]
         )
         assert result.is_complete
@@ -1364,7 +1365,6 @@ async def test_iter_stream_structured_output():
                             CityLocation(city='Mexico '),
                             CityLocation(city='Mexico City'),
                             CityLocation(city='Mexico City'),
-                            CityLocation(city='Mexico City', country='Mexico'),
                             CityLocation(city='Mexico City', country='Mexico'),
                         ]
                     )
@@ -1400,7 +1400,6 @@ async def test_iter_stream_output_tool_dont_hit_retry_limit():
                             CityLocation(city='Mex'),
                             CityLocation(city='Mexico City'),
                             CityLocation(city='Mexico City'),
-                            CityLocation(city='Mexico City', country='Mexico'),
                             CityLocation(city='Mexico City', country='Mexico'),
                         ]
                     )
@@ -1575,9 +1574,23 @@ async def test_deferred_tool_iter():
                 part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()),
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool'),
+                next_part_kind='tool-call',
+            ),
             PartStartEvent(
                 index=1,
-                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()),
+                part=ToolCallPart(
+                    tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                ),
+                previous_part_kind='tool-call',
+            ),
+            PartEndEvent(
+                index=1,
+                part=ToolCallPart(
+                    tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                ),
             ),
             FunctionToolCallEvent(part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())),
             FunctionToolCallEvent(part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())),
@@ -1615,9 +1628,23 @@ async def test_tool_raises_call_deferred_approval_required_iter():
                 index=0,
                 part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()),
             ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool'),
+                next_part_kind='tool-call',
+            ),
             PartStartEvent(
                 index=1,
-                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()),
+                part=ToolCallPart(
+                    tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                ),
+                previous_part_kind='tool-call',
+            ),
+            PartEndEvent(
+                index=1,
+                part=ToolCallPart(
+                    tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                ),
             ),
             FunctionToolCallEvent(part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())),
             FunctionToolCallEvent(part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())),
@@ -1657,6 +1684,10 @@ async def test_run_event_stream_handler():
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
             ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
+            ),
             FunctionToolCallEvent(part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -1670,6 +1701,7 @@ async def test_run_event_stream_handler():
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
+            PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
         ]
     )
 
@@ -1698,6 +1730,10 @@ def test_run_sync_event_stream_handler():
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
             ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
+            ),
             FunctionToolCallEvent(part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -1711,6 +1747,7 @@ def test_run_sync_event_stream_handler():
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
+            PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
         ]
     )
 
@@ -1733,7 +1770,7 @@ async def test_run_stream_event_stream_handler():
 
     async with test_agent.run_stream('Hello', event_stream_handler=event_stream_handler) as result:
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            ['{"ret_a":', '{"ret_a":"a-apple"}', '{"ret_a":"a-apple"}']
+            ['{"ret_a":', '{"ret_a":"a-apple"}']
         )
 
     assert events == snapshot(
@@ -1741,6 +1778,10 @@ async def test_run_stream_event_stream_handler():
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
             ),
             FunctionToolCallEvent(part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())),
             FunctionToolResultEvent(
@@ -1781,6 +1822,10 @@ async def test_stream_tool_returning_user_content():
                 index=0,
                 part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
             ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='get_image', args={}, tool_call_id='pyd_ai_tool_call_id__get_image'),
+            ),
             FunctionToolCallEvent(part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr())),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -1802,6 +1847,7 @@ async def test_stream_tool_returning_user_content():
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"get_image":"See ')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='file ')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='bd38f5"}')),
+            PartEndEvent(index=0, part=TextPart(content='{"get_image":"See file bd38f5"}')),
         ]
     )
 
@@ -1825,6 +1871,10 @@ async def test_run_stream_events():
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
             ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
+            ),
             FunctionToolCallEvent(part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -1838,6 +1888,7 @@ async def test_run_stream_events():
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
+            PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
             AgentRunResultEvent(result=AgentRunResult(output='{"ret_a":"a-apple"}')),
         ]
     )

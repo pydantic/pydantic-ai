@@ -17,6 +17,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
@@ -418,12 +419,27 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' in Paris.</')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='thinking')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='>\n')),
+            PartEndEvent(
+                index=0,
+                part=TextPart(
+                    content='<thinking> To find the temperature of the capital of France, I need to first determine the capital of France and then get the current temperature in that city. The capital of France is Paris. I will use the "get_temperature" tool to find the current temperature in Paris.</thinking>\n'
+                ),
+                next_part_kind='tool-call',
+            ),
             PartStartEvent(
-                index=1, part=ToolCallPart(tool_name='get_temperature', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA')
+                index=1,
+                part=ToolCallPart(tool_name='get_temperature', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(
                 index=1,
                 delta=ToolCallPartDelta(args_delta='{"city":"Paris"}', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'),
+            ),
+            PartEndEvent(
+                index=1,
+                part=ToolCallPart(
+                    tool_name='get_temperature', args='{"city":"Paris"}', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'
+                ),
             ),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
@@ -440,6 +456,9 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' capital of France,')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' is 30°C')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='.')),
+            PartEndEvent(
+                index=0, part=TextPart(content='The current temperature in Paris, the capital of France, is 30°C.')
+            ),
         ]
     )
 
@@ -883,16 +902,41 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     provider_name='bedrock',
                 ),
             ),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_content',
+                    signature='EtkECkgIBxABGAIqQJTfqS/PYuAFZeOls6R8uGN014YNT7YDIFuhNyywoX1Cjf9oIYThX1ucUFJ1cfckdN55jozmXi1PEgMfufPmD44SDHBw8Yp6gJ8Ys/Gt3BoMYdLaNUOqr7k/MAeYIjBhPIc9z85HrJAbeS8Hz/69R+vKHpRanI0n/B69dnv2nebRe7LKZgHs2AlVPEtNyyoqvgP463qJ7/KvDrAPSnhHQqZ8TH8JBC4eYb4Qow5eX7dI3UXY/DrQ2IOWLADJqshcXBg7zbN78H4l6fTP97Ztzz0qw4fadTzTb36dRR7p8rs2zA/pHWhK+75xvUGh8IdLPvMikKccHssHKdceru4JLG1cMVtq1Ci7ZPAbHRU8/XsjFtLWPHeYLfKGJN33C1MpWX5nQU2BjYICs5Hn+8Z9Smxhp06rZXTjZARiExrd1dgLn5/5PbEzMLJv/Q3c6XJH7kx7iUO4NAonTT1Q3WY1cGa38UNGYuTUae3CNFEZWjS21tWRmjX4t5w8L0BtQ5DSaW/ZzGf0yzUKUaS/fkVjr2xztQBvysFFbb7UrX+/lNw26CHXKUIXFcZzV9l0HrA6z3oQrqSpnwem/pt/Cxdh5YQlXq6DSdzstqwJA53n9Hj3osjT/viH4Y6N5dWLLBTQBvhUEy24FhlytD3scYrvAqCdxW9aDSW+e+Foj5vsjVA9VFrXqZeNSO77Qp5dLw5XcA8CH6YFTE6EWeFTki5vfTfSIw+m4inZGVzIRi8Qk90IzW2EnrxGtx3wsEn5XImQr1vg1Npq2jN6uiOPOp8nsBgB',
+                    provider_name='bedrock',
+                ),
+                next_part_kind='thinking',
+            ),
             PartStartEvent(
                 index=1,
                 part=ThinkingPart(
                     content='',
                     id='redacted_content',
-                    signature=IsStr(),
+                    signature='EqADCkgIBxABGAIqQB3h5GyHJD4hocRchUq2I40ChRLdpxjVl0xZkyVZrrk6JIJWeInuRQfJG5nJymmQBjH9VDeV53H/D3W9xjIJvPUSDLv7jRCF9b6Tx1Z5EBoMSv3CBw4zUjjSDaqlIjDBpH7V3YQB5twUmulAycDyZRvP3loupy6o2eqrfKAZZjq3rwkApWD9qOqJD3OEfd4qhQJZfOcHs9bt5zCqzYjoaIkxE3raXnhUHOlwq1Jq60bTQt2SQiHqoZTEht/DeDEEgpFy9Z32Zz3/Az0ORgTi3QE56K15OXo6GWMPYq/CTJ/xzPXfH0/yoQ4EP103VfVqvymEpXUru6RQGkou41LKRI92fRsqCK+jPOpxeED4kz7CFhQYMHttk7cOAF85SE3nCcpliARrLDvsApjgMFAYnineZQMLwawmnIm6EB61C20dB1Ft7vLG1TS6fn27EB8JZjr/jeC8O4ZysKv5iUxpMlDZib8jFszfzxCXdFX7NVKO9+dH8cW3RsJ80kzBp6xyoQhXSFx72jFllwDy8e+QlI3OIhweJ8IYAQ==',
                     provider_name='bedrock',
                 ),
+                previous_part_kind='thinking',
             ),
-            PartStartEvent(index=2, part=TextPart(content="I notice you've sent what appears to be some")),
+            PartEndEvent(
+                index=1,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_content',
+                    signature='EqADCkgIBxABGAIqQB3h5GyHJD4hocRchUq2I40ChRLdpxjVl0xZkyVZrrk6JIJWeInuRQfJG5nJymmQBjH9VDeV53H/D3W9xjIJvPUSDLv7jRCF9b6Tx1Z5EBoMSv3CBw4zUjjSDaqlIjDBpH7V3YQB5twUmulAycDyZRvP3loupy6o2eqrfKAZZjq3rwkApWD9qOqJD3OEfd4qhQJZfOcHs9bt5zCqzYjoaIkxE3raXnhUHOlwq1Jq60bTQt2SQiHqoZTEht/DeDEEgpFy9Z32Zz3/Az0ORgTi3QE56K15OXo6GWMPYq/CTJ/xzPXfH0/yoQ4EP103VfVqvymEpXUru6RQGkou41LKRI92fRsqCK+jPOpxeED4kz7CFhQYMHttk7cOAF85SE3nCcpliARrLDvsApjgMFAYnineZQMLwawmnIm6EB61C20dB1Ft7vLG1TS6fn27EB8JZjr/jeC8O4ZysKv5iUxpMlDZib8jFszfzxCXdFX7NVKO9+dH8cW3RsJ80kzBp6xyoQhXSFx72jFllwDy8e+QlI3OIhweJ8IYAQ==',
+                    provider_name='bedrock',
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=2,
+                part=TextPart(content="I notice you've sent what appears to be some"),
+                previous_part_kind='thinking',
+            ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' kind of command or trigger string, but I don')),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta="'t respond to special codes or")),
@@ -916,6 +960,16 @@ If you have a question you\
                 index=2, delta=TextPartDelta(content_delta=' a straightforward conversation. What would you like to')
             ),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' talk about today?')),
+            PartEndEvent(
+                index=2,
+                part=TextPart(
+                    content="""\
+I notice you've sent what appears to be some kind of command or trigger string, but I don't respond to special codes or triggers. That string doesn't have any special meaning to me.
+
+If you have a question you'd like to discuss or need assistance with something, I'd be happy to help in a straightforward conversation. What would you like to talk about today?\
+"""
+                ),
+            ),
         ]
     )
 
@@ -1123,12 +1177,22 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' how I can help')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' them today.')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta=IsStr(), provider_name='bedrock')),
-            PartStartEvent(index=1, part=TextPart(content='Hello! It')),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='The user has greeted me with a simple "Hello". I should respond in a friendly and welcoming manner. This is a straightforward greeting, so I\'ll respond warmly and ask how I can help them today.',
+                    signature='Eu0CCkgIBxABGAIqQJDccbDQkr81n7QjZ0Fi43umSvw0YvnGkMPEpaGAa2btYHyWw06KhwckvsnKzpKcxiRJT35meoG4/pdrTUiy2UISDPDaEWfOl3+HlRVsCxoMzfiqBp252RMvpmEyIjCbQ97Ac9Epkr5mgxeu1vGtJg+fDWIg0UnpMM8NYknhhvJmsXpYrfquwGL1ZnlBslUq0gHtbAAPwlWPmiQXU7gDQCDW9IdMVyw42b4f5MrAlpWkPWOJc9H+yYv0TpP/jY72SD1opqwkWnBgkzbi7A2jPmEFzIMQSO1KDXha5ADqQ3cLYMmVdNTSH9wlM7G7/JJ2/cqowqkwD6/q1AnYzcPte9iC67fY1LYN0NMCOSABFojP1rmkv9YBEulx5Y6eQpeVXBQiIqcGoCmWSumpGBskS1KxGerUmzUB0JmJnTENv4x3fSGSUSEPqMiz6Ebao8sVkb1wCWuZEXWJGtiQLMIm1o471iEYAQ==',
+                    provider_name='bedrock',
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=1, part=TextPart(content='Hello! It'), previous_part_kind='thinking'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta="'s nice")),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' to meet you.')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' How can I help')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you today?')),
+            PartEndEvent(index=1, part=TextPart(content="Hello! It's nice to meet you. How can I help you today?")),
         ]
     )
     assert agent_run.result is not None
@@ -1299,8 +1363,16 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
                     content='The user just says "Hi". We need to respond appropriately, friendly greeting. No special instructions. Should be short.'
                 ),
             ),
-            PartStartEvent(index=1, part=TextPart(content='Hello! How can I help')),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='The user just says "Hi". We need to respond appropriately, friendly greeting. No special instructions. Should be short.'
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=1, part=TextPart(content='Hello! How can I help'), previous_part_kind='thinking'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you today?')),
+            PartEndEvent(index=1, part=TextPart(content='Hello! How can I help you today?')),
         ]
     )
