@@ -125,7 +125,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
             # `dispatch_request` will store the frontend state from the request on `deps.state` (if it implements the `StateHandler` protocol),
             # so we need to copy the deps to avoid different requests mutating the same deps object.
             nonlocal deps
-            if isinstance(deps, StateHandler):
+            if isinstance(deps, StateHandler):  # pragma: no branch
                 deps = replace(deps)
 
             return await AGUIAdapter[AgentDepsT, OutputDataT].dispatch_request(
