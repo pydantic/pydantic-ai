@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
-from pydantic import ConfigDict, Discriminator, with_config,
+from pydantic import ConfigDict, Discriminator, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 from typing_extensions import Self
@@ -31,6 +31,7 @@ class _CallToolParams:
     tool_args: dict[str, Any]
     serialized_run_context: Any
     tool_def: ToolDefinition
+
 
 @dataclass
 class _ApprovalRequired:
