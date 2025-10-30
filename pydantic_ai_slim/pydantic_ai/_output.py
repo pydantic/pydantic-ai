@@ -1080,11 +1080,10 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-        allow_partial: bool = False,
     ) -> Any:
         output = await self.processors[name].call(tool_args, ctx, wrap_validation_errors=False)
         for validator in self.output_validators:
-            output = await validator.validate(output, ctx, wrap_validation_errors=False, allow_partial=allow_partial)
+            output = await validator.validate(output, ctx, wrap_validation_errors=False)
         return output
 
 
