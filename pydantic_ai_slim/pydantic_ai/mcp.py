@@ -522,14 +522,9 @@ class MCPServerStdio(MCPServer):
         'uv', args=['run', 'mcp-run-python', 'stdio'], timeout=10
     )
     agent = Agent('openai:gpt-4o', toolsets=[server])
-
-    async def main():
-        async with agent:  # (2)!
-            ...
     ```
 
     1. See [MCP Run Python](https://github.com/pydantic/mcp-run-python) for more information.
-    2. This will start the server as a subprocess and connect to it.
     """
 
     command: str
@@ -869,13 +864,7 @@ class MCPServerSSE(_MCPServerHTTP):
 
     server = MCPServerSSE('http://localhost:3001/sse')
     agent = Agent('openai:gpt-4o', toolsets=[server])
-
-    async def main():
-        async with agent:  # (1)!
-            ...
     ```
-
-    1. This will connect to a server running on `localhost:3001`.
     """
 
     @classmethod
@@ -918,13 +907,7 @@ class MCPServerHTTP(MCPServerSSE):
 
     server = MCPServerHTTP('http://localhost:3001/sse')
     agent = Agent('openai:gpt-4o', toolsets=[server])
-
-    async def main():
-        async with agent:  # (2)!
-            ...
     ```
-
-    1. This will connect to a server running on `localhost:3001`.
     """
 
 
@@ -943,12 +926,8 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     from pydantic_ai import Agent
     from pydantic_ai.mcp import MCPServerStreamableHTTP
 
-    server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
+    server = MCPServerStreamableHTTP('http://localhost:8000/mcp')
     agent = Agent('openai:gpt-4o', toolsets=[server])
-
-    async def main():
-        async with agent:  # (2)!
-            ...
     ```
     """
 

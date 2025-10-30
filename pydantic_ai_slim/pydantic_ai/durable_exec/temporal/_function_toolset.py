@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, assert_never
+from typing import Annotated, Any, Literal
 
 from pydantic import ConfigDict, Discriminator, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
+from typing_extensions import assert_never
 
 from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError

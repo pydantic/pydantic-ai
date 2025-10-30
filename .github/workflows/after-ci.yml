@@ -16,7 +16,6 @@ jobs:
     steps:
       - uses: astral-sh/setup-uv@v5
         with:
-          enable-cache: true
           python-version: "3.12"
 
       - uses: dawidd6/action-download-artifact@v6
@@ -54,8 +53,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
         with:
-          enable-cache: true
           python-version: "3.12"
+          enable-cache: true
+          cache-suffix: deploy-docs-preview
 
       - uses: dawidd6/action-download-artifact@v6
         with:
@@ -65,6 +65,7 @@ jobs:
           commit: ${{ github.event.workflow_run.head_sha }}
           allow_forks: true
           workflow_conclusion: completed
+          if_no_artifact_found: warn
 
       - uses: cloudflare/wrangler-action@v3
         id: deploy

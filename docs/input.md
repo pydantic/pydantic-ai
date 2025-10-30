@@ -12,7 +12,7 @@ If you have a direct URL for the image, you can use [`ImageUrl`][pydantic_ai.Ima
 ```py {title="image_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, ImageUrl
 
-agent = Agent(model='openai:gpt-4o')
+agent = Agent(model='openai:gpt-5')
 result = agent.run_sync(
     [
         'What company is this logo from?',
@@ -20,7 +20,7 @@ result = agent.run_sync(
     ]
 )
 print(result.output)
-# > This is the logo for Pydantic, a data validation and settings management library in Python.
+#> This is the logo for Pydantic, a data validation and settings management library in Python.
 ```
 
 If you have the image locally, you can also use [`BinaryContent`][pydantic_ai.BinaryContent]:
@@ -32,7 +32,7 @@ from pydantic_ai import Agent, BinaryContent
 
 image_response = httpx.get('https://iili.io/3Hs4FMg.png')  # Pydantic logo
 
-agent = Agent(model='openai:gpt-4o')
+agent = Agent(model='openai:gpt-5')
 result = agent.run_sync(
     [
         'What company is this logo from?',
@@ -40,7 +40,7 @@ result = agent.run_sync(
     ]
 )
 print(result.output)
-# > This is the logo for Pydantic, a data validation and settings management library in Python.
+#> This is the logo for Pydantic, a data validation and settings management library in Python.
 ```
 
 1. To ensure the example is runnable we download this image from the web, but you can also use `Path().read_bytes()` to read a local file's contents.
@@ -71,7 +71,7 @@ If you have a direct URL for the document, you can use [`DocumentUrl`][pydantic_
 ```py {title="document_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, DocumentUrl
 
-agent = Agent(model='anthropic:claude-3-sonnet')
+agent = Agent(model='anthropic:claude-sonnet-4-5')
 result = agent.run_sync(
     [
         'What is the main content of this document?',
@@ -79,7 +79,7 @@ result = agent.run_sync(
     ]
 )
 print(result.output)
-# > This document is the technical report introducing Gemini 1.5, Google's latest large language model...
+#> This document is the technical report introducing Gemini 1.5, Google's latest large language model...
 ```
 
 The supported document formats vary by model.
@@ -91,7 +91,7 @@ from pathlib import Path
 from pydantic_ai import Agent, BinaryContent
 
 pdf_path = Path('document.pdf')
-agent = Agent(model='anthropic:claude-3-sonnet')
+agent = Agent(model='anthropic:claude-sonnet-4-5')
 result = agent.run_sync(
     [
         'What is the main content of this document?',
@@ -99,7 +99,7 @@ result = agent.run_sync(
     ]
 )
 print(result.output)
-# > The document discusses...
+#> The document discusses...
 ```
 
 ## User-side download vs. direct file URL

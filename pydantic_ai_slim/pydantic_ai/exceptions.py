@@ -26,6 +26,7 @@ __all__ = (
     'MCPError',
     'MCPServerCapabilitiesError',
     'MCPServerError',
+    'IncompleteToolCall',
     'FallbackExceptionGroup',
 )
 
@@ -217,7 +218,7 @@ class MCPServerError(MCPError):
         return f'{self.message} (code: {self.code})'
 
 
-class FallbackExceptionGroup(ExceptionGroup):
+class FallbackExceptionGroup(ExceptionGroup[Any]):
     """A group of exceptions that can be raised when all fallback models fail."""
 
 
@@ -227,3 +228,7 @@ class ToolRetryError(Exception):
     def __init__(self, tool_retry: RetryPromptPart):
         self.tool_retry = tool_retry
         super().__init__()
+
+
+class IncompleteToolCall(UnexpectedModelBehavior):
+    """Error raised when a model stops due to token limit while emitting a tool call."""
