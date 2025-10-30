@@ -42,14 +42,13 @@ class PrefectFunctionToolset(PrefectWrapperToolset[AgentDepsT]):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-        allow_partial: bool = False,
     ) -> Any:
         """Call a tool, wrapped as a Prefect task with a descriptive name."""
         # Check if this specific tool has custom config or is disabled
         tool_specific_config = self._tool_task_config.get(name, default_task_config)
         if tool_specific_config is None:
             # None means this tool should not be wrapped as a task
-            return await super().call_tool(name, tool_args, ctx, tool, allow_partial=allow_partial)
+            return await super().call_tool(name, tool_args, ctx, tool)
 
         # Merge tool-specific config with default config
         merged_config = self._task_config | tool_specific_config

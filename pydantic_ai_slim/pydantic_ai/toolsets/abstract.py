@@ -121,7 +121,6 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-        allow_partial: bool = False,
     ) -> Any:
         """Call a tool with the given arguments.
 

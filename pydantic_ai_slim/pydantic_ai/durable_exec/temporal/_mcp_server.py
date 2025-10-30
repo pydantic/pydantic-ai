@@ -125,10 +125,9 @@ class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-        allow_partial: bool = False,
     ) -> ToolResult:
         if not workflow.in_workflow():
-            return await super().call_tool(name, tool_args, ctx, tool, allow_partial=allow_partial)
+            return await super().call_tool(name, tool_args, ctx, tool)
 
         tool_activity_config = self.activity_config | self.tool_activity_config.get(name, {})
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)

@@ -47,7 +47,6 @@ class ExternalToolset(AbstractToolset[AgentDepsT]):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-        allow_partial: bool = False,
     ) -> Any:
         raise NotImplementedError('External tools cannot be called directly')
 

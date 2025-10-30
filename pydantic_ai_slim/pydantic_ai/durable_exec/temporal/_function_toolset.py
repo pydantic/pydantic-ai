@@ -111,10 +111,9 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-        allow_partial: bool = False,
     ) -> Any:
         if not workflow.in_workflow():
-            return await super().call_tool(name, tool_args, ctx, tool, allow_partial=allow_partial)
+            return await super().call_tool(name, tool_args, ctx, tool)
 
         tool_activity_config = self.tool_activity_config.get(name, {})
         if tool_activity_config is False:
@@ -124,7 +123,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
                     f'Temporal activity config for tool {name!r} has been explicitly set to `False` (activity disabled), '
                     'but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead.'
                 )
-            return await super().call_tool(name, tool_args, ctx, tool, allow_partial=allow_partial)
+            return await super().call_tool(name, tool_args, ctx, tool)
 
         tool_activity_config = self.activity_config | tool_activity_config
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)

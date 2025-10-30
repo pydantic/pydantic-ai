@@ -107,10 +107,9 @@ def test_logfire(
             tool_args: dict[str, Any],
             ctx: RunContext[Any],
             tool: ToolsetTool[Any],
-            allow_partial: bool = False,
         ) -> Any:
             with logfire.span('toolset_call_tool {name}', name=name):  # pyright: ignore[reportPossiblyUnboundVariable]
-                return await super().call_tool(name, tool_args, ctx, tool, allow_partial=allow_partial)
+                return await super().call_tool(name, tool_args, ctx, tool)
 
     toolset = FunctionToolset()
 

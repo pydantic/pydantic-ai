@@ -316,7 +316,6 @@ class MockMCPServer(AbstractToolset[Any]):
         tool_args: dict[str, Any],
         ctx: RunContext[Any],
         tool: ToolsetTool[Any],
-        allow_partial: bool = False,
     ) -> Any:
         return None  # pragma: lax no cover
 

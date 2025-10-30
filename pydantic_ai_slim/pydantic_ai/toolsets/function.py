@@ -349,7 +349,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-        allow_partial: bool = False,
     ) -> Any:
         assert isinstance(tool, FunctionToolsetTool)
         return await tool.call_func(tool_args, ctx)

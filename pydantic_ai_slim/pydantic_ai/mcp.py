@@ -267,7 +267,6 @@ class MCPServer(AbstractToolset[Any], ABC):
         tool_args: dict[str, Any],
         ctx: RunContext[Any],
         tool: ToolsetTool[Any],
-        allow_partial: bool = False,
     ) -> ToolResult:
         if self.tool_prefix:
             name = name.removeprefix(f'{self.tool_prefix}_')

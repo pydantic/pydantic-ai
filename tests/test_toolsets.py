@@ -765,7 +765,6 @@ async def test_dynamic_toolset():
             tool_args: dict[str, Any],
             ctx: RunContext[None],
             tool: ToolsetTool[None],
-            allow_partial: bool = False,
         ) -> Any:
             return None  # pragma: no cover
 

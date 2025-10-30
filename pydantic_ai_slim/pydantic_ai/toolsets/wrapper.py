@@ -43,9 +43,8 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-        allow_partial: bool = False,
     ) -> Any:
-        return await self.wrapped.call_tool(name, tool_args, ctx, tool, allow_partial=allow_partial)
+        return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         self.wrapped.apply(visitor)

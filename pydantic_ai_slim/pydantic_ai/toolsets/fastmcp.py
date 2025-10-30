@@ -144,7 +144,6 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-        allow_partial: bool = False,
     ) -> Any:
         async with self:
             try:

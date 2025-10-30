@@ -29,9 +29,8 @@ class ApprovalRequiredToolset(WrapperToolset[AgentDepsT]):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-        allow_partial: bool = False,
     ) -> Any:
         if not ctx.tool_call_approved and self.approval_required_func(ctx, tool.tool_def, tool_args):
             raise ApprovalRequired
 
-        return await super().call_tool(name, tool_args, ctx, tool, allow_partial=allow_partial)
+        return await super().call_tool(name, tool_args, ctx, tool)

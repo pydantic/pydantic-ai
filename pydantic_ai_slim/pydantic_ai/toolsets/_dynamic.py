@@ -72,10 +72,9 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-        allow_partial: bool = False,
     ) -> Any:
         assert self._toolset is not None
-        return await self._toolset.call_tool(name, tool_args, ctx, tool, allow_partial=allow_partial)
+        return await self._toolset.call_tool(name, tool_args, ctx, tool)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         if self._toolset is None:

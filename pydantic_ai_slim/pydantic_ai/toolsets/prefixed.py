@@ -38,9 +38,8 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-        allow_partial: bool = False,
     ) -> Any:
         original_name = name.removeprefix(self.prefix + '_')
         ctx = replace(ctx, tool_name=original_name)
         tool = replace(tool, tool_def=replace(tool.tool_def, name=original_name))
-        return await super().call_tool(original_name, tool_args, ctx, tool, allow_partial=allow_partial)
+        return await super().call_tool(original_name, tool_args, ctx, tool)
