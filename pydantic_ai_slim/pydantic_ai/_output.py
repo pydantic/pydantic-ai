@@ -1083,7 +1083,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         output = await self.processors[name].call(tool_args, ctx, wrap_validation_errors=False)
         for validator in self.output_validators:
-            output = await validator.validate(output, ctx, wrap_validation_errors=False)
+            output = await validator.validate(output, ctx, wrap_validation_errors=False, partial=ctx.tool_args_partial)
         return output
 
 

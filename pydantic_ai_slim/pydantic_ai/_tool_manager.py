@@ -145,6 +145,7 @@ class ToolManager(Generic[AgentDepsT]):
                 self.ctx,
                 tool_name=name,
                 tool_call_id=call.tool_call_id,
+                tool_args_partial=allow_partial,
                 retry=self.ctx.retries.get(name, 0),
                 max_retries=tool.max_retries,
             )
