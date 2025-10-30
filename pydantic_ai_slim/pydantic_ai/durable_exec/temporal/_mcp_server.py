@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import ConfigDict, with_config
+from pydantic import ConfigDict, Discriminator, with_config,
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 from typing_extensions import Self
 
 from pydantic_ai import ToolsetTool
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.mcp import MCPServer, ToolResult
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
@@ -31,6 +31,33 @@ class _CallToolParams:
     tool_args: dict[str, Any]
     serialized_run_context: Any
     tool_def: ToolDefinition
+
+@dataclass
+class _ApprovalRequired:
+    kind: Literal['approval_required'] = 'approval_required'
+
+
+@dataclass
+class _CallDeferred:
+    kind: Literal['call_deferred'] = 'call_deferred'
+
+
+@dataclass
+class _ModelRetry:
+    message: str
+    kind: Literal['model_retry'] = 'model_retry'
+
+
+@dataclass
+class _ToolReturn:
+    result: Any
+    kind: Literal['tool_return'] = 'tool_return'
+
+
+_CallToolResult = Annotated[
+    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn,
+    Discriminator('kind'),
+]
 
 
 class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
@@ -72,14 +99,22 @@ class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
             get_tools_activity
         )
 
-        async def call_tool_activity(params: _CallToolParams, deps: AgentDepsT) -> ToolResult:
+        async def call_tool_activity(params: _CallToolParams, deps: AgentDepsT) -> _CallToolResult:
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
-            return await self.wrapped.call_tool(
-                params.name,
-                params.tool_args,
-                run_context,
-                self.tool_for_tool_def(params.tool_def),
-            )
+            try:
+                result = await self.wrapped.call_tool(
+                    params.name,
+                    params.tool_args,
+                    run_context,
+                    self.tool_for_tool_def(params.tool_def),
+                )
+                return _ToolReturn(result=result)
+            except ApprovalRequired:
+                return _ApprovalRequired()
+            except CallDeferred:
+                return _CallDeferred()
+            except ModelRetry as e:
+                return _ModelRetry(message=e.message)
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         call_tool_activity.__annotations__['deps'] = deps_type
