@@ -471,7 +471,7 @@ class GoogleModel(Model):
                 raise UnexpectedModelBehavior(
                     f'Content filter {raw_finish_reason.value!r} triggered', response.model_dump_json()
                 )
-            parts = []
+            parts = []  # pragma: no cover
         else:
             parts = candidate.content.parts or []
 
