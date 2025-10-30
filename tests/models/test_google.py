@@ -10,8 +10,7 @@ from httpx import Timeout
 from inline_snapshot import Is, snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
-from unittest.mock import AsyncMock
-from uuid import uuid4
+from unittest.mock import AsyncMock, MagicMock
 
 from pydantic_ai import (
     AudioUrl,
@@ -28,6 +27,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
@@ -382,6 +382,23 @@ print(result)\
                     provider_name='google-gla',
                 ),
             ),
+            PartEndEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args={
+                        'code': """\
+    result = 65465 - 6544 * 65464 - 6 + 1.02255
+    print(result)
+    \
+""",
+                        'language': 'PYTHON',
+                    },
+                    tool_call_id=IsStr(),
+                    provider_name='google-gla',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
             PartStartEvent(
                 index=1,
                 part=BuiltinToolReturnPart(
@@ -391,6 +408,7 @@ print(result)\
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=2,
@@ -407,6 +425,24 @@ print(result)\
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
                 ),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartEndEvent(
+                index=2,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args={
+                        'code': """\
+# Calculate the expression 65465-6544 * 65464-6+1.02255
+result = 65465 - 6544 * 65464 - 6 + 1.02255
+print(result)\
+""",
+                        'language': 'PYTHON',
+                    },
+                    tool_call_id=IsStr(),
+                    provider_name='google-gla',
+                ),
+                next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
                 index=3,
@@ -417,11 +453,13 @@ print(result)\
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=4, part=TextPart(content='The result is')),
+            PartStartEvent(index=4, part=TextPart(content='The result is'), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' -428,330,955.977')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='45.')),
+            PartEndEvent(index=4, part=TextPart(content='The result is -428,330,955.97745.')),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
@@ -627,6 +665,14 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                 index=0,
                 part=ToolCallPart(tool_name='get_capital', args={'country': 'France'}, tool_call_id=IsStr()),
             ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='get_capital',
+                    args={'country': 'France'},
+                    tool_call_id=IsStr(),
+                ),
+            ),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -637,6 +683,14 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                 index=0,
                 part=ToolCallPart(tool_name='get_temperature', args={'city': 'Paris'}, tool_call_id=IsStr()),
             ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='get_temperature',
+                    args={'city': 'Paris'},
+                    tool_call_id=IsStr(),
+                ),
+            ),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -646,6 +700,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
             PartStartEvent(index=0, part=TextPart(content='The temperature in Paris')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' is 30°C.\n')),
+            PartEndEvent(index=0, part=TextPart(content='The temperature in Paris is 30°C.\n')),
         ]
     )
 
@@ -853,7 +908,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
     )
     agent = Agent(m, instructions='You hate the world!', model_settings=settings)
 
-    with pytest.raises(UnexpectedModelBehavior, match='Safety settings triggered'):
+    with pytest.raises(UnexpectedModelBehavior, match="Content filter 'SAFETY' triggered"):
         await agent.run('Tell me a joke about a Brazilians.')
 
 
@@ -1157,6 +1212,22 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
             PartDeltaEvent(
                 index=0,
                 delta=TextPartDelta(content_delta=' the evening. The chance of rain remains low throughout the day.'),
+            ),
+            PartEndEvent(
+                index=0,
+                part=TextPart(
+                    content="""\
+### Weather in San Francisco is Mild and Partly Cloudy Today
+
+**San Francisco, CA** - Today's weather in San Francisco is partly cloudy with temperatures ranging from the high 50s to the low 80s, according to various weather reports.
+
+As of Tuesday afternoon, the temperature is around 69°F (21°C), with a real feel of about 76°F (24°C) and humidity at approximately 68%. Another report indicates a temperature of 68°F with passing clouds. There is a very low chance of rain throughout the day.
+
+The forecast for the remainder of the day predicts sunny skies with highs ranging from the mid-60s to the lower 80s. Some sources suggest the high could reach up to 85°F. Tonight, the weather is expected to be partly cloudy with lows in the upper 50s.
+
+Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening. The chance of rain remains low throughout the day.\
+"""
+                ),
             ),
         ]
     )
@@ -1769,7 +1840,43 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta=IsStr(), provider_name='google-gla')),
-            PartStartEvent(index=1, part=TextPart(content=IsStr())),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content="""\
+**Clarifying User Goals**
+
+I'm currently focused on defining the user's ultimate goal: ensuring their safety while crossing the street. I've pinpointed that this is a real-world scenario with significant safety considerations. However, I'm also mindful of my limitations as an AI and my inability to physically assist or visually assess the situation.
+
+
+**Developing a Safety Protocol**
+
+I'm now formulating a comprehensive safety procedure. I've pinpointed the essential first step: finding a safe crossing location, such as marked crosswalks or intersections. Stopping at the curb, and looking and listening for traffic are vital too. The rationale behind "look left, right, then left again" now needs further exploration. I'm focusing on crafting universally applicable and secure steps.
+
+
+**Prioritizing Safe Crossing**
+
+I've revised the procedure's initial step, emphasizing safe crossing zones (crosswalks, intersections). Next, I'm integrating the "look left, right, then left" sequence, considering why it's repeated. I'm focusing on crafting universal, safety-focused instructions that suit diverse situations and address my inherent limitations.
+
+
+**Crafting Safe Instructions**
+
+I've identified the core user intent: to learn safe street-crossing. Now, I'm focusing on crafting universally applicable steps. Finding safe crossing locations and looking-listening for traffic remain paramount. I'm prioritizing direct, clear language, addressing my limitations as an AI. I'm crafting advice that works generally, regardless of specific circumstances or locations.
+
+
+""",
+                    signature='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',
+                    provider_name='google-gla',
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=1,
+                part=TextPart(
+                    content='This is a great question! Safely crossing the street is all about being aware and predictable. Here is a step-by-step'
+                ),
+                previous_part_kind='thinking',
+            ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
@@ -1789,6 +1896,45 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartEndEvent(
+                index=1,
+                part=TextPart(
+                    content="""\
+This is a great question! Safely crossing the street is all about being aware and predictable. Here is a step-by-step guide that is widely taught for safety:
+
+### 1. Find a Safe Place to Cross
+The best place is always at a designated **crosswalk** or a **street corner/intersection**. These are places where drivers expect to see pedestrians. Avoid crossing in the middle of the block or from between parked cars.
+
+### 2. Stop at the Edge of the Curb
+Stand on the sidewalk, a safe distance from the edge of the street. This gives you a clear view of the traffic without putting you in danger.
+
+### 3. Look and Listen for Traffic
+Follow the "Left-Right-Left" rule:
+*   **Look left** for the traffic that will be closest to you first.
+*   **Look right** for oncoming traffic in the other lane.
+*   **Look left again** to make sure nothing has changed.
+*   **Listen** for the sound of approaching vehicles that you might not be able to see.
+
+### 4. Wait for a Safe Gap
+Wait until there is a large enough gap in traffic for you to walk all the way across. Don't assume a driver will stop for you. If you can, try to **make eye contact** with drivers to ensure they have seen you.
+
+### 5. Walk, Don't Run
+Once it's safe:
+*   Walk straight across the street.
+*   **Keep looking and listening** for traffic as you cross. The situation can change quickly.
+*   **Don't use your phone** or wear headphones that block out the sound of traffic.
+
+---
+
+### Special Situations:
+
+*   **At a Traffic Light:** Wait for the pedestrian signal to show the "Walk" sign (often a symbol of a person walking). Even when the sign says to walk, you should still look left and right before crossing.
+*   **At a Stop Sign:** Wait for the car to come to a complete stop. Make eye contact with the driver before you step into the street to be sure they see you.
+
+The most important rule is to **stay alert and be predictable**. Always assume a driver might not see you.\
+"""
+                ),
+            ),
         ]
     )
 
@@ -2592,7 +2738,7 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
 
 
 async def test_google_image_generation(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(m, output_type=BinaryImage)
 
     result = await agent.run('Generate an image of an axolotl.')
@@ -2602,6 +2748,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _identifier='8a7952',
             identifier='8a7952',
         )
     )
@@ -2622,6 +2769,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _identifier='8a7952',
                             identifier='8a7952',
                         )
                     ),
@@ -2631,7 +2779,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                     output_tokens=1304,
                     details={'text_prompt_tokens': 10, 'image_candidates_tokens': 1290},
                 ),
-                model_name='gemini-2.5-flash-image-preview',
+                model_name='gemini-2.5-flash-image',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
@@ -2646,6 +2794,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _identifier='7d173c',
             identifier='7d173c',
         )
     )
@@ -2666,6 +2815,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _identifier='7d173c',
                             identifier='7d173c',
                         )
                     ),
@@ -2675,7 +2825,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                     output_tokens=1304,
                     details={'text_prompt_tokens': 32, 'image_prompt_tokens': 1290, 'image_candidates_tokens': 1290},
                 ),
-                model_name='gemini-2.5-flash-image-preview',
+                model_name='gemini-2.5-flash-image',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
@@ -2687,7 +2837,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
 
 
 async def test_google_image_generation_stream(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(m, output_type=BinaryImage)
 
     async with agent.run_stream('Generate an image of an axolotl') as result:
@@ -2695,6 +2845,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
             BinaryImage(
                 data=IsBytes(),
                 media_type='image/png',
+                _identifier='9ff9cc',
                 identifier='9ff9cc',
             )
         )
@@ -2712,6 +2863,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _identifier='2af2a7',
             identifier='2af2a7',
         )
     )
@@ -2732,6 +2884,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _identifier='2af2a7',
                             identifier='2af2a7',
                         )
                     ),
@@ -2741,7 +2894,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                     output_tokens=1295,
                     details={'text_prompt_tokens': 10, 'image_candidates_tokens': 1290},
                 ),
-                model_name='gemini-2.5-flash-image-preview',
+                model_name='gemini-2.5-flash-image',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
@@ -2754,15 +2907,17 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
         [
             PartStartEvent(index=0, part=TextPart(content='Here you go!')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' ')),
+            PartEndEvent(index=0, part=TextPart(content='Here you go! '), next_part_kind='file'),
             PartStartEvent(
                 index=1,
                 part=FilePart(
                     content=BinaryImage(
                         data=IsBytes(),
                         media_type='image/png',
-                        identifier='2af2a7',
+                        _identifier='2af2a7',
                     )
                 ),
+                previous_part_kind='text',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
         ]
@@ -2770,7 +2925,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
 
 
 async def test_google_image_generation_with_text(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(m)
 
     result = await agent.run('Generate an illustrated two-sentence story about an axolotl.')
@@ -2798,6 +2953,7 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _identifier='00f2af',
                             identifier=IsStr(),
                         )
                     ),
@@ -2807,7 +2963,7 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
                     output_tokens=1335,
                     details={'text_prompt_tokens': 14, 'image_candidates_tokens': 1290},
                 ),
-                model_name='gemini-2.5-flash-image-preview',
+                model_name='gemini-2.5-flash-image',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
@@ -2819,8 +2975,8 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
 
 
 async def test_google_image_or_text_output(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
-    # ImageGenerationTool is listed here to indicate just that it doesn't cause any issues, even though it's not necessary with an image-preview model.
+    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
+    # ImageGenerationTool is listed here to indicate just that it doesn't cause any issues, even though it's not necessary with an image model.
     agent = Agent(m, output_type=str | BinaryImage, builtin_tools=[ImageGenerationTool()])
 
     result = await agent.run('Tell me a two-sentence story about an axolotl, no image please.')
@@ -2833,13 +2989,14 @@ async def test_google_image_or_text_output(allow_model_requests: None, google_pr
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _identifier='f82faf',
             identifier='f82faf',
         )
     )
 
 
 async def test_google_image_and_text_output(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(m)
 
     result = await agent.run('Tell me a two-sentence story about an axolotl with an illustration.')
@@ -2851,6 +3008,7 @@ async def test_google_image_and_text_output(allow_model_requests: None, google_p
             BinaryImage(
                 data=IsBytes(),
                 media_type='image/png',
+                _identifier='67b12f',
                 identifier='67b12f',
             )
         ]
@@ -2862,7 +3020,7 @@ async def test_google_image_generation_with_tool_output(allow_model_requests: No
         species: str
         name: str
 
-    model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(model=model, output_type=Animal)
 
     with pytest.raises(UserError, match='Tool output is not supported by this model.'):
@@ -2874,7 +3032,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
         species: str
         name: str
 
-    model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(model=model, output_type=NativeOutput(Animal))
 
     with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
@@ -2888,7 +3046,7 @@ async def test_google_image_generation_with_prompted_output(
         species: str
         name: str
 
-    model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(model=model, output_type=PromptedOutput(Animal))
 
     with pytest.raises(UserError, match='JSON output is not supported by this model.'):
@@ -2896,7 +3054,7 @@ async def test_google_image_generation_with_prompted_output(
 
 
 async def test_google_image_generation_with_tools(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     agent = Agent(model=model, output_type=BinaryImage)
 
     @agent.tool_plain
@@ -2919,7 +3077,7 @@ async def test_google_image_generation_tool(allow_model_requests: None, google_p
 
 
 async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):
-    model = GoogleModel('gemini-2.5-flash-image-preview', provider=vertex_provider)
+    model = GoogleModel('gemini-2.5-flash-image', provider=vertex_provider)
 
     agent = Agent(model, output_type=BinaryImage)
 
@@ -2933,48 +3091,43 @@ async def test_google_vertexai_image_generation(allow_model_requests: None, vert
     )
 
 
-async def test_google_model_stream_malformed_function_call_continue(
-    allow_model_requests: None, google_provider: GoogleProvider, monkeypatch: pytest.MonkeyPatch
-):
-    """Test that the model can continue streaming after a malformed function call."""
-    from unittest.mock import MagicMock
-
+def _create_google_stream_mock_helpers():
     from google.genai.types import Candidate, Content, GenerateContentResponse, Part
 
-    mock_stream = AsyncMock()
-
-    class _FinishReason(str):
-        """Mock finish reason with value attribute."""
+    class _FR(str):
+        def __new__(cls, name: str):
+            obj = str.__new__(cls, name)
+            return obj
 
         @property
-        def value(self):
+        def value(self) -> str:
             return str(self)
 
-    def create_mock_response(**kwargs):
+    def create_mock_response(**kwargs: Any) -> MagicMock:
         mock = MagicMock(spec=GenerateContentResponse)
         for key, value in kwargs.items():
             setattr(mock, key, value)
-        mock.model_version = 'gemini-2.5-flash'
+        mock.model_version = 'gemini-1.5-flash'
         mock.create_time = None
         mock.response_id = 'test-response-id'
         mock.usage_metadata = None
         return mock
 
-    def create_mock_candidate(**kwargs):
+    def create_mock_candidate(**kwargs: Any) -> MagicMock:
         mock = MagicMock(spec=Candidate)
-        # Convert string finish_reason to our mock enum
+        mock.grounding_metadata = None
         if 'finish_reason' in kwargs and isinstance(kwargs['finish_reason'], str):
-            kwargs['finish_reason'] = _FinishReason(kwargs['finish_reason'])
+            kwargs['finish_reason'] = _FR(kwargs['finish_reason'])
         for key, value in kwargs.items():
             setattr(mock, key, value)
         return mock
 
-    def create_mock_content(*parts):
+    def create_mock_content(*parts: MagicMock) -> MagicMock:
         mock = MagicMock(spec=Content)
         mock.parts = list(parts)
         return mock
 
-    def create_mock_part(**kwargs):
+    def create_mock_part(**kwargs: Any) -> MagicMock:
         mock = MagicMock(spec=Part)
         mock.text = None
         mock.function_call = None
@@ -2984,11 +3137,29 @@ async def test_google_model_stream_malformed_function_call_continue(
         mock.executable_code = None
         mock.code_execution_result = None
         mock.function_response = None
+
         for key, value in kwargs.items():
             setattr(mock, key, value)
         return mock
 
+    return create_mock_response, create_mock_candidate, create_mock_content, create_mock_part
 
+
+async def test_google_model_stream_malformed_function_call_continue(
+    allow_model_requests: None, google_provider: GoogleProvider, monkeypatch: pytest.MonkeyPatch
+):
+    """Test that the model can continue streaming after a malformed function call."""
+    mock_stream = AsyncMock()
+    (
+        create_mock_response,
+        create_mock_candidate,
+        create_mock_content,
+        create_mock_part,
+    ) = _create_google_stream_mock_helpers()
+    create_mock_response: Any
+    create_mock_candidate: Any
+    create_mock_content: Any
+    create_mock_part: Any
     async def mock_stream_iterator():
         # This part is a bit of a fiction, in reality the tool call and return would not be in the same stream.
         # But for testing the malformed function call in between, this is fine.
@@ -3039,57 +3210,17 @@ async def test_google_model_stream_malformed_function_call_retry(
     allow_model_requests: None, google_provider: GoogleProvider, monkeypatch: pytest.MonkeyPatch
 ):
     """Test that the model retries when the stream only contains a malformed function call."""
-    from unittest.mock import MagicMock
-
-    from google.genai.types import Candidate, Content, GenerateContentResponse, Part
-
     mock_stream = AsyncMock()
-
-    class _FinishReason(str):
-        """Mock finish reason with value attribute."""
-
-        @property
-        def value(self):
-            return str(self)
-
-    def create_mock_response(**kwargs):
-        mock = MagicMock(spec=GenerateContentResponse)
-        for key, value in kwargs.items():
-            setattr(mock, key, value)
-        mock.model_version = 'gemini-2.5-flash'
-        mock.create_time = None
-        mock.response_id = 'test-response-id'
-        mock.usage_metadata = None
-        return mock
-
-    def create_mock_candidate(**kwargs):
-        mock = MagicMock(spec=Candidate)
-        # Convert string finish_reason to our mock enum
-        if 'finish_reason' in kwargs and isinstance(kwargs['finish_reason'], str):
-            kwargs['finish_reason'] = _FinishReason(kwargs['finish_reason'])
-        for key, value in kwargs.items():
-            setattr(mock, key, value)
-        return mock
-
-    def create_mock_content(*parts):
-        mock = MagicMock(spec=Content)
-        mock.parts = list(parts)
-        return mock
-
-    def create_mock_part(**kwargs):
-        mock = MagicMock(spec=Part)
-        mock.text = None
-        mock.function_call = None
-        mock.thought_signature = None
-        mock.thought = None
-        mock.inline_data = None
-        mock.executable_code = None
-        mock.code_execution_result = None
-        mock.function_response = None
-        for key, value in kwargs.items():
-            setattr(mock, key, value)
-        return mock
-
+    (
+        create_mock_response,
+        create_mock_candidate,
+        create_mock_content,
+        create_mock_part,
+    ) = _create_google_stream_mock_helpers()
+    create_mock_response: Any
+    create_mock_candidate: Any
+    create_mock_content: Any
+    create_mock_part: Any
     async def first_call_iterator():
         yield create_mock_response(
             candidates=[create_mock_candidate(content=None, finish_reason='MALFORMED_FUNCTION_CALL')]
@@ -3123,63 +3254,22 @@ async def test_google_model_malformed_function_call_retry(
     allow_model_requests: None, google_provider: GoogleProvider, monkeypatch: pytest.MonkeyPatch
 ):
     """Test that the model retries when non-streamed response contains a malformed function call."""
-    from unittest.mock import MagicMock
-
-    from google.genai.types import Candidate, Content, GenerateContentResponse, Part
-
     mock_generate = AsyncMock()
-
-    class _FinishReason(str):
-        """Mock finish reason with value attribute."""
-
-        @property
-        def value(self):
-            return str(self)
-
-    def create_mock_response(**kwargs):
-        mock = MagicMock(spec=GenerateContentResponse)
-        for key, value in kwargs.items():
-            setattr(mock, key, value)
-        mock.model_version = 'gemini-2.5-flash'
-        mock.create_time = None
-        mock.response_id = 'test-response-id'
-        mock.usage_metadata = None
-        return mock
-
-    def create_mock_candidate(**kwargs):
-        mock = MagicMock(spec=Candidate)
-        # Convert string finish_reason to our mock enum
-        if 'finish_reason' in kwargs and isinstance(kwargs['finish_reason'], str):
-            kwargs['finish_reason'] = _FinishReason(kwargs['finish_reason'])
-        mock.grounding_metadata = None
-        for key, value in kwargs.items():
-            setattr(mock, key, value)
-        return mock
-
-    def create_mock_content(*parts):
-        mock = MagicMock(spec=Content)
-        mock.parts = list(parts)
-        return mock
-
-    def create_mock_part(**kwargs):
-        mock = MagicMock(spec=Part)
-        mock.text = None
-        mock.function_call = None
-        mock.thought_signature = None
-        mock.thought = None
-        mock.inline_data = None
-        mock.executable_code = None
-        mock.code_execution_result = None
-        mock.function_response = None
-        for key, value in kwargs.items():
-            setattr(mock, key, value)
-        return mock
-
-    first_response = create_mock_response(
+    (
+        create_mock_response,
+        create_mock_candidate,
+        create_mock_content,
+        create_mock_part,
+    ) = _create_google_stream_mock_helpers()
+    create_mock_response: Any
+    create_mock_candidate: Any
+    create_mock_content: Any
+    create_mock_part: Any
+    first_response: MagicMock = create_mock_response(
         candidates=[create_mock_candidate(content=None, finish_reason='MALFORMED_FUNCTION_CALL')]
     )
 
-    second_response = create_mock_response(
+    second_response: MagicMock = create_mock_response(
         candidates=[
             create_mock_candidate(
                 content=create_mock_content(create_mock_part(text='Successful response')), finish_reason='STOP'
@@ -3198,3 +3288,14 @@ async def test_google_model_malformed_function_call_retry(
 
     assert result.output == 'Successful response'
     assert mock_generate.call_count == 2
+
+
+async def test_google_httpx_client_is_not_closed(allow_model_requests: None, gemini_api_key: str):
+    # This should not raise any errors, see https://github.com/pydantic/pydantic-ai/issues/3242.
+    agent = Agent(GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key=gemini_api_key)))
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot('The capital of France is **Paris**.')
+
+    agent = Agent(GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key=gemini_api_key)))
+    result = await agent.run('What is the capital of Mexico?')
+    assert result.output == snapshot('The capital of Mexico is **Mexico City**.')

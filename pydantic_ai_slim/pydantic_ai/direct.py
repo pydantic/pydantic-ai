@@ -10,7 +10,7 @@ from __future__ import annotations as _annotations
 
 import queue
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -35,7 +35,7 @@ STREAM_INITIALIZATION_TIMEOUT = 30
 
 async def model_request(
     model: models.Model | models.KnownModelName | str,
-    messages: list[messages.ModelMessage],
+    messages: Sequence[messages.ModelMessage],
     *,
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
@@ -50,7 +50,7 @@ async def model_request(
 
     async def main():
         model_response = await model_request(
-            'anthropic:claude-3-5-haiku-latest',
+            'anthropic:claude-haiku-4-5',
             [ModelRequest.user_text_prompt('What is the capital of France?')]  # (1)!
         )
         print(model_response)
@@ -58,7 +58,7 @@ async def model_request(
         ModelResponse(
             parts=[TextPart(content='The capital of France is Paris.')],
             usage=RequestUsage(input_tokens=56, output_tokens=7),
-            model_name='claude-3-5-haiku-latest',
+            model_name='claude-haiku-4-5',
             timestamp=datetime.datetime(...),
         )
         '''
@@ -79,7 +79,7 @@ async def model_request(
     """
     model_instance = _prepare_model(model, instrument)
     return await model_instance.request(
-        messages,
+        list(messages),
         model_settings,
         model_request_parameters or models.ModelRequestParameters(),
     )
@@ -87,7 +87,7 @@ async def model_request(
 
 def model_request_sync(
     model: models.Model | models.KnownModelName | str,
-    messages: list[messages.ModelMessage],
+    messages: Sequence[messages.ModelMessage],
     *,
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
@@ -103,7 +103,7 @@ def model_request_sync(
     from pydantic_ai.direct import model_request_sync
 
     model_response = model_request_sync(
-        'anthropic:claude-3-5-haiku-latest',
+        'anthropic:claude-haiku-4-5',
         [ModelRequest.user_text_prompt('What is the capital of France?')]  # (1)!
     )
     print(model_response)
@@ -111,7 +111,7 @@ def model_request_sync(
     ModelResponse(
         parts=[TextPart(content='The capital of France is Paris.')],
         usage=RequestUsage(input_tokens=56, output_tokens=7),
-        model_name='claude-3-5-haiku-latest',
+        model_name='claude-haiku-4-5',
         timestamp=datetime.datetime(...),
     )
     '''
@@ -133,7 +133,7 @@ def model_request_sync(
     return _get_event_loop().run_until_complete(
         model_request(
             model,
-            messages,
+            list(messages),
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
             instrument=instrument,
@@ -143,7 +143,7 @@ def model_request_sync(
 
 def model_request_stream(
     model: models.Model | models.KnownModelName | str,
-    messages: list[messages.ModelMessage],
+    messages: Sequence[messages.ModelMessage],
     *,
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
@@ -172,6 +172,12 @@ def model_request_stream(
                     index=0, delta=TextPartDelta(content_delta='a German-born theoretical ')
                 ),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='physicist.')),
+                PartEndEvent(
+                    index=0,
+                    part=TextPart(
+                        content='Albert Einstein was a German-born theoretical physicist.'
+                    ),
+                ),
             ]
             '''
     ```
@@ -191,7 +197,7 @@ def model_request_stream(
     """
     model_instance = _prepare_model(model, instrument)
     return model_instance.request_stream(
-        messages,
+        list(messages),
         model_settings,
         model_request_parameters or models.ModelRequestParameters(),
     )
@@ -199,7 +205,7 @@ def model_request_stream(
 
 def model_request_stream_sync(
     model: models.Model | models.KnownModelName | str,
-    messages: list[messages.ModelMessage],
+    messages: Sequence[messages.ModelMessage],
     *,
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
@@ -229,6 +235,12 @@ def model_request_stream_sync(
                 index=0, delta=TextPartDelta(content_delta='a German-born theoretical ')
             ),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='physicist.')),
+            PartEndEvent(
+                index=0,
+                part=TextPart(
+                    content='Albert Einstein was a German-born theoretical physicist.'
+                ),
+            ),
         ]
         '''
     ```
@@ -246,7 +258,7 @@ def model_request_stream_sync(
     """
     async_stream_cm = model_request_stream(
         model=model,
-        messages=messages,
+        messages=list(messages),
         model_settings=model_settings,
         model_request_parameters=model_request_parameters,
         instrument=instrument,

@@ -11,7 +11,7 @@ from .models import Analysis, Profile
 
 ### [agent]
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     instructions=dedent(
         """
         When a new person joins our public Slack, please put together a brief snapshot so we can be most useful to them.

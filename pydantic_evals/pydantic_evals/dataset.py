@@ -265,6 +265,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         retry_evaluators: RetryConfig | None = None,
         *,
         task_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -283,6 +284,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             retry_evaluators: Optional retry configuration for evaluator execution.
             task_name: Optional override to the name of the task being executed, otherwise the name of the task
                 function will be used.
+            metadata: Optional dict of experiment metadata.
 
         Returns:
             A report containing the results of the evaluation.
@@ -294,6 +296,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else AsyncExitStack()
 
+        extra_attributes: dict[str, Any] = {'gen_ai.operation.name': 'experiment'}
+        if metadata is not None:
+            extra_attributes['metadata'] = metadata
         with (
             logfire_span(
                 'evaluate {name}',
@@ -301,7 +306,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 task_name=task_name,
                 dataset_name=self.name,
                 n_cases=len(self.cases),
-                **{'gen_ai.operation.name': 'experiment'},  # pyright: ignore[reportArgumentType]
+                **extra_attributes,
             ) as eval_span,
             progress_bar or nullcontext(),
         ):
@@ -339,11 +344,18 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 name=name,
                 cases=cases,
                 failures=failures,
+                experiment_metadata=metadata,
                 span_id=span_id,
                 trace_id=trace_id,
             )
-            if (averages := report.averages()) is not None and averages.assertions is not None:
-                eval_span.set_attribute('assertion_pass_rate', averages.assertions)
+            full_experiment_metadata: dict[str, Any] = {'n_cases': len(self.cases)}
+            if metadata is not None:
+                full_experiment_metadata['metadata'] = metadata
+            if (averages := report.averages()) is not None:
+                full_experiment_metadata['averages'] = averages
+                if averages.assertions is not None:
+                    eval_span.set_attribute('assertion_pass_rate', averages.assertions)
+            eval_span.set_attribute('logfire.experiment.metadata', full_experiment_metadata)
         return report
 
     def evaluate_sync(
@@ -354,6 +366,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         progress: bool = True,
         retry_task: RetryConfig | None = None,
         retry_evaluators: RetryConfig | None = None,
+        *,
+        task_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -362,13 +377,16 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         Args:
             task: The task to evaluate. This should be a callable that takes the inputs of the case
                 and returns the output.
-            name: The name of the task being evaluated, this is used to identify the task in the report.
-                If omitted, the name of the task function will be used.
+            name: The name of the experiment being run, this is used to identify the experiment in the report.
+                If omitted, the task_name will be used; if that is not specified, the name of the task function is used.
             max_concurrency: The maximum number of concurrent evaluations of the task to allow.
                 If None, all cases will be evaluated concurrently.
-            progress: Whether to show a progress bar for the evaluation. Defaults to True.
+            progress: Whether to show a progress bar for the evaluation. Defaults to `True`.
             retry_task: Optional retry configuration for the task execution.
             retry_evaluators: Optional retry configuration for evaluator execution.
+            task_name: Optional override to the name of the task being executed, otherwise the name of the task
+                function will be used.
+            metadata: Optional dict of experiment metadata.
 
         Returns:
             A report containing the results of the evaluation.
@@ -376,11 +394,13 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         return get_event_loop().run_until_complete(
             self.evaluate(
                 task,
-                task_name=name,
+                name=name,
                 max_concurrency=max_concurrency,
                 progress=progress,
                 retry_task=retry_task,
                 retry_evaluators=retry_evaluators,
+                task_name=task_name,
+                metadata=metadata,
             )
         )
 

@@ -103,7 +103,7 @@ def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
 
 
 def cli(  # noqa: C901
-    args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', default_model: str = 'openai:gpt-4.1'
+    args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', default_model: str = 'openai:gpt-5'
 ) -> int:
     """Run the CLI and return the exit code for the process."""
     parser = argparse.ArgumentParser(
@@ -124,7 +124,7 @@ Special prompts:
         '-m',
         '--model',
         nargs='?',
-        help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4.1" or "anthropic:claude-sonnet-4-0". Defaults to "{default_model}".',
+        help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "{default_model}".',
     )
     # we don't want to autocomplete or list models that don't include the provider,
     # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
@@ -228,7 +228,7 @@ async def run_chat(
     prog_name: str,
     config_dir: Path | None = None,
     deps: AgentDepsT = None,
-    message_history: list[ModelMessage] | None = None,
+    message_history: Sequence[ModelMessage] | None = None,
 ) -> int:
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -236,7 +236,7 @@ async def run_chat(
     session: PromptSession[Any] = PromptSession(history=FileHistory(str(prompt_history_path)))
 
     multiline = False
-    messages: list[ModelMessage] = message_history[:] if message_history else []
+    messages: list[ModelMessage] = list(message_history) if message_history else []
 
     while True:
         try:
@@ -272,7 +272,7 @@ async def ask_agent(
     console: Console,
     code_theme: str,
     deps: AgentDepsT = None,
-    messages: list[ModelMessage] | None = None,
+    messages: Sequence[ModelMessage] | None = None,
 ) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
 
