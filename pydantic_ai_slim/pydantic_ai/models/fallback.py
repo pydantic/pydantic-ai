@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 from opentelemetry.trace import get_current_span
@@ -11,6 +12,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelHTTPError
+from ..profiles import ModelProfile
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 if TYPE_CHECKING:
@@ -118,6 +120,10 @@ class FallbackModel(Model):
                 return
 
         raise FallbackExceptionGroup('All models from FallbackModel failed', exceptions)
+
+    @cached_property
+    def profile(self) -> ModelProfile:
+        raise NotImplementedError('FallbackModel does not have its own model profile.')
 
     def _set_span_attributes(self, model: Model):
         with suppress(Exception):

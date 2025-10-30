@@ -8,14 +8,13 @@ from __future__ import annotations
 import io
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils
-from .._output import PromptedOutputSchema
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from ..exceptions import UserError
@@ -247,6 +246,10 @@ class OutlinesModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         """Make a request to the model."""
         prompt, output_type, inference_kwargs = await self._build_generation_arguments(
             messages, model_settings, model_request_parameters
@@ -267,6 +270,11 @@ class OutlinesModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
+
         prompt, output_type, inference_kwargs = await self._build_generation_arguments(
             messages, model_settings, model_request_parameters
         )
@@ -298,15 +306,12 @@ class OutlinesModel(Model):
             raise UserError('Outlines does not support function tools and builtin tools yet.')
 
         if model_request_parameters.output_object:
-            instructions = PromptedOutputSchema.build_instructions(
-                self.profile.prompted_output_template, model_request_parameters.output_object
-            )
             output_type = JsonSchema(model_request_parameters.output_object.json_schema)
         else:
             instructions = None
             output_type = None
 
-        prompt = await self._format_prompt(messages, instructions)
+        prompt = await self._format_prompt(messages, model_request_parameters, instructions)
         inference_kwargs = self.format_inference_kwargs(model_settings)
 
         return prompt, output_type, inference_kwargs
@@ -416,16 +421,13 @@ class OutlinesModel(Model):
         return filtered_settings
 
     async def _format_prompt(  # noqa: C901
-        self, messages: list[ModelMessage], output_format_instructions: str | None
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> Chat:
         """Turn the model messages into an Outlines Chat instance."""
         chat = Chat()
 
-        if instructions := self._get_instructions(messages):
+        if instructions := self._get_instructions(messages, model_request_parameters):
             chat.add_system_message(instructions)
-
-        if output_format_instructions:
-            chat.add_system_message(output_format_instructions)
 
         for message in messages:
             if isinstance(message, ModelRequest):
@@ -524,6 +526,14 @@ class OutlinesModel(Model):
             _timestamp=timestamp,
             _provider_name='outlines',
         )
+
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        """Customize the model request parameters for the model."""
+        if model_request_parameters.output_mode in (None, 'native'):
+            # This way the JSON schema will be included in the instructions.
+            return replace(model_request_parameters, output_mode='prompted')
+        else:
+            return model_request_parameters
 
 
 @dataclass

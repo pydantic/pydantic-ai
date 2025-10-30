@@ -21,7 +21,7 @@ from typing_extensions import TypeAliasType, TypedDict
 
 from .. import _utils
 from .._json_schema import JsonSchemaTransformer
-from .._output import OutputObjectDefinition
+from .._output import OutputObjectDefinition, PromptedOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from ..builtin_tools import AbstractBuiltinTool
@@ -306,9 +306,10 @@ class ModelRequestParameters:
     function_tools: list[ToolDefinition] = field(default_factory=list)
     builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list)
 
-    output_mode: OutputMode = 'text'
+    output_mode: OutputMode | None = None
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list)
+    prompted_output_template: str | None = None
     allow_text_output: bool = True
     allow_image_output: bool = False
 
@@ -408,13 +409,15 @@ class Model(ABC):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         """Prepare request inputs before they are passed to the provider.
 
-        This merges the given ``model_settings`` with the model's own ``settings`` attribute and ensures
-        ``customize_request_parameters`` is applied to the resolved
+        This merges the given `model_settings` with the model's own `settings` attribute and ensures
+        `customize_request_parameters` is applied to the resolved
         [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters]. Subclasses can override this method if
         they need to customize the preparation flow further, but most implementations should simply call
-        ``self.prepare_request(...)`` at the start of their ``request`` (and related) methods.
+        `self.prepare_request(...)` at the start of their `request` (and related) methods.
         """
         model_settings = merge_model_settings(self.settings, model_settings)
+
+        model_request_parameters = self.customize_request_parameters(model_request_parameters)
 
         if builtin_tools := model_request_parameters.builtin_tools:
             # Deduplicate builtin tools
@@ -423,7 +426,41 @@ class Model(ABC):
                 builtin_tools=list({tool.unique_id: tool for tool in builtin_tools}.values()),
             )
 
-        model_request_parameters = self.customize_request_parameters(model_request_parameters)
+        if not model_request_parameters.output_mode:
+            if model_request_parameters.output_tools or model_request_parameters.output_object:
+                output_mode = self.profile.default_structured_output_mode
+            else:
+                output_mode = 'text'
+            model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
+
+        if model_request_parameters.output_mode in ('native', 'prompted'):
+            if not model_request_parameters.output_object:
+                raise UserError('An `output_object` is required when using `NativeOutput` or `PromptedOutput`.')
+
+            if model_request_parameters.output_mode == 'native' and not self.profile.supports_json_schema_output:
+                raise UserError('Native structured output is not supported by this model.')
+
+            if model_request_parameters.output_tools:
+                model_request_parameters = replace(model_request_parameters, output_tools=[])
+
+            if not model_request_parameters.prompted_output_template:
+                model_request_parameters = replace(
+                    model_request_parameters, prompted_output_template=self.profile.prompted_output_template
+                )
+        else:
+            if model_request_parameters.output_mode == 'tool':
+                if not model_request_parameters.output_tools:
+                    raise UserError('An `output_tools` list is required when using `ToolOutput`.')
+
+                if not self.profile.supports_tools:
+                    raise UserError('Tool output is not supported by this model.')
+
+            if model_request_parameters.output_object:
+                model_request_parameters = replace(model_request_parameters, output_object=None)
+
+        if model_request_parameters.allow_image_output and not self.profile.supports_image_output:
+            raise UserError('Image output is not supported by this model.')
+
         return model_settings, model_request_parameters
 
     @property
@@ -462,13 +499,17 @@ class Model(ABC):
         return None
 
     @staticmethod
-    def _get_instructions(messages: list[ModelMessage]) -> str | None:
+    def _get_instructions(
+        messages: list[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
+    ) -> str | None:
         """Get instructions from the first ModelRequest found when iterating messages in reverse.
 
         In the case that a "mock" request was generated to include a tool-return part for a result tool,
         we want to use the instructions from the second-to-most-recent request (which should correspond to the
         original request that generated the response that resulted in the tool-return part).
         """
+        instructions = None
+
         last_two_requests: list[ModelRequest] = []
         for message in reversed(messages):
             if isinstance(message, ModelRequest):
@@ -476,33 +517,47 @@ class Model(ABC):
                 if len(last_two_requests) == 2:
                     break
                 if message.instructions is not None:
-                    return message.instructions
+                    instructions = message.instructions
+                    break
 
         # If we don't have two requests, and we didn't already return instructions, there are definitely not any:
-        if len(last_two_requests) != 2:
-            return None
+        if instructions is not None and len(last_two_requests) == 2:
+            most_recent_request = last_two_requests[0]
+            second_most_recent_request = last_two_requests[1]
 
-        most_recent_request = last_two_requests[0]
-        second_most_recent_request = last_two_requests[1]
+            # If we've gotten this far and the most recent request consists of only tool-return parts or retry-prompt parts,
+            # we use the instructions from the second-to-most-recent request. This is necessary because when handling
+            # result tools, we generate a "mock" ModelRequest with a tool-return part for it, and that ModelRequest will not
+            # have the relevant instructions from the agent.
 
-        # If we've gotten this far and the most recent request consists of only tool-return parts or retry-prompt parts,
-        # we use the instructions from the second-to-most-recent request. This is necessary because when handling
-        # result tools, we generate a "mock" ModelRequest with a tool-return part for it, and that ModelRequest will not
-        # have the relevant instructions from the agent.
+            # While it's possible that you could have a message history where the most recent request has only tool returns,
+            # I believe there is no way to achieve that would _change_ the instructions without manually crafting the most
+            # recent message. That might make sense in principle for some usage pattern, but it's enough of an edge case
+            # that I think it's not worth worrying about, since you can work around this by inserting another ModelRequest
+            # with no parts at all immediately before the request that has the tool calls (that works because we only look
+            # at the two most recent ModelRequests here).
 
-        # While it's possible that you could have a message history where the most recent request has only tool returns,
-        # I believe there is no way to achieve that would _change_ the instructions without manually crafting the most
-        # recent message. That might make sense in principle for some usage pattern, but it's enough of an edge case
-        # that I think it's not worth worrying about, since you can work around this by inserting another ModelRequest
-        # with no parts at all immediately before the request that has the tool calls (that works because we only look
-        # at the two most recent ModelRequests here).
+            # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
 
-        # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
+            if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
+                instructions = second_most_recent_request.instructions
 
-        if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
-            return second_most_recent_request.instructions
+        # TODO (DouweM): This will now not be included in ModelRequest.instructions anymore, nor in OTel.
+        if (
+            model_request_parameters
+            and model_request_parameters.output_mode == 'prompted'
+            and model_request_parameters.prompted_output_template
+            and model_request_parameters.output_object
+        ):
+            output_instructions = PromptedOutputSchema.build_instructions(
+                model_request_parameters.prompted_output_template, model_request_parameters.output_object
+            )
+            if instructions is not None:
+                instructions = '\n\n'.join([instructions, output_instructions])
+            else:
+                instructions = output_instructions
 
-        return None
+        return instructions
 
 
 @dataclass

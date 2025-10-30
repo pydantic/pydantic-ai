@@ -401,6 +401,7 @@ class GoogleModel(Model):
         response_schema = None
         if model_request_parameters.output_mode == 'native':
             if tools:
+                # TODO (DouweM): Use tool output automatically in this case. In customize_request_parameters?
                 raise UserError(
                     'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
                 )
@@ -414,7 +415,7 @@ class GoogleModel(Model):
             response_mime_type = 'application/json'
 
         tool_config = self._get_tool_config(model_request_parameters, tools)
-        system_instruction, contents = await self._map_messages(messages)
+        system_instruction, contents = await self._map_messages(messages, model_request_parameters)
 
         modalities = [Modality.TEXT.value]
         if self.profile.supports_image_output:
@@ -506,7 +507,9 @@ class GoogleModel(Model):
             _provider_name=self._provider.name,
         )
 
-    async def _map_messages(self, messages: list[ModelMessage]) -> tuple[ContentDict | None, list[ContentUnionDict]]:
+    async def _map_messages(
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
 
@@ -553,7 +556,7 @@ class GoogleModel(Model):
                 contents.append(_content_model_response(m, self.system))
             else:
                 assert_never(m)
-        if instructions := self._get_instructions(messages):
+        if instructions := self._get_instructions(messages, model_request_parameters):
             system_parts.insert(0, {'text': instructions})
         system_instruction = ContentDict(role='user', parts=system_parts) if system_parts else None
         return system_instruction, contents

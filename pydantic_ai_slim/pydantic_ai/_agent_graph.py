@@ -140,7 +140,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     end_strategy: EndStrategy
     get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]]
 
-    output_schema: _output.OutputSchema[OutputDataT]
+    output_schema: _output.BaseOutputSchema[OutputDataT]
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
 
     history_processors: Sequence[HistoryProcessor[DepsT]]
@@ -374,9 +374,10 @@ async def _prepare_request_parameters(
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
     output_schema = ctx.deps.output_schema
-    output_object = None
-    if isinstance(output_schema, _output.NativeOutputSchema):
-        output_object = output_schema.object_def
+
+    prompted_output_template = (
+        output_schema.template if isinstance(output_schema, _output.PromptedOutputSchema) else None
+    )
 
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
@@ -391,7 +392,8 @@ async def _prepare_request_parameters(
         builtin_tools=ctx.deps.builtin_tools,
         output_mode=output_schema.mode,
         output_tools=output_tools,
-        output_object=output_object,
+        output_object=output_schema.object_def,
+        prompted_output_template=prompted_output_template,
         allow_text_output=output_schema.allows_text,
         allow_image_output=output_schema.allows_image,
     )
@@ -489,7 +491,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         message_history = _clean_message_history(message_history)
 
         model_request_parameters = await _prepare_request_parameters(ctx)
-        model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
 
         model_settings = ctx.deps.model_settings
         usage = ctx.state.usage
