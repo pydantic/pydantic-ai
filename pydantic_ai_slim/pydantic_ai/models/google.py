@@ -471,12 +471,7 @@ class GoogleModel(Model):
                 raise UnexpectedModelBehavior(
                     f'Content filter {raw_finish_reason.value!r} triggered', response.model_dump_json()
                 )
-            elif raw_finish_reason and raw_finish_reason.value == 'MALFORMED_FUNCTION_CALL':
-                parts = []
-            else:
-                raise UnexpectedModelBehavior(
-                    'Content field missing from Gemini response', response.model_dump_json()
-                )  # pragma: no cover
+            parts = []
         else:
             parts = candidate.content.parts or []
 
@@ -652,19 +647,12 @@ class GeminiStreamedResponse(StreamedResponse):
             #     )
 
             if candidate.content is None or candidate.content.parts is None:
-                if self.finish_reason == 'stop':  # pragma: no cover
-                    # Normal completion - skip this chunk
-                    continue
-                elif raw_finish_reason and raw_finish_reason.value == 'MALFORMED_FUNCTION_CALL':
-                    continue
-                elif self.finish_reason == 'content_filter' and raw_finish_reason:  # pragma: no cover
+                if self.finish_reason == 'content_filter' and raw_finish_reason:  # pragma: no cover
                     raise UnexpectedModelBehavior(
                         f'Content filter {raw_finish_reason.value!r} triggered', chunk.model_dump_json()
                     )
                 else:  # pragma: no cover
-                    raise UnexpectedModelBehavior(
-                        'Content field missing from streaming Gemini response', chunk.model_dump_json()
-                    )
+                    continue
 
             parts = candidate.content.parts
             if not parts:
