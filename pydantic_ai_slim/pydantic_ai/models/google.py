@@ -91,7 +91,7 @@ except ImportError as _import_error:
         'Please install `google-genai` to use the Google model, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
-    
+
 LatestGoogleModelNames = Literal[
     'gemini-2.0-flash',
     'gemini-2.0-flash-lite',
@@ -575,7 +575,7 @@ class GoogleModel(Model):
                                 media_type=item.media_type,
                                 identifier=item.identifier,
                             )
-                        )                    
+                        )
                     else:
                         inline_data_dict: BlobDict = {'data': item.data, 'mime_type': item.media_type}
                         part_dict: PartDict = {'inline_data': inline_data_dict}
@@ -607,7 +607,7 @@ class GoogleModel(Model):
                     if item.vendor_metadata:  # pragma: no branch
                         part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                     content.append(part_dict)
-                
+
                 elif isinstance(item, FileUrl):
                     if item.force_download or (
                         # google-gla does not support passing file urls directly, except for youtube videos
@@ -626,7 +626,7 @@ class GoogleModel(Model):
                         content.append({'file_data': file_data_dict})  # pragma: lax no cover
                 else:
                     assert_never(item)
-            
+
             return content
 
     @staticmethod
@@ -641,7 +641,7 @@ class GoogleModel(Model):
         )
 
     @staticmethod
-    def _inline_text_file_part(text: str, *, media_type: str, identifier: str) -> ChatCompletionContentPartTextParam:
+    def _inline_text_file_part(text: str, *, media_type: str, identifier: str):
         text = '\n'.join(
             [
                 f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----',
@@ -649,7 +649,7 @@ class GoogleModel(Model):
                 f'-----END FILE id="{identifier}"-----',
             ]
         )
-        return {"text": text}
+        return {'text': text}
 
     def _map_response_schema(self, o: OutputObjectDefinition) -> dict[str, Any]:
         response_schema = o.json_schema.copy()
