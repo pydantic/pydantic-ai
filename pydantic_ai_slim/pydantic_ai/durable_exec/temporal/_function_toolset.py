@@ -106,11 +106,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
         return [self.call_tool_activity]
 
     async def call_tool(
-        self,
-        name: str,
-        tool_args: dict[str, Any],
-        ctx: RunContext[AgentDepsT],
-        tool: ToolsetTool[AgentDepsT],
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         if not workflow.in_workflow():
             return await super().call_tool(name, tool_args, ctx, tool)
