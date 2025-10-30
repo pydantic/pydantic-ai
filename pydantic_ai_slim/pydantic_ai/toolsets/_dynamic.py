@@ -67,11 +67,7 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         return await self._toolset.get_tools(ctx)
 
     async def call_tool(
-        self,
-        name: str,
-        tool_args: dict[str, Any],
-        ctx: RunContext[AgentDepsT],
-        tool: ToolsetTool[AgentDepsT],
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         assert self._toolset is not None
         return await self._toolset.call_tool(name, tool_args, ctx, tool)

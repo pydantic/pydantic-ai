@@ -344,11 +344,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         return tools
 
     async def call_tool(
-        self,
-        name: str,
-        tool_args: dict[str, Any],
-        ctx: RunContext[AgentDepsT],
-        tool: ToolsetTool[AgentDepsT],
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         assert isinstance(tool, FunctionToolsetTool)
         return await tool.call_func(tool_args, ctx)

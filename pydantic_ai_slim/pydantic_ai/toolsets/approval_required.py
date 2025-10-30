@@ -24,11 +24,7 @@ class ApprovalRequiredToolset(WrapperToolset[AgentDepsT]):
     )
 
     async def call_tool(
-        self,
-        name: str,
-        tool_args: dict[str, Any],
-        ctx: RunContext[AgentDepsT],
-        tool: ToolsetTool[AgentDepsT],
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         if not ctx.tool_call_approved and self.approval_required_func(ctx, tool.tool_def, tool_args):
             raise ApprovalRequired

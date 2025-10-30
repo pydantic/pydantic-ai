@@ -38,11 +38,7 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
         return await self.wrapped.get_tools(ctx)
 
     async def call_tool(
-        self,
-        name: str,
-        tool_args: dict[str, Any],
-        ctx: RunContext[AgentDepsT],
-        tool: ToolsetTool[AgentDepsT],
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 

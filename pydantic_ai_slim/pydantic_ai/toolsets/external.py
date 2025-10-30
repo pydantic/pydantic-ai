@@ -42,11 +42,7 @@ class ExternalToolset(AbstractToolset[AgentDepsT]):
         }
 
     async def call_tool(
-        self,
-        name: str,
-        tool_args: dict[str, Any],
-        ctx: RunContext[AgentDepsT],
-        tool: ToolsetTool[AgentDepsT],
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         raise NotImplementedError('External tools cannot be called directly')
 
