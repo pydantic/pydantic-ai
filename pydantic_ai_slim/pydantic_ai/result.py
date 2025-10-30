@@ -194,7 +194,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
             )
             for validator in self._output_validators:
-                result_data = await validator.validate(result_data, self._run_ctx, allow_partial=allow_partial)
+                result_data = await validator.validate(result_data, self._run_ctx, partial=allow_partial)
             return result_data
         else:
             raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
