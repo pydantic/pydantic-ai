@@ -472,14 +472,14 @@ _(This example is complete, it can be run "as is")_
 
 #### Partial validation during streaming {#partial-validation}
 
-When [streaming responses](#streaming-model-responses), you can pass allow_partial=True to validate_response_output to make Pydantic output validators use partial validation.
+When [streaming responses](#streaming-model-responses), you can pass `allow_partial=True` to `validate_response_output` to make Pydantic output validators use partial validation.
 
 By adding a `partial: bool` parameter as the last argument, you can access this information within output validator functions as well.
 
 ```python
 from pydantic_ai import Agent, ModelRetry, RunContext
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 @agent.output_validator
 def validate_output(ctx: RunContext, output: str, partial: bool) -> str:
