@@ -116,7 +116,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         else:
             async for text in self._stream_response_text(delta=False, debounce_by=debounce_by):
                 for validator in self._output_validators:
-                    text = await validator.validate(text, self._run_ctx, allow_partial=True)  # pragma: no cover
+                    text = await validator.validate(text, self._run_ctx, partial=True)  # pragma: no cover
                 yield text
 
     # TODO (v2): Drop in favor of `response` property
