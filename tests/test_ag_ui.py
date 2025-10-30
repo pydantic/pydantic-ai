@@ -1154,15 +1154,21 @@ async def test_request_with_state() -> None:
         ),
     ]
 
-    deps = StateDeps(StateInt(value=0))
+    seen_deps_states: list[int] = []
 
     for run_input in run_inputs:
         events = list[dict[str, Any]]()
-        async for event in run_ag_ui(agent, run_input, deps=deps):
+        deps = StateDeps(StateInt(value=0))
+
+        async def on_complete(result: AgentRunResult[Any]):
+            seen_deps_states.append(deps.state.value)
+
+        async for event in run_ag_ui(agent, run_input, deps=deps, on_complete=on_complete):
             events.append(json.loads(event.removeprefix('data: ')))
 
         assert events == simple_result()
     assert seen_states == snapshot([41, 0, 0, 42])
+    assert seen_deps_states == snapshot([42, 1, 1, 43])
 
 
 async def test_request_with_state_without_handler() -> None:
@@ -1275,8 +1281,10 @@ async def test_concurrent_runs() -> None:
 async def test_to_ag_ui() -> None:
     """Test the agent.to_ag_ui method."""
 
-    agent = Agent(model=FunctionModel(stream_function=simple_stream))
-    app = agent.to_ag_ui()
+    agent = Agent(model=FunctionModel(stream_function=simple_stream), deps_type=StateDeps[StateInt])
+
+    deps = StateDeps(StateInt(value=0))
+    app = agent.to_ag_ui(deps=deps)
     async with LifespanManager(app):
         transport = httpx.ASGITransport(app)
         async with httpx.AsyncClient(transport=transport) as client:
@@ -1286,6 +1294,7 @@ async def test_to_ag_ui() -> None:
                     id='msg_1',
                     content='Hello, world!',
                 ),
+                state=StateInt(value=42),
             )
             async with client.stream(
                 'POST',
@@ -1300,6 +1309,9 @@ async def test_to_ag_ui() -> None:
                         events.append(json.loads(line.removeprefix('data: ')))
 
             assert events == simple_result()
+
+    # Verify the state was not mutated by the run
+    assert deps.state.value == 0
 
 
 async def test_callback_sync() -> None:
