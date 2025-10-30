@@ -179,7 +179,7 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
         result: T,
         run_context: RunContext[AgentDepsT],
         wrap_validation_errors: bool = True,
-        allow_partial: bool = False,
+        partial: bool = False,
     ) -> T:
         """Validate a result but calling the function.
 
@@ -187,7 +187,7 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
             result: The result data after Pydantic validation the message content.
             run_context: The current run context.
             wrap_validation_errors: If true, wrap the validation errors in a retry message.
-            allow_partial: Whether partial validation is allowed (passed to validator if it accepts it).
+            partial: Whether the output to validate is partial.
 
         Returns:
             Result of either the validated result data (ok) or a retry message (Err).
@@ -198,7 +198,7 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
             args = (result,)
 
         if self._takes_partial:
-            args = (*args, allow_partial)
+            args = (*args, partial)
 
         try:
             if self._is_async:
