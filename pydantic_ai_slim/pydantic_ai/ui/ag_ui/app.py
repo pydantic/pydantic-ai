@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from typing import Any, Generic
 
 from typing_extensions import Self
@@ -18,7 +19,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 
-from .. import OnCompleteFunc
+from .. import OnCompleteFunc, StateHandler
 from ._adapter import AGUIAdapter
 
 try:
@@ -121,6 +122,12 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
 
         async def run_agent(request: Request) -> Response:
             """Endpoint to run the agent with the provided input data."""
+            # `dispatch_request` will store the frontend state from the request on `deps.state` (if it implements the `StateHandler` protocol),
+            # so we need to copy the deps to avoid different requests mutating the same deps object.
+            nonlocal deps
+            if isinstance(deps, StateHandler):  # pragma: no branch
+                deps = replace(deps)
+
             return await AGUIAdapter[AgentDepsT, OutputDataT].dispatch_request(
                 request,
                 agent=agent,
