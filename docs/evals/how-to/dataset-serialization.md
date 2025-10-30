@@ -406,7 +406,7 @@ evaluators:
     max_length: 20
 - LLMJudge:
     rubric: "Response is accurate"
-    model: "openai:gpt-4o"
+    model: "openai:gpt-5"
     include_input: true
 ```
 

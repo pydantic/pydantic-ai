@@ -25,7 +25,7 @@ interactions:
         role: user
       metadata:
         user_id: '123'
-      model: claude-3-5-haiku-latest
+      model: claude-haiku-4-5
       stream: false
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
@@ -45,7 +45,7 @@ interactions:
       - text: Hi there! How are you doing today? Is there anything I can help you with?
         type: text
       id: msg_01PDYHzNnqSLAXuK8NNtC5MA
-      model: claude-3-5-haiku-20241022
+      model: claude-haiku-4-5-20251001
       role: assistant
       stop_reason: end_turn
       stop_sequence: null

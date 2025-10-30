@@ -120,13 +120,13 @@ LLMJudge(rubric='...')
 # Anthropic Claude (alternative default)
 LLMJudge(
     rubric='...',
-    model='anthropic:claude-3-7-sonnet-latest',
+    model='anthropic:claude-sonnet-4-5',
 )
 
 # Cheaper option for simple checks
 LLMJudge(
     rubric='Response contains profanity',
-    model='openai:gpt-4o-mini',
+    model='openai:gpt-5-mini',
 )
 
 # Premium option for nuanced evaluation
@@ -347,7 +347,7 @@ recipe_dataset = Dataset[CustomerOrder, Recipe, Any](
         LLMJudge(
             rubric='Recipe should have clear steps and relevant ingredients',
             include_input=True,
-            model='anthropic:claude-3-7-sonnet-latest',
+            model='anthropic:claude-sonnet-4-5',
         ),
     ],
 )
@@ -539,7 +539,7 @@ LLM judges make API calls, which cost money and time.
 
 **Mitigation:**
 
-- Use cheaper models for simple checks (`gpt-4o-mini`)
+- Use cheaper models for simple checks (`gpt-5-mini`)
 - Run deterministic checks first to fail fast
 - Cache results when possible
 - Limit evaluation to changed cases
@@ -646,9 +646,9 @@ def my_task(inputs: str) -> str:
 
 
 judges = [
-    LLMJudge(rubric='Response is clear', model='openai:gpt-4o'),
-    LLMJudge(rubric='Response is clear', model='anthropic:claude-3-7-sonnet-latest'),
-    LLMJudge(rubric='Response is clear', model='openai:gpt-4o-mini'),
+    LLMJudge(rubric='Response is clear', model='openai:gpt-5'),
+    LLMJudge(rubric='Response is clear', model='anthropic:claude-sonnet-4-5'),
+    LLMJudge(rubric='Response is clear', model='openai:gpt-5-mini'),
 ]
 
 for judge in judges:
@@ -666,7 +666,7 @@ from pydantic_evals.evaluators import LLMJudge
 from pydantic_evals.evaluators.llm_as_a_judge import set_default_judge_model
 
 # Set default to Claude
-set_default_judge_model('anthropic:claude-3-7-sonnet-latest')
+set_default_judge_model('anthropic:claude-sonnet-4-5')
 
 # Now all LLMJudge instances use Claude by default
 LLMJudge(rubric='...')  # Uses Claude

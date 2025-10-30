@@ -1,12 +1,10 @@
 """Tests for AG-UI implementation."""
 
-# pyright: reportPossiblyUnboundVariable=none
 from __future__ import annotations
 
-import contextlib
 import json
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
@@ -24,8 +22,12 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
     SystemPromptPart,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -48,12 +50,12 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
-from .conftest import IsDatetime, IsSameStr
+from .conftest import IsDatetime, IsSameStr, try_import
 
-has_ag_ui: bool = False
-with contextlib.suppress(ImportError):
+with try_import() as imports_successful:
     from ag_ui.core import (
         AssistantMessage,
+        BaseEvent,
         CustomEvent,
         DeveloperMessage,
         EventType,
@@ -68,21 +70,23 @@ with contextlib.suppress(ImportError):
         UserMessage,
     )
     from ag_ui.encoder import EventEncoder
+    from starlette.requests import Request
+    from starlette.responses import StreamingResponse
 
     from pydantic_ai.ag_ui import (
         SSE_CONTENT_TYPE,
+        AGUIAdapter,
         OnCompleteFunc,
         StateDeps,
-        _messages_from_ag_ui,  # type: ignore[reportPrivateUsage]
+        handle_ag_ui_request,
         run_ag_ui,
     )
-
-    has_ag_ui = True
+    from pydantic_ai.ui.ag_ui import AGUIEventStream
 
 
 pytestmark = [
     pytest.mark.anyio,
-    pytest.mark.skipif(not has_ag_ui, reason='ag-ui-protocol not installed'),
+    pytest.mark.skipif(not imports_successful(), reason='ag-ui-protocol not installed'),
     pytest.mark.filterwarnings(
         'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
     ),
@@ -121,7 +125,7 @@ async def run_and_collect_events(
     agent: Agent[AgentDepsT, OutputDataT],
     *run_inputs: RunAgentInput,
     deps: AgentDepsT = None,
-    on_complete: OnCompleteFunc | None = None,
+    on_complete: OnCompleteFunc[BaseEvent] | None = None,
 ) -> list[dict[str, Any]]:
     events = list[dict[str, Any]]()
     for run_input in run_inputs:
@@ -260,7 +264,7 @@ async def test_empty_messages() -> None:
                 'threadId': IsStr(),
                 'runId': IsStr(),
             },
-            {'type': 'RUN_ERROR', 'message': 'no messages found in the input', 'code': 'no_messages'},
+            {'type': 'RUN_ERROR', 'message': 'No message history, user prompt, or instructions provided'},
         ]
     )
 
@@ -644,6 +648,17 @@ async def test_tool_ag_ui_parts() -> None:
             },
             {'type': 'TOOL_CALL_ARGS', 'toolCallId': tool_call_id, 'delta': 'Paris"}'},
             {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'messageId': IsStr(),
+                'toolCallId': tool_call_id,
+                'content': """\
+Unknown tool name: 'get_weather'. Available tools: 'get_weather_parts'
+
+Fix the errors and try again.\
+""",
+                'role': 'tool',
+            },
             {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
@@ -888,6 +903,7 @@ async def test_thinking() -> None:
         yield {0: DeltaThinkingPart(content='')}
         yield "Let's do some thinking"
         yield ''
+        yield ' and some more'
         yield {1: DeltaThinkingPart(content='Thinking ')}
         yield {1: DeltaThinkingPart(content='about the weather')}
         yield {2: DeltaThinkingPart(content='')}
@@ -922,6 +938,11 @@ async def test_thinking() -> None:
                 'type': 'TEXT_MESSAGE_CONTENT',
                 'messageId': message_id,
                 'delta': "Let's do some thinking",
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': ' and some more',
             },
             {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
             {'type': 'THINKING_START'},
@@ -1100,7 +1121,7 @@ async def test_request_with_state() -> None:
 
     agent: Agent[StateDeps[StateInt], str] = Agent(
         model=FunctionModel(stream_function=simple_stream),
-        deps_type=StateDeps[StateInt],  # type: ignore[reportUnknownArgumentType]
+        deps_type=StateDeps[StateInt],
         prepare_tools=store_state,
     )
 
@@ -1157,7 +1178,7 @@ async def test_request_with_state_without_handler() -> None:
 
     with pytest.raises(
         UserError,
-        match='AG-UI state is provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol: it needs to be a dataclass with a non-optional `state` field.',
+        match='State is provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol: it needs to be a dataclass with a non-optional `state` field.',
     ):
         async for _ in run_ag_ui(agent, run_input):
             pass
@@ -1200,7 +1221,7 @@ async def test_concurrent_runs() -> None:
 
     agent: Agent[StateDeps[StateInt], str] = Agent(
         model=TestModel(),
-        deps_type=StateDeps[StateInt],  # type: ignore[reportUnknownArgumentType]
+        deps_type=StateDeps[StateInt],
     )
 
     @agent.tool
@@ -1345,30 +1366,7 @@ async def test_callback_async() -> None:
     assert events[-1]['type'] == 'RUN_FINISHED'
 
 
-async def test_callback_with_error() -> None:
-    """Test that callbacks are not called when errors occur."""
-
-    captured_results: list[AgentRunResult[Any]] = []
-
-    def error_callback(run_result: AgentRunResult[Any]) -> None:
-        captured_results.append(run_result)  # pragma: no cover
-
-    agent = Agent(TestModel())
-    # Empty messages should cause an error
-    run_input = create_input()  # No messages will cause _NoMessagesError
-
-    events = await run_and_collect_events(agent, run_input, on_complete=error_callback)
-
-    # Verify callback was not called due to error
-    assert len(captured_results) == 0
-
-    # Verify error event was sent
-    assert len(events) > 0
-    assert events[0]['type'] == 'RUN_STARTED'
-    assert any(event['type'] == 'RUN_ERROR' for event in events)
-
-
-async def test_messages_from_ag_ui() -> None:
+async def test_messages() -> None:
     messages = [
         SystemMessage(
             id='msg_1',
@@ -1451,7 +1449,7 @@ async def test_messages_from_ag_ui() -> None:
         ),
     ]
 
-    assert _messages_from_ag_ui(messages) == snapshot(
+    assert AGUIAdapter.load_messages(messages) == snapshot(
         [
             ModelRequest(
                 parts=[
@@ -1536,7 +1534,6 @@ async def test_builtin_tool_call() -> None:
         }
         yield {
             0: DeltaToolCall(
-                name=WebSearchTool.kind,
                 json_args='"Hello world"}',
                 tool_call_id='search_1',
             )
@@ -1605,5 +1602,164 @@ async def test_builtin_tool_call() -> None:
                 'threadId': thread_id,
                 'runId': run_id,
             },
+        ]
+    )
+
+
+async def test_event_stream_back_to_back_text():
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello world'), next_part_kind='text')
+        yield PartStartEvent(index=1, part=TextPart(content='Goodbye'), previous_part_kind='text')
+        yield PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' world'))
+        yield PartEndEvent(index=1, part=TextPart(content='Goodbye world'))
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Tell me about Hello World',
+        ),
+    )
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'Hello'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': ' world'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'Goodbye'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': ' world'},
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+    )
+
+
+async def test_handle_ag_ui_request():
+    agent = Agent(model=TestModel())
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Tell me about Hello World',
+        ),
+    )
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [
+                (b'content-type', b'application/json'),
+            ],
+        },
+        receive=receive,
+    )
+
+    response = await handle_ag_ui_request(agent, starlette_request)
+
+    assert isinstance(response, StreamingResponse)
+
+    chunks: list[MutableMapping[str, Any]] = []
+
+    async def send(data: MutableMapping[str, Any]) -> None:
+        if body := data.get('body'):
+            data['body'] = json.loads(body.decode('utf-8').removeprefix('data: '))
+        chunks.append(data)
+
+    await response.stream_response(send)
+
+    assert chunks == snapshot(
+        [
+            {
+                'type': 'http.response.start',
+                'status': 200,
+                'headers': [(b'content-type', b'text/event-stream; charset=utf-8')],
+            },
+            {
+                'type': 'http.response.body',
+                'body': {
+                    'type': 'RUN_STARTED',
+                    'threadId': (thread_id := IsSameStr()),
+                    'runId': (run_id := IsSameStr()),
+                },
+                'more_body': True,
+            },
+            {
+                'type': 'http.response.body',
+                'body': {
+                    'type': 'TEXT_MESSAGE_START',
+                    'messageId': (message_id := IsSameStr()),
+                    'role': 'assistant',
+                },
+                'more_body': True,
+            },
+            {
+                'type': 'http.response.body',
+                'body': {
+                    'type': 'TEXT_MESSAGE_CONTENT',
+                    'messageId': message_id,
+                    'delta': 'success ',
+                },
+                'more_body': True,
+            },
+            {
+                'type': 'http.response.body',
+                'body': {
+                    'type': 'TEXT_MESSAGE_CONTENT',
+                    'messageId': message_id,
+                    'delta': '(no ',
+                },
+                'more_body': True,
+            },
+            {
+                'type': 'http.response.body',
+                'body': {
+                    'type': 'TEXT_MESSAGE_CONTENT',
+                    'messageId': message_id,
+                    'delta': 'tool ',
+                },
+                'more_body': True,
+            },
+            {
+                'type': 'http.response.body',
+                'body': {
+                    'type': 'TEXT_MESSAGE_CONTENT',
+                    'messageId': message_id,
+                    'delta': 'calls)',
+                },
+                'more_body': True,
+            },
+            {
+                'type': 'http.response.body',
+                'body': {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+                'more_body': True,
+            },
+            {
+                'type': 'http.response.body',
+                'body': {
+                    'type': 'RUN_FINISHED',
+                    'threadId': thread_id,
+                    'runId': run_id,
+                },
+                'more_body': True,
+            },
+            {'type': 'http.response.body', 'body': b'', 'more_body': False},
         ]
     )

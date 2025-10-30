@@ -21,7 +21,7 @@ interactions:
         - text: How do I cross the street?
           type: text
         role: user
-      model: claude-3-7-sonnet-latest
+      model: claude-sonnet-4-5
       stream: true
       thinking:
         budget_tokens: 1024
@@ -31,7 +31,7 @@ interactions:
     body:
       string: |+
         event: message_start
-        data: {"type":"message_start","message":{"id":"msg_01PiJ6i3vjEZjHxojahi2YNc","type":"message","role":"assistant","model":"claude-3-7-sonnet-20250219","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":42,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard"}}          }
+        data: {"type":"message_start","message":{"id":"msg_01PiJ6i3vjEZjHxojahi2YNc","type":"message","role":"assistant","model":"claude-sonnet-4-5-20250929","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":42,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard"}}          }
 
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
