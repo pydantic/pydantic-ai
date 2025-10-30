@@ -26,7 +26,7 @@ from pydantic_ai import (
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
 from pydantic_ai.agent.abstract import Instructions, RunOutputDataT
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
@@ -112,7 +112,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             *(retry_policy.non_retryable_error_types or []),
             UserError.__name__,
             PydanticUserError.__name__,
-            ModelRetry.__name__,
         ]
         activity_config['retry_policy'] = retry_policy
         self.activity_config = activity_config
