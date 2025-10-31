@@ -406,7 +406,13 @@ async def test_output_validator_partial_stream_output():
         outputs = [output async for output in result.stream_output(debounce_by=None)]
 
     assert outputs[-1] == Foo(a=42, b='foo')
-    assert call_log == snapshot([(Foo(a=42, b='f'), True), (Foo(a=42, b='foo'), True), (Foo(a=42, b='foo'), False)])
+    assert call_log == snapshot(
+        [
+            (Foo(a=42, b='f'), True),
+            (Foo(a=42, b='foo'), True),
+            (Foo(a=42, b='foo'), False),
+        ]
+    )
 
 
 def test_plain_response_then_tuple():
