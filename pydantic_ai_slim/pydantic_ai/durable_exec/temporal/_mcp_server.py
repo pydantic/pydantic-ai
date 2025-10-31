@@ -1,64 +1,27 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
-from pydantic import ConfigDict, Discriminator, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 from typing_extensions import Self
 
 from pydantic_ai import ToolsetTool
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.mcp import MCPServer, ToolResult
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
 from ._run_context import TemporalRunContext
-from ._toolset import TemporalWrapperToolset
-
-
-@dataclass
-@with_config(ConfigDict(arbitrary_types_allowed=True))
-class _GetToolsParams:
-    serialized_run_context: Any
-
-
-@dataclass
-@with_config(ConfigDict(arbitrary_types_allowed=True))
-class _CallToolParams:
-    name: str
-    tool_args: dict[str, Any]
-    serialized_run_context: Any
-    tool_def: ToolDefinition
-
-
-@dataclass
-class _ApprovalRequired:
-    kind: Literal['approval_required'] = 'approval_required'
-
-
-@dataclass
-class _CallDeferred:
-    kind: Literal['call_deferred'] = 'call_deferred'
-
-
-@dataclass
-class _ModelRetry:
-    message: str
-    kind: Literal['model_retry'] = 'model_retry'
-
-
-@dataclass
-class _ToolReturn:
-    result: Any
-    kind: Literal['tool_return'] = 'tool_return'
-
-
-_CallToolResult = Annotated[
-    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn,
-    Discriminator('kind'),
-]
+from ._toolset import (
+    TemporalWrapperToolset,
+    _CallToolParams,
+    _CallToolResult,
+    _GetToolsParams,
+    _ToolReturn,
+    remap_exception_to_dataclass,
+    remap_dataclass_to_exception,
+)
 
 
 class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
@@ -103,6 +66,7 @@ class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
         async def call_tool_activity(params: _CallToolParams, deps: AgentDepsT) -> _CallToolResult:
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
             try:
+                assert isinstance(params.tool_def, ToolDefinition)
                 result = await self.wrapped.call_tool(
                     params.name,
                     params.tool_args,
@@ -110,12 +74,8 @@ class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
                     self.tool_for_tool_def(params.tool_def),
                 )
                 return _ToolReturn(result=result)
-            except ApprovalRequired:
-                return _ApprovalRequired()
-            except CallDeferred:
-                return _CallDeferred()
-            except ModelRetry as e:
-                return _ModelRetry(message=e.message)
+            except Exception as e:
+                return remap_exception_to_dataclass(e)
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         call_tool_activity.__annotations__['deps'] = deps_type
@@ -161,13 +121,13 @@ class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-    ) -> ToolResult:
+    ) -> _CallToolResult:
         if not workflow.in_workflow():
             return await super().call_tool(name, tool_args, ctx, tool)
 
         tool_activity_config = self.activity_config | self.tool_activity_config.get(name, {})
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        return await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
+        result = await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
             activity=self.call_tool_activity,
             args=[
                 _CallToolParams(
@@ -180,3 +140,4 @@ class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
             ],
             **tool_activity_config,
         )
+        return remap_dataclass_to_exception(result)

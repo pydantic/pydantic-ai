@@ -2,14 +2,61 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any, Literal
+from dataclasses import dataclass
+from typing import Annotated, Any, Literal
 
+from pydantic import ConfigDict, Discriminator, with_config
 from temporalio.workflow import ActivityConfig
+from typing_extensions import assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, WrapperToolset
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
+from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
 from ._run_context import TemporalRunContext
+
+
+@dataclass
+@with_config(ConfigDict(arbitrary_types_allowed=True))
+class _GetToolsParams:
+    serialized_run_context: Any
+
+
+@dataclass
+@with_config(ConfigDict(arbitrary_types_allowed=True))
+class _CallToolParams:
+    name: str
+    tool_args: dict[str, Any]
+    serialized_run_context: Any
+    tool_def: ToolDefinition | None
+
+
+@dataclass
+class _ApprovalRequired:
+    kind: Literal['approval_required'] = 'approval_required'
+
+
+@dataclass
+class _CallDeferred:
+    kind: Literal['call_deferred'] = 'call_deferred'
+
+
+@dataclass
+class _ModelRetry:
+    message: str
+    kind: Literal['model_retry'] = 'model_retry'
+
+
+@dataclass
+class _ToolReturn:
+    result: Any
+    kind: Literal['tool_return'] = 'tool_return'
+
+
+_CallToolResult = Annotated[
+    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn,
+    Discriminator('kind'),
+]
 
 
 class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
@@ -29,6 +76,30 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
     ) -> AbstractToolset[AgentDepsT]:
         # Temporalized toolsets cannot be swapped out after the fact.
         return self
+
+
+def remap_exception_to_dataclass(e: Exception) -> _CallToolResult:
+    try:
+        raise e
+    except ApprovalRequired:
+        return _ApprovalRequired()
+    except CallDeferred:
+        return _CallDeferred()
+    except ModelRetry as e:
+        return _ModelRetry(message=e.message)
+
+
+def remap_dataclass_to_exception(o: _CallToolResult):
+    if isinstance(o, _ApprovalRequired):
+        raise ApprovalRequired()
+    elif isinstance(o, _CallDeferred):
+        raise CallDeferred()
+    elif isinstance(o, _ModelRetry):
+        raise ModelRetry(o.message)
+    elif isinstance(o, _ToolReturn):
+        return o.result
+    else:
+        assert_never(o)
 
 
 def temporalize_toolset(

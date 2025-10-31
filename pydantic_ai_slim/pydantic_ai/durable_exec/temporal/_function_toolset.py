@@ -1,57 +1,25 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
-from pydantic import ConfigDict, Discriminator, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
-from typing_extensions import assert_never
 
 from pydantic_ai import FunctionToolset, ToolsetTool
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._run_context import TemporalRunContext
-from ._toolset import TemporalWrapperToolset
-
-
-@dataclass
-@with_config(ConfigDict(arbitrary_types_allowed=True))
-class _CallToolParams:
-    name: str
-    tool_args: dict[str, Any]
-    serialized_run_context: Any
-
-
-@dataclass
-class _ApprovalRequired:
-    kind: Literal['approval_required'] = 'approval_required'
-
-
-@dataclass
-class _CallDeferred:
-    kind: Literal['call_deferred'] = 'call_deferred'
-
-
-@dataclass
-class _ModelRetry:
-    message: str
-    kind: Literal['model_retry'] = 'model_retry'
-
-
-@dataclass
-class _ToolReturn:
-    result: Any
-    kind: Literal['tool_return'] = 'tool_return'
-
-
-_CallToolResult = Annotated[
-    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn,
-    Discriminator('kind'),
-]
+from ._toolset import (
+    TemporalWrapperToolset,
+    _CallToolParams,
+    _CallToolResult,
+    _ToolReturn,
+    remap_dataclass_to_exception,
+    remap_exception_to_dataclass,
+)
 
 
 class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
@@ -87,12 +55,8 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
             try:
                 result = await self.wrapped.call_tool(name, args_dict, ctx, tool)
                 return _ToolReturn(result=result)
-            except ApprovalRequired:
-                return _ApprovalRequired()
-            except CallDeferred:
-                return _CallDeferred()
-            except ModelRetry as e:
-                return _ModelRetry(message=e.message)
+            except Exception as e:
+                return remap_exception_to_dataclass(e)
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         call_tool_activity.__annotations__['deps'] = deps_type
@@ -130,18 +94,10 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
                     name=name,
                     tool_args=tool_args,
                     serialized_run_context=serialized_run_context,
+                    tool_def=None,
                 ),
                 ctx.deps,
             ],
             **tool_activity_config,
         )
-        if isinstance(result, _ApprovalRequired):
-            raise ApprovalRequired()
-        elif isinstance(result, _CallDeferred):
-            raise CallDeferred()
-        elif isinstance(result, _ModelRetry):
-            raise ModelRetry(result.message)
-        elif isinstance(result, _ToolReturn):
-            return result.result
-        else:
-            assert_never(result)
+        return remap_dataclass_to_exception(result)
