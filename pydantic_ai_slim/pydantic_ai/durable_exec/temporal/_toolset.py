@@ -10,7 +10,7 @@ from temporalio.workflow import ActivityConfig
 from typing_extensions import assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, WrapperToolset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
 from ._run_context import TemporalRunContext
