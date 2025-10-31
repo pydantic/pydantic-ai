@@ -14,9 +14,9 @@ from pydantic_ai.toolsets.function import FunctionToolsetTool
 from ._run_context import TemporalRunContext
 from ._toolset import (
     TemporalWrapperToolset,
-    _CallToolParams,
-    _CallToolResult,
-    _ToolReturn,
+    CallToolParamsData,
+    CallToolResultData,
+    ToolReturnData,
     remap_dataclass_to_exception,
     remap_exception_to_dataclass,
 )
@@ -38,7 +38,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
         self.tool_activity_config = tool_activity_config
         self.run_context_type = run_context_type
 
-        async def call_tool_activity(params: _CallToolParams, deps: AgentDepsT) -> _CallToolResult:
+        async def call_tool_activity(params: CallToolParamsData, deps: AgentDepsT) -> CallToolResultData:
             name = params.name
             ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
             try:
@@ -54,7 +54,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
             args_dict = tool.args_validator.validate_python(params.tool_args)
             try:
                 result = await self.wrapped.call_tool(name, args_dict, ctx, tool)
-                return _ToolReturn(result=result)
+                return ToolReturnData(result=result)
             except Exception as e:
                 return remap_exception_to_dataclass(e)
 
@@ -90,7 +90,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
         result = await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
             activity=self.call_tool_activity,
             args=[
-                _CallToolParams(
+                CallToolParamsData(
                     name=name,
                     tool_args=tool_args,
                     serialized_run_context=serialized_run_context,

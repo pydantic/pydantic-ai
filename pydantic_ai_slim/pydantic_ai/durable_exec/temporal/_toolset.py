@@ -18,13 +18,13 @@ from ._run_context import TemporalRunContext
 
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
-class _GetToolsParams:
+class GetToolsParamsData:
     serialized_run_context: Any
 
 
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
-class _CallToolParams:
+class CallToolParamsData:
     name: str
     tool_args: dict[str, Any]
     serialized_run_context: Any
@@ -32,29 +32,29 @@ class _CallToolParams:
 
 
 @dataclass
-class _ApprovalRequired:
+class ApprovalRequiredData:
     kind: Literal['approval_required'] = 'approval_required'
 
 
 @dataclass
-class _CallDeferred:
+class CallDeferredData:
     kind: Literal['call_deferred'] = 'call_deferred'
 
 
 @dataclass
-class _ModelRetry:
+class ModelRetryData:
     message: str
     kind: Literal['model_retry'] = 'model_retry'
 
 
 @dataclass
-class _ToolReturn:
+class ToolReturnData:
     result: Any
     kind: Literal['tool_return'] = 'tool_return'
 
 
-_CallToolResult = Annotated[
-    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn,
+CallToolResultData = Annotated[
+    ApprovalRequiredData | CallDeferredData | ModelRetryData | ToolReturnData,
     Discriminator('kind'),
 ]
 
@@ -78,25 +78,25 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         return self
 
 
-def remap_exception_to_dataclass(e: Exception) -> _CallToolResult:
+def remap_exception_to_dataclass(e: Exception) -> CallToolResultData:
     try:
         raise e
     except ApprovalRequired:
-        return _ApprovalRequired()
+        return ApprovalRequiredData()
     except CallDeferred:
-        return _CallDeferred()
+        return CallDeferredData()
     except ModelRetry as e:
-        return _ModelRetry(message=e.message)
+        return ModelRetryData(message=e.message)
 
 
-def remap_dataclass_to_exception(o: _CallToolResult):
-    if isinstance(o, _ApprovalRequired):
+def remap_dataclass_to_exception(o: CallToolResultData):
+    if isinstance(o, ApprovalRequiredData):
         raise ApprovalRequired()
-    elif isinstance(o, _CallDeferred):
+    elif isinstance(o, CallDeferredData):
         raise CallDeferred()
-    elif isinstance(o, _ModelRetry):
+    elif isinstance(o, ModelRetryData):
         raise ModelRetry(o.message)
-    elif isinstance(o, _ToolReturn):
+    elif isinstance(o, ToolReturnData):
         return o.result
     else:
         assert_never(o)

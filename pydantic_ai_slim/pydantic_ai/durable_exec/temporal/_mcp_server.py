@@ -15,10 +15,10 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from ._run_context import TemporalRunContext
 from ._toolset import (
     TemporalWrapperToolset,
-    _CallToolParams,
-    _CallToolResult,
-    _GetToolsParams,
-    _ToolReturn,
+    CallToolParamsData,
+    CallToolResultData,
+    GetToolsParamsData,
+    ToolReturnData,
     remap_exception_to_dataclass,
     remap_dataclass_to_exception,
 )
@@ -49,7 +49,7 @@ class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
 
         self.run_context_type = run_context_type
 
-        async def get_tools_activity(params: _GetToolsParams, deps: AgentDepsT) -> dict[str, ToolDefinition]:
+        async def get_tools_activity(params: GetToolsParamsData, deps: AgentDepsT) -> dict[str, ToolDefinition]:
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
             tools = await self.wrapped.get_tools(run_context)
             # ToolsetTool is not serializable as it holds a SchemaValidator (which is also the same for every MCP tool so unnecessary to pass along the wire every time),
@@ -63,7 +63,7 @@ class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
             get_tools_activity
         )
 
-        async def call_tool_activity(params: _CallToolParams, deps: AgentDepsT) -> _CallToolResult:
+        async def call_tool_activity(params: CallToolParamsData, deps: AgentDepsT) -> CallToolResultData:
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
             try:
                 assert isinstance(params.tool_def, ToolDefinition)
@@ -73,7 +73,7 @@ class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
                     run_context,
                     self.tool_for_tool_def(params.tool_def),
                 )
-                return _ToolReturn(result=result)
+                return ToolReturnData(result=result)
             except Exception as e:
                 return remap_exception_to_dataclass(e)
 
@@ -108,7 +108,7 @@ class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
         tool_defs = await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
             activity=self.get_tools_activity,
             args=[
-                _GetToolsParams(serialized_run_context=serialized_run_context),
+                GetToolsParamsData(serialized_run_context=serialized_run_context),
                 ctx.deps,
             ],
             **self.activity_config,
@@ -121,7 +121,7 @@ class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-    ) -> _CallToolResult:
+    ) -> CallToolResultData:
         if not workflow.in_workflow():
             return await super().call_tool(name, tool_args, ctx, tool)
 
@@ -130,7 +130,7 @@ class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
         result = await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
             activity=self.call_tool_activity,
             args=[
-                _CallToolParams(
+                CallToolParamsData(
                     name=name,
                     tool_args=tool_args,
                     serialized_run_context=serialized_run_context,
