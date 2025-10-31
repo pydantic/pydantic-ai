@@ -175,7 +175,7 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
         if params:
             first_param = params[0]
             annotation = first_param.annotation
-            self._takes_ctx = 'RunContext' in annotation
+            self._takes_ctx = 'RunContext' in str(annotation)
 
         expected_partial_index = 2 if self._takes_ctx else 1
         self._takes_partial = len(params) > expected_partial_index
