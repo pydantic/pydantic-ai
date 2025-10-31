@@ -425,7 +425,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     def stream_output_sync(self, *, debounce_by: float | None = 0.1) -> Iterator[OutputDataT]:
         """Stream the output as an iterable.
 
-        This is a convenience method that wraps [`self.stream_output`][pydantic_ai.result.StreamedRunResult.stream_output] with `loop.run_until_complete(...)`.
+        This is a convenience method that wraps [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] with `loop.run_until_complete(...)`.
         You therefore can't use this method inside async code or if there's an active event loop.
 
         The pydantic validator for structured data will be called in
@@ -530,7 +530,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     ) -> Iterator[tuple[_messages.ModelResponse, bool]]:
         """Stream the response as an iterable of Structured LLM Messages.
 
-        This is a convenience method that wraps [`self.stream_responses`][pydantic_ai.result.StreamedRunResult.stream_responses] with `loop.run_until_complete(...)`.
+        This is a convenience method that wraps [`stream_responses()`][pydantic_ai.result.StreamedRunResult.stream_responses] with `loop.run_until_complete(...)`.
         You therefore can't use this method inside async code or if there's an active event loop.
 
         Args:
@@ -560,7 +560,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     def get_output_sync(self) -> OutputDataT:
         """Stream the whole response, validate and return it.
 
-        This is a convenience method that wraps [`self.get_output`][pydantic_ai.result.StreamedRunResult.get_output] with `loop.run_until_complete(...)`.
+        This is a convenience method that wraps [`get_output()`][pydantic_ai.result.StreamedRunResult.get_output] with `loop.run_until_complete(...)`.
         You therefore can't use this method inside async code or if there's an active event loop.
         """
         return get_event_loop().run_until_complete(self.get_output())
@@ -642,11 +642,9 @@ class FinalResult(Generic[OutputDataT]):
 
 def _blocking_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
     loop = get_event_loop()
-
     while True:
         try:
-            item = loop.run_until_complete(async_iter.__anext__())
-            yield item
+            yield loop.run_until_complete(async_iter.__anext__())
         except StopAsyncIteration:
             break
 

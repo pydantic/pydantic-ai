@@ -4,7 +4,7 @@ import asyncio
 import inspect
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, AbstractContextManager, asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
@@ -598,7 +598,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> AbstractContextManager[result.StreamedRunResult[AgentDepsT, OutputDataT]]: ...
+    ) -> result.StreamedRunResult[AgentDepsT, OutputDataT]: ...
 
     @overload
     def run_stream_sync(
@@ -617,9 +617,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> AbstractContextManager[result.StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
+    ) -> result.StreamedRunResult[AgentDepsT, RunOutputDataT]: ...
 
-    @contextmanager
     def run_stream_sync(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
@@ -636,7 +635,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> Iterator[result.StreamedRunResult[AgentDepsT, Any]]:
+    ) -> result.StreamedRunResult[AgentDepsT, Any]:
         """Run the agent with a user prompt in sync streaming mode.
 
         This is a convenience method that wraps [`self.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] with `loop.run_until_complete(...)`.
@@ -651,6 +650,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
         If you want to always run the agent graph to completion and stream events and output at the same time,
         use [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] with an `event_stream_handler` or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] instead.
+
+        Example:
+        ```python
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-4o')
+
+        def main():
+            response = agent.run_stream_sync('What is the capital of the UK?')
+            print(response.get_output_sync())
+            #> The capital of the UK is London.
+        ```
 
         Args:
             user_prompt: User input to start/continue the conversation.
@@ -673,22 +684,26 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
-        async_cm = self.run_stream(
-            user_prompt,
-            output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            model=model,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            builtin_tools=builtin_tools,
-            event_stream_handler=event_stream_handler,
-        )
-        yield get_event_loop().run_until_complete(async_cm.__aenter__())
+
+        async def _consume_stream():
+            async with self.run_stream(
+                user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                model=model,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                builtin_tools=builtin_tools,
+                event_stream_handler=event_stream_handler,
+            ) as stream_result:
+                yield stream_result
+
+        return get_event_loop().run_until_complete(_consume_stream().__anext__())
 
     @overload
     def run_stream_events(
