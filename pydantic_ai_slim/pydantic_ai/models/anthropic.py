@@ -729,11 +729,10 @@ class AnthropicStreamedResponse(StreamedResponse):
             elif isinstance(event, BetaRawContentBlockStartEvent):
                 current_block = event.content_block
                 if isinstance(current_block, BetaTextBlock) and current_block.text:
-                    maybe_event = self._parts_manager.handle_text_delta(
+                    for event_item in self._parts_manager.handle_text_delta(
                         vendor_part_id=event.index, content=current_block.text
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event_item
                 elif isinstance(current_block, BetaThinkingBlock):
                     yield self._parts_manager.handle_thinking_delta(
                         vendor_part_id=event.index,
@@ -803,11 +802,10 @@ class AnthropicStreamedResponse(StreamedResponse):
 
             elif isinstance(event, BetaRawContentBlockDeltaEvent):
                 if isinstance(event.delta, BetaTextDelta):
-                    maybe_event = self._parts_manager.handle_text_delta(
+                    for event_item in self._parts_manager.handle_text_delta(
                         vendor_part_id=event.index, content=event.delta.text
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event_item
                 elif isinstance(event.delta, BetaThinkingDelta):
                     yield self._parts_manager.handle_thinking_delta(
                         vendor_part_id=event.index,
