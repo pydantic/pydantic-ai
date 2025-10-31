@@ -472,7 +472,7 @@ _(This example is complete, it can be run "as is")_
 
 #### Partial validation during streaming {#partial-validation}
 
-If your output validator takes `RunContext` as a first argument, you can add `partial: bool` as the last argument to handle validation differently for partial outputs during streaming (e.g. skip validation altogether). 
+If your output validator takes `RunContext` as a first argument, you can add `partial: bool` as the last argument to handle validation differently for partial outputs during streaming (e.g. skip validation altogether).
 
 ```python
 from pydantic_ai import Agent, ModelRetry, RunContext
