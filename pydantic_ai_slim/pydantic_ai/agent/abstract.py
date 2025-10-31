@@ -597,7 +597,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> result.StreamedRunResult[AgentDepsT, OutputDataT]: ...
+    ) -> result.StreamedRunResultSync[AgentDepsT, OutputDataT]: ...
 
     @overload
     def run_stream_sync(
@@ -616,7 +616,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> result.StreamedRunResult[AgentDepsT, RunOutputDataT]: ...
+    ) -> result.StreamedRunResultSync[AgentDepsT, RunOutputDataT]: ...
 
     def run_stream_sync(
         self,
@@ -634,7 +634,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> result.StreamedRunResult[AgentDepsT, Any]:
+    ) -> result.StreamedRunResultSync[AgentDepsT, Any]:
         """Run the agent with a user prompt in sync streaming mode.
 
         This is a convenience method that wraps [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] with `loop.run_until_complete(...)`.
@@ -658,7 +658,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         def main():
             response = agent.run_stream_sync('What is the capital of the UK?')
-            print(response.get_output_sync())
+            print(response.get_output())
             #> The capital of the UK is London.
         ```
 
@@ -704,7 +704,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             ) as stream_result:
                 yield stream_result
 
-        return _utils.get_event_loop().run_until_complete(anext(_consume_stream()))
+        async_result = _utils.get_event_loop().run_until_complete(anext(_consume_stream()))
+        return result.StreamedRunResultSync(async_result)
 
     @overload
     def run_stream_events(

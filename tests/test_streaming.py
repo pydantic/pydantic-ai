@@ -45,7 +45,7 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
-from pydantic_ai.result import AgentStream, FinalResult, RunUsage
+from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResultSync
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
@@ -175,7 +175,7 @@ def test_streamed_text_sync_response():
             tool_calls=1,
         )
     )
-    response = result.get_output_sync()
+    response = result.get_output()
     assert response == snapshot('{"ret_a":"a-apple"}')
     assert result.is_complete
     assert result.timestamp() == IsNow(tz=timezone.utc)
@@ -389,20 +389,20 @@ def test_streamed_text_stream_sync():
 
     result = agent.run_stream_sync('Hello')
     # typehint to test (via static typing) that the stream type is correctly inferred
-    chunks: list[str] = [c for c in result.stream_text_sync()]
+    chunks: list[str] = [c for c in result.stream_text()]
     # one chunk with `stream_text()` due to group_by_temporal
     assert chunks == snapshot(['The cat sat on the mat.'])
     assert result.is_complete
 
     result = agent.run_stream_sync('Hello')
     # typehint to test (via static typing) that the stream type is correctly inferred
-    chunks: list[str] = [c for c in result.stream_output_sync()]
+    chunks: list[str] = [c for c in result.stream_output()]
     # two chunks with `stream()` due to not-final vs. final
     assert chunks == snapshot(['The cat sat on the mat.'])
     assert result.is_complete
 
     result = agent.run_stream_sync('Hello')
-    assert [c for c in result.stream_text_sync(debounce_by=None)] == snapshot(
+    assert [c for c in result.stream_text(debounce_by=None)] == snapshot(
         [
             'The ',
             'The cat ',
@@ -415,12 +415,12 @@ def test_streamed_text_stream_sync():
 
     result = agent.run_stream_sync('Hello')
     # with stream_text, there is no need to do partial validation, so we only get the final message once:
-    assert [c for c in result.stream_text_sync(delta=False, debounce_by=None)] == snapshot(
+    assert [c for c in result.stream_text(delta=False, debounce_by=None)] == snapshot(
         ['The ', 'The cat ', 'The cat sat ', 'The cat sat on ', 'The cat sat on the ', 'The cat sat on the mat.']
     )
 
     result = agent.run_stream_sync('Hello')
-    assert [c for c in result.stream_text_sync(delta=True, debounce_by=None)] == snapshot(
+    assert [c for c in result.stream_text(delta=True, debounce_by=None)] == snapshot(
         ['The ', 'cat ', 'sat ', 'on ', 'the ', 'mat.']
     )
 
@@ -428,12 +428,12 @@ def test_streamed_text_stream_sync():
         return text.upper()
 
     result = agent.run_stream_sync('Hello', output_type=TextOutput(upcase))
-    assert [c for c in result.stream_output_sync(debounce_by=None)] == snapshot(
+    assert [c for c in result.stream_output(debounce_by=None)] == snapshot(
         ['THE ', 'THE CAT ', 'THE CAT SAT ', 'THE CAT SAT ON ', 'THE CAT SAT ON THE ', 'THE CAT SAT ON THE MAT.']
     )
 
     result = agent.run_stream_sync('Hello')
-    assert [c for c, _is_last in result.stream_responses_sync(debounce_by=None)] == snapshot(
+    assert [c for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
         [
             ModelResponse(
                 parts=[TextPart(content='The ')],
@@ -2101,8 +2101,81 @@ def test_structured_response_sync_validation():
 
     chunks: list[list[int]] = []
     result = agent.run_stream_sync('')
-    for structured_response, last in result.stream_responses_sync(debounce_by=None):
-        response_data = result.validate_response_output_sync(structured_response, allow_partial=not last)
+    for structured_response, last in result.stream_responses(debounce_by=None):
+        response_data = result.validate_response_output(structured_response, allow_partial=not last)
         chunks.append(response_data)
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]])
+
+
+def test_streamed_run_result_sync_wrapper():
+    """Test that run_stream_sync returns StreamedRunResultSync with all sync methods."""
+    m = TestModel(custom_output_text='The cat sat on the mat.')
+    agent = Agent(m)
+
+    # Test that run_stream_sync returns StreamedRunResultSync directly
+    result = agent.run_stream_sync('Hello')
+    assert isinstance(result, StreamedRunResultSync)
+
+    # Test all_messages
+    messages = result.all_messages()
+    assert len(messages) > 0
+
+    # Test all_messages_json
+    messages_json = result.all_messages_json()
+    assert isinstance(messages_json, bytes)
+
+    # Test new_messages
+    new_messages = result.new_messages()
+    assert len(new_messages) > 0
+
+    # Test new_messages_json
+    new_messages_json = result.new_messages_json()
+    assert isinstance(new_messages_json, bytes)
+
+    # Test stream_output
+    result = agent.run_stream_sync('Hello')
+    chunks: list[str] = [c for c in result.stream_output(debounce_by=None)]
+    assert chunks == snapshot(
+        ['The ', 'The cat ', 'The cat sat ', 'The cat sat on ', 'The cat sat on the ', 'The cat sat on the mat.']
+    )
+
+    # Test stream_text
+    result = agent.run_stream_sync('Hello')
+    text_chunks: list[str] = [c for c in result.stream_text(debounce_by=None)]
+    assert text_chunks == snapshot(
+        [
+            'The ',
+            'The cat ',
+            'The cat sat ',
+            'The cat sat on ',
+            'The cat sat on the ',
+            'The cat sat on the mat.',
+        ]
+    )
+
+    # Test stream_responses
+    result = agent.run_stream_sync('Hello')
+    responses = [c for c, _is_last in result.stream_responses(debounce_by=None)]
+    assert len(responses) > 0
+    assert all(isinstance(r, ModelResponse) for r in responses)
+
+    # Test get_output
+    result = agent.run_stream_sync('Hello')
+    output = result.get_output()
+    assert output == snapshot('The cat sat on the mat.')
+
+    # Test properties
+    result = agent.run_stream_sync('Hello')
+    _ = result.get_output()
+    assert result.is_complete
+    assert isinstance(result.response, ModelResponse)
+    assert isinstance(result.usage(), RunUsage)
+    assert isinstance(result.timestamp(), datetime.datetime)
+
+    # Test validate_response_output
+    result = agent.run_stream_sync('Hello')
+    _ = result.get_output()  # Need to complete the stream first
+    response = result.response
+    validated = result.validate_response_output(response)
+    assert validated == snapshot('The cat sat on the mat.')
