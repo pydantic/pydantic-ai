@@ -462,7 +462,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     def stream_text_sync(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> Iterator[str]:
         """Stream the text result as a sync iterable.
 
-        This is a convenience method that wraps [`self.stream_text`][pydantic_ai.result.StreamedRunResult.stream_text] with `loop.run_until_complete(...)`.
+        This is a convenience method that wraps [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] with `loop.run_until_complete(...)`.
         You therefore can't use this method inside async code or if there's an active event loop.
 
         !!! note
