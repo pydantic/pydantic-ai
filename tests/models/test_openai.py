@@ -100,6 +100,7 @@ def test_chat_model_init():
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'gpt-4o'
 
+
 def test_response_model_init():
     m = OpenAIResponsesModel('o4-mini-deep-research', provider=OpenAIProvider(api_key='foobar'))
     assert m.base_url == 'https://api.openai.com/v1/'
