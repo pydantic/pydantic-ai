@@ -78,4 +78,30 @@ def temporalize_toolset(
                 run_context_type=run_context_type,
             )
 
+    # Handle DynamicToolset
+    try:
+        from pydantic_ai.toolsets._dynamic import DynamicToolset
+
+        from ._dynamic_toolset import TemporalDynamicToolset
+    except ImportError:
+        pass
+    else:
+        if isinstance(toolset, DynamicToolset):
+            if toolset.id is None:
+                from pydantic_ai.exceptions import UserError
+
+                raise UserError(
+                    'DynamicToolset must have an `id` to be used with Temporal. '
+                    'Use @agent.toolset(id="my_id") to provide one.'
+                )
+            return TemporalDynamicToolset(
+                toolset,
+                activity_name_prefix=activity_name_prefix,
+                activity_config=activity_config,
+                tool_activity_config=tool_activity_config,
+                deps_type=deps_type,
+                run_context_type=run_context_type,
+                toolset_id=toolset.id,
+            )
+
     return toolset
