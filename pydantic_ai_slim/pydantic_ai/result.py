@@ -114,19 +114,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             async for text in self._stream_response_text(delta=True, debounce_by=debounce_by):
                 yield text
         else:
-            last_text: str | None = None
             async for text in self._stream_response_text(delta=False, debounce_by=debounce_by):
                 for validator in self._output_validators:
                     text = await validator.validate(text, self._run_ctx, partial=True)  # pragma: no cover
-                last_text = text
                 yield text
-
-            if last_text is not None:
-                validated_text = last_text
-                for validator in self._output_validators:
-                    validated_text = await validator.validate(validated_text, self._run_ctx)
-                if validated_text != last_text:
-                    yield validated_text
 
     # TODO (v2): Drop in favor of `response` property
     def get(self) -> _messages.ModelResponse:
