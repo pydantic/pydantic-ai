@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import KW_ONLY, Field, dataclass, replace
+from dataclasses import KW_ONLY, Field, dataclass
 from functools import cached_property
 from http import HTTPStatus
 from typing import (
@@ -238,7 +238,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             else:
                 state = raw_state
 
-            deps = replace(deps, state=state)
+            deps.state = state
         elif self.state:
             raise UserError(
                 f'State is provided but `deps` of type `{type(deps).__name__}` does not implement the `StateHandler` protocol: it needs to be a dataclass with a non-optional `state` field.'
