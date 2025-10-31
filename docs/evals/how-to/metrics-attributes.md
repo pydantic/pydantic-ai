@@ -62,7 +62,7 @@ def process(inputs: str) -> str:
 
 def my_task(inputs: str) -> str:
     # Record which model was used
-    set_eval_attribute('model', 'gpt-4o')
+    set_eval_attribute('model', 'gpt-5')
 
     # Record feature flags
     set_eval_attribute('used_cache', True)
@@ -168,7 +168,7 @@ from pydantic_ai import Agent
 
 logfire.configure(send_to_logfire='if-token-present')
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 
 async def ai_task(inputs: str) -> str:
@@ -279,7 +279,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_evals import increment_eval_metric, set_eval_attribute
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 
 def search(query: str) -> str:
@@ -418,34 +418,285 @@ class QualityEvaluator(Evaluator):
 ```
 
 
+## Experiment-Level Metadata
+
+In addition to case-level metadata, you can also pass experiment-level metadata when calling [`evaluate()`][pydantic_evals.Dataset.evaluate]:
+
+```python
+from pydantic_evals import Case, Dataset
+
+dataset = Dataset(
+    cases=[
+        Case(
+            inputs='test',
+            metadata={'difficulty': 'easy'},  # Case-level metadata
+        )
+    ]
+)
+
+
+async def task(inputs: str) -> str:
+    return f'Result: {inputs}'
+
+
+# Pass experiment-level metadata
+async def main():
+    report = await dataset.evaluate(
+        task,
+        metadata={
+            'model': 'gpt-4o',
+            'prompt_version': 'v2.1',
+            'temperature': 0.7,
+        },
+    )
+
+    # Access experiment metadata in the report
+    print(report.experiment_metadata)
+    #> {'model': 'gpt-4o', 'prompt_version': 'v2.1', 'temperature': 0.7}
+```
+
+### When to Use Experiment Metadata
+
+Experiment metadata is useful for tracking configuration that applies to the entire evaluation run:
+
+- **Model configuration**: Model name, version, parameters
+- **Prompt versioning**: Which prompt template was used
+- **Infrastructure**: Deployment environment, region
+- **Experiment context**: Developer name, feature branch, commit hash
+
+This metadata is especially valuable when:
+
+- Comparing multiple evaluation runs over time
+- Tracking which configuration produced which results
+- Reproducing evaluation results from historical data
+
+### Viewing in Reports
+
+Experiment metadata appears at the top of printed reports:
+
+```python
+from pydantic_evals import Case, Dataset
+
+dataset = Dataset(cases=[Case(inputs='hello', expected_output='HELLO')])
+
+
+async def task(text: str) -> str:
+    return text.upper()
+
+async def main():
+    report = await dataset.evaluate(
+        task,
+        metadata={'model': 'gpt-4o', 'version': 'v1.0'},
+    )
+
+    print(report.render())
+    """
+    ╭─ Evaluation Summary: task ─╮
+    │ model: gpt-4o              │
+    │ version: v1.0              │
+    ╰────────────────────────────╯
+    ┏━━━━━━━━━━┳━━━━━━━━━━┓
+    ┃ Case ID  ┃ Duration ┃
+    ┡━━━━━━━━━━╇━━━━━━━━━━┩
+    │ Case 1   │     10ms │
+    ├──────────┼──────────┤
+    │ Averages │     10ms │
+    └──────────┴──────────┘
+    """
+```
+
+## Synchronization between Tasks and Experiment Metadata
+
+Experiment metadata is for *recording* configuration, not *configuring* the task.
+The metadata dict doesn't automatically configure your task's behavior; you must ensure the values in the metadata dict match what your task actually uses.
+For example, it's easy to accidentally have metadata claim `temperature: 0.7` while your task actually uses `temperature: 1.0`, leading to incorrect experiment tracking and unreproducible results.
+
+To avoid this problem, we recommend establishing a single source of truth for configuration that both your task and metadata reference.
+Below are a few suggested patterns for achieving this synchronization.
+
+### Pattern 1: Shared Module Constants
+
+For simpler cases, use module-level constants:
+
+```python
+from pydantic_ai import Agent
+from pydantic_evals import Case, Dataset
+
+# Module constants as single source of truth
+MODEL_NAME = 'openai:gpt-5-mini'
+TEMPERATURE = 0.7
+SYSTEM_PROMPT = 'You are a helpful assistant.'
+
+agent = Agent(MODEL_NAME, model_settings={'temperature': TEMPERATURE}, system_prompt=SYSTEM_PROMPT)
+
+
+async def task(inputs: str) -> str:
+    result = await agent.run(inputs)
+    return result.output
+
+
+async def main():
+    dataset = Dataset(cases=[Case(inputs='What is the capital of France?')])
+
+    # Metadata references same constants
+    await dataset.evaluate(
+        task,
+        metadata={
+            'model': MODEL_NAME,
+            'temperature': TEMPERATURE,
+            'system_prompt': SYSTEM_PROMPT,
+        },
+    )
+```
+
+### Pattern 2: Configuration Object (Recommended)
+
+Define configuration once and use it everywhere:
+
+```python
+from dataclasses import asdict, dataclass
+
+from pydantic_ai import Agent
+from pydantic_evals import Case, Dataset
+
+
+@dataclass
+class TaskConfig:
+    """Single source of truth for task configuration.
+
+    Includes all variables you'd like to see in experiment metadata.
+    """
+
+    model: str
+    temperature: float
+    max_tokens: int
+    prompt_version: str
+
+
+# Define configuration once
+config = TaskConfig(
+    model='openai:gpt-5-mini',
+    temperature=0.7,
+    max_tokens=500,
+    prompt_version='v2.1',
+)
+
+# Use config in task
+agent = Agent(
+    config.model,
+    model_settings={'temperature': config.temperature, 'max_tokens': config.max_tokens},
+)
+
+
+async def task(inputs: str) -> str:
+    """Task uses the same config that's recorded in metadata."""
+    result = await agent.run(inputs)
+    return result.output
+
+
+# Evaluate with metadata derived from the same config
+async def main():
+    dataset = Dataset(cases=[Case(inputs='What is the capital of France?')])
+
+    report = await dataset.evaluate(
+        task,
+        metadata=asdict(config),  # Guaranteed to match task behavior
+    )
+
+    print(report.experiment_metadata)
+    """
+    {
+        'model': 'openai:gpt-5-mini',
+        'temperature': 0.7,
+        'max_tokens': 500,
+        'prompt_version': 'v2.1',
+    }
+    """
+```
+
+If it's problematic to have a global task configuration, you can also create your `TaskConfig` object at the task
+call-site and pass it to the agent via `deps` or similar, but in this case you would still need to guarantee that the
+value is always the same as the value passed to `metadata` in the call to `Dataset.evaluate`.
+
+### Anti-Pattern: Duplicate Configuration
+
+**Avoid this common mistake**:
+
+```python
+from pydantic_ai import Agent
+from pydantic_evals import Case, Dataset
+
+# ❌ BAD: Configuration defined in multiple places
+agent = Agent('openai:gpt-5-mini', model_settings={'temperature': 0.7})
+
+
+async def task(inputs: str) -> str:
+    result = await agent.run(inputs)
+    return result.output
+
+
+async def main():
+    dataset = Dataset(cases=[Case(inputs='test')])
+
+    # ❌ BAD: Metadata manually typed - easy to get out of sync
+    await dataset.evaluate(
+        task,
+        metadata={
+            'model': 'openai:gpt-5-mini',  # Duplicated! Could diverge from agent definition
+            'temperature': 0.8,  # ⚠️ WRONG! Task actually uses 0.7
+        },
+    )
+```
+
+In this anti-pattern, the metadata claims `temperature: 0.8` but the task uses `0.7`. This leads to:
+
+- Incorrect experiment tracking
+- Inability to reproduce results
+- Confusion when comparing runs
+- Wasted time debugging "why results differ"
+
 ## Metrics vs Attributes vs Metadata
 
 Understanding the differences:
 
-| Feature | Metrics | Attributes | Metadata |
-|---------|---------|------------|----------|
-| **Set in** | Task execution | Task execution | Case definition |
-| **Type** | int, float | Any | Any |
-| **Purpose** | Quantitative | Qualitative | Test data |
-| **Used for** | Aggregation | Context | Input to task |
-| **Available to** | Evaluators | Evaluators | Task & Evaluators |
+| Feature | Metrics | Attributes | Case Metadata | Experiment Metadata |
+|---------|---------|------------|---------------|---------------------|
+| **Set in** | Task execution | Task execution | Case definition | `evaluate()` call |
+| **Type** | int, float | Any | Any | Any |
+| **Purpose** | Quantitative | Qualitative | Test data | Experiment config |
+| **Used for** | Aggregation | Context | Input to task | Tracking runs |
+| **Available to** | Evaluators | Evaluators | Task & Evaluators | Report only |
+| **Scope** | Per case | Per case | Per case | Per experiment |
 
 ```python
-from pydantic_evals import Case, increment_eval_metric, set_eval_attribute
+from pydantic_evals import Case, Dataset, increment_eval_metric, set_eval_attribute
 
-# Metadata: Defined in case (before execution)
-Case(
+# Case Metadata: Defined in case (before execution)
+case = Case(
     inputs='question',
-    metadata={'difficulty': 'hard', 'category': 'math'},
+    metadata={'difficulty': 'hard', 'category': 'math'},  # Per-case metadata
 )
+
+dataset = Dataset(cases=[case])
 
 
 # Metrics & Attributes: Recorded during execution
-def task(inputs):
-    # These are recorded during execution
+async def task(inputs):
+    # These are recorded during execution for each case
     increment_eval_metric('tokens', 100)
-    set_eval_attribute('model', 'gpt-4o')
+    set_eval_attribute('model', 'gpt-5')
     return f'Result: {inputs}'
+
+
+async def main():
+    # Experiment Metadata: Defined at evaluation time
+    await dataset.evaluate(
+        task,
+        metadata={  # Experiment-level metadata
+            'prompt_version': 'v2.1',
+            'temperature': 0.7,
+        },
+    )
 ```
 
 ## Troubleshooting

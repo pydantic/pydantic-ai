@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from starlette.routing import BaseRoute, Route
     from starlette.types import ExceptionHandler, Lifespan
 
-    from ..ag_ui import AGUIApp
+    from pydantic_ai.ui.ag_ui.app import AGUIApp
 
 
 T = TypeVar('T')
@@ -763,6 +763,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 PartStartEvent(index=0, part=TextPart(content='The capital of ')),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='France is Paris. ')),
+                PartEndEvent(
+                    index=0, part=TextPart(content='The capital of France is Paris. ')
+                ),
                 AgentRunResultEvent(
                     result=AgentRunResult(output='The capital of France is Paris. ')
                 ),
@@ -792,6 +795,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             An async iterable of stream events `AgentStreamEvent` and finally a `AgentRunResultEvent` with the final
             run result.
         """
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+
         # unfortunately this hack of returning a generator rather than defining it right here is
         # required to allow overloads of this method to work in python's typing system, or at least with pyright
         # or at least I couldn't make it work without
@@ -805,7 +811,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings=model_settings,
             usage_limits=usage_limits,
             usage=usage,
-            infer_name=infer_name,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
         )
@@ -822,7 +827,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
-        infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
@@ -848,7 +852,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     model_settings=model_settings,
                     usage_limits=usage_limits,
                     usage=usage,
-                    infer_name=infer_name,
+                    infer_name=False,
                     toolsets=toolsets,
                     builtin_tools=builtin_tools,
                     event_stream_handler=event_stream_handler,
@@ -1098,11 +1102,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     async def __aexit__(self, *args: Any) -> bool | None:
         raise NotImplementedError
 
+    # TODO (v2): Remove in favor of using `AGUIApp` directly -- we don't have `to_temporal()` or `to_vercel_ai()` either.
     def to_ag_ui(
         self,
         *,
         # Agent.iter parameters
         output_type: OutputSpec[OutputDataT] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -1143,12 +1150,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         uvicorn app:app --host 0.0.0.0 --port 8000
         ```
 
-        See [AG-UI docs](../ag-ui.md) for more information.
+        See [AG-UI docs](../ui/ag-ui.md) for more information.
 
         Args:
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has
                 no output validators since output validators would expect an argument that matches the agent's
                 output type.
+            message_history: History of the conversation so far.
+            deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
@@ -1178,12 +1187,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             An ASGI application for running Pydantic AI agents with AG-UI protocol support.
         """
-        from ..ag_ui import AGUIApp
+        from pydantic_ai.ui.ag_ui.app import AGUIApp
 
         return AGUIApp(
             agent=self,
             # Agent.iter parameters
             output_type=output_type,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
             model=model,
             deps=deps,
             model_settings=model_settings,
