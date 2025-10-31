@@ -12,7 +12,6 @@ import anyio
 from typing_extensions import Self, TypeIs, TypeVar
 
 from pydantic_graph import End
-from pydantic_graph._utils import get_event_loop
 
 from .. import (
     _agent_graph,
@@ -335,7 +334,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        return get_event_loop().run_until_complete(
+        return _utils.get_event_loop().run_until_complete(
             self.run(
                 user_prompt,
                 output_type=output_type,
@@ -685,8 +684,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             The result of the run.
         """
         if infer_name and self.name is None:
-            if frame := inspect.currentframe():  # pragma: no branch
-                self._infer_name(frame)
+            self._infer_name(inspect.currentframe())
 
         async def _consume_stream():
             async with self.run_stream(
@@ -706,7 +704,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             ) as stream_result:
                 yield stream_result
 
-        return get_event_loop().run_until_complete(_consume_stream().__anext__())
+        return _utils.get_event_loop().run_until_complete(anext(_consume_stream()))
 
     @overload
     def run_stream_events(
@@ -1344,6 +1342,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         agent.to_cli_sync(prog_name='assistant')
         ```
         """
-        return get_event_loop().run_until_complete(
+        return _utils.get_event_loop().run_until_complete(
             self.to_cli(deps=deps, prog_name=prog_name, message_history=message_history)
         )

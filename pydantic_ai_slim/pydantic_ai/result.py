@@ -438,8 +438,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An iterable of the response data.
         """
-        async_stream = self.stream_output(debounce_by=debounce_by)
-        yield from _blocking_async_iterator(async_stream)
+        return _utils.sync_async_iterator(self.stream_output(debounce_by=debounce_by))
 
     async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
@@ -485,8 +484,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
-        async_stream = self.stream_text(delta=delta, debounce_by=debounce_by)
-        yield from _blocking_async_iterator(async_stream)
+        return _utils.sync_async_iterator(self.stream_text(delta=delta, debounce_by=debounce_by))
 
     @deprecated('`StreamedRunResult.stream_structured` is deprecated, use `stream_responses` instead.')
     async def stream_structured(
@@ -539,8 +537,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An iterable of the structured response message and whether that is the last message.
         """
-        async_stream = self.stream_responses(debounce_by=debounce_by)
-        yield from _blocking_async_iterator(async_stream)
+        return _utils.sync_async_iterator(self.stream_responses(debounce_by=debounce_by))
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
@@ -614,6 +611,18 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
+    def validate_response_output_sync(
+        self, message: _messages.ModelResponse, *, allow_partial: bool = False
+    ) -> OutputDataT:
+        """Validate a structured result message.
+
+        This is a convenience method that wraps [`validate_response_output()`][pydantic_ai.result.StreamedRunResult.validate_response_output] with `loop.run_until_complete(...)`.
+        You therefore can't use this method inside async code or if there's an active event loop.
+        """
+        return _utils.get_event_loop().run_until_complete(
+            self.validate_response_output(message, allow_partial=allow_partial)
+        )
+
     async def _marked_completed(self, message: _messages.ModelResponse | None = None) -> None:
         self.is_complete = True
         if message is not None:
@@ -636,15 +645,6 @@ class FinalResult(Generic[OutputDataT]):
     """ID of the tool call that produced the final output; `None` if the output came from unstructured text content."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-def _blocking_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
-    loop = _utils.get_event_loop()
-    while True:
-        try:
-            yield loop.run_until_complete(async_iter.__anext__())
-        except StopAsyncIteration:
-            break
 
 
 def _get_usage_checking_stream_response(

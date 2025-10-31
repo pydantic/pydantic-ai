@@ -2085,3 +2085,24 @@ async def test_run_stream_events():
             AgentRunResultEvent(result=AgentRunResult(output='{"ret_a":"a-apple"}')),
         ]
     )
+
+
+def test_structured_response_sync_validation():
+    async def text_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert agent_info.output_tools is not None
+        assert len(agent_info.output_tools) == 1
+        name = agent_info.output_tools[0].name
+        json_data = json.dumps({'response': [1, 2, 3, 4]})
+        yield {0: DeltaToolCall(name=name)}
+        yield {0: DeltaToolCall(json_args=json_data[:15])}
+        yield {0: DeltaToolCall(json_args=json_data[15:])}
+
+    agent = Agent(FunctionModel(stream_function=text_stream), output_type=list[int])
+
+    chunks: list[list[int]] = []
+    result = agent.run_stream_sync('')
+    for structured_response, last in result.stream_responses_sync(debounce_by=None):
+        response_data = result.validate_response_output_sync(structured_response, allow_partial=not last)
+        chunks.append(response_data)
+
+    assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]])

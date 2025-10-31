@@ -234,6 +234,15 @@ def sync_anext(iterator: Iterator[T]) -> T:
         raise StopAsyncIteration() from e
 
 
+def sync_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
+    loop = get_event_loop()
+    while True:
+        try:
+            yield loop.run_until_complete(anext(async_iter))
+        except StopAsyncIteration:
+            break
+
+
 def now_utc() -> datetime:
     return datetime.now(tz=timezone.utc)
 
