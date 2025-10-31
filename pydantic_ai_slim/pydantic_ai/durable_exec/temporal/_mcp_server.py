@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Literal
 
+from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 from typing_extensions import Self
@@ -14,14 +16,16 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
 from ._run_context import TemporalRunContext
 from ._toolset import (
-    CallToolParamsData,
-    CallToolResultData,
-    GetToolsParamsData,
+    CallToolParams,
+    CallToolResult,
     TemporalWrapperToolset,
-    ToolReturnData,
-    remap_dataclass_to_exception,
-    remap_exception_to_dataclass,
 )
+
+
+@dataclass
+@with_config(ConfigDict(arbitrary_types_allowed=True))
+class _GetToolsParams:
+    serialized_run_context: Any
 
 
 class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
@@ -49,7 +53,7 @@ class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
 
         self.run_context_type = run_context_type
 
-        async def get_tools_activity(params: GetToolsParamsData, deps: AgentDepsT) -> dict[str, ToolDefinition]:
+        async def get_tools_activity(params: _GetToolsParams, deps: AgentDepsT) -> dict[str, ToolDefinition]:
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
             tools = await self.wrapped.get_tools(run_context)
             # ToolsetTool is not serializable as it holds a SchemaValidator (which is also the same for every MCP tool so unnecessary to pass along the wire every time),
@@ -63,19 +67,17 @@ class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
             get_tools_activity
         )
 
-        async def call_tool_activity(params: CallToolParamsData, deps: AgentDepsT) -> CallToolResultData:
+        async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
-            try:
-                assert isinstance(params.tool_def, ToolDefinition)
-                result = await self.wrapped.call_tool(
+            assert isinstance(params.tool_def, ToolDefinition)
+            return await self._wrap_call_tool_result(
+                self.wrapped.call_tool(
                     params.name,
                     params.tool_args,
                     run_context,
                     self.tool_for_tool_def(params.tool_def),
                 )
-                return ToolReturnData(result=result)
-            except Exception as e:
-                return remap_exception_to_dataclass(e)
+            )
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         call_tool_activity.__annotations__['deps'] = deps_type
@@ -108,7 +110,7 @@ class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
         tool_defs = await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
             activity=self.get_tools_activity,
             args=[
-                GetToolsParamsData(serialized_run_context=serialized_run_context),
+                _GetToolsParams(serialized_run_context=serialized_run_context),
                 ctx.deps,
             ],
             **self.activity_config,
@@ -121,23 +123,24 @@ class TemporalMCPServer(TemporalWrapperToolset[AgentDepsT]):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-    ) -> CallToolResultData:
+    ) -> CallToolResult:
         if not workflow.in_workflow():
             return await super().call_tool(name, tool_args, ctx, tool)
 
         tool_activity_config = self.activity_config | self.tool_activity_config.get(name, {})
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        result = await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
-            activity=self.call_tool_activity,
-            args=[
-                CallToolParamsData(
-                    name=name,
-                    tool_args=tool_args,
-                    serialized_run_context=serialized_run_context,
-                    tool_def=tool.tool_def,
-                ),
-                ctx.deps,
-            ],
-            **tool_activity_config,
+        return self._unwrap_call_tool_result(
+            await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
+                activity=self.call_tool_activity,
+                args=[
+                    CallToolParams(
+                        name=name,
+                        tool_args=tool_args,
+                        serialized_run_context=serialized_run_context,
+                        tool_def=tool.tool_def,
+                    ),
+                    ctx.deps,
+                ],
+                **tool_activity_config,
+            )
         )
-        return remap_dataclass_to_exception(result)

@@ -13,12 +13,9 @@ from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._run_context import TemporalRunContext
 from ._toolset import (
-    CallToolParamsData,
-    CallToolResultData,
+    CallToolParams,
+    CallToolResult,
     TemporalWrapperToolset,
-    ToolReturnData,
-    remap_dataclass_to_exception,
-    remap_exception_to_dataclass,
 )
 
 
@@ -38,7 +35,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
         self.tool_activity_config = tool_activity_config
         self.run_context_type = run_context_type
 
-        async def call_tool_activity(params: CallToolParamsData, deps: AgentDepsT) -> CallToolResultData:
+        async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
             name = params.name
             ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
             try:
@@ -52,11 +49,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
             # The tool args will already have been validated into their proper types in the `ToolManager`,
             # but `execute_activity` would have turned them into simple Python types again, so we need to re-validate them.
             args_dict = tool.args_validator.validate_python(params.tool_args)
-            try:
-                result = await self.wrapped.call_tool(name, args_dict, ctx, tool)
-                return ToolReturnData(result=result)
-            except Exception as e:
-                return remap_exception_to_dataclass(e)
+            return await self._wrap_call_tool_result(self.wrapped.call_tool(name, args_dict, ctx, tool))
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         call_tool_activity.__annotations__['deps'] = deps_type
@@ -87,17 +80,18 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
 
         tool_activity_config = self.activity_config | tool_activity_config
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        result = await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
-            activity=self.call_tool_activity,
-            args=[
-                CallToolParamsData(
-                    name=name,
-                    tool_args=tool_args,
-                    serialized_run_context=serialized_run_context,
-                    tool_def=None,
-                ),
-                ctx.deps,
-            ],
-            **tool_activity_config,
+        return self._unwrap_call_tool_result(
+            await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
+                activity=self.call_tool_activity,
+                args=[
+                    CallToolParams(
+                        name=name,
+                        tool_args=tool_args,
+                        serialized_run_context=serialized_run_context,
+                        tool_def=None,
+                    ),
+                    ctx.deps,
+                ],
+                **tool_activity_config,
+            )
         )
-        return remap_dataclass_to_exception(result)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
@@ -18,13 +18,7 @@ from ._run_context import TemporalRunContext
 
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
-class GetToolsParamsData:
-    serialized_run_context: Any
-
-
-@dataclass
-@with_config(ConfigDict(arbitrary_types_allowed=True))
-class CallToolParamsData:
+class CallToolParams:
     name: str
     tool_args: dict[str, Any]
     serialized_run_context: Any
@@ -32,29 +26,29 @@ class CallToolParamsData:
 
 
 @dataclass
-class ApprovalRequiredData:
+class _ApprovalRequired:
     kind: Literal['approval_required'] = 'approval_required'
 
 
 @dataclass
-class CallDeferredData:
+class _CallDeferred:
     kind: Literal['call_deferred'] = 'call_deferred'
 
 
 @dataclass
-class ModelRetryData:
+class _ModelRetry:
     message: str
     kind: Literal['model_retry'] = 'model_retry'
 
 
 @dataclass
-class ToolReturnData:
+class _ToolReturn:
     result: Any
     kind: Literal['tool_return'] = 'tool_return'
 
 
-CallToolResultData = Annotated[
-    ApprovalRequiredData | CallDeferredData | ModelRetryData | ToolReturnData,
+CallToolResult = Annotated[
+    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn,
     Discriminator('kind'),
 ]
 
@@ -77,29 +71,28 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         # Temporalized toolsets cannot be swapped out after the fact.
         return self
 
+    async def _wrap_call_tool_result(self, coro: Awaitable[Any]) -> CallToolResult:
+        try:
+            result = await coro
+            return _ToolReturn(result=result)
+        except ApprovalRequired:
+            return _ApprovalRequired()
+        except CallDeferred:
+            return _CallDeferred()
+        except ModelRetry as e:
+            return _ModelRetry(message=e.message)
 
-def remap_exception_to_dataclass(e: Exception) -> CallToolResultData:
-    try:
-        raise e
-    except ApprovalRequired:
-        return ApprovalRequiredData()
-    except CallDeferred:
-        return CallDeferredData()
-    except ModelRetry as e:
-        return ModelRetryData(message=e.message)
-
-
-def remap_dataclass_to_exception(o: CallToolResultData):
-    if isinstance(o, ApprovalRequiredData):
-        raise ApprovalRequired()
-    elif isinstance(o, CallDeferredData):
-        raise CallDeferred()
-    elif isinstance(o, ModelRetryData):
-        raise ModelRetry(o.message)
-    elif isinstance(o, ToolReturnData):
-        return o.result
-    else:
-        assert_never(o)
+    def _unwrap_call_tool_result(self, result: CallToolResult) -> Any:
+        if isinstance(result, _ToolReturn):
+            return result.result
+        elif isinstance(result, _ApprovalRequired):
+            raise ApprovalRequired()
+        elif isinstance(result, _CallDeferred):
+            raise CallDeferred()
+        elif isinstance(result, _ModelRetry):
+            raise ModelRetry(result.message)
+        else:
+            assert_never(result)
 
 
 def temporalize_toolset(
