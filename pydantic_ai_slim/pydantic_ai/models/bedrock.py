@@ -374,7 +374,7 @@ class BedrockConverseModel(Model):
         model_settings: BedrockModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
-        system_prompt, bedrock_messages = await self._map_messages(messages)
+        system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters)
         inference_config = self._map_inference_config(model_settings)
 
         params: ConverseRequestTypeDef = {
@@ -450,7 +450,7 @@ class BedrockConverseModel(Model):
         return tool_config
 
     async def _map_messages(  # noqa: C901
-        self, messages: list[ModelMessage]
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> tuple[list[SystemContentBlockTypeDef], list[MessageUnionTypeDef]]:
         """Maps a `pydantic_ai.Message` to the Bedrock `MessageUnionTypeDef`.
 
@@ -561,7 +561,7 @@ class BedrockConverseModel(Model):
             processed_messages.append(current_message)
             last_message = cast(dict[str, Any], current_message)
 
-        if instructions := self._get_instructions(messages):
+        if instructions := self._get_instructions(messages, model_request_parameters):
             system_prompt.insert(0, {'text': instructions})
 
         return system_prompt, processed_messages

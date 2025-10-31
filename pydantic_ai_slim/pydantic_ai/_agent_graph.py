@@ -140,7 +140,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     end_strategy: EndStrategy
     get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]]
 
-    output_schema: _output.OutputSchema[OutputDataT]
+    output_schema: _output.BaseOutputSchema[OutputDataT]
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
 
     history_processors: Sequence[HistoryProcessor[DepsT]]
@@ -374,9 +374,10 @@ async def _prepare_request_parameters(
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
     output_schema = ctx.deps.output_schema
-    output_object = None
-    if isinstance(output_schema, _output.NativeOutputSchema):
-        output_object = output_schema.object_def
+
+    prompted_output_template = (
+        output_schema.template if isinstance(output_schema, _output.PromptedOutputSchema) else None
+    )
 
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
@@ -391,7 +392,8 @@ async def _prepare_request_parameters(
         builtin_tools=ctx.deps.builtin_tools,
         output_mode=output_schema.mode,
         output_tools=output_tools,
-        output_object=output_object,
+        output_object=output_schema.object_def,
+        prompted_output_template=prompted_output_template,
         allow_text_output=output_schema.allows_text,
         allow_image_output=output_schema.allows_image,
     )
@@ -489,7 +491,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         message_history = _clean_message_history(message_history)
 
         model_request_parameters = await _prepare_request_parameters(ctx)
-        model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
 
         model_settings = ctx.deps.model_settings
         usage = ctx.state.usage
@@ -566,67 +567,67 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_schema = ctx.deps.output_schema
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
-                if not self.model_response.parts:
-                    # we got an empty response.
-                    # this sometimes happens with anthropic (and perhaps other models)
-                    # when the model has already returned text along side tool calls
-                    if text_processor := output_schema.text_processor:
-                        # in this scenario, if text responses are allowed, we return text from the most recent model
-                        # response, if any
-                        for message in reversed(ctx.state.message_history):
-                            if isinstance(message, _messages.ModelResponse):
-                                text = ''
-                                for part in message.parts:
-                                    if isinstance(part, _messages.TextPart):
-                                        text += part.content
-                                    elif isinstance(part, _messages.BuiltinToolCallPart):
-                                        # Text parts before a built-in tool call are essentially thoughts,
-                                        # not part of the final result output, so we reset the accumulated text
-                                        text = ''  # pragma: no cover
-                                if text:
-                                    self._next_node = await self._handle_text_response(ctx, text, text_processor)
-                                    return
-
-                    # Go back to the model request node with an empty request, which means we'll essentially
-                    # resubmit the most recent request that resulted in an empty response,
-                    # as the empty response and request will not create any items in the API payload,
-                    # in the hope the model will return a non-empty response this time.
-                    ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
-                    run_context = build_run_context(ctx)
-                    instructions = await ctx.deps.get_instructions(run_context)
-                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
-                        _messages.ModelRequest(parts=[], instructions=instructions)
-                    )
-                    return
-
-                text = ''
-                tool_calls: list[_messages.ToolCallPart] = []
-                files: list[_messages.BinaryContent] = []
-
-                for part in self.model_response.parts:
-                    if isinstance(part, _messages.TextPart):
-                        text += part.content
-                    elif isinstance(part, _messages.ToolCallPart):
-                        tool_calls.append(part)
-                    elif isinstance(part, _messages.FilePart):
-                        files.append(part.content)
-                    elif isinstance(part, _messages.BuiltinToolCallPart):
-                        # Text parts before a built-in tool call are essentially thoughts,
-                        # not part of the final result output, so we reset the accumulated text
-                        text = ''
-                        yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
-                    elif isinstance(part, _messages.BuiltinToolReturnPart):
-                        yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
-                    elif isinstance(part, _messages.ThinkingPart):
-                        pass
-                    else:
-                        assert_never(part)
-
-                # At the moment, we prioritize at least executing tool calls if they are present.
-                # In the future, we'd consider making this configurable at the agent or run level.
-                # This accounts for cases like anthropic returns that might contain a text response
-                # and a tool call response, where the text response just indicates the tool call will happen.
                 try:
+                    if not self.model_response.parts:
+                        # we got an empty response.
+                        # this sometimes happens with anthropic (and perhaps other models)
+                        # when the model has already returned text along side tool calls
+                        if text_processor := output_schema.text_processor:
+                            # in this scenario, if text responses are allowed, we return text from the most recent model
+                            # response, if any
+                            for message in reversed(ctx.state.message_history):
+                                if isinstance(message, _messages.ModelResponse):
+                                    text = ''
+                                    for part in message.parts:
+                                        if isinstance(part, _messages.TextPart):
+                                            text += part.content
+                                        elif isinstance(part, _messages.BuiltinToolCallPart):
+                                            # Text parts before a built-in tool call are essentially thoughts,
+                                            # not part of the final result output, so we reset the accumulated text
+                                            text = ''  # pragma: no cover
+                                    if text:
+                                        self._next_node = await self._handle_text_response(ctx, text, text_processor)
+                                        return
+
+                        # Go back to the model request node with an empty request, which means we'll essentially
+                        # resubmit the most recent request that resulted in an empty response,
+                        # as the empty response and request will not create any items in the API payload,
+                        # in the hope the model will return a non-empty response this time.
+                        ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
+                        run_context = build_run_context(ctx)
+                        instructions = await ctx.deps.get_instructions(run_context)
+                        self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                            _messages.ModelRequest(parts=[], instructions=instructions)
+                        )
+                        return
+
+                    text = ''
+                    tool_calls: list[_messages.ToolCallPart] = []
+                    files: list[_messages.BinaryContent] = []
+
+                    for part in self.model_response.parts:
+                        if isinstance(part, _messages.TextPart):
+                            text += part.content
+                        elif isinstance(part, _messages.ToolCallPart):
+                            tool_calls.append(part)
+                        elif isinstance(part, _messages.FilePart):
+                            files.append(part.content)
+                        elif isinstance(part, _messages.BuiltinToolCallPart):
+                            # Text parts before a built-in tool call are essentially thoughts,
+                            # not part of the final result output, so we reset the accumulated text
+                            text = ''
+                            yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
+                        elif isinstance(part, _messages.BuiltinToolReturnPart):
+                            yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
+                        elif isinstance(part, _messages.ThinkingPart):
+                            pass
+                        else:
+                            assert_never(part)
+
+                    # At the moment, we prioritize at least executing tool calls if they are present.
+                    # In the future, we'd consider making this configurable at the agent or run level.
+                    # This accounts for cases like anthropic returns that might contain a text response
+                    # and a tool call response, where the text response just indicates the tool call will happen.
                     alternatives: list[str] = []
                     if tool_calls:
                         async for event in self._handle_tool_calls(ctx, tool_calls):
