@@ -97,6 +97,8 @@ mcp = ["mcp>=1.12.3"]
 fastmcp = ["fastmcp>=2.12.0"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
+# UI
+ui = ["starlette>=0.45.3"]
 # A2A
 a2a = ["fasta2a>=0.4.1"]
 # AG-UI

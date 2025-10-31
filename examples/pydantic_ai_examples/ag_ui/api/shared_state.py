@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field
 
 from ag_ui.core import EventType, StateSnapshotEvent
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.ag_ui import StateDeps
+from pydantic_ai.ui import StateDeps
+from pydantic_ai.ui.ag_ui.app import AGUIApp
 
 
 class SkillLevel(str, Enum):
@@ -135,4 +136,4 @@ async def recipe_instructions(ctx: RunContext[StateDeps[RecipeSnapshot]]) -> str
     )
 
 
-app = agent.to_ag_ui(deps=StateDeps(RecipeSnapshot()))
+app = AGUIApp(agent, deps=StateDeps(RecipeSnapshot()))

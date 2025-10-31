@@ -56,10 +56,10 @@ with try_import() as vllm_imports_successful:
     import vllm  # type: ignore[reportMissingImports]
 
     # We try to load the vllm model to ensure it is available
-    try:  # pragma: no cover
+    try:  # pragma: no lax cover
         vllm.LLM('microsoft/Phi-3-mini-4k-instruct')  # type: ignore
-    except RuntimeError as e:  # pragma: no cover
-        if 'Found no NVIDIA driver' in str(e):
+    except RuntimeError as e:  # pragma: lax no cover
+        if 'Found no NVIDIA driver' in str(e) or 'Device string must not be empty' in str(e):
             # Treat as import failure
             raise ImportError('CUDA/NVIDIA driver not available') from e
         raise
