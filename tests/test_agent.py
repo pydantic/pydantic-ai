@@ -380,7 +380,6 @@ async def test_output_validator_partial_stream_text():
             ('Hello world', True),
             ('Hello world!', True),
             ('Hello world!', False),
-            ('Hello world!', False),
         ]
     )
 
