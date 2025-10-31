@@ -48,6 +48,7 @@ from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
@@ -4655,7 +4656,7 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
     messages_resp: list[ModelMessage] = [
         ModelResponse(parts=[TextPart(content=''), TextPart(content='')], kind='response'),
     ]
-    _, anthropic_messages = await model._map_message(messages_resp)  # type: ignore[attr-defined]
+    _, anthropic_messages = await model._map_message(messages_resp, ModelRequestParameters())  # type: ignore[attr-defined]
     assert len(anthropic_messages) == 0  # No messages should be added
 
 

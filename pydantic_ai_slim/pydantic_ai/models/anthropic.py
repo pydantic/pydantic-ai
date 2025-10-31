@@ -39,7 +39,7 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
-from ..settings import ModelSettings
+from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
@@ -240,6 +240,26 @@ class AnthropicModel(Model):
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
 
+    def prepare_request(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        # TODO (DouweM): Dedupe with super
+        settings = merge_model_settings(self.settings, model_settings)
+        if (
+            model_request_parameters.output_tools
+            and not model_request_parameters.allow_text_output
+            and settings
+            and (thinking := settings.get('anthropic_thinking'))
+            and thinking.get('type') == 'enabled'
+        ):
+            if model_request_parameters.output_mode is None:
+                model_request_parameters = replace(model_request_parameters, output_mode='prompted')
+            else:
+                raise UserError(
+                    'Anthropic does not support thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+                )
+        return super().prepare_request(model_settings, model_request_parameters)
+
     @overload
     async def _messages_create(
         self,
@@ -278,10 +298,6 @@ class AnthropicModel(Model):
         else:
             if not model_request_parameters.allow_text_output:
                 tool_choice = {'type': 'any'}
-                if (thinking := model_settings.get('anthropic_thinking')) and thinking.get('type') == 'enabled':
-                    raise UserError(
-                        'Anthropic does not support thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
-                    )
             else:
                 tool_choice = {'type': 'auto'}
 
@@ -446,9 +462,9 @@ class AnthropicModel(Model):
                 )
         return tools, mcp_servers, beta_features
 
-    async def _map_message(
+    async def _map_message(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
-    ) -> tuple[str, list[BetaMessageParam]]:  # noqa: C901
+    ) -> tuple[str, list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []

@@ -8,7 +8,7 @@ from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
@@ -39,7 +39,6 @@ from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec
-from ..profiles import ModelProfile
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import (
@@ -446,7 +445,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT] | None = None,
+        output_type: OutputSpec[Any] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -548,7 +547,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # We consider it a user error if a user tries to restrict the result type while having an output validator that
         # may change the result type from the restricted type to something else. Therefore, we consider the following
         # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
-        output_validators = cast(list[_output.OutputValidator[AgentDepsT, RunOutputDataT]], self._output_validators)
+        output_validators = self._output_validators
 
         output_toolset = self._output_toolset
         if output_schema != self._output_schema or output_validators:
@@ -596,7 +595,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings = None
             tracer = NoOpTracer()
 
-        graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
+        graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             prompt=user_prompt,
             new_message_index=len(message_history) if message_history else 0,
@@ -1399,13 +1398,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         return toolsets
 
+    @overload
+    def _prepare_output_schema(self, output_type: None) -> _output.BaseOutputSchema[OutputDataT]: ...
+
+    @overload
     def _prepare_output_schema(
-        self, output_type: OutputSpec[RunOutputDataT] | None
-    ) -> _output.BaseOutputSchema[RunOutputDataT]:
+        self, output_type: OutputSpec[RunOutputDataT]
+    ) -> _output.BaseOutputSchema[RunOutputDataT]: ...
+
+    def _prepare_output_schema(self, output_type: OutputSpec[Any] | None) -> _output.BaseOutputSchema[Any]:
         if output_type is not None:
             if self._output_validators:
                 raise exceptions.UserError('Cannot set a custom run `output_type` when the agent has output validators')
-            schema = _output.OutputSchema[RunOutputDataT].build(output_type)
+            schema = _output.OutputSchema.build(output_type)
         else:
             schema = self._output_schema
 

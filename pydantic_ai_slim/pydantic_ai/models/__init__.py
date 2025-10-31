@@ -306,7 +306,7 @@ class ModelRequestParameters:
     function_tools: list[ToolDefinition] = field(default_factory=list)
     builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list)
 
-    output_mode: OutputMode | None = None
+    output_mode: OutputMode | None = 'text'
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list)
     prompted_output_template: str | None = None
@@ -427,17 +427,20 @@ class Model(ABC):
             )
 
         if not model_request_parameters.output_mode:
-            if model_request_parameters.output_tools or model_request_parameters.output_object:
-                output_mode = self.profile.default_structured_output_mode
-            else:
-                output_mode = 'text'
-            model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
+            assert model_request_parameters.output_tools or model_request_parameters.output_object
+            output_mode = self.profile.default_structured_output_mode
+            model_request_parameters = replace(
+                model_request_parameters,
+                output_mode=output_mode,
+                allow_text_output=output_mode in ('native', 'prompted'),
+            )
 
         if model_request_parameters.output_mode in ('native', 'prompted'):
             if not model_request_parameters.output_object:
                 raise UserError('An `output_object` is required when using `NativeOutput` or `PromptedOutput`.')
 
             if model_request_parameters.output_mode == 'native' and not self.profile.supports_json_schema_output:
+                # TODO (DouweM): Call `NativeOutputSchema.raise_if_unsupported(self.profile)`?
                 raise UserError('Native structured output is not supported by this model.')
 
             if model_request_parameters.output_tools:
@@ -449,7 +452,7 @@ class Model(ABC):
                 )
         else:
             if model_request_parameters.output_mode == 'tool':
-                if not model_request_parameters.output_tools:
+                if not model_request_parameters.output_tools and not model_request_parameters.function_tools:
                     raise UserError('An `output_tools` list is required when using `ToolOutput`.')
 
                 if not self.profile.supports_tools:
@@ -521,7 +524,7 @@ class Model(ABC):
                     break
 
         # If we don't have two requests, and we didn't already return instructions, there are definitely not any:
-        if instructions is not None and len(last_two_requests) == 2:
+        if instructions is None and len(last_two_requests) == 2:
             most_recent_request = last_two_requests[0]
             second_most_recent_request = last_two_requests[1]
 
@@ -542,7 +545,8 @@ class Model(ABC):
             if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
                 instructions = second_most_recent_request.instructions
 
-        # TODO (DouweM): This will now not be included in ModelRequest.instructions anymore, nor in OTel.
+        # TODO (DouweM): This will now not be included in ModelRequest.instructions anymore, nor in OTel. -- especially the latter may be a problem?
+        # Unless full model_request_parameters (after processing by model) are already sent
         if (
             model_request_parameters
             and model_request_parameters.output_mode == 'prompted'

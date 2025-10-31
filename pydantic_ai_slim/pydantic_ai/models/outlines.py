@@ -308,10 +308,9 @@ class OutlinesModel(Model):
         if model_request_parameters.output_object:
             output_type = JsonSchema(model_request_parameters.output_object.json_schema)
         else:
-            instructions = None
             output_type = None
 
-        prompt = await self._format_prompt(messages, model_request_parameters, instructions)
+        prompt = await self._format_prompt(messages, model_request_parameters)
         inference_kwargs = self.format_inference_kwargs(model_settings)
 
         return prompt, output_type, inference_kwargs

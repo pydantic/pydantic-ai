@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import base64
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 from uuid import uuid4
@@ -224,6 +224,18 @@ class GoogleModel(Model):
         """The model provider."""
         return self._provider.name
 
+    def prepare_request(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        if model_request_parameters.builtin_tools and model_request_parameters.output_tools:
+            if model_request_parameters.output_mode is None:
+                model_request_parameters = replace(model_request_parameters, output_mode='prompted')
+            else:
+                raise UserError(
+                    'Google does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+                )
+        return super().prepare_request(model_settings, model_request_parameters)
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -320,10 +332,6 @@ class GoogleModel(Model):
         ]
 
         if model_request_parameters.builtin_tools:
-            if model_request_parameters.output_tools:
-                raise UserError(
-                    'Gemini does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
-                )
             if model_request_parameters.function_tools:
                 raise UserError('Gemini does not support user tools and built-in tools at the same time.')
 
@@ -401,7 +409,8 @@ class GoogleModel(Model):
         response_schema = None
         if model_request_parameters.output_mode == 'native':
             if tools:
-                # TODO (DouweM): Use tool output automatically in this case. In customize_request_parameters?
+                # TODO (DouweM): Use tool output automatically in this case. In prepare_request, if model_request_parameters.output_mode is None and default_structured_output_mode is 'native', set to `tool`.
+                # Still raise this error if NativeOutput used explicitly?
                 raise UserError(
                     'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
                 )

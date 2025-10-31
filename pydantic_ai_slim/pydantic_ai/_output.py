@@ -26,7 +26,6 @@ from .output import (
     OutputSpec,
     OutputTypeOrFunction,
     PromptedOutput,
-    StructuredOutputMode,
     TextOutput,
     TextOutputFunc,
     ToolOutput,
@@ -233,30 +232,6 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
     """Model the final output from an agent run."""
 
     # TODO (DouweM): Rename/merge this, BaseOutputSchema, and OutputSchemaWithoutMode
-
-    @classmethod
-    @overload
-    def build(
-        cls,
-        output_spec: OutputSpec[OutputDataT],
-        *,
-        default_mode: StructuredOutputMode,
-        name: str | None = None,
-        description: str | None = None,
-        strict: bool | None = None,
-    ) -> OutputSchema[OutputDataT]: ...
-
-    @classmethod
-    @overload
-    def build(
-        cls,
-        output_spec: OutputSpec[OutputDataT],
-        *,
-        default_mode: None = None,
-        name: str | None = None,
-        description: str | None = None,
-        strict: bool | None = None,
-    ) -> BaseOutputSchema[OutputDataT]: ...
 
     @classmethod
     def build(  # noqa: C901
@@ -555,6 +530,7 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
         """Get instructions to tell model to output JSON matching the schema."""
         template = self.template or default_template
         object_def = self.object_def
+        assert object_def is not None
         return self.build_instructions(template, object_def)
 
 
