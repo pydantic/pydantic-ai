@@ -684,6 +684,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
+        if infer_name and self.name is None:
+            if frame := inspect.currentframe():  # pragma: no branch
+                self._infer_name(frame)
 
         async def _consume_stream():
             async with self.run_stream(

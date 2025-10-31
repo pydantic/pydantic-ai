@@ -135,13 +135,7 @@ async def test_streamed_text_response():
         )
 
 
-@pytest.fixture
-def close_cached_httpx_client():
-    """Override the global fixture to avoid async context issues in sync tests."""
-    yield
-
-
-def test_streamed_text_sync_response(close_cached_httpx_client):  # type: ignore[reportUnknownParameterType]
+def test_streamed_text_sync_response():
     m = TestModel()
 
     test_agent = Agent(m)
@@ -152,7 +146,7 @@ def test_streamed_text_sync_response(close_cached_httpx_client):  # type: ignore
         return f'{x}-apple'
 
     result = test_agent.run_stream_sync('Hello')
-    # assert test_agent.name == 'test_agent'
+    assert test_agent.name == 'test_agent'
     assert not result.is_complete
     assert result.all_messages() == snapshot(
         [
