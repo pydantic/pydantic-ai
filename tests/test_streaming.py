@@ -393,12 +393,12 @@ def test_streamed_text_stream_sync():
 
     agent = Agent(m)
 
-    with agent.run_stream_sync('Hello') as result:
-        # typehint to test (via static typing) that the stream type is correctly inferred
-        chunks: list[str] = [c for c in result.stream_text_sync()]
-        # one chunk with `stream_text()` due to group_by_temporal
-        assert chunks == snapshot(['The cat sat on the mat.'])
-        assert result.is_complete
+    result = agent.run_stream_sync('Hello')
+    # typehint to test (via static typing) that the stream type is correctly inferred
+    chunks: list[str] = [c for c in result.stream_text_sync()]
+    # one chunk with `stream_text()` due to group_by_temporal
+    assert chunks == snapshot(['The cat sat on the mat.'])
+    assert result.is_complete
 
     with agent.run_stream_sync('Hello') as result:
         # typehint to test (via static typing) that the stream type is correctly inferred
