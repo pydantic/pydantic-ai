@@ -9,8 +9,6 @@ from typing import TYPE_CHECKING, Generic, cast, overload
 from pydantic import ValidationError
 from typing_extensions import TypeVar, deprecated
 
-from pydantic_graph._utils import get_event_loop
-
 from . import _utils, exceptions, messages as _messages, models
 from ._output import (
     OutputDataT_inv,
@@ -563,7 +561,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         This is a convenience method that wraps [`get_output()`][pydantic_ai.result.StreamedRunResult.get_output] with `loop.run_until_complete(...)`.
         You therefore can't use this method inside async code or if there's an active event loop.
         """
-        return get_event_loop().run_until_complete(self.get_output())
+        return _utils.get_event_loop().run_until_complete(self.get_output())
 
     @property
     def response(self) -> _messages.ModelResponse:
@@ -641,7 +639,7 @@ class FinalResult(Generic[OutputDataT]):
 
 
 def _blocking_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
-    loop = get_event_loop()
+    loop = _utils.get_event_loop()
     while True:
         try:
             yield loop.run_until_complete(async_iter.__anext__())
