@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import Enum
 from textwrap import dedent
 
 from pydantic import BaseModel, Field
 
 from ag_ui.core import EventType, StateSnapshotEvent
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.ag_ui import StateDeps
+from pydantic_ai.ui import StateDeps
+from pydantic_ai.ui.ag_ui.app import AGUIApp
 
 
-class SkillLevel(StrEnum):
+class SkillLevel(str, Enum):
     """The level of skill required for the recipe."""
 
     BEGINNER = 'Beginner'
@@ -20,7 +21,7 @@ class SkillLevel(StrEnum):
     ADVANCED = 'Advanced'
 
 
-class SpecialPreferences(StrEnum):
+class SpecialPreferences(str, Enum):
     """Special preferences for the recipe."""
 
     HIGH_PROTEIN = 'High Protein'
@@ -32,7 +33,7 @@ class SpecialPreferences(StrEnum):
     VEGAN = 'Vegan'
 
 
-class CookingTime(StrEnum):
+class CookingTime(str, Enum):
     """The cooking time of the recipe."""
 
     FIVE_MIN = '5 min'
@@ -84,7 +85,7 @@ class RecipeSnapshot(BaseModel):
     )
 
 
-agent = Agent('openai:gpt-4o-mini', deps_type=StateDeps[RecipeSnapshot])
+agent = Agent('openai:gpt-5-mini', deps_type=StateDeps[RecipeSnapshot])
 
 
 @agent.tool_plain
@@ -135,4 +136,4 @@ async def recipe_instructions(ctx: RunContext[StateDeps[RecipeSnapshot]]) -> str
     )
 
 
-app = agent.to_ag_ui(deps=StateDeps(RecipeSnapshot()))
+app = AGUIApp(agent, deps=StateDeps(RecipeSnapshot()))

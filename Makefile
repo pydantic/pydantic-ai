@@ -50,12 +50,9 @@ lint: ## Lint the code
 
 .PHONY: typecheck-pyright
 typecheck-pyright:
-ifeq ($(DETECTED_OS),Windows)
-	@set PYRIGHT_PYTHON_IGNORE_WARNINGS=1 & uv run pyright
-else
+	@# To typecheck for a specific version of python, run 'make install-all-python' then set environment variable PYRIGHT_PYTHON=3.10 or similar
 	@# PYRIGHT_PYTHON_IGNORE_WARNINGS avoids the overhead of making a request to github on every invocation
-	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright
-endif
+	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
 
 .PHONY: typecheck-mypy
 typecheck-mypy:
@@ -69,7 +66,8 @@ typecheck-both: typecheck-pyright typecheck-mypy
 
 .PHONY: test
 test: ## Run tests and collect coverage data
-	uv run coverage run -m pytest -n auto --dist=loadgroup --durations=20
+	@# To test using a specific version of python, run 'make install-all-python' then set environment variable PYTEST_PYTHON=3.10 or similar
+	$(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) coverage run -m pytest -n auto --dist=loadgroup --durations=20
 	@uv run coverage combine
 	@uv run coverage report
 

@@ -9,7 +9,6 @@ from typing import Any, Literal, cast
 from unittest.mock import Mock
 
 import pytest
-from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
@@ -18,19 +17,14 @@ from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     DocumentUrl,
-    FinalResultEvent,
     ImageUrl,
     ModelRequest,
     ModelResponse,
     ModelRetry,
-    PartDeltaEvent,
-    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
-    TextPartDelta,
     ThinkingPart,
-    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -38,6 +32,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.result import RunUsage
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
@@ -562,13 +557,7 @@ async def test_stream_structured(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {},
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{}, {'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
         assert result.is_complete
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
@@ -591,13 +580,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
         assert result.is_complete
 
@@ -978,35 +961,32 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
     )
     agent = Agent(m)
 
-    event_parts: list[Any] = []
-    async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
-        async for node in agent_run:
-            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
-                async with node.stream(agent_run.ctx) as request_stream:
-                    async for event in request_stream:
-                        event_parts.append(event)
+    result: AgentRunResult | None = None
+    async for event in agent.run_stream_events(user_prompt='How do I cross the street?'):
+        if isinstance(event, AgentRunResultEvent):
+            result = event.result
 
-    assert event_parts == snapshot(
-        IsListOrTuple(
-            positions={
-                0: PartStartEvent(index=0, part=ThinkingPart(content='')),
-                1: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='\n')),
-                2: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Okay')),
-                3: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=',')),
-                4: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the')),
-                5: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' user')),
-                6: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' is')),
-                7: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' asking')),
-                413: PartStartEvent(index=1, part=TextPart(content='Cross')),
-                414: FinalResultEvent(tool_name=None, tool_call_id=None),
-                415: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='ing')),
-                416: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' the')),
-                417: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' street')),
-                418: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' safely')),
-                419: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' requires')),
-                420: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' attent')),
-                421: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='iveness')),
-            },
-            length=1062,
-        )
+    assert result is not None
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content=IsStr()),
+                    TextPart(content=IsStr()),
+                ],
+                model_name='Qwen/Qwen3-235B-A22B',
+                timestamp=IsDatetime(),
+                provider_name='huggingface',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='chatcmpl-357f347a3f5d4897b36a128fb4e4cf7b',
+            ),
+        ]
     )

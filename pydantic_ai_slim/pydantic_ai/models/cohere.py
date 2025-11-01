@@ -62,15 +62,8 @@ except ImportError as _import_error:
 LatestCohereModelNames = Literal[
     'c4ai-aya-expanse-32b',
     'c4ai-aya-expanse-8b',
-    'command',
-    'command-light',
-    'command-light-nightly',
     'command-nightly',
-    'command-r',
-    'command-r-03-2024',
     'command-r-08-2024',
-    'command-r-plus',
-    'command-r-plus-04-2024',
     'command-r-plus-08-2024',
     'command-r7b-12-2024',
 ]

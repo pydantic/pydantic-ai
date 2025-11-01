@@ -277,7 +277,7 @@ class HuggingFaceModel(Model):
 
         items: list[ModelResponsePart] = []
 
-        if content is not None:
+        if content:
             items.extend(split_content_into_text_and_thinking(content, self.profile.thinking_tags))
         if tool_calls is not None:
             for c in tool_calls:
@@ -482,7 +482,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
 
             # Handle the text part of the response
             content = choice.delta.content
-            if content is not None:
+            if content:
                 maybe_event = self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,
