@@ -6,6 +6,7 @@ No special handling is required for this feature.
 from __future__ import annotations
 
 from pydantic_ai import Agent
+from pydantic_ai.ui.ag_ui.app import AGUIApp
 
 agent = Agent('openai:gpt-5-mini')
-app = agent.to_ag_ui()
+app = AGUIApp(agent)

@@ -6,9 +6,9 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from pydantic_ai import Agent
+from pydantic_ai.ui.ag_ui.app import AGUIApp
 
 agent = Agent('openai:gpt-5-mini')
-app = agent.to_ag_ui()
 
 
 @agent.tool_plain
@@ -23,3 +23,6 @@ async def current_time(timezone: str = 'UTC') -> str:
     """
     tz: ZoneInfo = ZoneInfo(timezone)
     return datetime.now(tz=tz).isoformat()
+
+
+app = AGUIApp(agent)

@@ -46,7 +46,7 @@ requires-python = ">=3.10"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,logfire]=={{ version }}",
+    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,logfire,ui]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -54,6 +54,11 @@ examples = ["pydantic-ai-examples=={{ version }}"]
 a2a = ["fasta2a>=0.4.1"]
 dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
 prefect = ["pydantic-ai-slim[prefect]=={{ version }}"]
+outlines-transformers = ["pydantic-ai-slim[outlines-transformers]=={{ version }}"]
+outlines-llamacpp = ["pydantic-ai-slim[outlines-llamacpp]=={{ version }}"]
+outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}"]
+outlines-sglang = ["pydantic-ai-slim[outlines-sglang]=={{ version }}"]
+outlines-vllm-offline = ["pydantic-ai-slim[outlines-vllm-offline]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
@@ -105,11 +110,6 @@ dev = [
     "pip>=25.2",
     "genai-prices>=0.0.28",
     "mcp-run-python>=0.0.20",
-    # Needed to test Outlines (not included in the default installation)
-    "pydantic-ai-slim[outlines-transformers]",
-    "pydantic-ai-slim[outlines-llamacpp]",
-    "pydantic-ai-slim[outlines-mlxlm]",
-    "pydantic-ai-slim[outlines-sglang]",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [
