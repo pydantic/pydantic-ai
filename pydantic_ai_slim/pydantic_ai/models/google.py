@@ -19,9 +19,9 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    DocumentUrl,
     FilePart,
     FileUrl,
-    DocumentUrl,
     FinishReason,
     ModelMessage,
     ModelRequest,
@@ -568,9 +568,9 @@ class GoogleModel(Model):
                 if isinstance(item, str):
                     content.append({'text': item})
                 elif isinstance(item, BinaryContent):
-                    if self._is_text_like_media_type(item.media_type):
+                    if BinaryContent.is_text_like_media_type(item.media_type):
                         content.append(
-                            self._inline_text_file_part(
+                            BinaryContent.inline_text_file_part(
                                 item.data.decode('utf-8'),
                                 media_type=item.media_type,
                                 identifier=item.identifier,
@@ -584,10 +584,10 @@ class GoogleModel(Model):
                         content.append(part_dict)
 
                 elif isinstance(item, DocumentUrl):
-                    if self._is_text_like_media_type(item.media_type):
+                    if DocumentUrl.is_text_like_media_type(item.media_type):
                         downloaded_text = await download_item(item, data_format='text')
                         content.append(
-                            self._inline_text_file_part(
+                            DocumentUrl.inline_text_file_part(
                                 downloaded_text['data'],
                                 media_type=item.media_type,
                                 identifier=item.identifier,
@@ -628,28 +628,6 @@ class GoogleModel(Model):
                     assert_never(item)
 
             return content
-
-    @staticmethod
-    def _is_text_like_media_type(media_type: str) -> bool:
-        return (
-            media_type.startswith('text/')
-            or media_type == 'application/json'
-            or media_type.endswith('+json')
-            or media_type == 'application/xml'
-            or media_type.endswith('+xml')
-            or media_type in ('application/x-yaml', 'application/yaml')
-        )
-
-    @staticmethod
-    def _inline_text_file_part(text: str, *, media_type: str, identifier: str):
-        text = '\n'.join(
-            [
-                f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----',
-                text,
-                f'-----END FILE id="{identifier}"-----',
-            ]
-        )
-        return {'text': text}
 
     def _map_response_schema(self, o: OutputObjectDefinition) -> dict[str, Any]:
         response_schema = o.json_schema.copy()

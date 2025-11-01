@@ -458,6 +458,27 @@ class DocumentUrl(FileUrl):
         except KeyError as e:
             raise ValueError(f'Unknown document media type: {media_type}') from e
 
+    @staticmethod
+    def is_text_like_media_type(media_type: str) -> bool:
+        return (
+            media_type.startswith('text/')
+            or media_type == 'application/json'
+            or media_type.endswith('+json')
+            or media_type == 'application/xml'
+            or media_type.endswith('+xml')
+            or media_type in ('application/x-yaml', 'application/yaml')
+        )
+
+    @staticmethod
+    def inline_text_file_part(text: str, *, media_type: str, identifier: str):
+        text = '\n'.join(
+            [
+                f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----',
+                text,
+                f'-----END FILE id="{identifier}"-----',
+            ]
+        )
+        return {'text': text}
 
 @dataclass(init=False, repr=False)
 class BinaryContent:
@@ -515,6 +536,15 @@ class BinaryContent:
             )
         else:
             return bc  # pragma: no cover
+        
+    @staticmethod
+    def is_text_like_media_type(mediatype: str) -> bool:
+      return DocumentUrl.is_text_like_media_type(mediatype)
+
+    @staticmethod
+    def inline_text_file_part(text: str, *, media_type: str, identifier: str):
+      return DocumentUrl.inline_text_file_part(text, media_type=media_type, identifier=identifier)
+    
 
     @classmethod
     def from_data_uri(cls, data_uri: str) -> Self:
