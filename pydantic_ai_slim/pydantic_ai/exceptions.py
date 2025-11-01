@@ -24,7 +24,6 @@ __all__ = (
     'UsageLimitExceeded',
     'ModelHTTPError',
     'MCPError',
-    'MCPServerCapabilitiesError',
     'MCPServerError',
     'IncompleteToolCall',
     'FallbackExceptionGroup',
@@ -174,10 +173,6 @@ class MCPError(RuntimeError):
 
     def __str__(self) -> str:
         return self.message
-
-
-class MCPServerCapabilitiesError(MCPError):
-    """Raised when attempting to access server capabilities that aren't present."""
 
 
 class MCPServerError(MCPError):

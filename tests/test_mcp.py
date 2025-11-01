@@ -26,7 +26,6 @@ from pydantic_ai import (
 from pydantic_ai._mcp import Resource, ServerCapabilities
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import (
-    MCPServerCapabilitiesError,
     MCPServerError,
     ModelRetry,
     UnexpectedModelBehavior,
@@ -1546,14 +1545,47 @@ async def test_read_resource_template(run_context: RunContext[int]):
 
 
 async def test_read_resource_not_found(mcp_server: MCPServerStdio) -> None:
-    """Test that read_resource raises MCPServerError for non-existent resources."""
+    """Test that read_resource raises MCPServerError for non-existent resources with non-standard error codes."""
     async with mcp_server:
+        # FastMCP uses error code 0 instead of -32002, so it should raise
         with pytest.raises(MCPServerError, match='Unknown resource: resource://does_not_exist') as exc_info:
             await mcp_server.read_resource('resource://does_not_exist')
 
         # Verify the exception has the expected attributes
         assert exc_info.value.code == 0
         assert exc_info.value.message == 'Unknown resource: resource://does_not_exist'
+
+
+async def test_read_resource_not_found_mcp_spec(mcp_server: MCPServerStdio) -> None:
+    """Test that read_resource returns None for MCP spec error code -32002 (resource not found)."""
+    # As per https://modelcontextprotocol.io/specification/2025-06-18/server/resources#error-handling
+    mcp_error = McpError(error=ErrorData(code=-32002, message='Resource not found'))
+
+    async with mcp_server:
+        with patch.object(
+            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            'read_resource',
+            new=AsyncMock(side_effect=mcp_error),
+        ):
+            result = await mcp_server.read_resource('resource://missing')
+            assert result is None
+
+
+async def test_read_resource_empty_contents(mcp_server: MCPServerStdio) -> None:
+    """Test that read_resource returns None when server returns empty contents."""
+    from mcp.types import ReadResourceResult
+
+    # Mock a result with empty contents
+    empty_result = ReadResourceResult(contents=[])
+
+    async with mcp_server:
+        with patch.object(
+            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            'read_resource',
+            new=AsyncMock(return_value=empty_result),
+        ):
+            result = await mcp_server.read_resource('resource://empty')
+            assert result is None
 
 
 async def test_list_resources_error(mcp_server: MCPServerStdio) -> None:
@@ -1645,16 +1677,19 @@ async def test_capabilities(mcp_server: MCPServerStdio) -> None:
 
 
 async def test_resource_methods_without_capability(mcp_server: MCPServerStdio) -> None:
-    """Test that resource methods raise MCPServerCapabilitiesError when resources capability is not available."""
+    """Test that resource methods return empty values when resources capability is not available."""
     async with mcp_server:
         # Mock the capabilities to not support resources
         mock_capabilities = ServerCapabilities(resources=False)
         with patch.object(mcp_server, '_server_capabilities', mock_capabilities):
-            with pytest.raises(MCPServerCapabilitiesError, match='Server does not support resources capability'):
-                await mcp_server.list_resources()
+            # list_resources should return empty list
+            result = await mcp_server.list_resources()
+            assert result == []
 
-            with pytest.raises(MCPServerCapabilitiesError, match='Server does not support resources capability'):
-                await mcp_server.list_resource_templates()
+            # list_resource_templates should return empty list
+            result = await mcp_server.list_resource_templates()
+            assert result == []
 
-            with pytest.raises(MCPServerCapabilitiesError, match='Server does not support resources capability'):
-                await mcp_server.read_resource('resource://test')
+            # read_resource should return None
+            result = await mcp_server.read_resource('resource://test')
+            assert result is None
