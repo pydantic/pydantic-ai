@@ -540,6 +540,7 @@ class BinaryContent:
         It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
         distinguish multiple files.
         """
+        print(self._identifier)
         return self._identifier or _multi_modal_content_identifier(self.data)
 
     @property

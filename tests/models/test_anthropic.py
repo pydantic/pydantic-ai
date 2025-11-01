@@ -4630,14 +4630,14 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
     messages_empty_string: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='')], kind='request'),
     ]
-    _, anthropic_messages = await model._map_message(messages_empty_string)  # type: ignore[attr-defined]
+    _, anthropic_messages = await model._map_message(messages_empty_string, ModelRequestParameters())  # type: ignore[attr-defined]
     assert anthropic_messages == snapshot([])  # Empty content should be filtered out
 
     # Test _map_message with list containing empty strings in user prompt
     messages_mixed_content: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content=['', 'Hello', '', 'World'])], kind='request'),
     ]
-    _, anthropic_messages = await model._map_message(messages_mixed_content)  # type: ignore[attr-defined]
+    _, anthropic_messages = await model._map_message(messages_mixed_content, ModelRequestParameters())  # type: ignore[attr-defined]
     assert anthropic_messages == snapshot(
         [{'role': 'user', 'content': [{'text': 'Hello', 'type': 'text'}, {'text': 'World', 'type': 'text'}]}]
     )
@@ -4648,7 +4648,7 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
         ModelResponse(parts=[TextPart(content='')], kind='response'),  # Empty response
         ModelRequest(parts=[UserPromptPart(content='Hello')], kind='request'),
     ]
-    _, anthropic_messages = await model._map_message(messages)  # type: ignore[attr-defined]
+    _, anthropic_messages = await model._map_message(messages, ModelRequestParameters())  # type: ignore[attr-defined]
     # The empty assistant message should be filtered out
     assert anthropic_messages == snapshot([{'role': 'user', 'content': [{'text': 'Hello', 'type': 'text'}]}])
 
@@ -4872,14 +4872,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                         content='What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[
@@ -4910,14 +4903,7 @@ Don't include any text or Markdown fencing before or after.\
                         tool_call_id='toolu_01ArHq5f2wxRpRF2PVQcKExM',
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -4966,14 +4952,7 @@ async def test_anthropic_prompted_output_multiple(allow_model_requests: None, an
                         content='What is the largest city in Mexico?',
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[

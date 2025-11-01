@@ -42,6 +42,7 @@ from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
@@ -1632,14 +1633,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[
@@ -1666,14 +1660,7 @@ Don't include any text or Markdown fencing before or after.\
                         tool_call_id='call_FrlL4M0CbAy8Dhv4VqF1Shom',
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[
@@ -1723,14 +1710,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[
@@ -1757,14 +1737,7 @@ Don't include any text or Markdown fencing before or after.\
                         tool_call_id='call_my4OyoVXRT0m7bLWmsxcaCQI',
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[
@@ -2373,7 +2346,9 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
         ]
     )
 
-    _, openai_messages = await model._map_messages(result.all_messages(), model_settings=model.settings or {})  # type: ignore[reportPrivateUsage]
+    _, openai_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
+        result.all_messages(), model_settings=model.settings or {}, model_request_parameters=ModelRequestParameters()
+    )
     assert openai_messages == snapshot(
         [
             {'role': 'user', 'content': 'What is 2+2?'},
@@ -2443,7 +2418,9 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
         ]
     )
 
-    _, openai_messages = await model._map_messages(result.all_messages(), model_settings=model.settings or {})  # type: ignore[reportPrivateUsage]
+    _, openai_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
+        result.all_messages(), model_settings=model.settings or {}, model_request_parameters=ModelRequestParameters()
+    )
     assert openai_messages == snapshot(
         [
             {'role': 'user', 'content': 'What is 2+2?'},
@@ -3571,7 +3548,9 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
         ]
     )
 
-    _, openai_messages = await model._map_messages(messages, model_settings=model.settings or {})  # type: ignore[reportPrivateUsage]
+    _, openai_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
+        messages, model_settings=model.settings or {}, model_request_parameters=ModelRequestParameters()
+    )
     assert openai_messages == snapshot(
         [
             {'role': 'user', 'content': 'What is the meaning of life?'},
@@ -6052,14 +6031,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                         content='Generate an image of an axolotl.',
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"species": {"type": "string"}, "name": {"type": "string"}}, "required": ["species", "name"], "title": "Animal", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[
@@ -7290,7 +7262,9 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
     result = await agent.run('What is the meaning of life?')
     messages = result.all_messages()
 
-    _, openai_messages = await model._map_messages(messages, model_settings=model.settings or {})  # type: ignore[reportPrivateUsage]
+    _, openai_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
+        messages, model_settings=model.settings or {}, model_request_parameters=ModelRequestParameters()
+    )
     assert openai_messages == snapshot(
         [
             {'role': 'user', 'content': 'What is the meaning of life?'},
