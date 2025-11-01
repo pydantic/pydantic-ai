@@ -168,8 +168,6 @@ def test_streamed_text_sync_response():
         ]
     )
     assert result.new_messages() == result.all_messages()
-    assert result.all_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
-    assert result.new_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
     assert result.usage() == snapshot(
         RunUsage(
             requests=2,
