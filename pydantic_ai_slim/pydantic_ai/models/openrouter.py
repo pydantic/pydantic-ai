@@ -1,9 +1,8 @@
-import re
 from dataclasses import asdict, dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal, assert_never, cast
 
 from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletion, ChatCompletionMessage, ChatCompletionMessageParam
+from openai.types import chat
 from openai.types.chat.chat_completion import Choice
 from pydantic import AliasChoices, BaseModel, Field, TypeAdapter
 from typing_extensions import TypedDict
@@ -11,9 +10,13 @@ from typing_extensions import TypedDict
 from .. import _utils
 from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
 from ..messages import (
-    ModelMessage,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
+    FilePart,
     ModelResponse,
+    TextPart,
     ThinkingPart,
+    ToolCallPart,
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
@@ -323,7 +326,7 @@ class OpenRouterThinkingPart(ThinkingPart):
         return _reasoning_detail_adapter.validate_python(asdict(self)).model_dump()
 
 
-class OpenRouterCompletionMessage(ChatCompletionMessage):
+class OpenRouterCompletionMessage(chat.ChatCompletionMessage):
     """Wrapped chat completion message with OpenRouter specific attributes."""
 
     reasoning: str | None = None
@@ -349,7 +352,7 @@ class OpenRouterChoice(Choice):
     """A wrapped chat completion message with OpenRouter specific attributes."""
 
 
-class OpenRouterChatCompletion(ChatCompletion):
+class OpenRouterChatCompletion(chat.ChatCompletion):
     """Wraps OpenAI chat completion with OpenRouter specific attributes."""
 
     provider: str
@@ -419,8 +422,8 @@ class OpenRouterModel(OpenAIChatModel):
         new_settings = _openrouter_settings_to_openai_settings(cast(OpenRouterModelSettings, merged_settings or {}))
         return new_settings, customized_parameters
 
-    def _process_response(self, response: ChatCompletion | str) -> ModelResponse:
-        if not isinstance(response, ChatCompletion):
+    def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
+        if not isinstance(response, chat.ChatCompletion):
             raise UnexpectedModelBehavior(
                 'Invalid response from OpenRouter chat completions endpoint, expected JSON data'
             )
@@ -448,32 +451,38 @@ class OpenRouterModel(OpenAIChatModel):
         provider_details['native_finish_reason'] = choice.native_finish_reason
 
         if reasoning_details := choice.message.reasoning_details:
-            new_parts: list[ThinkingPart] = [
-                OpenRouterThinkingPart.from_reasoning_detail(reasoning) for reasoning in reasoning_details
-            ]
-
+            new_parts = [OpenRouterThinkingPart.from_reasoning_detail(reasoning) for reasoning in reasoning_details]
             model_response.parts = [*new_parts, *model_response.parts]
 
         model_response.provider_details = provider_details
 
         return model_response
 
-    async def _map_messages(self, messages: list[ModelMessage]) -> list[ChatCompletionMessageParam]:
-        """Maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam` and adds OpenRouter specific parameters."""
-        openai_messages = await super()._map_messages(messages)
-
-        for message, openai_message in zip(messages, openai_messages):
-            if isinstance(message, ModelResponse):
-                if reasoning_details := [
-                    part.into_reasoning_detail()
-                    for part in message.parts
-                    if isinstance(part, OpenRouterThinkingPart) and part.provider_name == self.system
-                ]:
-                    openai_message['reasoning_details'] = reasoning_details  # type: ignore[reportGeneralTypeIssues]
-
-            if openai_message['role'] == 'assistant' and isinstance(
-                contents := openai_message.get('content'), str
-            ):  # pragma: lax no cover
-                openai_message['content'] = re.sub(r'<think>.*?</think>\s*', '', contents, flags=re.DOTALL).strip()
-
-        return openai_messages
+    def _map_model_response(self, message: ModelResponse) -> chat.ChatCompletionMessageParam:
+        texts: list[str] = []
+        tool_calls: list[chat.ChatCompletionMessageFunctionToolCallParam] = []
+        reasoning_details: list[dict[str, Any]] = []
+        for item in message.parts:
+            if isinstance(item, TextPart):
+                texts.append(item.content)
+            elif isinstance(item, ThinkingPart):
+                if isinstance(item, OpenRouterThinkingPart) and item.provider_name == self.system:
+                    reasoning_details.append(item.into_reasoning_detail())
+            elif isinstance(item, ToolCallPart):
+                tool_calls.append(self._map_tool_call(item))
+            elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
+                pass
+            elif isinstance(item, FilePart):  # pragma: no cover
+                pass
+            else:
+                assert_never(item)
+        message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
+        if texts:
+            message_param['content'] = '\n\n'.join(texts)
+        else:
+            message_param['content'] = None
+        if tool_calls:
+            message_param['tool_calls'] = tool_calls
+        if reasoning_details:
+            message_param['reasoning_details'] = reasoning_details  # type: ignore[reportGeneralTypeIssues]
+        return message_param
