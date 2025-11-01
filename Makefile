@@ -1,5 +1,12 @@
 .DEFAULT_GOAL := all
 
+# Detect OS
+ifeq ($(OS),Windows_NT)
+	DETECTED_OS := Windows
+else
+	DETECTED_OS := $(shell uname -s)
+endif
+
 .PHONY: .uv
 .uv: ## Check that uv is installed
 	@uv --version || echo 'Please install uv: https://docs.astral.sh/uv/getting-started/installation/'
@@ -15,10 +22,17 @@ install: .uv .pre-commit ## Install the package, dependencies, and pre-commit fo
 
 .PHONY: install-all-python
 install-all-python: ## Install and synchronize an interpreter for every python version
+ifeq ($(DETECTED_OS),Windows)
+	@set UV_PROJECT_ENVIRONMENT=.venv310 & uv sync --python 3.10 --frozen --all-extras --all-packages --group lint --group docs
+	@set UV_PROJECT_ENVIRONMENT=.venv311 & uv sync --python 3.11 --frozen --all-extras --all-packages --group lint --group docs
+	@set UV_PROJECT_ENVIRONMENT=.venv312 & uv sync --python 3.12 --frozen --all-extras --all-packages --group lint --group docs
+	@set UV_PROJECT_ENVIRONMENT=.venv313 & uv sync --python 3.13 --frozen --all-extras --all-packages --group lint --group docs
+else
 	UV_PROJECT_ENVIRONMENT=.venv310 uv sync --python 3.10 --frozen --all-extras --all-packages --group lint --group docs
 	UV_PROJECT_ENVIRONMENT=.venv311 uv sync --python 3.11 --frozen --all-extras --all-packages --group lint --group docs
 	UV_PROJECT_ENVIRONMENT=.venv312 uv sync --python 3.12 --frozen --all-extras --all-packages --group lint --group docs
 	UV_PROJECT_ENVIRONMENT=.venv313 uv sync --python 3.13 --frozen --all-extras --all-packages --group lint --group docs
+endif
 
 .PHONY: sync
 sync: .uv ## Update local packages and uv.lock
@@ -59,10 +73,17 @@ test: ## Run tests and collect coverage data
 
 .PHONY: test-all-python
 test-all-python: ## Run tests on Python 3.10 to 3.13
+ifeq ($(DETECTED_OS),Windows)
+	@set UV_PROJECT_ENVIRONMENT=.venv310 & uv run --python 3.10 --all-extras --all-packages coverage run -p -m pytest
+	@set UV_PROJECT_ENVIRONMENT=.venv311 & uv run --python 3.11 --all-extras --all-packages coverage run -p -m pytest
+	@set UV_PROJECT_ENVIRONMENT=.venv312 & uv run --python 3.12 --all-extras --all-packages coverage run -p -m pytest
+	@set UV_PROJECT_ENVIRONMENT=.venv313 & uv run --python 3.13 --all-extras --all-packages coverage run -p -m pytest
+else
 	UV_PROJECT_ENVIRONMENT=.venv310 uv run --python 3.10 --all-extras --all-packages coverage run -p -m pytest
 	UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --all-packages coverage run -p -m pytest
 	UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --all-packages coverage run -p -m pytest
 	UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras --all-packages coverage run -p -m pytest
+endif
 	@uv run coverage combine
 	@uv run coverage report
 
@@ -91,16 +112,31 @@ docs-serve: ## Build and serve the documentation
 
 .PHONY: .docs-insiders-install
 .docs-insiders-install: ## Install insiders packages for docs if necessary
-ifeq ($(shell uv pip show mkdocs-material | grep -q insiders && echo 'installed'), installed)
-	@echo 'insiders packages already installed'
-else ifeq ($(PPPR_TOKEN),)
-	@echo "Error: PPPR_TOKEN is not set, can't install insiders packages"
-	@exit 1
+ifeq ($(DETECTED_OS),Windows)
+	@powershell -NoProfile -Command " \
+		$$material = uv pip show mkdocs-material 2>$$null; \
+		if ($$material -match 'insiders') { \
+			Write-Host 'insiders packages already installed'; \
+		} elseif ('$(PPPR_TOKEN)' -eq '') { \
+			Write-Host 'Error: PPPR_TOKEN is not set, cannot install insiders packages'; \
+			exit 1; \
+		} else { \
+			Write-Host 'installing insiders packages...'; \
+			uv pip install --reinstall --no-deps --extra-index-url https://pydantic:$(PPPR_TOKEN)@pppr.pydantic.dev/simple/ mkdocs-material mkdocstrings-python; \
+		} \
+	"
 else
-	@echo 'installing insiders packages...'
-	@uv pip install --reinstall --no-deps \
-		--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/ \
-		mkdocs-material mkdocstrings-python
+	ifeq ($(shell uv pip show mkdocs-material | grep -q insiders && echo 'installed'), installed)
+		@echo 'insiders packages already installed'
+	else ifeq ($(PPPR_TOKEN),)
+		@echo "Error: PPPR_TOKEN is not set, can't install insiders packages"
+		@exit 1
+	else
+		@echo 'installing insiders packages...'
+		@uv pip install --reinstall --no-deps \
+			--extra-index-url https://pydantic:${PPPR_TOKEN}@pppr.pydantic.dev/simple/ \
+			mkdocs-material mkdocstrings-python
+	endif
 endif
 
 .PHONY: docs-insiders
@@ -127,6 +163,11 @@ all: format lint typecheck testcov ## Run code formatting, linting, static type 
 
 .PHONY: help
 help: ## Show this help (usage: make help)
+ifeq ($(DETECTED_OS),Windows)
+	@echo Usage: make [recipe]
+	@echo Recipes:
+	@powershell -NoProfile -Command "Get-Content '$(MAKEFILE_LIST)' | Select-String -Pattern '^([a-zA-Z0-9_-]+):.*?## (.*)$$' | ForEach-Object { Write-Host ('  {0,-20} {1}' -f $$_.Matches[0].Groups[1].Value, $$_.Matches[0].Groups[2].Value) }"
+else
 	@echo "Usage: make [recipe]"
 	@echo "Recipes:"
 	@awk '/^[a-zA-Z0-9_-]+:.*?##/ { \
@@ -137,3 +178,4 @@ help: ## Show this help (usage: make help)
 			printf "  \033[36m%-20s\033[0m %s\n", recipe, substr($$0, RSTART + 3, RLENGTH); \
 		} \
 	}' $(MAKEFILE_LIST)
+endif
