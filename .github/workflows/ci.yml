@@ -26,14 +26,15 @@ jobs:
         # Typecheck both Python 3.10 and 3.13. We've had issues due to not checking against both.
         python-version: ["3.10", "3.13"]
     env:
-      UV_PYTHON: ${{ matrix.python-version }}
       PYRIGHT_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v5
         with:
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
+          cache-suffix: lint
 
       - name: Install dependencies
         run: uv sync --all-extras --all-packages --group lint
@@ -56,6 +57,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: mypy
 
       - name: Install dependencies
         run: uv sync --no-dev --group lint
@@ -70,6 +72,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: docs
 
       - run: uv sync --group docs
 
@@ -107,6 +110,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: live
 
       - uses: pydantic/ollama-action@v3
         with:
@@ -138,7 +142,7 @@ jobs:
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -151,7 +155,6 @@ jobs:
           - name: all-extras
             command: "--all-extras"
     env:
-      UV_PYTHON: ${{ matrix.python-version }}
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
     steps:
@@ -159,7 +162,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
         with:
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
+          cache-suffix: ${{ matrix.install.name }}
 
       - uses: denoland/setup-deno@v2
         with:
@@ -167,14 +172,15 @@ jobs:
 
       - run: mkdir .coverage
 
-      - run: uv run mcp-run-python example --deps=numpy
       - run: uv sync --only-dev
+
+      - run: uv run mcp-run-python example --deps=numpy
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: hf-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
           restore-keys: |
             hf-${{ runner.os }}-
 
@@ -192,13 +198,12 @@ jobs:
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
     env:
-      UV_PYTHON: ${{ matrix.python-version }}
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
     steps:
@@ -206,7 +211,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
         with:
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
+          cache-suffix: lowest-versions
 
       - uses: denoland/setup-deno@v2
         with:
@@ -216,15 +223,15 @@ jobs:
 
       - run: uv sync --group dev
 
+      - run: uv run mcp-run-python example --deps=numpy
+
       - name: cache HuggingFace models
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: hf-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
           restore-keys: |
             hf-${{ runner.os }}-
-
-      - run: uv run mcp-run-python example --deps=numpy
 
       - run: unset UV_FROZEN
 
@@ -248,20 +255,21 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     env:
-      UV_PYTHON: ${{ matrix.python-version }}
       CI: true
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v5
         with:
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
+          cache-suffix: examples
 
       - name: cache HuggingFace models
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: hf-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
           restore-keys: |
             hf-${{ runner.os }}-
 
@@ -285,6 +293,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: dev
 
       - run: uv sync --group dev
       - run: uv run coverage combine
@@ -340,6 +349,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: docs-upload
 
       - uses: actions/download-artifact@v4
         with:
@@ -381,6 +391,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: deploy-docs-preview
 
       - uses: actions/download-artifact@v4
         with:
@@ -428,6 +439,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: release
 
       - run: uv build --all-packages
 

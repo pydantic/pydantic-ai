@@ -26,6 +26,7 @@ from pydantic_ai import (
     ModelResponse,
     ModelResponseStreamEvent,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
@@ -402,6 +403,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                 PartStartEvent(index=0, part=TextPart(content='text1')),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='text2')),
+                PartEndEvent(index=0, part=TextPart(content='text1text2')),
             ]
         )
 
