@@ -71,17 +71,17 @@ class MCPError(RuntimeError):
     code: int
     """The error code returned by the server."""
 
-    data: Any | None
+    data: dict[str, Any] | None
     """Additional information about the error, if provided by the server."""
 
-    def __init__(self, message: str, code: int, data: Any | None = None):
+    def __init__(self, message: str, code: int, data: dict[str, Any] | None = None):
         self.message = message
         self.code = code
         self.data = data
         super().__init__(message)
 
     @classmethod
-    def from_mcp_sdk_error(cls, error: Any) -> MCPError:
+    def from_mcp_sdk_error(cls, error: mcp_exceptions.McpError) -> MCPError:
         """Create an MCPError from an MCP SDK McpError.
 
         Args:
