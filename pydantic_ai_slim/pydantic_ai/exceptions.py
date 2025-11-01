@@ -23,8 +23,6 @@ __all__ = (
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'ModelHTTPError',
-    'MCPError',
-    'MCPServerError',
     'IncompleteToolCall',
     'FallbackExceptionGroup',
 )
@@ -159,58 +157,6 @@ class ModelHTTPError(AgentRunError):
         self.body = body
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
         super().__init__(message)
-
-
-class MCPError(RuntimeError):
-    """Base class for errors occurring during interaction with an MCP server."""
-
-    message: str
-    """The error message."""
-
-    def __init__(self, message: str):
-        self.message = message
-        super().__init__(message)
-
-    def __str__(self) -> str:
-        return self.message
-
-
-class MCPServerError(MCPError):
-    """Raised when an MCP server returns an error response.
-
-    This exception wraps error responses from MCP servers, following the ErrorData schema
-    from the MCP specification.
-    """
-
-    code: int
-    """The error code returned by the server."""
-
-    data: Any | None
-    """Additional information about the error, if provided by the server."""
-
-    def __init__(self, message: str, code: int, data: Any | None = None):
-        super().__init__(message)
-        self.code = code
-        self.data = data
-
-    @classmethod
-    def from_mcp_sdk_error(cls, error: Any) -> MCPServerError:
-        """Create an MCPServerError from an MCP SDK McpError.
-
-        Args:
-            error: An McpError from the MCP SDK.
-
-        Returns:
-            A new MCPServerError instance with the error data.
-        """
-        # Extract error data from the McpError.error attribute
-        error_data = error.error
-        return cls(message=error_data.message, code=error_data.code, data=error_data.data)
-
-    def __str__(self) -> str:
-        if self.data:
-            return f'{self.message} (code: {self.code}, data: {self.data})'
-        return f'{self.message} (code: {self.code})'
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):

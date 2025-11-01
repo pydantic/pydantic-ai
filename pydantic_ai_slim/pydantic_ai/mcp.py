@@ -42,9 +42,59 @@ except ImportError as _import_error:
 
 # after mcp imports so any import error maps to this file, not _mcp.py
 from . import _mcp, _utils, exceptions, messages, models
-from .exceptions import MCPServerError
 
-__all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP', 'load_mcp_servers'
+__all__ = (
+    'MCPServer',
+    'MCPServerStdio',
+    'MCPServerHTTP',
+    'MCPServerSSE',
+    'MCPServerStreamableHTTP',
+    'load_mcp_servers',
+    'MCPError',
+)
+
+
+class MCPError(RuntimeError):
+    """Raised when an MCP server returns an error response.
+
+    This exception wraps error responses from MCP servers, following the ErrorData schema
+    from the MCP specification.
+    """
+
+    message: str
+    """The error message."""
+
+    code: int
+    """The error code returned by the server."""
+
+    data: Any | None
+    """Additional information about the error, if provided by the server."""
+
+    def __init__(self, message: str, code: int, data: Any | None = None):
+        self.message = message
+        self.code = code
+        self.data = data
+        super().__init__(message)
+
+    @classmethod
+    def from_mcp_sdk_error(cls, error: Any) -> MCPError:
+        """Create an MCPError from an MCP SDK McpError.
+
+        Args:
+            error: An McpError from the MCP SDK.
+
+        Returns:
+            A new MCPError instance with the error data.
+        """
+        # Extract error data from the McpError.error attribute
+        error_data = error.error
+        return cls(message=error_data.message, code=error_data.code, data=error_data.data)
+
+    def __str__(self) -> str:
+        if self.data:
+            return f'{self.message} (code: {self.code}, data: {self.data})'
+        return f'{self.message} (code: {self.code})'
+
 
 TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
     schema=pydantic_core.core_schema.dict_schema(
@@ -322,7 +372,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         - We also don't subscribe to resource changes to avoid complexity.
 
         Raises:
-            MCPServerError: If the server returns an error.
+            MCPError: If the server returns an error.
         """
         async with self:  # Ensure server is running
             if not self.capabilities.resources:
@@ -330,14 +380,14 @@ class MCPServer(AbstractToolset[Any], ABC):
             try:
                 result = await self._client.list_resources()
             except mcp_exceptions.McpError as e:
-                raise MCPServerError.from_mcp_sdk_error(e) from e
+                raise MCPError.from_mcp_sdk_error(e) from e
         return [_mcp.map_from_mcp_resource(r) for r in result.resources]
 
     async def list_resource_templates(self) -> list[_mcp.ResourceTemplate]:
         """Retrieve resource templates that are currently present on the server.
 
         Raises:
-            MCPServerError: If the server returns an error.
+            MCPError: If the server returns an error.
         """
         async with self:  # Ensure server is running
             if not self.capabilities.resources:
@@ -345,7 +395,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             try:
                 result = await self._client.list_resource_templates()
             except mcp_exceptions.McpError as e:
-                raise MCPServerError.from_mcp_sdk_error(e) from e
+                raise MCPError.from_mcp_sdk_error(e) from e
         return [_mcp.map_from_mcp_resource_template(t) for t in result.resourceTemplates]
 
     @overload
@@ -372,7 +422,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             Returns `None` if the server does not support resources or the resource is not found.
 
         Raises:
-            MCPServerError: If the server returns an error other than resource not found.
+            MCPError: If the server returns an error other than resource not found.
         """
         resource_uri = uri if isinstance(uri, str) else uri.uri
         async with self:  # Ensure server is running
@@ -384,7 +434,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 # As per https://modelcontextprotocol.io/specification/2025-06-18/server/resources#error-handling
                 if e.error.code == -32002:
                     return None
-                raise MCPServerError.from_mcp_sdk_error(e) from e
+                raise MCPError.from_mcp_sdk_error(e) from e
 
         if not result.contents:
             return None

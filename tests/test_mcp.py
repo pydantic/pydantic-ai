@@ -26,12 +26,11 @@ from pydantic_ai import (
 from pydantic_ai._mcp import Resource, ServerCapabilities
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import (
-    MCPServerError,
     ModelRetry,
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.mcp import MCPServerStreamableHTTP, load_mcp_servers
+from pydantic_ai.mcp import MCPError, MCPServerStreamableHTTP, load_mcp_servers
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
@@ -1545,10 +1544,10 @@ async def test_read_resource_template(run_context: RunContext[int]):
 
 
 async def test_read_resource_not_found(mcp_server: MCPServerStdio) -> None:
-    """Test that read_resource raises MCPServerError for non-existent resources with non-standard error codes."""
+    """Test that read_resource raises MCPError for non-existent resources with non-standard error codes."""
     async with mcp_server:
         # FastMCP uses error code 0 instead of -32002, so it should raise
-        with pytest.raises(MCPServerError, match='Unknown resource: resource://does_not_exist') as exc_info:
+        with pytest.raises(MCPError, match='Unknown resource: resource://does_not_exist') as exc_info:
             await mcp_server.read_resource('resource://does_not_exist')
 
         # Verify the exception has the expected attributes
@@ -1589,7 +1588,7 @@ async def test_read_resource_empty_contents(mcp_server: MCPServerStdio) -> None:
 
 
 async def test_list_resources_error(mcp_server: MCPServerStdio) -> None:
-    """Test that list_resources converts McpError to MCPServerError."""
+    """Test that list_resources converts McpError to MCPError."""
     mcp_error = McpError(
         error=ErrorData(code=-32603, message='Failed to list resources', data={'details': 'server overloaded'})
     )
@@ -1600,7 +1599,7 @@ async def test_list_resources_error(mcp_server: MCPServerStdio) -> None:
             'list_resources',
             new=AsyncMock(side_effect=mcp_error),
         ):
-            with pytest.raises(MCPServerError, match='Failed to list resources') as exc_info:
+            with pytest.raises(MCPError, match='Failed to list resources') as exc_info:
                 await mcp_server.list_resources()
 
             # Verify the exception has the expected attributes
@@ -1613,7 +1612,7 @@ async def test_list_resources_error(mcp_server: MCPServerStdio) -> None:
 
 
 async def test_list_resource_templates_error(mcp_server: MCPServerStdio) -> None:
-    """Test that list_resource_templates converts McpError to MCPServerError."""
+    """Test that list_resource_templates converts McpError to MCPError."""
     mcp_error = McpError(error=ErrorData(code=-32001, message='Service unavailable'))
 
     async with mcp_server:
@@ -1622,7 +1621,7 @@ async def test_list_resource_templates_error(mcp_server: MCPServerStdio) -> None
             'list_resource_templates',
             new=AsyncMock(side_effect=mcp_error),
         ):
-            with pytest.raises(MCPServerError, match='Service unavailable') as exc_info:
+            with pytest.raises(MCPError, match='Service unavailable') as exc_info:
                 await mcp_server.list_resource_templates()
 
             # Verify the exception has the expected attributes
