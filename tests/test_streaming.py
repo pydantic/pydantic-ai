@@ -135,6 +135,96 @@ async def test_streamed_text_response():
         )
 
 
+def test_streamed_text_sync_response():
+    m = TestModel()
+
+    test_agent = Agent(m)
+    assert test_agent.name is None
+
+    @test_agent.tool_plain
+    async def ret_a(x: str) -> str:
+        return f'{x}-apple'
+
+    result = test_agent.run_stream_sync('Hello')
+    assert test_agent.name == 'test_agent'
+    assert not result.is_complete
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                    )
+                ]
+            ),
+        ]
+    )
+    assert result.new_messages() == result.all_messages()
+    assert result.usage() == snapshot(
+        RunUsage(
+            requests=2,
+            input_tokens=103,
+            output_tokens=5,
+            tool_calls=1,
+        )
+    )
+    response = result.get_output()
+    assert response == snapshot('{"ret_a":"a-apple"}')
+    assert result.is_complete
+    assert result.timestamp() == IsNow(tz=timezone.utc)
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='{"ret_a":"a-apple"}')],
+            usage=RequestUsage(input_tokens=52, output_tokens=11),
+            model_name='test',
+            timestamp=IsDatetime(),
+            provider_name='test',
+        )
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                usage=RequestUsage(input_tokens=52, output_tokens=11),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+            ),
+        ]
+    )
+    assert result.usage() == snapshot(
+        RunUsage(
+            requests=2,
+            input_tokens=103,
+            output_tokens=11,
+            tool_calls=1,
+        )
+    )
+
+
 async def test_streamed_structured_response():
     m = TestModel()
 
@@ -300,6 +390,119 @@ async def test_streamed_text_stream():
                 ),
             ]
         )
+
+
+def test_streamed_text_stream_sync():
+    m = TestModel(custom_output_text='The cat sat on the mat.')
+
+    agent = Agent(m)
+
+    result = agent.run_stream_sync('Hello')
+    # typehint to test (via static typing) that the stream type is correctly inferred
+    chunks: list[str] = [c for c in result.stream_text()]
+    # one chunk with `stream_text()` due to group_by_temporal
+    assert chunks == snapshot(['The cat sat on the mat.'])
+    assert result.is_complete
+
+    result = agent.run_stream_sync('Hello')
+    # typehint to test (via static typing) that the stream type is correctly inferred
+    chunks: list[str] = [c for c in result.stream_output()]
+    # two chunks with `stream()` due to not-final vs. final
+    assert chunks == snapshot(['The cat sat on the mat.'])
+    assert result.is_complete
+
+    result = agent.run_stream_sync('Hello')
+    assert [c for c in result.stream_text(debounce_by=None)] == snapshot(
+        [
+            'The ',
+            'The cat ',
+            'The cat sat ',
+            'The cat sat on ',
+            'The cat sat on the ',
+            'The cat sat on the mat.',
+        ]
+    )
+
+    result = agent.run_stream_sync('Hello')
+    # with stream_text, there is no need to do partial validation, so we only get the final message once:
+    assert [c for c in result.stream_text(delta=False, debounce_by=None)] == snapshot(
+        ['The ', 'The cat ', 'The cat sat ', 'The cat sat on ', 'The cat sat on the ', 'The cat sat on the mat.']
+    )
+
+    result = agent.run_stream_sync('Hello')
+    assert [c for c in result.stream_text(delta=True, debounce_by=None)] == snapshot(
+        ['The ', 'cat ', 'sat ', 'on ', 'the ', 'mat.']
+    )
+
+    def upcase(text: str) -> str:
+        return text.upper()
+
+    result = agent.run_stream_sync('Hello', output_type=TextOutput(upcase))
+    assert [c for c in result.stream_output(debounce_by=None)] == snapshot(
+        ['THE ', 'THE CAT ', 'THE CAT SAT ', 'THE CAT SAT ON ', 'THE CAT SAT ON THE ', 'THE CAT SAT ON THE MAT.']
+    )
+
+    result = agent.run_stream_sync('Hello')
+    assert [c for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        [
+            ModelResponse(
+                parts=[TextPart(content='The ')],
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The cat ')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The cat sat ')],
+                usage=RequestUsage(input_tokens=51, output_tokens=3),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The cat sat on ')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The cat sat on the ')],
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The cat sat on the mat.')],
+                usage=RequestUsage(input_tokens=51, output_tokens=7),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The cat sat on the mat.')],
+                usage=RequestUsage(input_tokens=51, output_tokens=7),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The cat sat on the mat.')],
+                usage=RequestUsage(input_tokens=51, output_tokens=7),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+            ),
+        ]
+    )
 
 
 async def test_plain_response():
@@ -1892,3 +2095,24 @@ async def test_run_stream_events():
             AgentRunResultEvent(result=AgentRunResult(output='{"ret_a":"a-apple"}')),
         ]
     )
+
+
+def test_structured_response_sync_validation():
+    async def text_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert agent_info.output_tools is not None
+        assert len(agent_info.output_tools) == 1
+        name = agent_info.output_tools[0].name
+        json_data = json.dumps({'response': [1, 2, 3, 4]})
+        yield {0: DeltaToolCall(name=name)}
+        yield {0: DeltaToolCall(json_args=json_data[:15])}
+        yield {0: DeltaToolCall(json_args=json_data[15:])}
+
+    agent = Agent(FunctionModel(stream_function=text_stream), output_type=list[int])
+
+    chunks: list[list[int]] = []
+    result = agent.run_stream_sync('')
+    for structured_response, last in result.stream_responses(debounce_by=None):
+        response_data = result.validate_response_output(structured_response, allow_partial=not last)
+        chunks.append(response_data)
+
+    assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]])
