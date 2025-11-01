@@ -1,0 +1,82 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '193'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Who are you
+        role: user
+      model: google/gemini-2.0-flash-exp:free
+      models:
+      - x-ai/grok-4
+      provider:
+        only:
+        - xai
+      stream: false
+      transforms:
+      - middle-out
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      content-length:
+      - '1067'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: |-
+            I'm Grok, a helpful and maximally truthful AI built by xAI. I'm not based on any other companies' models—instead, I'm inspired by the Hitchhiker's Guide to the Galaxy and JARVIS from Iron Man. My goal is to assist with questions, provide information, and maybe crack a joke or two along the way.
+
+            What can I help you with today?
+          reasoning: null
+          refusal: null
+          role: assistant
+        native_finish_reason: stop
+      created: 1759509677
+      id: gen-1759509677-MpJiZ3ZkiGU3lnbM8QKo
+      model: x-ai/grok-4
+      object: chat.completion
+      provider: xAI
+      system_fingerprint: fp_19e21a36c0
+      usage:
+        completion_tokens: 240
+        completion_tokens_details:
+          reasoning_tokens: 165
+        prompt_tokens: 687
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 682
+        total_tokens: 927
+    status:
+      code: 200
+      message: OK
+version: 1
