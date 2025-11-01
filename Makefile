@@ -166,7 +166,7 @@ help: ## Show this help (usage: make help)
 ifeq ($(DETECTED_OS),Windows)
 	@echo Usage: make [recipe]
 	@echo Recipes:
-	@uv run python -c "import re; [print(f'  {m[0]:<20} {m[1]}') for m in re.findall(r'^([a-zA-Z0-9_-]+):.*?## (.*)$$', open('$(MAKEFILE_LIST)').read(), re.MULTILINE)]" || powershell -NoProfile -Command "Get-Content '$(MAKEFILE_LIST)' | Select-String -Pattern '^([a-zA-Z0-9_-]+):.*?## (.*)$$' | ForEach-Object { Write-Host ('  {0,-20} {1}' -f $$_.Matches[0].Groups[1].Value, $$_.Matches[0].Groups[2].Value) }"
+	@powershell -NoProfile -Command "Get-Content '$(MAKEFILE_LIST)' | Select-String -Pattern '^([a-zA-Z0-9_-]+):.*?## (.*)$$' | ForEach-Object { Write-Host ('  {0,-20} {1}' -f $$_.Matches[0].Groups[1].Value, $$_.Matches[0].Groups[2].Value) }"
 else
 	@echo "Usage: make [recipe]"
 	@echo "Recipes:"
