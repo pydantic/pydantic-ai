@@ -1,11 +1,11 @@
 from dataclasses import asdict, dataclass
-from typing import Any, Literal, assert_never, cast
+from typing import Any, Literal, cast
 
 from openai import AsyncOpenAI
 from openai.types import chat
 from openai.types.chat.chat_completion import Choice
 from pydantic import AliasChoices, BaseModel, Field, TypeAdapter
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, assert_never
 
 from .. import _utils
 from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
