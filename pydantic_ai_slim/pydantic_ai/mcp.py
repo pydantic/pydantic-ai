@@ -10,13 +10,13 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontext
 from dataclasses import field, replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, overload
 
 import anyio
 import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from pydantic import BaseModel, Discriminator, Field, Tag
+from pydantic import AnyUrl, BaseModel, Discriminator, Field, Tag
 from pydantic_core import CoreSchema, core_schema
 from typing_extensions import Self, assert_never, deprecated
 
@@ -31,8 +31,8 @@ try:
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
     from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
+    from mcp.shared import exceptions as mcp_exceptions
     from mcp.shared.context import RequestContext
-    from mcp.shared.exceptions import McpError
     from mcp.shared.message import SessionMessage
 except ImportError as _import_error:
     raise ImportError(
@@ -43,7 +43,58 @@ except ImportError as _import_error:
 # after mcp imports so any import error maps to this file, not _mcp.py
 from . import _mcp, _utils, exceptions, messages, models
 
-__all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP', 'load_mcp_servers'
+__all__ = (
+    'MCPServer',
+    'MCPServerStdio',
+    'MCPServerHTTP',
+    'MCPServerSSE',
+    'MCPServerStreamableHTTP',
+    'load_mcp_servers',
+    'MCPError',
+)
+
+
+class MCPError(RuntimeError):
+    """Raised when an MCP server returns an error response.
+
+    This exception wraps error responses from MCP servers, following the ErrorData schema
+    from the MCP specification.
+    """
+
+    message: str
+    """The error message."""
+
+    code: int
+    """The error code returned by the server."""
+
+    data: Any | None
+    """Additional information about the error, if provided by the server."""
+
+    def __init__(self, message: str, code: int, data: Any | None = None):
+        self.message = message
+        self.code = code
+        self.data = data
+        super().__init__(message)
+
+    @classmethod
+    def from_mcp_sdk_error(cls, error: Any) -> MCPError:
+        """Create an MCPError from an MCP SDK McpError.
+
+        Args:
+            error: An McpError from the MCP SDK.
+
+        Returns:
+            A new MCPError instance with the error data.
+        """
+        # Extract error data from the McpError.error attribute
+        error_data = error.error
+        return cls(message=error_data.message, code=error_data.code, data=error_data.data)
+
+    def __str__(self) -> str:
+        if self.data:
+            return f'{self.message} (code: {self.code}, data: {self.data})'
+        return f'{self.message} (code: {self.code})'
+
 
 TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
     schema=pydantic_core.core_schema.dict_schema(
@@ -113,6 +164,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
     _server_info: mcp_types.Implementation
+    _server_capabilities: _mcp.ServerCapabilities
 
     def __init__(
         self,
@@ -191,6 +243,15 @@ class MCPServer(AbstractToolset[Any], ABC):
             )
         return self._server_info
 
+    @property
+    def capabilities(self) -> _mcp.ServerCapabilities:
+        """Access the capabilities advertised by the MCP server during initialization."""
+        if getattr(self, '_server_capabilities', None) is None:
+            raise AttributeError(
+                f'The `{self.__class__.__name__}.capabilities` is only instantiated after initialization.'
+            )
+        return self._server_capabilities
+
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.
 
@@ -236,7 +297,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     ),
                     mcp_types.CallToolResult,
                 )
-            except McpError as e:
+            except mcp_exceptions.McpError as e:
                 raise exceptions.ModelRetry(e.error.message)
 
         if result.isError:
@@ -303,6 +364,87 @@ class MCPServer(AbstractToolset[Any], ABC):
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 
+    async def list_resources(self) -> list[_mcp.Resource]:
+        """Retrieve resources that are currently present on the server.
+
+        Note:
+        - We don't cache resources as they might change.
+        - We also don't subscribe to resource changes to avoid complexity.
+
+        Raises:
+            MCPError: If the server returns an error.
+        """
+        async with self:  # Ensure server is running
+            if not self.capabilities.resources:
+                return []
+            try:
+                result = await self._client.list_resources()
+            except mcp_exceptions.McpError as e:
+                raise MCPError.from_mcp_sdk_error(e) from e
+        return [_mcp.map_from_mcp_resource(r) for r in result.resources]
+
+    async def list_resource_templates(self) -> list[_mcp.ResourceTemplate]:
+        """Retrieve resource templates that are currently present on the server.
+
+        Raises:
+            MCPError: If the server returns an error.
+        """
+        async with self:  # Ensure server is running
+            if not self.capabilities.resources:
+                return []
+            try:
+                result = await self._client.list_resource_templates()
+            except mcp_exceptions.McpError as e:
+                raise MCPError.from_mcp_sdk_error(e) from e
+        return [_mcp.map_from_mcp_resource_template(t) for t in result.resourceTemplates]
+
+    @overload
+    async def read_resource(
+        self, uri: str
+    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent] | None: ...
+
+    @overload
+    async def read_resource(
+        self, uri: _mcp.Resource
+    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent] | None: ...
+
+    async def read_resource(
+        self, uri: str | _mcp.Resource
+    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent] | None:
+        """Read the contents of a specific resource by URI.
+
+        Args:
+            uri: The URI of the resource to read, or a Resource object.
+
+        Returns:
+            The resource contents. If the resource has a single content item, returns that item directly.
+            If the resource has multiple content items, returns a list of items.
+            Returns `None` if the server does not support resources or the resource is not found.
+
+        Raises:
+            MCPError: If the server returns an error other than resource not found.
+        """
+        resource_uri = uri if isinstance(uri, str) else uri.uri
+        async with self:  # Ensure server is running
+            if not self.capabilities.resources:
+                return None
+            try:
+                result = await self._client.read_resource(AnyUrl(resource_uri))
+            except mcp_exceptions.McpError as e:
+                # As per https://modelcontextprotocol.io/specification/2025-06-18/server/resources#error-handling
+                if e.error.code == -32002:
+                    return None
+                raise MCPError.from_mcp_sdk_error(e) from e
+
+        if not result.contents:
+            return None
+
+        return (
+            self._get_content(result.contents[0])
+            if len(result.contents) == 1
+            else [self._get_content(resource) for resource in result.contents]
+        )
+
     async def __aenter__(self) -> Self:
         """Enter the MCP server context.
 
@@ -328,6 +470,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     with anyio.fail_after(self.timeout):
                         result = await self._client.initialize()
                         self._server_info = result.serverInfo
+                        self._server_capabilities = _mcp.map_from_mcp_server_capabilities(result.capabilities)
                         if log_level := self.log_level:
                             await self._client.set_logging_level(log_level)
 
@@ -397,12 +540,9 @@ class MCPServer(AbstractToolset[Any], ABC):
             resource = part.resource
             return self._get_content(resource)
         elif isinstance(part, mcp_types.ResourceLink):
-            resource_result: mcp_types.ReadResourceResult = await self._client.read_resource(part.uri)
-            return (
-                self._get_content(resource_result.contents[0])
-                if len(resource_result.contents) == 1
-                else [self._get_content(resource) for resource in resource_result.contents]
-            )
+            result = await self.read_resource(str(part.uri))
+            # If resource not found, return an empty string as it's impossible to fetch anyway
+            return result if result is not None else ''
         else:
             assert_never(part)
 
