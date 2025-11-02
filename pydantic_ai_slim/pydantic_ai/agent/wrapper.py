@@ -76,6 +76,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -94,6 +95,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -112,6 +114,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -185,6 +188,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            instructions: Optional instructions to append to the instructions provided at the initialization of the agent and only to be used for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
@@ -202,6 +206,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             model=model,
+            instructions=instructions,
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,

@@ -907,11 +907,14 @@ In general, we recommend using `instructions` instead of `system_prompt` unless 
 Instructions, like system prompts, fall into two categories:
 
 1. **Static instructions**: These are known when writing the code and can be defined via the `instructions` parameter of the [`Agent` constructor][pydantic_ai.Agent.__init__].
-2. **Dynamic instructions**: These rely on context that is only available at runtime and should be defined using functions decorated with [`@agent.instructions`][pydantic_ai.Agent.instructions]. Unlike dynamic system prompts, which may be reused when `message_history` is present, dynamic instructions are always reevaluated.
+2. **Dynamic instructions**: These rely on context that is only available at runtime. Dynamic instructions can be further divided into *temporary* dynamic instructions which are used only for a
+   single run and *permanent* dynamic instructions, which are used for all runs.
+   - **Dynamic temporary instructions*: Should be defined via the *instructions* argument to any of the `run` methods and will be effective only for the specific run for which they have been specified
+   - **Dynamic permanent instructions*: Should be defined using functions decorated with [`@agent.instructions`][pydantic_ai.Agent.instructions]. Unlike dynamic system prompts, which may be reused when `message_history` is present, dynamic instructions are always reevaluated.
 
 Both static and dynamic instructions can be added to a single agent, and they are appended in the order they are defined at runtime.
 
-Here's an example using both types of instructions:
+Here's an example using a static instruction as well as permanent dynamic instructions:
 
 ```python {title="instructions.py"}
 from datetime import date
