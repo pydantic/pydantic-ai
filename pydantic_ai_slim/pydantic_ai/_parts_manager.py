@@ -60,6 +60,10 @@ class ModelResponsePartsManager:
     """Maps a vendor's "part" ID (if provided) to the index in `_parts` where that part resides."""
     _thinking_tag_buffer: dict[VendorId, str] = field(default_factory=dict, init=False)
     """Buffers partial content when thinking tags might be split across chunks."""
+    _started_part_indices: set[int] = field(default_factory=set, init=False)
+    """Tracks indices of parts for which a PartStartEvent has already been yielded."""
+    _isolated_start_tags: dict[int, str] = field(default_factory=dict, init=False)
+    """Tracks start tags for isolated ThinkingParts (created from standalone tags with no content)."""
 
     def get_parts(self) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
@@ -79,8 +83,31 @@ class ModelResponsePartsManager:
         Yields:
             ModelResponseStreamEvent for any buffered content that gets flushed.
         """
+        # convert isolated ThinkingParts to TextParts using their original start tags
+        for part_index in range(len(self._parts)):
+            if part_index not in self._started_part_indices:
+                part = self._parts[part_index]
+                # we only convert ThinkingParts from standalone tags (no metadata) to TextParts.
+                # ThinkingParts from explicit model deltas have signatures/ids that the tests expect.
+                if (
+                    isinstance(part, ThinkingPart)
+                    and not part.content
+                    and not part.signature
+                    and not part.id
+                    and not part.provider_name
+                ):
+                    start_tag = self._isolated_start_tags.get(part_index, '<think>')
+                    text_part = TextPart(content=start_tag)
+                    self._parts[part_index] = text_part
+                    yield PartStartEvent(index=part_index, part=text_part)
+                    self._started_part_indices.add(part_index)
+
+        # flush any remaining buffered content (partial tags like '<thi')
         for vendor_part_id, buffered_content in list(self._thinking_tag_buffer.items()):
             if buffered_content:
+                # Remove the vendor_part_id mapping to avoid trying to update existing parts
+                # This ensures buffered partial tags create new TextParts
+                self._vendor_id_to_part_index.pop(vendor_part_id, None)
                 yield from self._handle_text_delta_simple(
                     vendor_part_id=vendor_part_id,
                     content=buffered_content,
@@ -162,9 +189,7 @@ class ModelResponsePartsManager:
                 part_index = len(self._parts) - 1
                 latest_part = self._parts[part_index]
                 if isinstance(latest_part, ThinkingPart):
-                    # If there's an existing ThinkingPart and no thinking tags, add content to it
-                    # This handles the case where vendor_part_id=None with trailing content after start tag
-                    yield self.handle_thinking_delta(vendor_part_id=None, content=content)
+                    yield from self.handle_thinking_delta(vendor_part_id=None, content=content)
                     return
                 elif isinstance(latest_part, TextPart):
                     existing_text_part_and_index = latest_part, part_index
@@ -173,70 +198,78 @@ class ModelResponsePartsManager:
             if part_index is not None:
                 existing_part = self._parts[part_index]
 
-                if thinking_tags and isinstance(existing_part, ThinkingPart):  # pragma: no cover
-                    end_tag = thinking_tags[1]  # pragma: no cover
-                    if end_tag in content:  # pragma: no cover
-                        before_end, after_end = content.split(end_tag, 1)  # pragma: no cover
+                if thinking_tags and isinstance(existing_part, ThinkingPart):
+                    end_tag = thinking_tags[1]
+                    if end_tag in content:
+                        before_end, after_end = content.split(end_tag, 1)
 
-                        if before_end:  # pragma: no cover
-                            yield self.handle_thinking_delta(  # pragma: no cover
-                                vendor_part_id=vendor_part_id, content=before_end
-                            )
+                        if before_end:
+                            yield from self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=before_end)
 
-                        self._vendor_id_to_part_index.pop(vendor_part_id)  # pragma: no cover
+                        self._vendor_id_to_part_index.pop(vendor_part_id)
 
-                        if after_end:  # pragma: no cover
-                            yield from self._handle_text_delta_simple(  # pragma: no cover
+                        if after_end:
+                            yield from self._handle_text_delta_simple(
                                 vendor_part_id=vendor_part_id,
                                 content=after_end,
                                 id=id,
                                 thinking_tags=thinking_tags,
                                 ignore_leading_whitespace=ignore_leading_whitespace,
                             )
-                        return  # pragma: no cover
+                        return
 
-                    if content == end_tag:  # pragma: no cover
-                        self._vendor_id_to_part_index.pop(vendor_part_id)  # pragma: no cover
-                        return  # pragma: no cover
+                    if content == end_tag:
+                        self._vendor_id_to_part_index.pop(vendor_part_id)
+                        return
 
-                    yield self.handle_thinking_delta(  # pragma: no cover
-                        vendor_part_id=vendor_part_id, content=content
-                    )
-                    return  # pragma: no cover
+                    yield from self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=content)
+                    return
                 elif isinstance(existing_part, TextPart):
                     existing_text_part_and_index = existing_part, part_index
                 else:
                     raise UnexpectedModelBehavior(f'Cannot apply a text delta to {existing_part=}')
+
+        # If a TextPart has already been created for this vendor_part_id, disable thinking tag detection
+        if vendor_part_id is not None:
+            existing_part_index = self._vendor_id_to_part_index.get(vendor_part_id)
+            if existing_part_index is not None and isinstance(self._parts[existing_part_index], TextPart):
+                thinking_tags = None
 
         if thinking_tags and thinking_tags[0] in content:
             start_tag = thinking_tags[0]
             before_start, after_start = content.split(start_tag, 1)
 
             if before_start:
-                yield from self._handle_text_delta_simple(
-                    vendor_part_id=vendor_part_id,
-                    content=before_start,
-                    id=id,
-                    thinking_tags=None,
-                    ignore_leading_whitespace=ignore_leading_whitespace,
-                )
+                if ignore_leading_whitespace and before_start.isspace():
+                    before_start = ''
 
+                if before_start:
+                    yield from self._handle_text_delta_simple(
+                        vendor_part_id=vendor_part_id,
+                        content=content,
+                        id=id,
+                        thinking_tags=None,
+                        ignore_leading_whitespace=ignore_leading_whitespace,
+                    )
+                    return
             self._vendor_id_to_part_index.pop(vendor_part_id, None)
-            yield self.handle_thinking_delta(vendor_part_id=vendor_part_id, content='')
+
+            # Create ThinkingPart but defer PartStartEvent until there is content
+            new_part_index = len(self._parts)
+            part = ThinkingPart(content='')
+            if vendor_part_id is not None:
+                self._vendor_id_to_part_index[vendor_part_id] = new_part_index
+            self._parts.append(part)
 
             if after_start:
-                yield from self._handle_text_delta_simple(
-                    vendor_part_id=vendor_part_id,
-                    content=after_start,
-                    id=id,
-                    thinking_tags=thinking_tags,
-                    ignore_leading_whitespace=ignore_leading_whitespace,
-                )
+                yield from self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=after_start)
             return
 
         if existing_text_part_and_index is None:
+            # This is a workaround for models that emit `<think>\n</think>\n\n` or an empty text part ahead of tool calls (e.g. Ollama + Qwen3),
+            # which we don't want to end up treating as a final result when using `run_stream` with `str` as a valid `output_type`.
             if ignore_leading_whitespace and (len(content) == 0 or content.isspace()):
-                return
+                return None
 
             new_part_index = len(self._parts)
             part = TextPart(content=content, id=id)
@@ -244,11 +277,18 @@ class ModelResponsePartsManager:
                 self._vendor_id_to_part_index[vendor_part_id] = new_part_index
             self._parts.append(part)
             yield PartStartEvent(index=new_part_index, part=part)
+            self._started_part_indices.add(new_part_index)
         else:
             existing_text_part, part_index = existing_text_part_and_index
             part_delta = TextPartDelta(content_delta=content)
-            self._parts[part_index] = part_delta.apply(existing_text_part)
-            yield PartDeltaEvent(index=part_index, delta=part_delta)
+
+            updated_text_part = part_delta.apply(existing_text_part)
+            self._parts[part_index] = updated_text_part
+            if part_index not in self._started_part_indices:
+                self._started_part_indices.add(part_index)
+                yield PartStartEvent(index=part_index, part=updated_text_part)
+            else:
+                yield PartDeltaEvent(index=part_index, delta=part_delta)
 
     def _handle_text_delta_with_thinking_tags(
         self,
@@ -267,12 +307,24 @@ class ModelResponsePartsManager:
         part_index = self._vendor_id_to_part_index.get(vendor_part_id)
         existing_part = self._parts[part_index] if part_index is not None else None
 
+        # If a TextPart has already been created for this vendor_part_id, disable thinking tag detection
+        if existing_part is not None and isinstance(existing_part, TextPart):
+            self._thinking_tag_buffer.pop(vendor_part_id, None)
+            yield from self._handle_text_delta_simple(
+                vendor_part_id=vendor_part_id,
+                content=combined_content,
+                id=id,
+                thinking_tags=None,
+                ignore_leading_whitespace=ignore_leading_whitespace,
+            )
+            return
+
         if existing_part is not None and isinstance(existing_part, ThinkingPart):
             if end_tag in combined_content:
                 before_end, after_end = combined_content.split(end_tag, 1)
 
                 if before_end:
-                    yield self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=before_end)
+                    yield from self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=before_end)
 
                 self._vendor_id_to_part_index.pop(vendor_part_id)
                 self._thinking_tag_buffer.pop(vendor_part_id, None)
@@ -287,29 +339,47 @@ class ModelResponsePartsManager:
                     )
                 return
 
-            if self._could_be_tag_start(combined_content, end_tag):
-                self._thinking_tag_buffer[vendor_part_id] = combined_content
-                return
+            # Check if any suffix of combined_content could be the start of the end tag
+            for i in range(len(combined_content)):
+                suffix = combined_content[i:]
+                if self._could_be_tag_start(suffix, end_tag):
+                    prefix = combined_content[:i]
+                    if prefix:
+                        yield from self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=prefix)
+                    self._thinking_tag_buffer[vendor_part_id] = suffix
+                    return
 
+            # No suffix could be a tag start, so emit all content
             self._thinking_tag_buffer.pop(vendor_part_id, None)
-            yield self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=combined_content)
+            yield from self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=combined_content)
             return
 
         if start_tag in combined_content:
             before_start, after_start = combined_content.split(start_tag, 1)
 
             if before_start:
-                yield from self._handle_text_delta_simple(
-                    vendor_part_id=vendor_part_id,
-                    content=before_start,
-                    id=id,
-                    thinking_tags=thinking_tags,
-                    ignore_leading_whitespace=ignore_leading_whitespace,
-                )
+                if ignore_leading_whitespace and before_start.isspace():
+                    before_start = ''
 
+                if before_start:
+                    self._thinking_tag_buffer.pop(vendor_part_id, None)
+                    yield from self._handle_text_delta_simple(
+                        vendor_part_id=vendor_part_id,
+                        content=combined_content,
+                        id=id,
+                        thinking_tags=None,
+                        ignore_leading_whitespace=ignore_leading_whitespace,
+                    )
+                    return
             self._thinking_tag_buffer.pop(vendor_part_id, None)
             self._vendor_id_to_part_index.pop(vendor_part_id, None)
-            yield self.handle_thinking_delta(vendor_part_id=vendor_part_id, content='')
+
+            # Create ThinkingPart but defer PartStartEvent until there is content
+            new_part_index = len(self._parts)
+            part = ThinkingPart(content='')
+            self._vendor_id_to_part_index[vendor_part_id] = new_part_index
+            self._parts.append(part)
+            self._isolated_start_tags[new_part_index] = start_tag
 
             if after_start:
                 yield from self._handle_text_delta_with_thinking_tags(
@@ -320,7 +390,6 @@ class ModelResponsePartsManager:
                     ignore_leading_whitespace=ignore_leading_whitespace,
                 )
             return
-
         if content.startswith(start_tag[0]) and self._could_be_tag_start(combined_content, start_tag):
             self._thinking_tag_buffer[vendor_part_id] = combined_content
             return
@@ -336,9 +405,6 @@ class ModelResponsePartsManager:
 
     def _could_be_tag_start(self, content: str, tag: str) -> bool:
         """Check if content could be the start of a tag."""
-        # Defensive check for content that's already complete or longer than tag
-        # This occurs when buffered content + new chunk exceeds tag length
-        # Example: buffer='<think' + new='<' = '<think<' (7 chars) >= '<think>' (7 chars)
         if len(content) >= len(tag):
             return False
         return tag.startswith(content)
@@ -351,7 +417,7 @@ class ModelResponsePartsManager:
         id: str | None = None,
         signature: str | None = None,
         provider_name: str | None = None,
-    ) -> ModelResponseStreamEvent:
+    ) -> Generator[ModelResponseStreamEvent, None, None]:
         """Handle incoming thinking content, creating or updating a ThinkingPart in the manager as appropriate.
 
         When `vendor_part_id` is None, the latest part is updated if it exists and is a ThinkingPart;
@@ -368,7 +434,7 @@ class ModelResponsePartsManager:
             provider_name: An optional provider name for the thinking part.
 
         Returns:
-            A `PartStartEvent` if a new part was created, or a `PartDeltaEvent` if an existing part was updated.
+            A Generator of a `PartStartEvent` if a new part was created, or a `PartDeltaEvent` if an existing part was updated.
 
         Raises:
             UnexpectedModelBehavior: If attempting to apply a thinking delta to a part that is not a ThinkingPart.
@@ -380,7 +446,7 @@ class ModelResponsePartsManager:
             if self._parts:
                 part_index = len(self._parts) - 1
                 latest_part = self._parts[part_index]
-                if isinstance(latest_part, ThinkingPart):  # pragma: no branch
+                if isinstance(latest_part, ThinkingPart):
                     existing_thinking_part_and_index = latest_part, part_index
         else:
             # Otherwise, attempt to look up an existing ThinkingPart by vendor_part_id
@@ -392,27 +458,33 @@ class ModelResponsePartsManager:
                 existing_thinking_part_and_index = existing_part, part_index
 
         if existing_thinking_part_and_index is None:
-            if content is not None or signature is not None:
-                # There is no existing thinking part that should be updated, so create a new one
-                new_part_index = len(self._parts)
-                part = ThinkingPart(content=content or '', id=id, signature=signature, provider_name=provider_name)
-                if vendor_part_id is not None:  # pragma: no branch
-                    self._vendor_id_to_part_index[vendor_part_id] = new_part_index
-                self._parts.append(part)
-                return PartStartEvent(index=new_part_index, part=part)
-            else:
+            if content is None and signature is None:
                 raise UnexpectedModelBehavior('Cannot create a ThinkingPart with no content or signature')
+
+            # There is no existing thinking part that should be updated, so create a new one
+            new_part_index = len(self._parts)
+            part = ThinkingPart(content=content or '', id=id, signature=signature, provider_name=provider_name)
+            if vendor_part_id is not None:
+                self._vendor_id_to_part_index[vendor_part_id] = new_part_index
+            self._parts.append(part)
+            yield PartStartEvent(index=new_part_index, part=part)
+            self._started_part_indices.add(new_part_index)
         else:
-            if content is not None or signature is not None:
-                # Update the existing ThinkingPart with the new content and/or signature delta
-                existing_thinking_part, part_index = existing_thinking_part_and_index
-                part_delta = ThinkingPartDelta(
-                    content_delta=content, signature_delta=signature, provider_name=provider_name
-                )
-                self._parts[part_index] = part_delta.apply(existing_thinking_part)
-                return PartDeltaEvent(index=part_index, delta=part_delta)
-            else:
+            if content is None and signature is None:
                 raise UnexpectedModelBehavior('Cannot update a ThinkingPart with no content or signature')
+
+            # Update the existing ThinkingPart with the new content and/or signature delta
+            existing_thinking_part, part_index = existing_thinking_part_and_index
+            part_delta = ThinkingPartDelta(
+                content_delta=content, signature_delta=signature, provider_name=provider_name
+            )
+            updated_thinking_part = part_delta.apply(existing_thinking_part)
+            self._parts[part_index] = updated_thinking_part
+            if part_index not in self._started_part_indices:
+                self._started_part_indices.add(part_index)
+                yield PartStartEvent(index=part_index, part=updated_thinking_part)
+            else:
+                yield PartDeltaEvent(index=part_index, delta=part_delta)
 
     def handle_tool_call_delta(
         self,
@@ -458,7 +530,7 @@ class ModelResponsePartsManager:
             if tool_name is None and self._parts:
                 part_index = len(self._parts) - 1
                 latest_part = self._parts[part_index]
-                if isinstance(latest_part, ToolCallPart | BuiltinToolCallPart | ToolCallPartDelta):  # pragma: no branch
+                if isinstance(latest_part, ToolCallPart | BuiltinToolCallPart | ToolCallPartDelta):
                     existing_matching_part_and_index = latest_part, part_index
         else:
             # vendor_part_id is provided, so look up the corresponding part or delta

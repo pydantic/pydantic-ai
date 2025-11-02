@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import io
-from collections.abc import AsyncIterable, AsyncIterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -537,15 +537,18 @@ class OutlinesStreamedResponse(StreamedResponse):
     _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        async for event in self._response:
-            event = self._parts_manager.handle_text_delta(
-                vendor_part_id='content',
-                content=event,
-                thinking_tags=self._model_profile.thinking_tags,
-                ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+        async for chunk in self._response:
+            events = cast(
+                Iterator[ModelResponseStreamEvent],
+                self._parts_manager.handle_text_delta(
+                    vendor_part_id='content',
+                    content=chunk,
+                    thinking_tags=self._model_profile.thinking_tags,
+                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                ),
             )
-            if event is not None:  # pragma: no branch
-                yield event
+            for e in events:
+                yield e
 
     @property
     def model_name(self) -> str:

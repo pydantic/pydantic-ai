@@ -734,19 +734,21 @@ class AnthropicStreamedResponse(StreamedResponse):
                     ):
                         yield event_item
                 elif isinstance(current_block, BetaThinkingBlock):
-                    yield self._parts_manager.handle_thinking_delta(
+                    for e in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=event.index,
                         content=current_block.thinking,
                         signature=current_block.signature,
                         provider_name=self.provider_name,
-                    )
+                    ):
+                        yield e
                 elif isinstance(current_block, BetaRedactedThinkingBlock):
-                    yield self._parts_manager.handle_thinking_delta(
+                    for e in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=event.index,
                         id='redacted_thinking',
                         signature=current_block.data,
                         provider_name=self.provider_name,
-                    )
+                    ):
+                        yield e
                 elif isinstance(current_block, BetaToolUseBlock):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=event.index,
@@ -807,17 +809,19 @@ class AnthropicStreamedResponse(StreamedResponse):
                     ):
                         yield event_item
                 elif isinstance(event.delta, BetaThinkingDelta):
-                    yield self._parts_manager.handle_thinking_delta(
+                    for e in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=event.index,
                         content=event.delta.thinking,
                         provider_name=self.provider_name,
-                    )
+                    ):
+                        yield e
                 elif isinstance(event.delta, BetaSignatureDelta):
-                    yield self._parts_manager.handle_thinking_delta(
+                    for e in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=event.index,
                         signature=event.delta.signature,
                         provider_name=self.provider_name,
-                    )
+                    ):
+                        yield e
                 elif isinstance(event.delta, BetaInputJSONDelta):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=event.index,

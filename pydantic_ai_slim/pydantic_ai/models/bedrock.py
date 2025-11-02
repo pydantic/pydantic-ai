@@ -687,20 +687,22 @@ class BedrockStreamedResponse(StreamedResponse):
                     delta = content_block_delta['delta']
                     if 'reasoningContent' in delta:
                         if redacted_content := delta['reasoningContent'].get('redactedContent'):
-                            yield self._parts_manager.handle_thinking_delta(
+                            for e in self._parts_manager.handle_thinking_delta(
                                 vendor_part_id=index,
                                 id='redacted_content',
                                 signature=redacted_content.decode('utf-8'),
                                 provider_name=self.provider_name,
-                            )
+                            ):
+                                yield e
                         else:
                             signature = delta['reasoningContent'].get('signature')
-                            yield self._parts_manager.handle_thinking_delta(
+                            for e in self._parts_manager.handle_thinking_delta(
                                 vendor_part_id=index,
                                 content=delta['reasoningContent'].get('text'),
                                 signature=signature,
                                 provider_name=self.provider_name if signature else None,
-                            )
+                            ):
+                                yield e
                     if text := delta.get('text'):
                         for event in self._parts_manager.handle_text_delta(vendor_part_id=index, content=text):
                             yield event

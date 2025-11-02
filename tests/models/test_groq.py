@@ -2061,8 +2061,7 @@ Enjoy your homemade Uruguayan alfajores!\
 
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=ThinkingPart(content='')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='\n')),
+            PartStartEvent(index=0, part=ThinkingPart(content='\n')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Okay')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=',')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' so')),

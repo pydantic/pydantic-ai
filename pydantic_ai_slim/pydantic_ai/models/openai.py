@@ -1680,7 +1680,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_name: str
     _provider_url: str
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for chunk in self._response:
             self._usage += _map_usage(chunk, self._provider_name, self._provider_url, self._model_name)
 
@@ -1706,23 +1706,25 @@ class OpenAIStreamedResponse(StreamedResponse):
             # The `reasoning_content` field is only present in DeepSeek models.
             # https://api-docs.deepseek.com/guides/reasoning_model
             if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
-                yield self._parts_manager.handle_thinking_delta(
+                for e in self._parts_manager.handle_thinking_delta(
                     vendor_part_id='reasoning_content',
                     id='reasoning_content',
                     content=reasoning_content,
                     provider_name=self.provider_name,
-                )
+                ):
+                    yield e
 
             # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
             # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
             # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
             if reasoning := getattr(choice.delta, 'reasoning', None):  # pragma: no cover
-                yield self._parts_manager.handle_thinking_delta(
+                for e in self._parts_manager.handle_thinking_delta(
                     vendor_part_id='reasoning',
                     id='reasoning',
                     content=reasoning,
                     provider_name=self.provider_name,
-                )
+                ):
+                    yield e
 
             # Handle the text part of the response
             content = choice.delta.content
@@ -1887,12 +1889,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 if isinstance(chunk.item, responses.ResponseReasoningItem):
                     if signature := chunk.item.encrypted_content:  # pragma: no branch
                         # Add the signature to the part corresponding to the first summary item
-                        yield self._parts_manager.handle_thinking_delta(
+                        for e in self._parts_manager.handle_thinking_delta(
                             vendor_part_id=f'{chunk.item.id}-0',
                             id=chunk.item.id,
                             signature=signature,
                             provider_name=self.provider_name,
-                        )
+                        ):
+                            yield e
                 elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
                     _, return_part, file_parts = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
                     for i, file_part in enumerate(file_parts):
@@ -1925,11 +1928,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
-                yield self._parts_manager.handle_thinking_delta(
+                for e in self._parts_manager.handle_thinking_delta(
                     vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
                     content=chunk.part.text,
                     id=chunk.item_id,
-                )
+                ):
+                    yield e
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartDoneEvent):
                 pass  # there's nothing we need to do here
@@ -1938,11 +1942,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryTextDeltaEvent):
-                yield self._parts_manager.handle_thinking_delta(
+                for e in self._parts_manager.handle_thinking_delta(
                     vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
                     content=chunk.delta,
                     id=chunk.item_id,
-                )
+                ):
+                    yield e
 
             elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
                 # TODO(Marcelo): We should support annotations in the future.

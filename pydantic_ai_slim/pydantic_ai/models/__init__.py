@@ -521,7 +521,7 @@ class StreamedResponse(ABC):
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
 
-    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
 
         This proxies the `_event_iterator()` and emits all events, while also checking for matches
@@ -579,6 +579,16 @@ class StreamedResponse(ABC):
                         last_start_event = event
 
                     yield event
+
+                # Flush any buffered content and stream finalize events
+                for finalize_event in self._parts_manager.finalize():
+                    if isinstance(finalize_event, PartStartEvent):
+                        if last_start_event:
+                            end_event = part_end_event(finalize_event.part)
+                            if end_event:
+                                yield end_event
+                        last_start_event = finalize_event
+                    yield finalize_event
 
                 end_event = part_end_event()
                 if end_event:

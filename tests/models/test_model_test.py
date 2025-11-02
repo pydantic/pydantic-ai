@@ -444,24 +444,3 @@ def test_different_content_input(content: AudioUrl | VideoUrl | ImageUrl | Binar
     result = agent.run_sync(['x', content], model=TestModel(custom_output_text='custom'))
     assert result.output == snapshot('custom')
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=1))
-
-
-@pytest.mark.anyio
-async def test_finalize_integration_buffered_content():
-    """Integration test: StreamedResponse.get() calls finalize() without breaking.
-
-    Note: TestModel doesn't pass thinking_tags during streaming, so this doesn't actually
-    test buffering behavior - it just verifies that calling get() works correctly.
-    The actual buffering logic is thoroughly tested in test_parts_manager_split_tags.py,
-    and normal streaming is tested extensively in test_streaming.py.
-    """
-    test_model = TestModel(custom_output_text='Hello <thi')
-
-    agent = Agent(test_model)
-
-    # Run with streaming and get the final output
-    async with agent.run_stream('test prompt') as result:
-        output = await result.get_output()
-
-    # Verify we get the expected output (processed as plain text, not buffered)
-    assert output == 'Hello <thi'

@@ -547,9 +547,10 @@ class GroqStreamedResponse(StreamedResponse):
                         reasoning = True
 
                     # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
-                    yield self._parts_manager.handle_thinking_delta(
+                    for e in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=f'reasoning-{reasoning_index}', content=choice.delta.reasoning
-                    )
+                    ):
+                        yield e
                 else:
                     reasoning = False
 

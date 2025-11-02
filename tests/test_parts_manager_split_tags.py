@@ -1,193 +1,95 @@
 """Tests for split thinking tag handling in ModelResponsePartsManager."""
 
+from __future__ import annotations as _annotations
+
+from collections.abc import Hashable
+
 from inline_snapshot import snapshot
 
-from pydantic_ai._parts_manager import ModelResponsePartsManager
-from pydantic_ai.messages import (
-    PartDeltaEvent,
+from pydantic_ai import (
     PartStartEvent,
     TextPart,
-    TextPartDelta,
     ThinkingPart,
-    ThinkingPartDelta,
 )
+from pydantic_ai._parts_manager import ModelResponsePart, ModelResponsePartsManager
+from pydantic_ai.messages import ModelResponseStreamEvent
+
+
+def stream_text_deltas(
+    chunks: list[str],
+    vendor_part_id: Hashable | None = 'content',
+    thinking_tags: tuple[str, str] | None = ('<think>', '</think>'),
+    ignore_leading_whitespace: bool = False,
+    finalize: bool = True,
+) -> tuple[list[ModelResponseStreamEvent], list[ModelResponsePart]]:
+    """Helper to stream chunks through manager and return all events + final parts.
+
+    Args:
+        chunks: List of text chunks to stream
+        vendor_part_id: Vendor ID for part tracking
+        thinking_tags: Tuple of (start_tag, end_tag) for thinking detection
+        ignore_leading_whitespace: Whether to ignore leading whitespace
+        finalize: Whether to call finalize() at the end
+
+    Returns:
+        Tuple of (all events, final parts)
+    """
+    manager = ModelResponsePartsManager()
+    all_events: list[ModelResponseStreamEvent] = []
+
+    for chunk in chunks:
+        for event in manager.handle_text_delta(
+            vendor_part_id=vendor_part_id,
+            content=chunk,
+            thinking_tags=thinking_tags,
+            ignore_leading_whitespace=ignore_leading_whitespace,
+        ):
+            all_events.append(event)
+
+    if finalize:
+        for event in manager.finalize():
+            all_events.append(event)
+
+    return all_events, manager.get_parts()
 
 
 def test_handle_text_deltas_with_split_think_tags_at_chunk_start():
-    """Test split thinking tags when tag starts at position 0 of chunk."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
+    """Test split thinking tags when tags are split across chunks."""
 
-    # Chunk 1: "<thi" - starts at position 0, buffer it  # codespell:ignore thi
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='<thi', thinking_tags=thinking_tags))
-    assert len(events) == 0  # Buffered, no events yet
-    assert manager.get_parts() == []
-
-    # Chunk 2: "nk>" - completes the tag
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='nk>', thinking_tags=thinking_tags))
-    assert len(events) == 1
+    # Scenario 1: Split start tag - <thi + nk>content</think>
+    events, parts = stream_text_deltas(['<thi', 'nk>', 'reasoning content', '</think>', 'after'])
+    assert len(events) == 2
     assert events[0] == snapshot(
-        PartStartEvent(index=0, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start')
-    )
-    assert manager.get_parts() == snapshot([ThinkingPart(content='', part_kind='thinking')])
-
-    # Chunk 3: "reasoning content"
-    events = list(
-        manager.handle_text_delta(vendor_part_id='content', content='reasoning content', thinking_tags=thinking_tags)
-    )
-    assert len(events) == 1
-    assert events[0] == snapshot(
-        PartDeltaEvent(
-            index=0,
-            delta=ThinkingPartDelta(content_delta='reasoning content', part_delta_kind='thinking'),
-            event_kind='part_delta',
+        PartStartEvent(
+            index=0, part=ThinkingPart(content='reasoning content', part_kind='thinking'), event_kind='part_start'
         )
     )
-
-    # Chunk 4: "</think>" - end tag
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='</think>', thinking_tags=thinking_tags))
-    assert len(events) == 0
-
-    # Chunk 5: "after" - text after thinking
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='after', thinking_tags=thinking_tags))
-    assert len(events) == 1
-    assert events[0] == snapshot(
+    assert events[1] == snapshot(
         PartStartEvent(index=1, part=TextPart(content='after', part_kind='text'), event_kind='part_start')
     )
+    assert len(parts) == 2
+    assert parts[0] == snapshot(ThinkingPart(content='reasoning content', part_kind='thinking'))
+    assert parts[1] == snapshot(TextPart(content='after', part_kind='text'))
 
-
-def test_handle_text_deltas_split_tags_after_text():
-    """Test split thinking tags at chunk position 0 after text in previous chunk."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    # Chunk 1: "pre-" - creates TextPart
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='pre-', thinking_tags=thinking_tags))
-    assert len(events) == 1
+    # Scenario 2: Split end tag - <think>content</thi + nk>
+    events, parts = stream_text_deltas(['<think>', 'more content', '</thi', 'nk>', 'text after'])
+    assert len(events) == 2
     assert events[0] == snapshot(
-        PartStartEvent(index=0, part=TextPart(content='pre-', part_kind='text'), event_kind='part_start')
-    )
-
-    # Chunk 2: "<thi" - starts at position 0 of THIS chunk, buffer it
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='<thi', thinking_tags=thinking_tags))
-    assert len(events) == 0  # Buffered
-    assert manager.get_parts() == snapshot([TextPart(content='pre-', part_kind='text')])
-
-    # Chunk 3: "nk>" - completes the tag
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='nk>', thinking_tags=thinking_tags))
-    assert len(events) == 1
-    assert events[0] == snapshot(
-        PartStartEvent(index=1, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start')
-    )
-    assert manager.get_parts() == snapshot(
-        [TextPart(content='pre-', part_kind='text'), ThinkingPart(content='', part_kind='thinking')]
-    )
-
-
-def test_handle_text_deltas_split_tags_mid_chunk_treated_as_text():
-    """Test that split tags mid-chunk (after other content in same chunk) are treated as text."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    # Chunk 1: "pre-<thi" - tag does NOT start at position 0 of chunk
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='pre-<thi', thinking_tags=thinking_tags))
-    assert len(events) == 1  # Treated as text, not buffered
-    assert events[0] == snapshot(
-        PartStartEvent(index=0, part=TextPart(content='pre-<thi', part_kind='text'), event_kind='part_start')
-    )
-
-    # Chunk 2: "nk>" - appends to text (not recognized as completing a tag)
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='nk>', thinking_tags=thinking_tags))
-    assert len(events) == 1
-    assert events[0] == snapshot(
-        PartDeltaEvent(
-            index=0, delta=TextPartDelta(content_delta='nk>', part_delta_kind='text'), event_kind='part_delta'
+        PartStartEvent(
+            index=0, part=ThinkingPart(content='more content', part_kind='thinking'), event_kind='part_start'
         )
     )
-    assert manager.get_parts() == snapshot([TextPart(content='pre-<think>', part_kind='text')])
-
-
-def test_handle_text_deltas_split_tags_no_vendor_id():
-    """Test that split tags don't work with vendor_part_id=None (no buffering)."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    # Chunk 1: "<thi" with no vendor_part_id - can't buffer
-    events = list(manager.handle_text_delta(vendor_part_id=None, content='<thi', thinking_tags=thinking_tags))
-    assert len(events) == 1  # Treated as text immediately (simple path)
-    assert events[0] == snapshot(
-        PartStartEvent(index=0, part=TextPart(content='<thi', part_kind='text'), event_kind='part_start')
+    assert events[1] == snapshot(
+        PartStartEvent(index=1, part=TextPart(content='text after', part_kind='text'), event_kind='part_start')
     )
+    assert len(parts) == 2
+    assert parts[0] == snapshot(ThinkingPart(content='more content', part_kind='thinking'))
+    assert parts[1] == snapshot(TextPart(content='text after', part_kind='text'))
 
-    # Chunk 2: "nk>" - appends to text
-    events = list(manager.handle_text_delta(vendor_part_id=None, content='nk>', thinking_tags=thinking_tags))
-    assert len(events) == 1
-    assert events[0] == snapshot(
-        PartDeltaEvent(
-            index=0, delta=TextPartDelta(content_delta='nk>', part_delta_kind='text'), event_kind='part_delta'
-        )
-    )
-    assert manager.get_parts() == snapshot([TextPart(content='<think>', part_kind='text')])
-
-
-def test_handle_text_deltas_false_start_then_real_tag():
-    """Test buffering a false start, then processing real content."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    # Chunk 1: "<th" - could be tag start, buffer it
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='<th', thinking_tags=thinking_tags))
-    assert len(events) == 0  # Buffered
-
-    # Chunk 2: "is is text" - proves it's not a tag, flush buffer
-    events = list(
-        manager.handle_text_delta(vendor_part_id='content', content='is is text', thinking_tags=thinking_tags)
-    )
-    assert len(events) == 1
-    assert events[0] == snapshot(
-        PartStartEvent(index=0, part=TextPart(content='<this is text', part_kind='text'), event_kind='part_start')
-    )
-    assert manager.get_parts() == snapshot([TextPart(content='<this is text', part_kind='text')])
-
-
-def test_buffered_content_exceeds_tag_length():
-    """Test that buffered content longer than tag is flushed (covers line 231)."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    # To hit line 231, we need:
-    # 1. Buffer some content
-    # 2. Next chunk starts with '<' (to pass first check)
-    # 3. Combined length >= tag length
-
-    # First chunk: exactly 6 chars
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='<think', thinking_tags=thinking_tags))
-    assert len(events) == 0  # Buffered
-
-    # Second chunk: starts with '<' so it checks _could_be_tag_start
-    # Combined will be '<think<' (7 chars) which equals tag length '<think>' (7 chars)
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='<', thinking_tags=thinking_tags))
-    # 7 >= 7 is True, so line 231 returns False
-    assert len(events) == 1
-    assert events[0] == snapshot(
-        PartStartEvent(index=0, part=TextPart(content='<think<', part_kind='text'), event_kind='part_start')
-    )
-    assert manager.get_parts() == snapshot([TextPart(content='<think<', part_kind='text')])
-
-
-def test_complete_thinking_tag_no_vendor_id():
-    """Test complete thinking tag with vendor_part_id=None (covers lines 161-164)."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    # Complete start tag with vendor_part_id=None goes through simple path
-    # This covers lines 161-164 in _handle_text_delta_simple
-    events = list(manager.handle_text_delta(vendor_part_id=None, content='<think>', thinking_tags=thinking_tags))
-    assert len(events) == 1
-    assert events[0] == snapshot(
-        PartStartEvent(index=0, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start')
-    )
-    assert manager.get_parts() == snapshot([ThinkingPart(content='', part_kind='thinking')])
+    # Scenario 3: Both tags split - <thi + nk>foo</thi + nk>
+    events, parts = stream_text_deltas(['<thi', 'nk>foo</thi', 'nk>'])
+    assert events == snapshot([PartStartEvent(index=0, part=ThinkingPart(content='foo'))])
+    assert parts == snapshot([ThinkingPart(content='foo')])
 
 
 def test_exact_tag_length_boundary():
@@ -197,28 +99,18 @@ def test_exact_tag_length_boundary():
 
     # Send content in one chunk that's exactly tag length
     events = list(manager.handle_text_delta(vendor_part_id='content', content='<think>', thinking_tags=thinking_tags))
-    # Exact match creates ThinkingPart
-    assert len(events) == 1
-    assert events[0] == snapshot(
-        PartStartEvent(index=0, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start')
-    )
+    # An empty ThinkingPart is created but no event is yielded until content arrives
+    assert len(events) == 0
 
 
 def test_buffered_content_flushed_on_finalize():
     """Test that buffered content is flushed when finalize is called."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    # Buffer partial tag
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='<thi', thinking_tags=thinking_tags))
-    assert len(events) == 0  # Buffered
-
-    # Finalize should flush buffer
-    final_events = list(manager.finalize())
-    assert len(final_events) == 1
-    assert final_events[0] == snapshot(
+    events, parts = stream_text_deltas(['<thi'])
+    assert len(events) == 1
+    assert events[0] == snapshot(
         PartStartEvent(index=0, part=TextPart(content='<thi', part_kind='text'), event_kind='part_start')
     )
+    assert parts == snapshot([TextPart(content='<thi', part_kind='text')])
 
 
 def test_finalize_flushes_all_buffers():
@@ -226,23 +118,18 @@ def test_finalize_flushes_all_buffers():
     manager = ModelResponsePartsManager()
     thinking_tags = ('<think>', '</think>')
 
-    # Buffer for vendor_id_1
-    list(manager.handle_text_delta(vendor_part_id='id1', content='<th', thinking_tags=thinking_tags))
+    for _ in manager.handle_text_delta(vendor_part_id='id1', content='<th', thinking_tags=thinking_tags):
+        pass
+    for _ in manager.handle_text_delta(vendor_part_id='id2', content='<thi', thinking_tags=thinking_tags):
+        pass
 
-    # Buffer for vendor_id_2
-    list(manager.handle_text_delta(vendor_part_id='id2', content='<thi', thinking_tags=thinking_tags))
-
-    # Finalize should flush both
     final_events = list(manager.finalize())
     assert len(final_events) == 2
 
-    # Both should become TextParts
     parts = manager.get_parts()
     assert len(parts) == 2
     assert all(isinstance(p, TextPart) for p in parts)
-    # Note: order may vary, so check content exists
-    text_parts = [p for p in parts if isinstance(p, TextPart)]
-    contents = {p.content for p in text_parts}
+    contents: set[str] = {p.content for p in parts if isinstance(p, TextPart)}
     assert contents == {'<th', '<thi'}
 
 
@@ -253,321 +140,170 @@ def test_finalize_with_no_buffer():
     assert len(events) == 0  # No events, no errors
 
 
-def test_finalize_with_empty_buffered_content():
-    """Test that finalize handles empty string in buffer (covers 83->82 branch)."""
-    manager = ModelResponsePartsManager()
-    # Add both empty and non-empty content to test the branch where buffered_content is falsy
-    # This ensures the loop continues after skipping the empty content
-    manager._thinking_tag_buffer['id1'] = ''  # Will be skipped  # pyright: ignore[reportPrivateUsage]
-    manager._thinking_tag_buffer['id2'] = 'content'  # Will be flushed  # pyright: ignore[reportPrivateUsage]
-    events = list(manager.finalize())
-    assert len(events) == 1  # Only non-empty content produces events
-    assert isinstance(events[0], PartStartEvent)
-    assert events[0].part == TextPart(content='content')
-    assert manager._thinking_tag_buffer == {}  # Buffer should be cleared  # pyright: ignore[reportPrivateUsage]
-
-
 def test_get_parts_after_finalize():
-    """Test that get_parts returns flushed content after finalize (unit test)."""
-    # NOTE: This is a unit test of the manager. Real integration testing with
-    # StreamedResponse is done in test_finalize_integration().
+    """Test that get_parts returns flushed content after finalize."""
     manager = ModelResponsePartsManager()
     thinking_tags = ('<think>', '</think>')
 
-    list(manager.handle_text_delta(vendor_part_id='content', content='<thi', thinking_tags=thinking_tags))
+    for _ in manager.handle_text_delta(vendor_part_id='content', content='<thi', thinking_tags=thinking_tags):
+        pass
 
-    # Before finalize
-    assert manager.get_parts() == []  # Buffer not included
+    assert manager.get_parts() == []
 
-    # Finalize
-    list(manager.finalize())
+    for _ in manager.finalize():
+        pass
 
-    # After finalize
     assert manager.get_parts() == snapshot([TextPart(content='<thi', part_kind='text')])
 
 
-def test_end_tag_with_trailing_text_same_chunk():
-    """Test that text after end tag in same chunk is handled correctly."""
+def test_prefixed_thinking_tags_are_text():
+    """Test that thinking tags (incomplete or complete) with a prefix are treated as plain text."""
     manager = ModelResponsePartsManager()
     thinking_tags = ('<think>', '</think>')
 
-    # Start thinking
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='<think>', thinking_tags=thinking_tags))
-    assert len(events) == 1
-    assert isinstance(events[0], PartStartEvent)
-    assert isinstance(events[0].part, ThinkingPart)
-
-    # Add thinking content
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='reasoning', thinking_tags=thinking_tags))
+    # Case 1: Incomplete tag with prefix
+    events = list(manager.handle_text_delta(vendor_part_id='content', content='foo<th', thinking_tags=thinking_tags))
     assert len(events) == 1
     assert events[0] == snapshot(
-        PartDeltaEvent(
-            index=0,
-            delta=ThinkingPartDelta(content_delta='reasoning', part_delta_kind='thinking'),
-            event_kind='part_delta',
-        )
+        PartStartEvent(index=0, part=TextPart(content='foo<th', part_kind='text'), event_kind='part_start')
     )
+    assert manager.get_parts() == snapshot([TextPart(content='foo<th', part_kind='text')])
 
-    # End tag with trailing text in same chunk
+    # Reset manager for next case
+    manager = ModelResponsePartsManager()
+
+    # Case 2: Complete tag with prefix
     events = list(
-        manager.handle_text_delta(vendor_part_id='content', content='</think>post-text', thinking_tags=thinking_tags)
+        manager.handle_text_delta(vendor_part_id='content', content='bar<think>', thinking_tags=thinking_tags)
     )
-
-    # Should emit event for new TextPart
     assert len(events) == 1
-    assert isinstance(events[0], PartStartEvent)
-    assert events[0].part == TextPart(content='post-text')
-
-    # Final state
-    assert manager.get_parts() == snapshot(
-        [ThinkingPart(content='reasoning', part_kind='thinking'), TextPart(content='post-text', part_kind='text')]
+    assert events[0] == snapshot(
+        PartStartEvent(index=0, part=TextPart(content='bar<think>', part_kind='text'), event_kind='part_start')
     )
+    assert manager.get_parts() == snapshot([TextPart(content='bar<think>', part_kind='text')])
 
-
-def test_split_end_tag_with_trailing_text():
-    """Test split end tag with text after it."""
+    # Reset manager for next case
     manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
 
-    # Start thinking (tag at position 0)
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='<think>', thinking_tags=thinking_tags))
-    assert len(events) == 1
-    assert isinstance(events[0], PartStartEvent)
-    assert isinstance(events[0].part, ThinkingPart)
-
-    # Add thinking content
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='thinking', thinking_tags=thinking_tags))
-    assert len(events) == 1
-    assert isinstance(events[0], PartDeltaEvent)
-
-    # Split end tag: "</thi"
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='</thi', thinking_tags=thinking_tags))
-    assert len(events) == 0  # Buffered
-
-    # Complete end tag with trailing text: "nk>post"
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='nk>post', thinking_tags=thinking_tags))
-
-    # Should close thinking and start text part
-    assert len(events) == 1
-    assert isinstance(events[0], PartStartEvent)
-    assert events[0].part == TextPart(content='post')
-
-    assert manager.get_parts() == snapshot(
-        [ThinkingPart(content='thinking', part_kind='thinking'), TextPart(content='post', part_kind='text')]
-    )
-
-
-def test_thinking_content_before_end_tag_with_trailing():
-    """Test thinking content before end tag, with trailing text in same chunk."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    # Start thinking
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='<think>', thinking_tags=thinking_tags))
-    assert len(events) == 1
-    assert isinstance(events[0], PartStartEvent)
-    assert isinstance(events[0].part, ThinkingPart)
-
-    # Send content + end tag + trailing all in one chunk
+    # Case 3: Complete tag with content and prefix
     events = list(
         manager.handle_text_delta(
-            vendor_part_id='content', content='reasoning</think>after', thinking_tags=thinking_tags
+            vendor_part_id='content', content='baz<think>thinking</think>', thinking_tags=thinking_tags
         )
     )
-
-    # Should emit thinking delta event, then text start event
-    assert len(events) == 2
-    assert isinstance(events[0], PartDeltaEvent)
-    assert events[0].delta == ThinkingPartDelta(content_delta='reasoning')
-    assert isinstance(events[1], PartStartEvent)
-    assert events[1].part == TextPart(content='after')
-
-    assert manager.get_parts() == snapshot(
-        [ThinkingPart(content='reasoning', part_kind='thinking'), TextPart(content='after', part_kind='text')]
+    assert len(events) == 1
+    assert events[0] == snapshot(
+        PartStartEvent(
+            index=0, part=TextPart(content='baz<think>thinking</think>', part_kind='text'), event_kind='part_start'
+        )
     )
+    assert manager.get_parts() == snapshot([TextPart(content='baz<think>thinking</think>', part_kind='text')])
 
 
-# Issue 3b: START tags with trailing content
-# These tests document the broken behavior where start tags with trailing content
-# in the same chunk are not handled correctly.
+def test_stream_and_finalize():
+    """Simulates streaming with complete tags and content."""
+    events, parts = stream_text_deltas(['<thi', 'nk>', 'content', '</think>', 'final text'], vendor_part_id='stream1')
 
-
-def test_start_tag_with_trailing_content_same_chunk():
-    """Test that content after start tag in same chunk is handled correctly."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    # Start tag with trailing content in same chunk
-    events = list(
-        manager.handle_text_delta(vendor_part_id='content', content='<think>thinking', thinking_tags=thinking_tags)
-    )
-
-    # Should emit event for new ThinkingPart, then delta for content
     assert len(events) == 2
     assert isinstance(events[0], PartStartEvent)
     assert isinstance(events[0].part, ThinkingPart)
-    assert isinstance(events[1], PartDeltaEvent)
-    assert events[1].delta == ThinkingPartDelta(content_delta='thinking')
+    assert events[0].part.content == 'content'
 
-    # Final state
-    assert manager.get_parts() == snapshot([ThinkingPart(content='thinking', part_kind='thinking')])
+    assert len(parts) == 2
+    assert isinstance(parts[1], TextPart)
+    assert parts[1].content == 'final text'
 
+    events_incomplete, parts_incomplete = stream_text_deltas(['<thi'], vendor_part_id='stream2')
 
-def test_split_start_tag_with_trailing_content():
-    """Test split start tag with content after it."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    # Split start tag: "<thi"
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='<thi', thinking_tags=thinking_tags))
-    assert len(events) == 0  # Buffered
-
-    # Complete start tag with trailing content: "nk>content"
-    events = list(
-        manager.handle_text_delta(vendor_part_id='content', content='nk>content', thinking_tags=thinking_tags)
-    )
-
-    # Should create ThinkingPart and add content
-    assert len(events) == 2
-    assert isinstance(events[0], PartStartEvent)
-    assert isinstance(events[0].part, ThinkingPart)
-    assert isinstance(events[1], PartDeltaEvent)
-    assert events[1].delta == ThinkingPartDelta(content_delta='content')
-
-    assert manager.get_parts() == snapshot([ThinkingPart(content='content', part_kind='thinking')])
+    assert len(events_incomplete) == 1
+    assert isinstance(events_incomplete[0], PartStartEvent)
+    assert events_incomplete[0].part == TextPart(content='<thi')
+    assert parts_incomplete == [TextPart(content='<thi')]
 
 
-def test_complete_sequence_start_tag_with_inline_content():
-    """Test complete sequence: start tag with inline content and end tag."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
+def test_whitespace_prefixed_thinking_tags():
+    """Test thinking tags prefixed by whitespace when ignore_leading_whitespace=True."""
+    events, parts = stream_text_deltas(['\n<think>', 'thinking content'], ignore_leading_whitespace=True)
 
-    # All in one chunk: "<think>content</think>after"
-    events = list(
-        manager.handle_text_delta(
-            vendor_part_id='content', content='<think>content</think>after', thinking_tags=thinking_tags
+    assert len(events) == 1
+    assert events[0] == snapshot(
+        PartStartEvent(
+            index=0, part=ThinkingPart(content='thinking content', part_kind='thinking'), event_kind='part_start'
         )
     )
-
-    # Should create ThinkingPart with content, then TextPart
-    # Exact event count may vary based on implementation
-    assert len(events) >= 2
-
-    # Final state should have both parts
-    assert manager.get_parts() == snapshot(
-        [ThinkingPart(content='content', part_kind='thinking'), TextPart(content='after', part_kind='text')]
-    )
+    assert parts == snapshot([ThinkingPart(content='thinking content', part_kind='thinking')])
 
 
-def test_text_then_start_tag_with_content():
-    """Test text part followed by start tag with content."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
+def test_isolated_think_tag_with_finalize():
+    """Test isolated <think> tag converted to TextPart on finalize."""
+    events, parts = stream_text_deltas(['<think>'])
 
-    # Chunk 1: "Hello "
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='Hello ', thinking_tags=thinking_tags))
     assert len(events) == 1
     assert isinstance(events[0], PartStartEvent)
-    assert events[0].part == TextPart(content='Hello ')
-
-    # Chunk 2: "<think>reasoning"
-    events = list(
-        manager.handle_text_delta(vendor_part_id='content', content='<think>reasoning', thinking_tags=thinking_tags)
-    )
-
-    # Should create ThinkingPart and add reasoning content
-    assert len(events) == 2
-    assert isinstance(events[0], PartStartEvent)
-    assert isinstance(events[0].part, ThinkingPart)
-    assert isinstance(events[1], PartDeltaEvent)
-    assert events[1].delta == ThinkingPartDelta(content_delta='reasoning')
-
-    # Final state
-    assert manager.get_parts() == snapshot(
-        [TextPart(content='Hello ', part_kind='text'), ThinkingPart(content='reasoning', part_kind='thinking')]
-    )
+    assert events[0].part == snapshot(TextPart(content='<think>', part_kind='text'))
+    assert parts == snapshot([TextPart(content='<think>', part_kind='text')])
 
 
-def test_text_and_start_tag_same_chunk():
-    """Test text followed by start tag in the same chunk (covers line 297)."""
+def test_vendor_id_switch_during_thinking():
+    """Test that switching vendor_part_id during thinking creates separate parts."""
     manager = ModelResponsePartsManager()
     thinking_tags = ('<think>', '</think>')
 
-    # Single chunk with text then start tag: "prefix<think>"
+    events = list(manager.handle_text_delta(vendor_part_id='id1', content='<think>', thinking_tags=thinking_tags))
+    assert len(events) == 0
+
     events = list(
-        manager.handle_text_delta(vendor_part_id='content', content='prefix<think>', thinking_tags=thinking_tags)
+        manager.handle_text_delta(vendor_part_id='id1', content='thinking content', thinking_tags=thinking_tags)
     )
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, PartStartEvent)
+    assert isinstance(event.part, ThinkingPart)
+    assert event.part.content == 'thinking content'
 
-    # Should create TextPart for "prefix", then ThinkingPart
-    assert len(events) == 2
-    assert isinstance(events[0], PartStartEvent)
-    assert events[0].part == TextPart(content='prefix')
-    assert isinstance(events[1], PartStartEvent)
-    assert isinstance(events[1].part, ThinkingPart)
-
-    # Final state
-    assert manager.get_parts() == snapshot(
-        [TextPart(content='prefix', part_kind='text'), ThinkingPart(content='', part_kind='thinking')]
+    events = list(
+        manager.handle_text_delta(vendor_part_id='id2', content='different part', thinking_tags=thinking_tags)
     )
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, PartStartEvent)
+    assert isinstance(event.part, TextPart)
+    assert event.part.content == 'different part'
+
+    parts = manager.get_parts()
+    assert len(parts) == 2
+    assert parts[0] == snapshot(ThinkingPart(content='thinking content', part_kind='thinking'))
+    assert parts[1] == snapshot(TextPart(content='different part', part_kind='text'))
 
 
-def test_text_and_start_tag_with_content_same_chunk():
-    """Test text + start tag + content in the same chunk (covers lines 211, 223, 297)."""
+# this last one's a weird one because the closing tag gets buffered and then flushed (bc it doesn't close)
+# in accordance with the open question https://github.com/pydantic/pydantic-ai/pull/3206#discussion_r2483976551
+# if we auto-close <think> tags then this case will reach the user as `ThinkingPart(content='thinking foo</th')`
+def test_thinking_interrupted_by_incomplete_end_tag_and_vendor_switch():
+    """Test unclosed thinking tag followed by different vendor_part_id."""
     manager = ModelResponsePartsManager()
     thinking_tags = ('<think>', '</think>')
 
-    # Single chunk: "prefix<think>thinking"
-    events = list(
-        manager.handle_text_delta(
-            vendor_part_id='content', content='prefix<think>thinking', thinking_tags=thinking_tags
-        )
-    )
+    for _ in manager.handle_text_delta(vendor_part_id='id1', content='<think>', thinking_tags=thinking_tags):
+        pass
+    for _ in manager.handle_text_delta(vendor_part_id='id1', content='thinking foo</th', thinking_tags=thinking_tags):
+        pass
 
-    # Should create TextPart, ThinkingPart, and add thinking content
-    assert len(events) >= 2
+    events = list(manager.handle_text_delta(vendor_part_id='id2', content='new content', thinking_tags=thinking_tags))
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, PartStartEvent)
+    assert isinstance(event.part, TextPart)
 
-    # Final state
-    assert manager.get_parts() == snapshot(
-        [TextPart(content='prefix', part_kind='text'), ThinkingPart(content='thinking', part_kind='thinking')]
-    )
+    for _ in manager.finalize():
+        pass
 
-
-def test_start_tag_with_content_no_vendor_id():
-    """Test start tag with trailing content when vendor_part_id=None.
-
-    The content after the start tag should be added to the ThinkingPart, not create a separate TextPart.
-    """
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    # With vendor_part_id=None and start tag with content
-    events = list(
-        manager.handle_text_delta(vendor_part_id=None, content='<think>thinking', thinking_tags=thinking_tags)
-    )
-
-    # Should create ThinkingPart and add content
-    assert len(events) >= 1
-    assert isinstance(events[0], PartStartEvent)
-    assert isinstance(events[0].part, ThinkingPart)
-
-    # Content should be in the ThinkingPart, not a separate TextPart
-    assert manager.get_parts() == snapshot([ThinkingPart(content='thinking')])
-
-
-def test_text_then_start_tag_no_vendor_id():
-    """Test text before start tag when vendor_part_id=None (covers line 211 in _handle_text_delta_simple)."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    # With vendor_part_id=None and text before start tag
-    events = list(manager.handle_text_delta(vendor_part_id=None, content='text<think>', thinking_tags=thinking_tags))
-
-    # Should create TextPart for "text", then ThinkingPart
-    assert len(events) == 2
-    assert isinstance(events[0], PartStartEvent)
-    assert events[0].part == TextPart(content='text')
-    assert isinstance(events[1], PartStartEvent)
-    assert isinstance(events[1].part, ThinkingPart)
-
-    # Final state
-    assert manager.get_parts() == snapshot([TextPart(content='text'), ThinkingPart(content='')])
+    parts = manager.get_parts()
+    assert len(parts) == 3
+    assert isinstance(parts[0], ThinkingPart)
+    assert parts[0].content == 'thinking foo'
+    assert isinstance(parts[1], TextPart)
+    assert parts[1].content == 'new content'
+    # currently as it stands, the incomplete end tag gets flushed as text (which is even weirder from a UX perspective)
+    assert isinstance(parts[2], TextPart)
+    assert parts[2].content == '</th'
