@@ -1,8 +1,9 @@
 from collections.abc import Sequence
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
@@ -11,9 +12,12 @@ from pydantic_ai import (
     ModelRequest,
     TextPart,
     ThinkingPart,
+    ToolCallPart,
+    ToolDefinition,
     UnexpectedModelBehavior,
 )
 from pydantic_ai.direct import model_request
+from pydantic_ai.models import ModelRequestParameters
 
 from ..conftest import try_import
 
@@ -67,6 +71,58 @@ What can I help you with today?\
     assert response.provider_details is not None
     assert response.provider_details['downstream_provider'] == 'xAI'
     assert response.provider_details['native_finish_reason'] == 'stop'
+
+
+async def test_openrouter_tool_calling(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+
+    class Divide(BaseModel):
+        """Divide two numbers."""
+
+        numerator: float
+        denominator: float
+        on_inf: Literal['error', 'infinity'] = 'infinity'
+
+    model = OpenRouterModel('mistralai/mistral-small', provider=provider)
+    response = await model_request(
+        model,
+        [ModelRequest.user_text_prompt('What is 123 / 456?')],
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[
+                ToolDefinition(
+                    name=Divide.__name__.lower(),
+                    description=Divide.__doc__,
+                    parameters_json_schema=Divide.model_json_schema(),
+                )
+            ],
+            allow_text_output=True,  # Allow model to either use tools or respond directly
+        ),
+    )
+
+    assert len(response.parts) == 1
+
+    tool_call_part = response.parts[0]
+    assert isinstance(tool_call_part, ToolCallPart)
+    assert tool_call_part.tool_call_id == snapshot('3sniiMddS')
+    assert tool_call_part.tool_name == 'divide'
+    assert tool_call_part.args == snapshot('{"numerator": 123, "denominator": 456, "on_inf": "infinity"}')
+
+    mapped_messages = await model._map_messages([response])  # type: ignore[reportPrivateUsage]
+    tool_call_message = mapped_messages[0]
+    assert tool_call_message['role'] == 'assistant'
+    assert tool_call_message.get('content') is None
+    assert tool_call_message.get('tool_calls') == snapshot(
+        [
+            {
+                'id': '3sniiMddS',
+                'type': 'function',
+                'function': {
+                    'name': 'divide',
+                    'arguments': '{"numerator": 123, "denominator": 456, "on_inf": "infinity"}',
+                },
+            }
+        ]
+    )
 
 
 async def test_openrouter_with_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:

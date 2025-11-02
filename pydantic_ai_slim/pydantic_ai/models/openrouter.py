@@ -466,8 +466,10 @@ class OpenRouterModel(OpenAIChatModel):
             if isinstance(item, TextPart):
                 texts.append(item.content)
             elif isinstance(item, ThinkingPart):
-                if isinstance(item, OpenRouterThinkingPart) and item.provider_name == self.system:
+                if item.provider_name == self.system and isinstance(item, OpenRouterThinkingPart):
                     reasoning_details.append(item.into_reasoning_detail())
+                else:  # pragma: no cover
+                    pass
             elif isinstance(item, ToolCallPart):
                 tool_calls.append(self._map_tool_call(item))
             elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
