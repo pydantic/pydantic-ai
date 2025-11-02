@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 
+from openai.types.chat.chat_completion_chunk import Choice
 from pydantic import ValidationError
 from pydantic_core import to_json
 from typing_extensions import assert_never, deprecated
@@ -529,6 +530,50 @@ class OpenAIChatModel(Model):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
 
+    def _validate_completion(self, response: chat.ChatCompletion) -> chat.ChatCompletion:
+        return chat.ChatCompletion.model_validate(response.model_dump())
+
+    def _process_reasoning(self, response: chat.ChatCompletion) -> list[ThinkingPart]:
+        message = response.choices[0].message
+        items: list[ThinkingPart] = []
+
+        # The `reasoning_content` field is only present in DeepSeek models.
+        # https://api-docs.deepseek.com/guides/reasoning_model
+        if reasoning_content := getattr(message, 'reasoning_content', None):
+            items.append(ThinkingPart(id='reasoning_content', content=reasoning_content, provider_name=self.system))
+
+        # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
+        # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
+        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
+        if reasoning := getattr(message, 'reasoning', None):
+            items.append(ThinkingPart(id='reasoning', content=reasoning, provider_name=self.system))
+
+        return items
+
+    def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any]:
+        choice = response.choices[0]
+        provider_details: dict[str, Any] = {}
+
+        # Add logprobs to vendor_details if available
+        if choice.logprobs is not None and choice.logprobs.content:
+            # Convert logprobs to a serializable format
+            provider_details['logprobs'] = [
+                {
+                    'token': lp.token,
+                    'bytes': lp.bytes,
+                    'logprob': lp.logprob,
+                    'top_logprobs': [
+                        {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+                    ],
+                }
+                for lp in choice.logprobs.content
+            ]
+
+        raw_finish_reason = choice.finish_reason
+        provider_details['finish_reason'] = raw_finish_reason
+
+        return provider_details
+
     def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         # Although the OpenAI SDK claims to return a Pydantic model (`ChatCompletion`) from the chat completions function:
@@ -536,7 +581,9 @@ class OpenAIChatModel(Model):
         # * if the endpoint returns plain text, the return type is a string
         # Thus we validate it fully here.
         if not isinstance(response, chat.ChatCompletion):
-            raise UnexpectedModelBehavior('Invalid response from OpenAI chat completions endpoint, expected JSON data')
+            raise UnexpectedModelBehavior(
+                f'Invalid response from {self.system} chat completions endpoint, expected JSON data'
+            )
 
         if response.created:
             timestamp = number_to_datetime(response.created)
@@ -549,23 +596,15 @@ class OpenAIChatModel(Model):
             choice.finish_reason = 'stop'
 
         try:
-            response = chat.ChatCompletion.model_validate(response.model_dump())
+            response = self._validate_completion(response)
         except ValidationError as e:
-            raise UnexpectedModelBehavior(f'Invalid response from OpenAI chat completions endpoint: {e}') from e
+            raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
 
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
 
-        # The `reasoning_content` field is only present in DeepSeek models.
-        # https://api-docs.deepseek.com/guides/reasoning_model
-        if reasoning_content := getattr(choice.message, 'reasoning_content', None):
-            items.append(ThinkingPart(id='reasoning_content', content=reasoning_content, provider_name=self.system))
-
-        # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
-        # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
-        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
-        if reasoning := getattr(choice.message, 'reasoning', None):
-            items.append(ThinkingPart(id='reasoning', content=reasoning, provider_name=self.system))
+        if thinking_parts := self._process_reasoning(response):
+            items.extend(thinking_parts)
 
         if choice.message.content:
             items.extend(
@@ -585,36 +624,15 @@ class OpenAIChatModel(Model):
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
 
-        vendor_details: dict[str, Any] = {}
-
-        # Add logprobs to vendor_details if available
-        if choice.logprobs is not None and choice.logprobs.content:
-            # Convert logprobs to a serializable format
-            vendor_details['logprobs'] = [
-                {
-                    'token': lp.token,
-                    'bytes': lp.bytes,
-                    'logprob': lp.logprob,
-                    'top_logprobs': [
-                        {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
-                    ],
-                }
-                for lp in choice.logprobs.content
-            ]
-
-        raw_finish_reason = choice.finish_reason
-        vendor_details['finish_reason'] = raw_finish_reason
-        finish_reason = _CHAT_FINISH_REASON_MAP.get(raw_finish_reason)
-
         return ModelResponse(
             parts=items,
             usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
             model_name=response.model,
             timestamp=timestamp,
-            provider_details=vendor_details or None,
+            provider_details=self._process_provider_details(response),
             provider_response_id=response.id,
             provider_name=self._provider.name,
-            finish_reason=finish_reason,
+            finish_reason=self._map_finish_reason(choice.finish_reason),
         )
 
     async def _process_streamed_response(
@@ -700,6 +718,11 @@ class OpenAIChatModel(Model):
         if tool_calls:
             message_param['tool_calls'] = tool_calls
         return message_param
+
+    def _map_finish_reason(
+        self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
+    ) -> FinishReason | None:
+        return _CHAT_FINISH_REASON_MAP.get(key)
 
     async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
@@ -1679,9 +1702,35 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_name: str
     _provider_url: str
 
+    def _handle_thinking_delta(self, choice: Choice):
+        # The `reasoning_content` field is only present in DeepSeek models.
+        # https://api-docs.deepseek.com/guides/reasoning_model
+        if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
+            yield self._parts_manager.handle_thinking_delta(
+                vendor_part_id='reasoning_content',
+                id='reasoning_content',
+                content=reasoning_content,
+                provider_name=self.provider_name,
+            )
+
+        # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
+        # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
+        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
+        if reasoning := getattr(choice.delta, 'reasoning', None):  # pragma: no cover
+            yield self._parts_manager.handle_thinking_delta(
+                vendor_part_id='reasoning',
+                id='reasoning',
+                content=reasoning,
+                provider_name=self.provider_name,
+            )
+
+    def _handle_provider_details(self, choice: Choice) -> dict[str, str] | None:
+        if raw_finish_reason := choice.finish_reason:
+            return {'finish_reason': raw_finish_reason}
+
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
-            self._usage += _map_usage(chunk, self._provider_name, self._provider_url, self._model_name)
+            self._usage += self._map_usage(chunk)
 
             if chunk.id:  # pragma: no branch
                 self.provider_response_id = chunk.id
@@ -1699,29 +1748,13 @@ class OpenAIStreamedResponse(StreamedResponse):
                 continue
 
             if raw_finish_reason := choice.finish_reason:
-                self.provider_details = {'finish_reason': raw_finish_reason}
-                self.finish_reason = _CHAT_FINISH_REASON_MAP.get(raw_finish_reason)
+                self.finish_reason = self._map_finish_reason(raw_finish_reason)
 
-            # The `reasoning_content` field is only present in DeepSeek models.
-            # https://api-docs.deepseek.com/guides/reasoning_model
-            if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
-                yield self._parts_manager.handle_thinking_delta(
-                    vendor_part_id='reasoning_content',
-                    id='reasoning_content',
-                    content=reasoning_content,
-                    provider_name=self.provider_name,
-                )
+            if provider_details := self._handle_provider_details(choice):
+                self.provider_details = provider_details
 
-            # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
-            # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
-            # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
-            if reasoning := getattr(choice.delta, 'reasoning', None):  # pragma: no cover
-                yield self._parts_manager.handle_thinking_delta(
-                    vendor_part_id='reasoning',
-                    id='reasoning',
-                    content=reasoning,
-                    provider_name=self.provider_name,
-                )
+            for thinking_part in self._handle_thinking_delta(choice):
+                yield thinking_part
 
             # Handle the text part of the response
             content = choice.delta.content
@@ -1747,6 +1780,14 @@ class OpenAIStreamedResponse(StreamedResponse):
                 )
                 if maybe_event is not None:
                     yield maybe_event
+
+    def _map_usage(self, response: ChatCompletionChunk):
+        return _map_usage(response, self._provider_name, self._provider_url, self._model_name)
+
+    def _map_finish_reason(
+        self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
+    ) -> FinishReason | None:
+        return _CHAT_FINISH_REASON_MAP.get(key)
 
     @property
     def model_name(self) -> OpenAIModelName:

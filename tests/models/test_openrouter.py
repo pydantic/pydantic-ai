@@ -16,7 +16,7 @@ from pydantic_ai import (
     ToolDefinition,
     UnexpectedModelBehavior,
 )
-from pydantic_ai.direct import model_request
+from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
 
 from ..conftest import try_import
@@ -71,6 +71,28 @@ What can I help you with today?\
     assert response.provider_details is not None
     assert response.provider_details['downstream_provider'] == 'xAI'
     assert response.provider_details['native_finish_reason'] == 'stop'
+
+
+async def test_openrouter_stream_with_native_options(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    # These specific settings will force OpenRouter to use the fallback model, since Gemini is not available via the xAI provider.
+    settings = OpenRouterModelSettings(
+        openrouter_models=['x-ai/grok-4'],
+        openrouter_transforms=['middle-out'],
+        openrouter_provider={'only': ['xai']},
+    )
+
+    async with model_request_stream(
+        model, [ModelRequest.user_text_prompt('Who are you')], model_settings=settings
+    ) as stream:
+        assert stream.provider_details == snapshot(None)
+        assert stream.finish_reason == snapshot(None)
+
+        _ = [chunk async for chunk in stream]
+
+        assert stream.provider_details == snapshot({'finish_reason': 'stop'})
+        assert stream.finish_reason == snapshot('stop')
 
 
 async def test_openrouter_tool_calling(allow_model_requests: None, openrouter_api_key: str) -> None:
@@ -200,7 +222,7 @@ async def test_openrouter_validate_non_json_response(openrouter_api_key: str) ->
         model._process_response('This is not JSON!')  # type: ignore[reportPrivateUsage]
 
     assert str(exc_info.value) == snapshot(
-        'Invalid response from OpenRouter chat completions endpoint, expected JSON data'
+        'Invalid response from openrouter chat completions endpoint, expected JSON data'
     )
 
 
@@ -221,25 +243,6 @@ async def test_openrouter_validate_error_response(openrouter_api_key: str) -> No
 
     assert str(exc_info.value) == snapshot(
         'status_code: 200, model_name: test, body: This response has an error attribute'
-    )
-
-
-async def test_openrouter_validate_error_finish_reason(openrouter_api_key: str) -> None:
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
-
-    choice = Choice.model_construct(
-        index=0, message={'role': 'assistant'}, finish_reason='error', native_finish_reason='stop'
-    )
-    response = ChatCompletion.model_construct(
-        id='', choices=[choice], created=0, object='chat.completion', model='test', provider='test'
-    )
-
-    with pytest.raises(UnexpectedModelBehavior) as exc_info:
-        model._process_response(response)  # type: ignore[reportPrivateUsage]
-
-    assert str(exc_info.value) == snapshot(
-        'Invalid response from OpenRouter chat completions endpoint, error finish_reason without error data'
     )
 
 

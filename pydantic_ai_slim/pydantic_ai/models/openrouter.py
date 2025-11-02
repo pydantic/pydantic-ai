@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal, cast, override
 
-from openai import AsyncOpenAI
+from openai import AsyncStream
 from openai.types import chat
 from openai.types.chat.chat_completion import Choice
 from pydantic import AliasChoices, BaseModel, Field, TypeAdapter
@@ -13,16 +13,26 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FilePart,
+    FinishReason,
     ModelResponse,
     TextPart,
     ThinkingPart,
     ToolCallPart,
 )
 from ..profiles import ModelProfileSpec
-from ..providers import Provider
+from ..providers.openrouter import OpenRouterProvider
 from ..settings import ModelSettings
+from ..usage import RequestUsage
 from . import ModelRequestParameters
-from .openai import OpenAIChatModel, OpenAIChatModelSettings
+from .openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIStreamedResponse
+
+_CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_filter', 'error'], FinishReason] = {
+    'stop': 'stop',
+    'length': 'length',
+    'tool_calls': 'tool_call',
+    'content_filter': 'content_filter',
+    'error': 'error',
+}
 
 
 class OpenRouterMaxPrice(TypedDict, total=False):
@@ -102,7 +112,7 @@ KnownOpenRouterProviders = Literal[
 ]
 """Known providers in the OpenRouter marketplace"""
 
-OpenRouterProvider = str | KnownOpenRouterProviders
+OpenRouterMarketplaceProvider = str | KnownOpenRouterProviders
 """Possible OpenRouter provider slugs.
 
 Since OpenRouter is constantly updating their list of providers, we explicitly list some known providers but
@@ -120,7 +130,7 @@ Currently only supports 'middle-out', but is expected to grow in the future.
 class OpenRouterProviderConfig(TypedDict, total=False):
     """Represents the 'Provider' object from the OpenRouter API."""
 
-    order: list[OpenRouterProvider]
+    order: list[OpenRouterMarketplaceProvider]
     """List of provider slugs to try in order (e.g. ["anthropic", "openai"]). [See details](https://openrouter.ai/docs/features/provider-routing#ordering-specific-providers)"""
 
     allow_fallbacks: bool
@@ -135,7 +145,7 @@ class OpenRouterProviderConfig(TypedDict, total=False):
     zdr: bool
     """Restrict routing to only ZDR (Zero Data Retention) endpoints. [See details](https://openrouter.ai/docs/features/provider-routing#zero-data-retention-enforcement)"""
 
-    only: list[OpenRouterProvider]
+    only: list[OpenRouterMarketplaceProvider]
     """List of provider slugs to allow for this request. [See details](https://openrouter.ai/docs/features/provider-routing#allowing-only-specific-providers)"""
 
     ignore: list[str]
@@ -365,6 +375,60 @@ class OpenRouterChatCompletion(chat.ChatCompletion):
     """OpenRouter specific error attribute."""
 
 
+class OpenRouterChatCompletionChunk(chat.ChatCompletionChunk):
+    """Wraps OpenAI chat completion with OpenRouter specific attributes."""
+
+    provider: str
+    """The downstream provider that was used by OpenRouter."""
+
+    choices: list[OpenRouterChoice]  # type: ignore[reportIncompatibleVariableOverride]
+    """A list of chat completion choices modified with OpenRouter specific attributes."""
+
+    error: OpenRouterError | None = None
+    """OpenRouter specific error attribute."""
+
+
+def _map_usage(
+    response: chat.ChatCompletion | chat.ChatCompletionChunk,
+    provider: str,
+    provider_url: str,
+    model: str,
+) -> RequestUsage:
+    response_usage = response.usage
+    if response_usage is None:
+        return RequestUsage()
+
+    usage_data = response_usage.model_dump(exclude_none=True)
+    details = {
+        k: v
+        for k, v in usage_data.items()
+        if k not in {'prompt_tokens', 'completion_tokens', 'input_tokens', 'output_tokens', 'total_tokens'}
+        if isinstance(v, int)
+    }
+    response_data = dict(model=model, usage=usage_data)
+
+    if response_usage.completion_tokens_details is not None:
+        details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
+
+    return RequestUsage.extract(
+        response_data,
+        provider=provider,
+        provider_url=provider_url,
+        provider_fallback='openai',
+        api_flavor='chat',
+        details=details,
+    )
+
+
+@dataclass
+class OpenRouterStreamedResponse(OpenAIStreamedResponse):
+    """Implementation of `StreamedResponse` for OpenAI models."""
+
+    @override
+    def _map_usage(self, response: chat.ChatCompletionChunk):
+        return _map_usage(response, self._provider_name, self._provider_url, self._model_name)
+
+
 def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSettings) -> OpenAIChatModelSettings:
     """Transforms a 'OpenRouterModelSettings' object into an 'OpenAIChatModelSettings' object.
 
@@ -397,7 +461,7 @@ class OpenRouterModel(OpenAIChatModel):
         self,
         model_name: str,
         *,
-        provider: Literal['openrouter'] | Provider[AsyncOpenAI] = 'openrouter',
+        provider: OpenRouterProvider | None = None,
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -405,13 +469,11 @@ class OpenRouterModel(OpenAIChatModel):
 
         Args:
             model_name: The name of the model to use.
-            provider: The provider to use for authentication and API access. Currently, uses OpenAI as the internal client. Can be either the string
-                'openrouter' or an instance of `Provider[AsyncOpenAI]`. If not provided, a new provider will be
-                created using the other parameters.
+            provider: The provider to use for authentication and API access. If not provided, a new provider will be created with the default settings.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: Model-specific settings that will be used as defaults for this model.
         """
-        super().__init__(model_name, provider=provider, profile=profile, settings=settings)
+        super().__init__(model_name, provider=provider or OpenRouterProvider(), profile=profile, settings=settings)
 
     def prepare_request(
         self,
@@ -422,41 +484,59 @@ class OpenRouterModel(OpenAIChatModel):
         new_settings = _openrouter_settings_to_openai_settings(cast(OpenRouterModelSettings, merged_settings or {}))
         return new_settings, customized_parameters
 
-    def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
-        if not isinstance(response, chat.ChatCompletion):
-            raise UnexpectedModelBehavior(
-                'Invalid response from OpenRouter chat completions endpoint, expected JSON data'
+    @override
+    def _map_finish_reason(
+        self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error']
+    ) -> FinishReason | None:  # type: ignore[reportIncompatibleMethodOverride]
+        return _CHAT_FINISH_REASON_MAP.get(key)
+
+    @override
+    def _process_reasoning(self, response: OpenRouterChatCompletion) -> list[ThinkingPart]:
+        message = response.choices[0].message
+        items: list[ThinkingPart] = []
+
+        if reasoning_details := message.reasoning_details:
+            for detail in reasoning_details:
+                items.append(OpenRouterThinkingPart.from_reasoning_detail(detail))
+
+        return items
+
+    @override
+    def _process_provider_details(self, response: OpenRouterChatCompletion) -> dict[str, Any]:
+        if error := response.error:
+            raise ModelHTTPError(status_code=error.code, model_name=response.model, body=error.message)
+
+        provider_details = super()._process_provider_details(response)
+
+        provider_details['downstream_provider'] = response.provider
+        provider_details['native_finish_reason'] = response.choices[0].native_finish_reason
+
+        return provider_details
+
+    @override
+    def _validate_completion(self, response: chat.ChatCompletion) -> chat.ChatCompletion:
+        return OpenRouterChatCompletion.model_validate(response.model_dump())
+
+    async def _process_streamed_response(
+        self, response: AsyncStream[chat.ChatCompletionChunk], model_request_parameters: ModelRequestParameters
+    ) -> OpenRouterStreamedResponse:
+        """Process a streamed response, and prepare a streaming response to return."""
+        peekable_response = _utils.PeekableAsyncStream(response)
+        first_chunk = await peekable_response.peek()
+        if isinstance(first_chunk, _utils.Unset):
+            raise UnexpectedModelBehavior(  # pragma: no cover
+                'Streamed response ended without content or tool calls'
             )
 
-        native_response = OpenRouterChatCompletion.model_validate(response.model_dump())
-        choice = native_response.choices[0]
-
-        if error := native_response.error:
-            raise ModelHTTPError(status_code=error.code, model_name=response.model, body=error.message)
-        else:
-            if choice.finish_reason == 'error':
-                raise UnexpectedModelBehavior(
-                    'Invalid response from OpenRouter chat completions endpoint, error finish_reason without error data'
-                )
-
-            # This is done because 'super()._process_response' reads 'reasoning' to create a ThinkingPart.
-            # but this method will also create a ThinkingPart  using 'reasoning_details'; Delete 'reasoning' to avoid duplication
-            if choice.message.reasoning is not None:
-                delattr(response.choices[0].message, 'reasoning')
-
-        model_response = super()._process_response(response=response)
-
-        provider_details = model_response.provider_details or {}
-        provider_details['downstream_provider'] = native_response.provider
-        provider_details['native_finish_reason'] = choice.native_finish_reason
-
-        if reasoning_details := choice.message.reasoning_details:
-            new_parts = [OpenRouterThinkingPart.from_reasoning_detail(reasoning) for reasoning in reasoning_details]
-            model_response.parts = [*new_parts, *model_response.parts]
-
-        model_response.provider_details = provider_details
-
-        return model_response
+        return OpenRouterStreamedResponse(
+            model_request_parameters=model_request_parameters,
+            _model_name=self._model_name,
+            _model_profile=self.profile,
+            _response=peekable_response,
+            _timestamp=_utils.number_to_datetime(first_chunk.created),
+            _provider_name=self._provider.name,
+            _provider_url=self._provider.base_url,
+        )
 
     def _map_model_response(self, message: ModelResponse) -> chat.ChatCompletionMessageParam:
         texts: list[str] = []
