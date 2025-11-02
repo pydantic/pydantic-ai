@@ -276,11 +276,12 @@ def test_vendor_id_switch_during_thinking():
     assert parts[1] == snapshot(TextPart(content='different part', part_kind='text'))
 
 
-# this last one's a weird one because the closing tag gets buffered and then flushed (bc it doesn't close)
-# in accordance with the open question https://github.com/pydantic/pydantic-ai/pull/3206#discussion_r2483976551
-# if we auto-close <think> tags then this case will reach the user as `ThinkingPart(content='thinking foo</th')`
 def test_thinking_interrupted_by_incomplete_end_tag_and_vendor_switch():
-    """Test unclosed thinking tag followed by different vendor_part_id."""
+    """Test unclosed thinking tag followed by different vendor_part_id.
+
+    When a vendor_part_id switches and leaves a ThinkingPart with buffered partial end tag,
+    the buffered content is auto-closed by appending it to the ThinkingPart during finalize().
+    """
     manager = ModelResponsePartsManager()
     thinking_tags = ('<think>', '</think>')
 
@@ -299,11 +300,8 @@ def test_thinking_interrupted_by_incomplete_end_tag_and_vendor_switch():
         pass
 
     parts = manager.get_parts()
-    assert len(parts) == 3
+    assert len(parts) == 2
     assert isinstance(parts[0], ThinkingPart)
-    assert parts[0].content == 'thinking foo'
+    assert parts[0].content == 'thinking foo</th'
     assert isinstance(parts[1], TextPart)
     assert parts[1].content == 'new content'
-    # currently as it stands, the incomplete end tag gets flushed as text (which is even weirder from a UX perspective)
-    assert isinstance(parts[2], TextPart)
-    assert parts[2].content == '</th'

@@ -74,11 +74,13 @@ class ModelResponsePartsManager:
         return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
 
     def finalize(self) -> Generator[ModelResponseStreamEvent, None, None]:
-        """Flush any buffered content as text parts.
+        """Flush any buffered content, appending to ThinkingParts or creating TextParts.
 
         This should be called when streaming is complete to ensure no content is lost.
-        Any content buffered in _thinking_tag_buffer that hasn't been processed will be
-        treated as regular text and emitted.
+        Any content buffered in _thinking_tag_buffer will be appended to its corresponding
+        ThinkingPart if one exists, otherwise it will be emitted as a TextPart.
+
+        The only possible buffered content to append to ThinkingParts are incomplete closing tags like `</th`
 
         Yields:
             ModelResponseStreamEvent for any buffered content that gets flushed.
@@ -102,19 +104,27 @@ class ModelResponsePartsManager:
                     yield PartStartEvent(index=part_index, part=text_part)
                     self._started_part_indices.add(part_index)
 
-        # flush any remaining buffered content (partial tags like '<thi')
+        # flush any remaining buffered content
         for vendor_part_id, buffered_content in list(self._thinking_tag_buffer.items()):
             if buffered_content:
-                # Remove the vendor_part_id mapping to avoid trying to update existing parts
-                # This ensures buffered partial tags create new TextParts
-                self._vendor_id_to_part_index.pop(vendor_part_id, None)
-                yield from self._handle_text_delta_simple(
-                    vendor_part_id=vendor_part_id,
-                    content=buffered_content,
-                    id=None,
-                    thinking_tags=None,
-                    ignore_leading_whitespace=False,
-                )
+                part_index = self._vendor_id_to_part_index.get(vendor_part_id)
+
+                # If buffered content belongs to a ThinkingPart, append it to the ThinkingPart
+                # (for orphaned buffers like '</th')
+                if part_index is not None and isinstance(self._parts[part_index], ThinkingPart):
+                    yield from self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=buffered_content)
+                    self._vendor_id_to_part_index.pop(vendor_part_id)
+                else:
+                    # Otherwise flush as TextPart
+                    # (for orphaned buffers like '<thi')
+                    self._vendor_id_to_part_index.pop(vendor_part_id, None)
+                    yield from self._handle_text_delta_simple(
+                        vendor_part_id=vendor_part_id,
+                        content=buffered_content,
+                        id=None,
+                        thinking_tags=None,
+                        ignore_leading_whitespace=False,
+                    )
 
         self._thinking_tag_buffer.clear()
 
