@@ -474,7 +474,7 @@ _(This example is complete, it can be run "as is")_
 
 If your output validator takes `RunContext` as a first argument, you can add `partial: bool` as the last argument to handle validation differently for partial outputs during streaming (e.g. skip validation altogether).
 
-```python {title="partial_validation_streaming.py" test="skip"}
+```python {title="partial_validation_streaming.py" line_length="120"}
 from pydantic_ai import Agent, ModelRetry, RunContext
 
 agent = Agent('openai:gpt-5')
@@ -493,9 +493,12 @@ async def main():
     async with agent.run_stream('Write a long story about a cat') as result:
         async for message in result.stream_text():
             print(message)
-            #> Once upon a time
-            #> Once upon a time, there was a
-            #> Once upon a time, there was a curious cat named
+            #> Once upon a 
+            #> Once upon a time, there was 
+            #> Once upon a time, there was a curious cat 
+            #> Once upon a time, there was a curious cat named Whiskers who 
+            #> Once upon a time, there was a curious cat named Whiskers who loved to explore 
+            #> Once upon a time, there was a curious cat named Whiskers who loved to explore the world around 
             #> Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...
 ```
 
