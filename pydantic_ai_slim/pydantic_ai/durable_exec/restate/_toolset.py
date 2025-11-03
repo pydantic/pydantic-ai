@@ -21,8 +21,9 @@ from ._serde import PydanticTypeAdapter
 class RestateContextRunResult:
     """A simple wrapper for tool results to be used with Restate's run_typed."""
 
-    kind: Literal['output', 'call_deferred', 'approval_required']
+    kind: Literal['output', 'call_deferred', 'approval_required', 'model_retry']
     output: Any
+    error: str | None = None
 
 
 CONTEXT_RUN_SERDE = PydanticTypeAdapter(RestateContextRunResult)
@@ -66,14 +67,13 @@ class RestateContextRunToolSet(WrapperToolset[AgentDepsT]):
                 # Since, restate ctx.run() will retry this exception we need to convert these exceptions
                 # to a return value and handle them outside of the ctx.run().
                 output = await self.wrapped.call_tool(name, tool_args, ctx, tool)
-                return RestateContextRunResult(kind='output', output=output)
-            except ModelRetry:
-                # we let restate to retry this
-                raise
+                return RestateContextRunResult(kind='output', output=output, error=None)
+            except ModelRetry as e:
+                return RestateContextRunResult(kind='model_retry', output=None, error=e.message)
             except CallDeferred:
-                return RestateContextRunResult(kind='call_deferred', output=None)
+                return RestateContextRunResult(kind='call_deferred', output=None, error=None)
             except ApprovalRequired:
-                return RestateContextRunResult(kind='approval_required', output=None)
+                return RestateContextRunResult(kind='approval_required', output=None, error=None)
             except UserError as e:
                 raise TerminalError(str(e)) from e
 
@@ -83,6 +83,9 @@ class RestateContextRunToolSet(WrapperToolset[AgentDepsT]):
             raise CallDeferred()
         elif res.kind == 'approval_required':
             raise ApprovalRequired()
+        elif res.kind == 'model_retry':
+            assert res.error is not None
+            raise ModelRetry(res.error)
         else:
             assert res.kind == 'output'
             return res.output
