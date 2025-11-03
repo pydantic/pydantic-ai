@@ -232,7 +232,7 @@ Special prompts:
         return 0
 
     try:
-        return asyncio.run(run_chat(stream, agent, console, code_theme, prog_name, history=history))
+        return asyncio.run(run_chat(stream, agent, console, code_theme, prog_name, message_history=history))
     except KeyboardInterrupt:  # pragma: no cover
         return 0
 
