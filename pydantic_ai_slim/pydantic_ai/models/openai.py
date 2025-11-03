@@ -7,9 +7,9 @@ from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from itertools import chain
 from typing import Any, Literal, cast, overload
 
-from openai.types.chat.chat_completion_chunk import Choice
 from pydantic import ValidationError
 from pydantic_core import to_json
 from typing_extensions import assert_never, deprecated
@@ -1702,7 +1702,8 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_name: str
     _provider_url: str
 
-    def _handle_thinking_delta(self, choice: Choice):
+    def _handle_thinking_delta(self, chunk: ChatCompletionChunk):
+        choice = chunk.choices[0]
         # The `reasoning_content` field is only present in DeepSeek models.
         # https://api-docs.deepseek.com/guides/reasoning_model
         if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
@@ -1724,12 +1725,45 @@ class OpenAIStreamedResponse(StreamedResponse):
                 provider_name=self.provider_name,
             )
 
-    def _handle_provider_details(self, choice: Choice) -> dict[str, str] | None:
+    def _handle_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, str] | None:
+        choice = chunk.choices[0]
         if raw_finish_reason := choice.finish_reason:
             return {'finish_reason': raw_finish_reason}
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    def _handle_text_delta(self, chunk: ChatCompletionChunk):
+        # Handle the text part of the response
+        content = chunk.choices[0].delta.content
+        if content:
+            maybe_event = self._parts_manager.handle_text_delta(
+                vendor_part_id='content',
+                content=content,
+                thinking_tags=self._model_profile.thinking_tags,
+                ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+            )
+            if maybe_event is not None:  # pragma: no branch
+                if isinstance(maybe_event, PartStartEvent) and isinstance(maybe_event.part, ThinkingPart):
+                    maybe_event.part.id = 'content'
+                    maybe_event.part.provider_name = self.provider_name
+                yield maybe_event
+
+    def _handle_tool_delta(self, chunk: ChatCompletionChunk):
+        choice = chunk.choices[0]
+        for dtc in choice.delta.tool_calls or []:
+            maybe_event = self._parts_manager.handle_tool_call_delta(
+                vendor_part_id=dtc.index,
+                tool_name=dtc.function and dtc.function.name,
+                args=dtc.function and dtc.function.arguments,
+                tool_call_id=dtc.id,
+            )
+            if maybe_event is not None:
+                yield maybe_event
+
+    async def _validate_response(self):
         async for chunk in self._response:
+            yield chunk
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        async for chunk in self._validate_response():
             self._usage += self._map_usage(chunk)
 
             if chunk.id:  # pragma: no branch
@@ -1750,36 +1784,15 @@ class OpenAIStreamedResponse(StreamedResponse):
             if raw_finish_reason := choice.finish_reason:
                 self.finish_reason = self._map_finish_reason(raw_finish_reason)
 
-            if provider_details := self._handle_provider_details(choice):
+            if provider_details := self._handle_provider_details(chunk):
                 self.provider_details = provider_details
 
-            for thinking_part in self._handle_thinking_delta(choice):
-                yield thinking_part
-
-            # Handle the text part of the response
-            content = choice.delta.content
-            if content:
-                maybe_event = self._parts_manager.handle_text_delta(
-                    vendor_part_id='content',
-                    content=content,
-                    thinking_tags=self._model_profile.thinking_tags,
-                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-                )
-                if maybe_event is not None:  # pragma: no branch
-                    if isinstance(maybe_event, PartStartEvent) and isinstance(maybe_event.part, ThinkingPart):
-                        maybe_event.part.id = 'content'
-                        maybe_event.part.provider_name = self.provider_name
-                    yield maybe_event
-
-            for dtc in choice.delta.tool_calls or []:
-                maybe_event = self._parts_manager.handle_tool_call_delta(
-                    vendor_part_id=dtc.index,
-                    tool_name=dtc.function and dtc.function.name,
-                    args=dtc.function and dtc.function.arguments,
-                    tool_call_id=dtc.id,
-                )
-                if maybe_event is not None:
-                    yield maybe_event
+            for event in chain(
+                self._handle_thinking_delta(chunk),
+                self._handle_text_delta(chunk),
+                self._handle_tool_delta(chunk),
+            ):
+                yield event
 
     def _map_usage(self, response: ChatCompletionChunk):
         return _map_usage(response, self._provider_name, self._provider_url, self._model_name)

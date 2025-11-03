@@ -3,7 +3,7 @@ from typing import Any, Literal, cast, override
 
 from openai import AsyncStream
 from openai.types import chat
-from openai.types.chat.chat_completion import Choice
+from openai.types.chat import chat_completion, chat_completion_chunk
 from pydantic import AliasChoices, BaseModel, Field, TypeAdapter
 from typing_extensions import TypedDict, assert_never
 
@@ -346,7 +346,7 @@ class OpenRouterCompletionMessage(chat.ChatCompletionMessage):
     """The reasoning details associated with the message, if any."""
 
 
-class OpenRouterChoice(Choice):
+class OpenRouterChoice(chat_completion.Choice):
     """Wraps OpenAI chat completion choice with OpenRouter specific attributes."""
 
     native_finish_reason: str
@@ -375,14 +375,40 @@ class OpenRouterChatCompletion(chat.ChatCompletion):
     """OpenRouter specific error attribute."""
 
 
+class OpenRouterChoiceDelta(chat_completion_chunk.ChoiceDelta):
+    """Wrapped chat completion message with OpenRouter specific attributes."""
+
+    reasoning: str | None = None
+    """The reasoning text associated with the message, if any."""
+
+    reasoning_details: list[OpenRouterReasoningDetail] | None = None
+    """The reasoning details associated with the message, if any."""
+
+
+class OpenRouterChunkChoice(chat_completion_chunk.Choice):
+    """Wraps OpenAI chat completion chunk choice with OpenRouter specific attributes."""
+
+    native_finish_reason: str | None
+    """The provided finish reason by the downstream provider from OpenRouter."""
+
+    finish_reason: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error'] | None  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenRouter specific finish reasons for streaming chunks.
+
+    Notably, removes 'function_call' and adds 'error' finish reasons.
+    """
+
+    delta: OpenRouterChoiceDelta  # type: ignore[reportIncompatibleVariableOverride]
+    """A wrapped chat completion delta with OpenRouter specific attributes."""
+
+
 class OpenRouterChatCompletionChunk(chat.ChatCompletionChunk):
     """Wraps OpenAI chat completion with OpenRouter specific attributes."""
 
     provider: str
     """The downstream provider that was used by OpenRouter."""
 
-    choices: list[OpenRouterChoice]  # type: ignore[reportIncompatibleVariableOverride]
-    """A list of chat completion choices modified with OpenRouter specific attributes."""
+    choices: list[OpenRouterChunkChoice]  # type: ignore[reportIncompatibleVariableOverride]
+    """A list of chat completion chunk choices modified with OpenRouter specific attributes."""
 
     error: OpenRouterError | None = None
     """OpenRouter specific error attribute."""
@@ -427,6 +453,48 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
     @override
     def _map_usage(self, response: chat.ChatCompletionChunk):
         return _map_usage(response, self._provider_name, self._provider_url, self._model_name)
+
+    @override
+    def _map_finish_reason(  # type: ignore[reportIncompatibleMethodOverride]
+        self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error']
+    ) -> FinishReason | None:
+        return _CHAT_FINISH_REASON_MAP.get(key)
+
+    @override
+    def _handle_thinking_delta(self, chunk: OpenRouterChatCompletionChunk):  # type: ignore[reportIncompatibleMethodOverride]
+        delta = chunk.choices[0].delta
+        if reasoning_details := delta.reasoning_details:
+            for detail in reasoning_details:
+                thinking_part = OpenRouterThinkingPart.from_reasoning_detail(detail)
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id='reasoning_detail',
+                    id=thinking_part.id,
+                    content=thinking_part.content,
+                    provider_name=self._provider_name,
+                )
+
+    @override
+    def _handle_provider_details(self, chunk: chat.ChatCompletionChunk) -> dict[str, str] | None:
+        native_chunk = OpenRouterChatCompletionChunk.model_validate(chunk.model_dump())
+
+        if provider_details := super()._handle_provider_details(chunk):
+            if provider := native_chunk.provider:
+                provider_details['downstream_provider'] = provider
+
+            if native_finish_reason := native_chunk.choices[0].native_finish_reason:
+                provider_details['native_finish_reason'] = native_finish_reason
+
+            return provider_details
+
+    @override
+    async def _validate_response(self):
+        async for chunk in self._response:
+            chunk = OpenRouterChatCompletionChunk.model_validate(chunk.model_dump())
+
+            if error := chunk.error:
+                raise ModelHTTPError(status_code=error.code, model_name=chunk.model, body=error.message)
+
+            yield chunk
 
 
 def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSettings) -> OpenAIChatModelSettings:
@@ -475,6 +543,7 @@ class OpenRouterModel(OpenAIChatModel):
         """
         super().__init__(model_name, provider=provider or OpenRouterProvider(), profile=profile, settings=settings)
 
+    @override
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
@@ -485,13 +554,13 @@ class OpenRouterModel(OpenAIChatModel):
         return new_settings, customized_parameters
 
     @override
-    def _map_finish_reason(
+    def _map_finish_reason(  # type: ignore[reportIncompatibleMethodOverride]
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error']
-    ) -> FinishReason | None:  # type: ignore[reportIncompatibleMethodOverride]
+    ) -> FinishReason | None:
         return _CHAT_FINISH_REASON_MAP.get(key)
 
     @override
-    def _process_reasoning(self, response: OpenRouterChatCompletion) -> list[ThinkingPart]:
+    def _process_reasoning(self, response: OpenRouterChatCompletion) -> list[ThinkingPart]:  # type: ignore[reportIncompatibleMethodOverride]
         message = response.choices[0].message
         items: list[ThinkingPart] = []
 
@@ -502,10 +571,7 @@ class OpenRouterModel(OpenAIChatModel):
         return items
 
     @override
-    def _process_provider_details(self, response: OpenRouterChatCompletion) -> dict[str, Any]:
-        if error := response.error:
-            raise ModelHTTPError(status_code=error.code, model_name=response.model, body=error.message)
-
+    def _process_provider_details(self, response: OpenRouterChatCompletion) -> dict[str, Any]:  # type: ignore[reportIncompatibleMethodOverride]
         provider_details = super()._process_provider_details(response)
 
         provider_details['downstream_provider'] = response.provider
@@ -515,8 +581,14 @@ class OpenRouterModel(OpenAIChatModel):
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> chat.ChatCompletion:
-        return OpenRouterChatCompletion.model_validate(response.model_dump())
+        response = OpenRouterChatCompletion.model_validate(response.model_dump())
 
+        if error := response.error:
+            raise ModelHTTPError(status_code=error.code, model_name=response.model, body=error.message)
+
+        return response
+
+    @override
     async def _process_streamed_response(
         self, response: AsyncStream[chat.ChatCompletionChunk], model_request_parameters: ModelRequestParameters
     ) -> OpenRouterStreamedResponse:
@@ -538,6 +610,7 @@ class OpenRouterModel(OpenAIChatModel):
             _provider_url=self._provider.base_url,
         )
 
+    @override
     def _map_model_response(self, message: ModelResponse) -> chat.ChatCompletionMessageParam:
         texts: list[str] = []
         tool_calls: list[chat.ChatCompletionMessageFunctionToolCallParam] = []

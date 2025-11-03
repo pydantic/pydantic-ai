@@ -10,6 +10,8 @@ from pydantic_ai import (
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
+    PartEndEvent,
+    PartStartEvent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -91,8 +93,34 @@ async def test_openrouter_stream_with_native_options(allow_model_requests: None,
 
         _ = [chunk async for chunk in stream]
 
-        assert stream.provider_details == snapshot({'finish_reason': 'stop'})
+        assert stream.provider_details == snapshot(
+            {'finish_reason': 'stop', 'downstream_provider': 'xAI', 'native_finish_reason': 'completed'}
+        )
         assert stream.finish_reason == snapshot('stop')
+
+
+async def test_openrouter_stream_with_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/o3', provider=provider)
+
+    async with model_request_stream(model, [ModelRequest.user_text_prompt('Who are you')]) as stream:
+        chunks = [chunk async for chunk in stream]
+
+        thinking_event_start = chunks[0]
+        assert isinstance(thinking_event_start, PartStartEvent)
+        assert thinking_event_start.part == snapshot(
+            ThinkingPart(
+                content='', id='rs_0aa4f2c435e6d1dc0169082486816c8193a029b5fc4ef1764f', provider_name='openrouter'
+            )
+        )
+
+        thinking_event_end = chunks[1]
+        assert isinstance(thinking_event_end, PartEndEvent)
+        assert thinking_event_end.part == snapshot(
+            ThinkingPart(
+                content='', id='rs_0aa4f2c435e6d1dc0169082486816c8193a029b5fc4ef1764f', provider_name='openrouter'
+            )
+        )
 
 
 async def test_openrouter_tool_calling(allow_model_requests: None, openrouter_api_key: str) -> None:
