@@ -58,8 +58,9 @@ def create_test_module():
 
 
 @pytest.fixture
-def empty_last_conversation_path():
-    path = PYDANTIC_AI_HOME / LAST_CONVERSATION_FILENAME
+def empty_last_conversation_path(tmp_path, mocker):
+    path = tmp_path / LAST_CONVERSATION_FILENAME
+    mocker.patch('pydantic_ai._cli.PYDANTIC_AI_HOME', tmp_path)
 
     if path.exists():
         path.unlink()
