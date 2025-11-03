@@ -7,7 +7,6 @@ from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from itertools import chain
 from typing import Any, Literal, cast, overload
 
 from pydantic import ValidationError
@@ -650,7 +649,7 @@ class OpenAIChatModel(Model):
         # so we set it from a later chunk in `OpenAIChatStreamedResponse`.
         model_name = first_chunk.model or self._model_name
 
-        return OpenAIStreamedResponse(
+        return self._streamed_response_cls(
             model_request_parameters=model_request_parameters,
             _model_name=model_name,
             _model_profile=self.profile,
@@ -659,6 +658,10 @@ class OpenAIChatModel(Model):
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
         )
+
+    @property
+    def _streamed_response_cls(self):
+        return OpenAIStreamedResponse
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
@@ -687,6 +690,10 @@ class OpenAIChatModel(Model):
                 )
 
     def _map_model_response(self, message: ModelResponse) -> chat.ChatCompletionMessageParam:
+        """Hook that determines how `ModelResponse` is mapped into `ChatCompletionMessageParam` objects before sending.
+
+        Subclasses of `OpenAIChatModel` should override this method to provide their own mapping logic.
+        """
         texts: list[str] = []
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = []
         for item in message.parts:
@@ -1702,66 +1709,6 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_name: str
     _provider_url: str
 
-    def _handle_thinking_delta(self, chunk: ChatCompletionChunk):
-        choice = chunk.choices[0]
-        # The `reasoning_content` field is only present in DeepSeek models.
-        # https://api-docs.deepseek.com/guides/reasoning_model
-        if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
-            yield self._parts_manager.handle_thinking_delta(
-                vendor_part_id='reasoning_content',
-                id='reasoning_content',
-                content=reasoning_content,
-                provider_name=self.provider_name,
-            )
-
-        # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
-        # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
-        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
-        if reasoning := getattr(choice.delta, 'reasoning', None):  # pragma: no cover
-            yield self._parts_manager.handle_thinking_delta(
-                vendor_part_id='reasoning',
-                id='reasoning',
-                content=reasoning,
-                provider_name=self.provider_name,
-            )
-
-    def _handle_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, str] | None:
-        choice = chunk.choices[0]
-        if raw_finish_reason := choice.finish_reason:
-            return {'finish_reason': raw_finish_reason}
-
-    def _handle_text_delta(self, chunk: ChatCompletionChunk):
-        # Handle the text part of the response
-        content = chunk.choices[0].delta.content
-        if content:
-            maybe_event = self._parts_manager.handle_text_delta(
-                vendor_part_id='content',
-                content=content,
-                thinking_tags=self._model_profile.thinking_tags,
-                ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-            )
-            if maybe_event is not None:  # pragma: no branch
-                if isinstance(maybe_event, PartStartEvent) and isinstance(maybe_event.part, ThinkingPart):
-                    maybe_event.part.id = 'content'
-                    maybe_event.part.provider_name = self.provider_name
-                yield maybe_event
-
-    def _handle_tool_delta(self, chunk: ChatCompletionChunk):
-        choice = chunk.choices[0]
-        for dtc in choice.delta.tool_calls or []:
-            maybe_event = self._parts_manager.handle_tool_call_delta(
-                vendor_part_id=dtc.index,
-                tool_name=dtc.function and dtc.function.name,
-                args=dtc.function and dtc.function.arguments,
-                tool_call_id=dtc.id,
-            )
-            if maybe_event is not None:
-                yield maybe_event
-
-    async def _validate_response(self):
-        async for chunk in self._response:
-            yield chunk
-
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._validate_response():
             self._usage += self._map_usage(chunk)
@@ -1784,15 +1731,82 @@ class OpenAIStreamedResponse(StreamedResponse):
             if raw_finish_reason := choice.finish_reason:
                 self.finish_reason = self._map_finish_reason(raw_finish_reason)
 
-            if provider_details := self._handle_provider_details(chunk):
+            if provider_details := self._map_provider_details(chunk):
                 self.provider_details = provider_details
 
-            for event in chain(
-                self._handle_thinking_delta(chunk),
-                self._handle_text_delta(chunk),
-                self._handle_tool_delta(chunk),
-            ):
+            for event in self._map_part_delta(chunk):
                 yield event
+
+    async def _validate_response(self):
+        """Hook that validates incoming chunks.
+
+        This method should be overridden by subclasses of `OpenAIStreamedResponse` to apply custom chunk validations.
+
+        By default, this is a no-op since `ChatCompletionChunk` is already validated.
+        """
+        async for chunk in self._response:
+            yield chunk
+
+    def _map_part_delta(self, chunk: ChatCompletionChunk):
+        """Hook that maps delta content to events.
+
+        This method should be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
+        """
+        choice = chunk.choices[0]
+        # The `reasoning_content` field is only present in DeepSeek models.
+        # https://api-docs.deepseek.com/guides/reasoning_model
+        if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
+            yield self._parts_manager.handle_thinking_delta(
+                vendor_part_id='reasoning_content',
+                id='reasoning_content',
+                content=reasoning_content,
+                provider_name=self.provider_name,
+            )
+
+        # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
+        # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
+        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
+        if reasoning := getattr(choice.delta, 'reasoning', None):  # pragma: no cover
+            yield self._parts_manager.handle_thinking_delta(
+                vendor_part_id='reasoning',
+                id='reasoning',
+                content=reasoning,
+                provider_name=self.provider_name,
+            )
+
+        # Handle the text part of the response
+        content = choice.delta.content
+        if content:
+            maybe_event = self._parts_manager.handle_text_delta(
+                vendor_part_id='content',
+                content=content,
+                thinking_tags=self._model_profile.thinking_tags,
+                ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+            )
+            if maybe_event is not None:  # pragma: no branch
+                if isinstance(maybe_event, PartStartEvent) and isinstance(maybe_event.part, ThinkingPart):
+                    maybe_event.part.id = 'content'
+                    maybe_event.part.provider_name = self.provider_name
+                yield maybe_event
+
+        for dtc in choice.delta.tool_calls or []:
+            maybe_event = self._parts_manager.handle_tool_call_delta(
+                vendor_part_id=dtc.index,
+                tool_name=dtc.function and dtc.function.name,
+                args=dtc.function and dtc.function.arguments,
+                tool_call_id=dtc.id,
+            )
+            if maybe_event is not None:
+                yield maybe_event
+
+    def _map_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, str] | None:
+        """Hook that generates the provider details from chunk content.
+
+        This method should be overridden by subclasses of `OpenAIStreamResponse` to customize the provider details.
+        """
+        choice = chunk.choices[0]
+        if raw_finish_reason := choice.finish_reason:
+            return {'finish_reason': raw_finish_reason}
 
     def _map_usage(self, response: ChatCompletionChunk):
         return _map_usage(response, self._provider_name, self._provider_url, self._model_name)

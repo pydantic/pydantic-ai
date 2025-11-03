@@ -123,6 +123,18 @@ async def test_openrouter_stream_with_reasoning(allow_model_requests: None, open
         )
 
 
+async def test_openrouter_stream_error(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('minimax/minimax-m2:free', provider=provider)
+    settings = OpenRouterModelSettings(max_tokens=10)
+
+    with pytest.raises(ModelHTTPError):
+        async with model_request_stream(
+            model, [ModelRequest.user_text_prompt('Hello there')], model_settings=settings
+        ) as stream:
+            _ = [chunk async for chunk in stream]
+
+
 async def test_openrouter_tool_calling(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
 
