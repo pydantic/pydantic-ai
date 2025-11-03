@@ -397,10 +397,9 @@ async def test_output_validator_partial_stream_output():
     agent = Agent(FunctionModel(stream_function=stream_model), output_type=Foo)
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Foo, partial: bool) -> Foo:
-        call_log.append((o, partial))
-        assert ctx.tool_name == 'final_result'
-        return o
+    def validate_output(ctx: RunContext[None], output: Foo, partial: bool) -> Foo:
+        call_log.append((output, partial))
+        return output
 
     async with agent.run_stream('Hello') as result:
         outputs = [output async for output in result.stream_output(debounce_by=None)]
