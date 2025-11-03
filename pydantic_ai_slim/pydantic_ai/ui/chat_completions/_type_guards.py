@@ -9,17 +9,6 @@ from openai.types.chat import CompletionCreateParams, ChatCompletionToolUnionPar
 from openai.types.chat.chat_completion_assistant_message_param import ContentArrayOfContentPart
 from openai.types.chat.chat_completion_content_part_param import File
 from openai.types.chat.chat_completion_content_part_refusal_param import ChatCompletionContentPartRefusalParam
-from openai.types.chat.completion_create_params import CompletionCreateParamsStreaming, \
-    CompletionCreateParamsNonStreaming
-
-
-# Streaming params
-def _is_streaming_params(run_input: CompletionCreateParams) -> TypeGuard[CompletionCreateParamsStreaming]:
-    return isinstance(run_input, dict) and run_input.get("stream")
-
-
-def _is_non_streaming_params(run_input: CompletionCreateParams) -> TypeGuard[CompletionCreateParamsNonStreaming]:
-    return isinstance(run_input, dict) and not run_input.get("stream")
 
 
 # Tool params

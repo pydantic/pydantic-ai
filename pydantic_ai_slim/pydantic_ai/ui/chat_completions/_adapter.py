@@ -1,8 +1,9 @@
 import base64
+import json
 import warnings
 from functools import cached_property
 from pathlib import Path
-from typing import cast, Iterable, Any, Literal, TypeAlias
+from typing import cast, Iterable, Any, Literal, TypeAlias, Sequence
 
 from openai.types.chat import (
     CompletionCreateParams,
@@ -10,8 +11,8 @@ from openai.types.chat import (
     ChatCompletionChunk,
     ChatCompletionContentPartParam,
 )
-from openai.types.chat.completion_create_params import CompletionCreateParamsBase
-from pydantic import TypeAdapter
+from openai.types.chat.completion_create_params import CompletionCreateParamsBase, CompletionCreateParamsNonStreaming, CompletionCreateParamsStreaming
+from pydantic import TypeAdapter, ConfigDict, field_validator, ValidationError
 
 from ... import ModelMessage, AbstractToolset, ExternalToolset, ToolDefinition
 from ...messages import (
@@ -27,6 +28,8 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT
 from ...ui import UIAdapter, UIEventStream, MessagesBuilder
+
+from ._event_stream import ChatCompletionsEventStream
 from ._type_guards import (
     _is_function_tool_param, _is_custom_tool_param, _is_text_part, _is_image_part, _is_audio_part,
     _is_file_part, _is_assistant_message, _is_system_message, _is_user_message, _is_tool_message,
@@ -104,67 +107,73 @@ def _parse_user_content_part(part: ChatCompletionContentPartParam) -> UserConten
 
 
 class ChatCompletionsAdapter(
-    UIAdapter[CompletionCreateParams, ChatCompletionMessageParam, ChatCompletionChunk, AgentDepsT, OutputDataT]):
+    UIAdapter[CompletionCreateParamsStreaming, ChatCompletionMessageParam, ChatCompletionChunk, AgentDepsT, OutputDataT]
+):
     """UI adapter for the Chat Completions protocol."""
+    _COMPLETIONS_TA: TypeAdapter[CompletionCreateParamsStreaming] = TypeAdapter(CompletionCreateParamsStreaming)
+    _MESSAGES_TA: TypeAdapter[Sequence[ChatCompletionMessageParam]] = TypeAdapter(Sequence[ChatCompletionMessageParam])
 
     @classmethod
-    def build_run_input(cls, body: bytes) -> CompletionCreateParams:
+    def build_run_input(cls, body: bytes) -> CompletionCreateParamsStreaming:
         """Build a Chat Completions input object from the request object."""
 
-        type_adapter: TypeAdapter[CompletionCreateParams] = TypeAdapter(CompletionCreateParams)
-        out = type_adapter.validate_json(body)
-        return out
+        data = json.loads(body)
 
-    def build_event_stream(self) -> UIEventStream[CompletionCreateParams, ChatCompletionChunk, AgentDepsT, OutputDataT]:
+        # Iterable[ChatCompletionMessageParam] yields a ValidatorIterator which breaks with a panic because
+        # of a `Option::unwrap() on a None value` in pydantic-core. So this validation
+        # step is only there to validate the rest of the body.
+        _val = cls._COMPLETIONS_TA.validate_json(body)
+
+        return CompletionCreateParamsStreaming(**data)
+
+    def build_event_stream(self) -> UIEventStream[CompletionCreateParamsStreaming, ChatCompletionChunk, AgentDepsT, OutputDataT]:
         """Build a Chat Completions event stream transformer."""
-        from ._event_stream import ChatCompletionsEventStream
         return ChatCompletionsEventStream(self.run_input, accept=self.accept)
 
-    @cached_property
+    @property
     def messages(self) -> list[ModelMessage]:
         """Pydantic AI messages from the Chat Completions input"""
-        run_input = cast(CompletionCreateParamsBase, self.run_input)
-        messages = run_input["messages"]
+        run_input = cast(CompletionCreateParamsStreaming, self.run_input)
+
+        messages = self._MESSAGES_TA.validate_python(run_input["messages"])
 
         return self.load_messages(messages)
 
     @cached_property
     def toolset(self) -> AbstractToolset[AgentDepsT] | None:
         """Toolset representing frontend tools from the Chat Completions run input."""
-        run_input = cast(CompletionCreateParamsBase, self.run_input)
+        run_input = cast(CompletionCreateParamsStreaming, self.run_input)
 
-        tools = run_input["tools"]
+        if tools := run_input.get("tools"):
+            tool_defs = []
 
-        tool_defs = []
+            for tool in tools:
+                if _is_function_tool_param(tool):
+                    fn = tool["function"]
+                    tool_defs.append(ToolDefinition(
+                        name=fn["name"],
+                        description=fn["description"],
+                        parameters_json_schema=fn["parameters"],
+                        strict=fn.get("strict")
+                    ))
 
-        for tool in tools:
-            if _is_function_tool_param(tool):
-                fn = tool["function"]
-                tool_defs.append(ToolDefinition(
-                    name=fn["name"],
-                    description=fn["description"],
-                    parameters_json_schema=fn["parameters"],
-                    strict=fn["strict"]
-                ))
+                elif _is_custom_tool_param(tool):
+                    warnings.warn(  # pragma: no cover
+                        f'Custom tool parameters are not supported in the Chat Completions adapter.',
+                        UserWarning,
+                    )
 
-            elif _is_custom_tool_param(tool):
-                warnings.warn(  # pragma: no cover
-                    f'Custom tool parameters are not supported in the Chat Completions adapter.',
-                    UserWarning,
-                )
+            if len(tool_defs) > 0:
+                return ExternalToolset[AgentDepsT](tool_defs)
 
-        if len(tool_defs) > 0:
-            return ExternalToolset[AgentDepsT](tool_defs)
-
-        else:
-            return None
+        return None
 
     @cached_property
     def state(self) -> dict[str, Any] | None:
         return None
 
     @classmethod
-    def load_messages(cls, messages: Iterable[ChatCompletionMessageParam]) -> list[ModelMessage]:
+    def load_messages(cls, messages: Sequence[ChatCompletionMessageParam]) -> list[ModelMessage]:
         """Transform OpenAI Chat Completion messages into Pydantic AI messages.
         
         Args:
@@ -189,29 +198,34 @@ class ChatCompletionsAdapter(
                                 text_parts.append(part['text'])
                             elif _is_assistant_refusal_part(part):
                                 text_parts.append(part['refusal'])
-                        
+
                         if len(text_parts) > 0:
                             builder.add(TextPart(content=' '.join(text_parts)))
 
-                for tc in message['tool_calls']:
-                    if _is_message_function_tool_call_param(tc):
-                        builder.add(
-                            ToolCallPart(
-                                tool_call_id=tc['id'],
-                                tool_name=tc['function']['name'],
-                                args=tc['function']['arguments'],
+                # Handle tool calls if present
+                if tool_calls := message.get('tool_calls'):
+                    for tc in tool_calls:
+                        if _is_message_function_tool_call_param(tc):
+                            # Parse arguments from JSON string to dict/object
+                            args_str = tc['function']['arguments']
+                            args = json.loads(args_str) if isinstance(args_str, str) else args_str
+                            builder.add(
+                                ToolCallPart(
+                                    tool_call_id=tc['id'],
+                                    tool_name=tc['function']['name'],
+                                    args=args,
+                                )
                             )
-                        )
 
-                    elif _is_message_custom_tool_call_param(tc):
-                        builder.add(
-                            ToolCallPart(
-                                tool_call_id=tc['id'],
-                                tool_name=tc['custom']['name'],
-                                # Input is arbitrary string
-                                args=tc['custom']['input'],
+                        elif _is_message_custom_tool_call_param(tc):
+                            builder.add(
+                                ToolCallPart(
+                                    tool_call_id=tc['id'],
+                                    tool_name=tc['custom']['name'],
+                                    # Input is arbitrary string
+                                    args=tc['custom']['input'],
+                                )
                             )
-                        )
 
             elif _is_system_message(message):
                 content = message['content']

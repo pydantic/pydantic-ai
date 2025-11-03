@@ -254,12 +254,6 @@ class OpenAIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         self.router.add_route('/v1/responses', responses_endpoint, methods=['POST'], name='chat_completions')
 
 
-CompletionCreateParams: TypeAdapter[CompletionCreateParamsT] = TypeAdapter(CompletionCreateParamsT)
-CompletionCreateParamsNonStreaming: TypeAdapter[CompletionCreateParamsNonStreamingT] = TypeAdapter(
-    CompletionCreateParamsNonStreamingT)
-CompletionCreateParamsStreaming: TypeAdapter[CompletionCreateParamsStreamingT] = TypeAdapter(
-    CompletionCreateParamsStreamingT)
-
 ResponseCreateParams: TypeAdapter[ResponseCreateParamsT] = TypeAdapter(ResponseCreateParamsT)
 ResponseCreateParamsNonStreaming: TypeAdapter[ResponseCreateParamsNonStreamingT] = TypeAdapter(
     ResponseCreateParamsNonStreamingT)
