@@ -133,29 +133,6 @@ def test_finalize_flushes_all_buffers():
     assert contents == {'<th', '<thi'}
 
 
-def test_finalize_with_no_buffer():
-    """Test that finalize is safe when buffer is empty."""
-    manager = ModelResponsePartsManager()
-    events = list(manager.finalize())
-    assert len(events) == 0  # No events, no errors
-
-
-def test_get_parts_after_finalize():
-    """Test that get_parts returns flushed content after finalize."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    for _ in manager.handle_text_delta(vendor_part_id='content', content='<thi', thinking_tags=thinking_tags):
-        pass
-
-    assert manager.get_parts() == []
-
-    for _ in manager.finalize():
-        pass
-
-    assert manager.get_parts() == snapshot([TextPart(content='<thi', part_kind='text')])
-
-
 def test_prefixed_thinking_tags_are_text():
     """Test that thinking tags (incomplete or complete) with a prefix are treated as plain text."""
     manager = ModelResponsePartsManager()

@@ -47,6 +47,75 @@ this includes ToolCallPartDelta's in addition to the more fully-formed ModelResp
 """
 
 
+def _parse_chunk_for_thinking_tags(
+    content: str,
+    buffered: str,
+    start_tag: str,
+    end_tag: str,
+    in_thinking: bool,
+) -> tuple[list[tuple[str, str]], str]:
+    """Parse content for thinking tags, handling split tags across chunks.
+
+    Args:
+        content: New content chunk to parse
+        buffered: Previously buffered content (for split tags)
+        start_tag: Opening thinking tag (e.g., '<think>')
+        end_tag: Closing thinking tag (e.g., '</think>')
+        in_thinking: Whether currently inside a ThinkingPart
+
+    Returns:
+        (segments, new_buffer) where:
+        - segments: List of (type, content) tuples
+        - type: 'text'|'start_tag'|'thinking'|'end_tag'
+        - new_buffer: Content to buffer for next chunk (empty if nothing to buffer)
+    """
+    combined = buffered + content
+    segments: list[tuple[str, str]] = []
+    current_thinking_state = in_thinking
+    remaining = combined
+
+    while remaining:
+        if current_thinking_state:
+            if end_tag in remaining:
+                before_end, after_end = remaining.split(end_tag, 1)
+                if before_end:
+                    segments.append(('thinking', before_end))
+                segments.append(('end_tag', ''))
+                remaining = after_end
+                current_thinking_state = False
+            else:
+                # Check for partial end tag at end of remaining content
+                for i in range(len(remaining)):
+                    suffix = remaining[i:]
+                    if len(suffix) < len(end_tag) and end_tag.startswith(suffix):
+                        if i > 0:
+                            segments.append(('thinking', remaining[:i]))
+                        return segments, suffix
+
+                # No end tag or partial, emit all as thinking
+                segments.append(('thinking', remaining))
+                return segments, ''
+        else:
+            if start_tag in remaining:
+                before_start, after_start = remaining.split(start_tag, 1)
+                if before_start:
+                    segments.append(('text', before_start))
+                segments.append(('start_tag', ''))
+                remaining = after_start
+                current_thinking_state = True
+            else:
+                # Check for partial start tag (only if original content started with first char of tag)
+                if content and remaining and content[0] == start_tag[0]:
+                    if len(remaining) < len(start_tag) and start_tag.startswith(remaining):
+                        return segments, remaining
+
+                # No start tag, treat as text
+                segments.append(('text', remaining))
+                return segments, ''
+
+    return segments, ''
+
+
 @dataclass
 class ModelResponsePartsManager:
     """Manages a sequence of parts that make up a model's streamed response.
@@ -201,7 +270,7 @@ class ModelResponsePartsManager:
                 ignore_leading_whitespace=ignore_leading_whitespace,
             )
 
-    def _handle_text_delta_simple(  # noqa: C901
+    def _handle_text_delta_simple(
         self,
         *,
         vendor_part_id: VendorId | None,
@@ -210,9 +279,7 @@ class ModelResponsePartsManager:
         thinking_tags: tuple[str, str] | None,
         ignore_leading_whitespace: bool,
     ) -> Generator[ModelResponseStreamEvent, None, None]:
-        """Handle text delta without split tag buffering (original logic)."""
-        existing_text_part_and_index: tuple[TextPart, int] | None = None
-
+        """Handle text delta without split tag buffering."""
         if vendor_part_id is None:
             if self._parts:
                 part_index = len(self._parts) - 1
@@ -220,24 +287,14 @@ class ModelResponsePartsManager:
                 if isinstance(latest_part, ThinkingPart):
                     yield from self.handle_thinking_delta(vendor_part_id=None, content=content)
                     return
-                elif isinstance(latest_part, TextPart):
-                    existing_text_part_and_index = latest_part, part_index
-        else:
-            part_index = self._vendor_id_to_part_index.get(vendor_part_id)
-            if part_index is not None:
-                existing_part = self._parts[part_index]
-
-                if isinstance(existing_part, TextPart):
-                    existing_text_part_and_index = existing_part, part_index
-                else:
-                    raise UnexpectedModelBehavior(f'Cannot apply a text delta to {existing_part=}')
 
         # If a TextPart has already been created for this vendor_part_id, disable thinking tag detection
-        if vendor_part_id is not None:
+        else:
             existing_part_index = self._vendor_id_to_part_index.get(vendor_part_id)
             if existing_part_index is not None and isinstance(self._parts[existing_part_index], TextPart):
                 thinking_tags = None
 
+        # Handle thinking tag detection for simple path (no buffering)
         if thinking_tags and thinking_tags[0] in content:
             start_tag = thinking_tags[0]
             before_start, after_start = content.split(start_tag, 1)
@@ -247,51 +304,29 @@ class ModelResponsePartsManager:
                     before_start = ''
 
                 if before_start:
-                    yield from self._handle_text_delta_simple(
+                    yield from self._emit_text_part(
                         vendor_part_id=vendor_part_id,
                         content=content,
                         id=id,
-                        thinking_tags=None,
-                        ignore_leading_whitespace=ignore_leading_whitespace,
+                        ignore_leading_whitespace=False,
                     )
                     return
-            self._vendor_id_to_part_index.pop(vendor_part_id, None)
 
-            # Create ThinkingPart but defer PartStartEvent until there is content
-            new_part_index = len(self._parts)
+            self._vendor_id_to_part_index.pop(vendor_part_id, None)
             part = ThinkingPart(content='')
             self._parts.append(part)
 
-            if after_start:  # pragma: no branch
+            if after_start:
                 yield from self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=after_start)
             return
 
-        if existing_text_part_and_index is None:
-            # This is a workaround for models that emit `<think>\n</think>\n\n` or an empty text part ahead of tool calls (e.g. Ollama + Qwen3),
-            # which we don't want to end up treating as a final result when using `run_stream` with `str` as a valid `output_type`.
-            if ignore_leading_whitespace and (len(content) == 0 or content.isspace()):
-                return
-
-            new_part_index = len(self._parts)
-            part = TextPart(content=content, id=id)
-            if vendor_part_id is not None:
-                self._vendor_id_to_part_index[vendor_part_id] = new_part_index
-            self._parts.append(part)
-            yield PartStartEvent(index=new_part_index, part=part)
-            self._started_part_indices.add(new_part_index)
-        else:
-            existing_text_part, part_index = existing_text_part_and_index
-            part_delta = TextPartDelta(content_delta=content)
-
-            updated_text_part = part_delta.apply(existing_text_part)
-            self._parts[part_index] = updated_text_part
-            if (
-                part_index not in self._started_part_indices
-            ):  # pragma: no cover - defensive: TextPart should always be started
-                self._started_part_indices.add(part_index)
-                yield PartStartEvent(index=part_index, part=updated_text_part)
-            else:
-                yield PartDeltaEvent(index=part_index, delta=part_delta)
+        # emit as TextPart
+        yield from self._emit_text_part(
+            vendor_part_id=vendor_part_id,
+            content=content,
+            id=id,
+            ignore_leading_whitespace=ignore_leading_whitespace,
+        )
 
     def _handle_text_delta_with_thinking_tags(
         self,
@@ -305,112 +340,138 @@ class ModelResponsePartsManager:
         """Handle text delta with thinking tag detection and buffering for split tags."""
         start_tag, end_tag = thinking_tags
         buffered = self._thinking_tag_buffer.get(vendor_part_id, '')
-        combined_content = buffered + content
 
         part_index = self._vendor_id_to_part_index.get(vendor_part_id)
         existing_part = self._parts[part_index] if part_index is not None else None
 
         # If a TextPart has already been created for this vendor_part_id, disable thinking tag detection
         if existing_part is not None and isinstance(existing_part, TextPart):
+            combined_content = buffered + content
             self._thinking_tag_buffer.pop(vendor_part_id, None)
-            yield from self._handle_text_delta_simple(
+            yield from self._emit_text_part(
                 vendor_part_id=vendor_part_id,
                 content=combined_content,
                 id=id,
-                thinking_tags=None,
-                ignore_leading_whitespace=ignore_leading_whitespace,
+                ignore_leading_whitespace=False,
             )
             return
 
-        if existing_part is not None and isinstance(existing_part, ThinkingPart):
-            if end_tag in combined_content:
-                before_end, after_end = combined_content.split(end_tag, 1)
+        in_thinking = existing_part is not None and isinstance(existing_part, ThinkingPart)
 
-                if before_end:
-                    yield from self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=before_end)
-
-                self._vendor_id_to_part_index.pop(vendor_part_id)
-                self._thinking_tag_buffer.pop(vendor_part_id, None)
-
-                if after_end:
-                    yield from self._handle_text_delta_with_thinking_tags(
-                        vendor_part_id=vendor_part_id,
-                        content=after_end,
-                        id=id,
-                        thinking_tags=thinking_tags,
-                        ignore_leading_whitespace=ignore_leading_whitespace,
-                    )
-                return
-
-            # Check if any suffix of combined_content could be the start of the end tag
-            for i in range(len(combined_content)):
-                suffix = combined_content[i:]
-                if self._could_be_tag_start(suffix, end_tag):
-                    prefix = combined_content[:i]
-                    if prefix:
-                        yield from self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=prefix)
-                    self._thinking_tag_buffer[vendor_part_id] = suffix
-                    return
-
-            # No suffix could be a tag start, so emit all content
-            self._thinking_tag_buffer.pop(vendor_part_id, None)
-            yield from self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=combined_content)
-            return
-
-        if start_tag in combined_content:
-            before_start, after_start = combined_content.split(start_tag, 1)
-
-            if before_start:
-                if ignore_leading_whitespace and before_start.isspace():
-                    before_start = ''
-
-                if before_start:
-                    self._thinking_tag_buffer.pop(vendor_part_id, None)
-                    yield from self._handle_text_delta_simple(
-                        vendor_part_id=vendor_part_id,
-                        content=combined_content,
-                        id=id,
-                        thinking_tags=None,
-                        ignore_leading_whitespace=ignore_leading_whitespace,
-                    )
-                    return
-            self._thinking_tag_buffer.pop(vendor_part_id, None)
-            self._vendor_id_to_part_index.pop(vendor_part_id, None)
-
-            # Create ThinkingPart but defer PartStartEvent until there is content
-            new_part_index = len(self._parts)
-            part = ThinkingPart(content='')
-            self._vendor_id_to_part_index[vendor_part_id] = new_part_index
-            self._parts.append(part)
-            self._isolated_start_tags[new_part_index] = start_tag
-
-            if after_start:
-                yield from self._handle_text_delta_with_thinking_tags(
-                    vendor_part_id=vendor_part_id,
-                    content=after_start,
-                    id=id,
-                    thinking_tags=thinking_tags,
-                    ignore_leading_whitespace=ignore_leading_whitespace,
-                )
-            return
-        if content.startswith(start_tag[0]) and self._could_be_tag_start(combined_content, start_tag):
-            self._thinking_tag_buffer[vendor_part_id] = combined_content
-            return
-
-        self._thinking_tag_buffer.pop(vendor_part_id, None)
-        yield from self._handle_text_delta_simple(
-            vendor_part_id=vendor_part_id,
-            content=combined_content,
-            id=id,
-            thinking_tags=thinking_tags,
-            ignore_leading_whitespace=ignore_leading_whitespace,
+        segments, new_buffer = _parse_chunk_for_thinking_tags(
+            content=content,
+            buffered=buffered,
+            start_tag=start_tag,
+            end_tag=end_tag,
+            in_thinking=in_thinking,
         )
 
-    def _could_be_tag_start(self, content: str, tag: str) -> bool:
-        """Check if content could be the start of a tag."""
-        if len(content) >= len(tag):
-            return False
-        return tag.startswith(content)
+        # Check for text before thinking tag - if so, treat entire combined content as text
+        if segments and segments[0][0] == 'text':
+            text_content = segments[0][1]
+            if ignore_leading_whitespace and text_content.isspace():
+                text_content = ''
+
+            if text_content:
+                combined_content = buffered + content
+                self._thinking_tag_buffer.pop(vendor_part_id, None)
+                yield from self._emit_text_part(
+                    vendor_part_id=vendor_part_id,
+                    content=combined_content,
+                    id=id,
+                    ignore_leading_whitespace=False,
+                )
+                return
+
+        for i, (segment_type, segment_content) in enumerate(segments):
+            if segment_type == 'text':
+                # Skip whitespace-only text before a thinking tag when ignore_leading_whitespace=True
+                skip_whitespace_before_tag = (
+                    ignore_leading_whitespace
+                    and segment_content.isspace()
+                    and i + 1 < len(segments)
+                    and segments[i + 1][0] == 'start_tag'
+                )
+                if not skip_whitespace_before_tag:
+                    yield from self._emit_text_part(
+                        vendor_part_id=vendor_part_id,
+                        content=segment_content,
+                        id=id,
+                        ignore_leading_whitespace=ignore_leading_whitespace,
+                    )
+            elif segment_type == 'start_tag':
+                self._vendor_id_to_part_index.pop(vendor_part_id, None)
+                new_part_index = len(self._parts)
+                part = ThinkingPart(content='')
+                self._vendor_id_to_part_index[vendor_part_id] = new_part_index
+                self._parts.append(part)
+                self._isolated_start_tags[new_part_index] = start_tag
+            elif segment_type == 'thinking':
+                yield from self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=segment_content)
+            elif segment_type == 'end_tag':
+                self._vendor_id_to_part_index.pop(vendor_part_id)
+
+        if new_buffer:
+            self._thinking_tag_buffer[vendor_part_id] = new_buffer
+        else:
+            self._thinking_tag_buffer.pop(vendor_part_id, None)
+
+    def _emit_text_part(
+        self,
+        vendor_part_id: VendorId | None,
+        content: str,
+        id: str | None = None,
+        ignore_leading_whitespace: bool = False,
+    ) -> Generator[ModelResponseStreamEvent, None, None]:
+        """Create or update a TextPart, yielding appropriate events.
+
+        Args:
+            vendor_part_id: Vendor ID for tracking this part
+            content: Text content to add
+            id: Optional id for the text part
+            ignore_leading_whitespace: Whether to ignore empty/whitespace content
+
+        Yields:
+            PartStartEvent if creating new part, PartDeltaEvent if updating existing part
+        """
+        if ignore_leading_whitespace and (len(content) == 0 or content.isspace()):
+            return
+
+        existing_text_part_and_index: tuple[TextPart, int] | None = None
+
+        if vendor_part_id is None:
+            if self._parts:
+                part_index = len(self._parts) - 1
+                latest_part = self._parts[part_index]
+                if isinstance(latest_part, TextPart):
+                    existing_text_part_and_index = latest_part, part_index
+        else:
+            part_index = self._vendor_id_to_part_index.get(vendor_part_id)
+            if part_index is not None:
+                existing_part = self._parts[part_index]
+                if isinstance(existing_part, TextPart):
+                    existing_text_part_and_index = existing_part, part_index
+                else:
+                    raise UnexpectedModelBehavior(f'Cannot apply a text delta to {existing_part=}')
+
+        if existing_text_part_and_index is None:
+            new_part_index = len(self._parts)
+            part = TextPart(content=content, id=id)
+            if vendor_part_id is not None:
+                self._vendor_id_to_part_index[vendor_part_id] = new_part_index
+            self._parts.append(part)
+            yield PartStartEvent(index=new_part_index, part=part)
+            self._started_part_indices.add(new_part_index)
+        else:
+            existing_text_part, part_index = existing_text_part_and_index
+            part_delta = TextPartDelta(content_delta=content)
+            updated_text_part = part_delta.apply(existing_text_part)
+            self._parts[part_index] = updated_text_part
+            if part_index not in self._started_part_indices:
+                self._started_part_indices.add(part_index)
+                yield PartStartEvent(index=part_index, part=updated_text_part)
+            else:
+                yield PartDeltaEvent(index=part_index, delta=part_delta)
 
     def handle_thinking_delta(
         self,

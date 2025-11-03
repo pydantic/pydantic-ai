@@ -7,6 +7,7 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 import base64
+import copy
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator
@@ -613,11 +614,13 @@ class StreamedResponse(ABC):
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
         # Flush any buffered content before building response
-        for _ in self._parts_manager.finalize():
+        # clone parts manager to avoid modifying the ongoing stream state
+        cloned_manager = copy.deepcopy(self._parts_manager)
+        for _ in cloned_manager.finalize():
             pass
 
         return ModelResponse(
-            parts=self._parts_manager.get_parts(),
+            parts=cloned_manager.get_parts(),
             model_name=self.model_name,
             timestamp=self.timestamp,
             usage=self.usage(),
