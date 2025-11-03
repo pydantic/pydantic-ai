@@ -29,7 +29,15 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.mcp import MCPError, MCPServerStreamableHTTP, Resource, ServerCapabilities, load_mcp_servers
+from pydantic_ai.mcp import (
+    MCPError,
+    MCPServerStreamableHTTP,
+    Resource,
+    ResourceAnnotations,
+    ResourceTemplate,
+    ServerCapabilities,
+    load_mcp_servers,
+)
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
@@ -328,36 +336,35 @@ async def test_stdio_server_list_resources(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         resources = await server.list_resources()
-        assert len(resources) == snapshot(3)
-
-        assert resources[0].uri == snapshot('resource://kiwi.png')
-        assert resources[0].mime_type == snapshot('image/png')
-        assert resources[0].name == snapshot('kiwi_resource')
-        assert resources[0].annotations is None
-
-        assert resources[1].uri == snapshot('resource://marcelo.mp3')
-        assert resources[1].mime_type == snapshot('audio/mpeg')
-        assert resources[1].name == snapshot('marcelo_resource')
-        assert resources[1].annotations is None
-
-        assert resources[2].uri == snapshot('resource://product_name.txt')
-        assert resources[2].mime_type == snapshot('text/plain')
-        assert resources[2].name == snapshot('product_name_resource')
-        # Test ResourceAnnotations
-        assert resources[2].annotations is not None
-        assert resources[2].annotations.audience == snapshot(['user', 'assistant'])
-        assert resources[2].annotations.priority == snapshot(0.5)
+        assert resources == snapshot(
+            [
+                Resource(name='kiwi_resource', description='', mime_type='image/png', uri='resource://kiwi.png'),
+                Resource(name='marcelo_resource', description='', mime_type='audio/mpeg', uri='resource://marcelo.mp3'),
+                Resource(
+                    name='product_name_resource',
+                    description='',
+                    mime_type='text/plain',
+                    annotations=ResourceAnnotations(audience=['user', 'assistant'], priority=0.5),
+                    uri='resource://product_name.txt',
+                ),
+            ]
+        )
 
 
 async def test_stdio_server_list_resource_templates(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         resource_templates = await server.list_resource_templates()
-        assert len(resource_templates) == snapshot(1)
-
-        assert resource_templates[0].uri_template == snapshot('resource://greeting/{name}')
-        assert resource_templates[0].name == snapshot('greeting_resource_template')
-        assert resource_templates[0].description == snapshot('Dynamic greeting resource template.')
+        assert resource_templates == snapshot(
+            [
+                ResourceTemplate(
+                    name='greeting_resource_template',
+                    description='Dynamic greeting resource template.',
+                    mime_type='text/plain',
+                    uri_template='resource://greeting/{name}',
+                )
+            ]
+        )
 
 
 async def test_log_level_set(run_context: RunContext[int]):

@@ -52,6 +52,7 @@ __all__ = (
     'load_mcp_servers',
     'MCPError',
     'Resource',
+    'ResourceAnnotations',
     'ResourceTemplate',
     'ServerCapabilities',
 )
