@@ -493,12 +493,12 @@ async def main():
     async with agent.run_stream('Write a long story about a cat') as result:
         async for message in result.stream_text():
             print(message)
-            #> Once upon a 
-            #> Once upon a time, there was 
-            #> Once upon a time, there was a curious cat 
-            #> Once upon a time, there was a curious cat named Whiskers who 
-            #> Once upon a time, there was a curious cat named Whiskers who loved to explore 
-            #> Once upon a time, there was a curious cat named Whiskers who loved to explore the world around 
+            #> Once upon a
+            #> Once upon a time, there was
+            #> Once upon a time, there was a curious cat
+            #> Once upon a time, there was a curious cat named Whiskers who
+            #> Once upon a time, there was a curious cat named Whiskers who loved to explore
+            #> Once upon a time, there was a curious cat named Whiskers who loved to explore the world around
             #> Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...
 ```
 
