@@ -46,7 +46,7 @@ requires-python = ">=3.10"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,logfire,ui]=={{ version }}",
+    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,logfire,ui,fastapi]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -110,6 +110,10 @@ dev = [
     "pip>=25.2",
     "genai-prices>=0.0.28",
     "mcp-run-python>=0.0.20",
+    "pytest-asyncio>=1.2.0",
+    "freezegun>=1.5.5",
+    "aioresponses>=0.7.8",
+    "openai[aiohttp]",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [

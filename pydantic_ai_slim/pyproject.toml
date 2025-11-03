@@ -68,6 +68,7 @@ dependencies = [
 logfire = ["logfire[httpx]>=3.14.1"]
 # Models
 openai = ["openai>=1.107.2"]
+fastapi = ["fastapi"]
 cohere = ["cohere>=5.18.0; platform_system != 'Emscripten'"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
 google = ["google-genai>=1.46.0"]
