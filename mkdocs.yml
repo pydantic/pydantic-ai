@@ -14,7 +14,6 @@ nav:
   - install.md
   - help.md
   - troubleshooting.md
-  - changelog.md
 
   - Documentation:
       - Core Concepts:
@@ -191,6 +190,8 @@ nav:
 
   - Project:
       - contributing.md
+      - changelog.md
+      - version-policy.md
 
 extra:
   # hide the "Made with Material for MkDocs" message
@@ -333,7 +334,6 @@ plugins:
           - install.md
           - help.md
           - troubleshooting.md
-          - changelog.md
         Concepts documentation:
           - a2a.md
           - ag-ui.md
@@ -365,11 +365,15 @@ plugins:
           - durable_execution/*.md
         MCP:
           - mcp/*.md
+        UI Event Streams:
+          - ui/*.md
         Optional:
           - testing.md
           - cli.md
           - logfire.md
           - contributing.md
+          - changelog.md
+          - version-policy.md
         Examples:
           - examples/*.md
 
