@@ -472,7 +472,7 @@ _(This example is complete, it can be run "as is")_
 
 #### Partial validation during streaming {#partial-validation}
 
-If your output validator takes `RunContext` as a first argument, you can add `partial: bool` as the last argument to handle validation differently for partial outputs during streaming (e.g. skip validation altogether).
+You can use the `partial_output` field on `RunContext` to handle validation differently for partial outputs during streaming (e.g. skip validation altogether).
 
 ```python {title="partial_validation_streaming.py" line_length="120"}
 from pydantic_ai import Agent, ModelRetry, RunContext
@@ -480,8 +480,8 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 agent = Agent('openai:gpt-5')
 
 @agent.output_validator
-def validate_output(ctx: RunContext, output: str, partial: bool) -> str:
-    if partial:
+def validate_output(ctx: RunContext, output: str) -> str:
+    if ctx.partial_output:
         return output
     else:
         if len(output) < 50:
