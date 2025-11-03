@@ -78,6 +78,8 @@ def test_openai_responses_model(env: TestEnv):
     model = OpenAIResponsesModel('gpt-4o')
     assert model.model_name == 'gpt-4o'
     assert model.system == 'openai'
+    assert model.base_url == 'https://api.openai.com/v1/'
+    assert model.client.api_key == 'test'
 
 
 async def test_openai_responses_model_simple_response(allow_model_requests: None, openai_api_key: str):
