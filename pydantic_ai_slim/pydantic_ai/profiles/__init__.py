@@ -1,13 +1,13 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, fields, replace
 from textwrap import dedent
-from typing import Callable, Union
 
 from typing_extensions import Self
 
+from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from ..output import StructuredOutputMode
-from ._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 
 __all__ = [
     'ModelProfile',
@@ -18,9 +18,9 @@ __all__ = [
 ]
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ModelProfile:
-    """Describes how requests to a specific model or family of models need to be constructed to get the best results, independent of the model and provider classes used."""
+    """Describes how requests to and responses from specific models or families of models need to be constructed and processed to get the best results, independent of the model and provider classes used."""
 
     supports_tools: bool = True
     """Whether the model supports tools."""
@@ -28,6 +28,8 @@ class ModelProfile:
     """Whether the model supports JSON schema output."""
     supports_json_object_output: bool = False
     """Whether the model supports JSON object output."""
+    supports_image_output: bool = False
+    """Whether the model supports image output."""
     default_structured_output_mode: StructuredOutputMode = 'tool'
     """The default structured output mode to use for the model."""
     prompted_output_template: str = dedent(
@@ -45,6 +47,15 @@ class ModelProfile:
 
     thinking_tags: tuple[str, str] = ('<think>', '</think>')
     """The tags used to indicate thinking parts in the model's output. Defaults to ('<think>', '</think>')."""
+
+    ignore_streamed_leading_whitespace: bool = False
+    """Whether to ignore leading whitespace when streaming a response.
+
+    This is a workaround for models that emit `<think>\n</think>\n\n` or an empty text part ahead of tool calls (e.g. Ollama + Qwen3),
+    which we don't want to end up treating as a final result when using `run_stream` with `str` a valid `output_type`.
+
+    This is currently only used by `OpenAIChatModel`, `HuggingFaceModel`, and `GroqModel`.
+    """
 
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:
@@ -66,6 +77,6 @@ class ModelProfile:
         return replace(self, **non_default_attrs)
 
 
-ModelProfileSpec = Union[ModelProfile, Callable[[str], Union[ModelProfile, None]]]
+ModelProfileSpec = ModelProfile | Callable[[str], ModelProfile | None]
 
 DEFAULT_PROFILE = ModelProfile()

@@ -3,12 +3,12 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-from httpx import AsyncClient as AsyncHTTPClient
+import httpx
 from openai import AsyncOpenAI
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.providers import Provider
@@ -40,7 +40,7 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
     def model_profile(self, model_name: str) -> ModelProfile | None:
         profile = deepseek_model_profile(model_name)
 
-        # As DeepSeekProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+        # As DeepSeekProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly.
         # This was not the case when using a DeepSeek model with another model class (e.g. BedrockConverseModel or GroqModel),
         # so we won't do this in `deepseek_model_profile` unless we learn it's always needed.
@@ -53,7 +53,7 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: AsyncHTTPClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -63,7 +63,7 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
         *,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: AsyncHTTPClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         api_key = api_key or os.getenv('DEEPSEEK_API_KEY')
         if not api_key and openai_client is None:

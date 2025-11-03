@@ -49,6 +49,7 @@ Either way, running `clai` will start an interactive session where you can chat 
 - `/exit`: Exit the session
 - `/markdown`: Show the last response in markdown format
 - `/multiline`: Toggle multiline input mode (use Ctrl+D to submit)
+- `/cp`: Copy the last response to clipboard
 
 ## Help
 
@@ -61,6 +62,7 @@ Special prompts:
 * `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)
 * `/markdown` - show the last markdown output of the last question
 * `/multiline` - toggle multiline mode
+* `/cp` - copy the last response to clipboard
 
 positional arguments:
   prompt                AI Prompt, if omitted fall into interactive mode
@@ -68,7 +70,7 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   -m [MODEL], --model [MODEL]
-                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4.1" or "anthropic:claude-sonnet-4-0". Defaults to "openai:gpt-4.1".
+                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "openai:gpt-5".
   -a AGENT, --agent AGENT
                         Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"
   -l, --list-models     List all available models and exit

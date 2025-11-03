@@ -49,7 +49,7 @@ interactions:
       etag:
       - W/"61efea10-a0e"
       expires:
-      - Sat, 31 May 2025 15:03:55 GMT
+      - Thu, 21 Aug 2025 11:11:48 GMT
       last-modified:
       - Tue, 25 Jan 2022 12:16:16 GMT
       transfer-encoding:
@@ -75,7 +75,7 @@ interactions:
       - api.anthropic.com
     method: POST
     parsed_body:
-      max_tokens: 1024
+      max_tokens: 4096
       messages:
       - content:
         - text: What is the main content on this document?
@@ -107,7 +107,7 @@ interactions:
             type: text
           type: document
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
@@ -115,7 +115,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1343'
+      - '1153'
       content-type:
       - application/json
       strict-transport-security:
@@ -125,35 +125,28 @@ interactions:
     parsed_body:
       content:
       - text: |-
-          This document is primarily about the use of placeholder names, specifically focusing on "John Doe" and its variants. The content explains how these placeholder names are used in legal contexts and other situations when a person's identity is unknown or needs to be withheld. The text describes:
+          This document is a TXT test file that contains example content about the use of placeholder names like "John Doe," "Jane Doe," and their variants in legal and cultural contexts. The main content is divided into three main paragraphs explaining:
 
-          1. Various placeholder names like:
-          - "John Doe" (for males)
-          - "Jane Doe" or "Jane Roe" (for females)
-          - "Jonnie Doe" and "Janie Doe" (for children)
-          - "Baby Doe" (for unidentified children)
+          1. The use of "Doe" names as placeholders for unknown parties in legal actions
+          2. The use of "John Doe" as a reference to a typical male in various contexts
+          3. The use of variations like "Baby Doe" and numbered "John Doe"s in specific cases
 
-          2. The usage of these names in:
-          - Legal actions and cases
-          - Hospital settings for unidentified patients
-          - Forms and examples
-          - Popular culture
-
-          3. Regional variations, noting that while this practice is common in the United States and Canada, other English-speaking countries like the UK use alternatives such as "Joe Bloggs" or "John Smith."
-
-          The document appears to be a test file with example content sourced from Wikipedia, including licensing information and attribution details at the end.
+          The document also includes metadata about the file itself, including its purpose, type, and version, as well as attribution information indicating that the example content is from Wikipedia and is licensed under Attribution-ShareAlike 4.0.
         type: text
-      id: msg_01KowpGguk6MzqFet3BGtvkc
-      model: claude-3-5-sonnet-20241022
+      id: msg_0181va21HMXatSVPvFwiTN1k
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
       stop_sequence: null
       type: message
       usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 713
-        output_tokens: 236
+        output_tokens: 166
         service_tier: standard
     status:
       code: 200

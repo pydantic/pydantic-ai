@@ -69,6 +69,7 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                     # Responses will have the body under a field called 'string'
                     body = body.get('string')
                 if body is not None:
+                    # NOTE(Marcelo): This doesn't handle gzip compression.
                     data['parsed_body'] = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
                     if 'access_token' in data['parsed_body']:
                         data['parsed_body']['access_token'] = 'scrubbed'

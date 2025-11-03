@@ -12,3 +12,4 @@
             - RunOutputDataT
             - capture_run_messages
             - InstrumentationSettings
+            - EventStreamHandler

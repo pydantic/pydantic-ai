@@ -31,10 +31,16 @@ A trace is generated for the agent run, and spans are emitted for each model req
 
 ## Using Logfire
 
-To use Logfire, you'll need a Logfire [account](https://logfire.pydantic.dev), and the Logfire Python SDK installed:
+To use Logfire, you'll need a Logfire [account](https://logfire.pydantic.dev). The Logfire Python SDK is included with `pydantic-ai`:
 
 ```bash
-pip/uv-add "pydantic-ai[logfire]"
+pip/uv-add pydantic-ai
+```
+
+Or if you're using the slim package, you can install it with the `logfire` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[logfire]"
 ```
 
 Then authenticate your local environment with Logfire:
@@ -63,7 +69,7 @@ from pydantic_ai import Agent
 logfire.configure()  # (1)!
 logfire.instrument_pydantic_ai()  # (2)!
 
-agent = Agent('openai:gpt-4o', instructions='Be concise, reply with one sentence.')
+agent = Agent('openai:gpt-5', instructions='Be concise, reply with one sentence.')
 result = agent.run_sync('Where does "hello world" come from?')  # (3)!
 print(result.output)
 """
@@ -116,7 +122,7 @@ We can also query data with SQL in Logfire to monitor the performance of an appl
     logfire.configure()
     logfire.instrument_pydantic_ai()
     logfire.instrument_httpx(capture_all=True)  # (1)!
-    agent = Agent('openai:gpt-4o')
+    agent = Agent('openai:gpt-5')
     result = agent.run_sync('What is the capital of France?')
     print(result.output)
     #> The capital of France is Paris.
@@ -136,7 +142,7 @@ We can also query data with SQL in Logfire to monitor the performance of an appl
     logfire.configure()
     logfire.instrument_pydantic_ai()
 
-    agent = Agent('openai:gpt-4o')
+    agent = Agent('openai:gpt-5')
     result = agent.run_sync('What is the capital of France?')
     print(result.output)
     #> The capital of France is Paris.
@@ -178,7 +184,7 @@ logfire.configure(send_to_logfire=False)  # (2)!
 logfire.instrument_pydantic_ai()
 logfire.instrument_httpx(capture_all=True)
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> Paris
@@ -220,7 +226,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import set_tracer_provider
 
-from pydantic_ai.agent import Agent
+from pydantic_ai import Agent
 
 os.environ['OTEL_EXPORTER_OTLP_ENDPOINT'] = 'http://localhost:4318'
 exporter = OTLPSpanExporter()
@@ -231,7 +237,7 @@ tracer_provider.add_span_processor(span_processor)
 set_tracer_provider(tracer_provider)
 
 Agent.instrument_all()
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> Paris
@@ -255,12 +261,21 @@ The following providers have dedicated documentation on Pydantic AI:
 - [Opik](https://www.comet.com/docs/opik/tracing/integrations/pydantic-ai)
 - [mlflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/pydantic_ai)
 - [Agenta](https://docs.agenta.ai/observability/integrations/pydanticai)
+- [Confident AI](https://documentation.confident-ai.com/docs/llm-tracing/integrations/pydanticai)
+- [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
 
 ## Advanced usage
 
 ### Configuring data format
 
-Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), with one caveat. The semantic conventions specify that messages should be captured as individual events (logs) that are children of the request span. By default, Pydantic AI instead collects these events into a JSON array which is set as a single large attribute called `events` on the request span. To change this, use `event_mode='logs'`:
+Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/). Specifically, it follows version 1.37.0 of the conventions by default, with a few exceptions. Certain span and attribute names are not spec compliant by default for compatibility reasons, but can be made compliant by passing [`InstrumentationSettings(version=3)`][pydantic_ai.models.instrumented.InstrumentationSettings] (the default is currently `version=2`). This will change the following:
+
+- The span name `agent run` becomes `invoke_agent {gen_ai.agent.name}` (with the agent name filled in)
+- The span name `running tool` becomes `execute_tool {gen_ai.tool.name}` (with the tool name filled in)
+- The attribute name `tool_arguments` becomes `gen_ai.tool.call.arguments`
+- The attribute name `tool_response` becomes `gen_ai.tool.call.result`
+
+To use [OpenTelemetry semantic conventions version 1.36.0](https://github.com/open-telemetry/semantic-conventions/blob/v1.36.0/docs/gen-ai/README.md) or older, pass [`InstrumentationSettings(version=1)`][pydantic_ai.models.instrumented.InstrumentationSettings]. Moreover, those semantic conventions specify that messages should be captured as individual events (logs) that are children of the request span, whereas by default, Pydantic AI instead collects these events into a JSON array which is set as a single large attribute called `events` on the request span. To change this, use `event_mode='logs'`:
 
 ```python {title="instrumentation_settings_event_mode.py"}
 import logfire
@@ -268,16 +283,14 @@ import logfire
 from pydantic_ai import Agent
 
 logfire.configure()
-logfire.instrument_pydantic_ai(event_mode='logs')
-agent = Agent('openai:gpt-4o')
+logfire.instrument_pydantic_ai(version=1, event_mode='logs')
+agent = Agent('openai:gpt-5')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
 ```
 
-For now, this won't look as good in the Logfire UI, but we're working on it.
-
-If you have very long conversations, the `events` span attribute may be truncated. Using `event_mode='logs'` will help avoid this issue.
+This won't look as good in the Logfire UI, and will also be removed from Pydantic AI in a future release, but may be useful for backwards compatibility.
 
 Note that the OpenTelemetry Semantic Conventions are still experimental and are likely to change.
 
@@ -289,14 +302,14 @@ By default, the global `TracerProvider` and `EventLoggerProvider` are used. Thes
 from opentelemetry.sdk._events import EventLoggerProvider
 from opentelemetry.sdk.trace import TracerProvider
 
-from pydantic_ai.agent import Agent, InstrumentationSettings
+from pydantic_ai import Agent, InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(
     tracer_provider=TracerProvider(),
     event_logger_provider=EventLoggerProvider(),
 )
 
-agent = Agent('gpt-4o', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-5', instrument=instrumentation_settings)
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -308,18 +321,18 @@ from pydantic_ai import Agent
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 
 settings = InstrumentationSettings()
-model = InstrumentedModel('gpt-4o', settings)
+model = InstrumentedModel('openai:gpt-5', settings)
 agent = Agent(model)
 ```
 
 ### Excluding binary content
 
 ```python {title="excluding_binary_content.py"}
-from pydantic_ai.agent import Agent, InstrumentationSettings
+from pydantic_ai import Agent, InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_binary_content=False)
 
-agent = Agent('gpt-4o', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-5', instrument=instrumentation_settings)
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -331,12 +344,12 @@ For privacy and security reasons, you may want to monitor your agent's behavior 
 When `include_content=False` is set, Pydantic AI will exclude sensitive content from OpenTelemetry events, including user prompts and model completions, tool call arguments and responses, and any other message content.
 
 ```python {title="excluding_sensitive_content.py"}
-from pydantic_ai.agent import Agent
+from pydantic_ai import Agent
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_content=False)
 
-agent = Agent('gpt-4o', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-5', instrument=instrumentation_settings)
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```

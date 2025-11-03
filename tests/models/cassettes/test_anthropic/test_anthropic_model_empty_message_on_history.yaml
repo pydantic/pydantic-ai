@@ -15,7 +15,7 @@ interactions:
       - api.anthropic.com
     method: POST
     parsed_body:
-      max_tokens: 1024
+      max_tokens: 4096
       messages:
       - content:
         - text: Hello, how can I help you?
@@ -25,7 +25,7 @@ interactions:
         - text: I need a potato!
           type: text
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
       system: |+
         You are a helpful assistant.
@@ -36,7 +36,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '671'
+      - '777'
       content-type:
       - application/json
       strict-transport-security:
@@ -46,26 +46,29 @@ interactions:
     parsed_body:
       content:
       - text: |-
-          I can't physically give you a potato since I'm a computer program. However, I can:
+          I can't physically give you a potato since I'm a digital assistant. However, I can:
 
           1. Help you find recipes that use potatoes
-          2. Give you tips on how to select, store, or cook potatoes
-          3. Share information about different potato varieties
-          4. Provide guidance on growing potatoes
+          2. Give you tips on how to select, store, or prepare potatoes
+          3. Share information about different types of potatoes
+          4. Suggest where you might buy potatoes locally
 
-          What specifically would you like to know about potatoes?
+          What specific information about potatoes would be most helpful to you?
         type: text
-      id: msg_01UjnDmX3B57Drosu49sMteT
-      model: claude-3-5-sonnet-20241022
+      id: msg_01PAZFa5ciacA9ptgEDMbkZM
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
       stop_sequence: null
       type: message
       usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 41
-        output_tokens: 82
+        output_tokens: 88
         service_tier: standard
     status:
       code: 200

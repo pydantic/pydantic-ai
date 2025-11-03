@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from typing import Any, Callable, Union
+from typing import Any, TypeAlias
 
-from typing_extensions import Self, TypeAlias
+from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
 from .abstract import AbstractToolset, ToolsetTool
 
 ToolsetFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT]],
-    Union[AbstractToolset[AgentDepsT], None, Awaitable[Union[AbstractToolset[AgentDepsT], None]]],
+    AbstractToolset[AgentDepsT] | None | Awaitable[AbstractToolset[AgentDepsT] | None],
 ]
 """A sync/async function which takes a run context and returns a toolset."""
 
@@ -73,7 +73,9 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         return await self._toolset.call_tool(name, tool_args, ctx, tool)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
-        if self._toolset is not None:
+        if self._toolset is None:
+            super().apply(visitor)
+        else:
             self._toolset.apply(visitor)
 
     def visit_and_replace(

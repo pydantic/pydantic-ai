@@ -1,9 +1,9 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from opentelemetry.trace import get_current_span
 
@@ -32,8 +32,8 @@ class FallbackModel(Model):
 
     def __init__(
         self,
-        default_model: Model | KnownModelName,
-        *fallback_models: Model | KnownModelName,
+        default_model: Model | KnownModelName | str,
+        *fallback_models: Model | KnownModelName | str,
         fallback_on: Callable[[Exception], bool] | tuple[type[Exception], ...] = (ModelHTTPError,),
     ):
         """Initialize a fallback model instance.
@@ -51,6 +51,19 @@ class FallbackModel(Model):
         else:
             self._fallback_on = fallback_on
 
+    @property
+    def model_name(self) -> str:
+        """The model name."""
+        return f'fallback:{",".join(model.model_name for model in self.models)}'
+
+    @property
+    def system(self) -> str:
+        return f'fallback:{",".join(model.system for model in self.models)}'
+
+    @property
+    def base_url(self) -> str | None:
+        return self.models[0].base_url
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -64,9 +77,8 @@ class FallbackModel(Model):
         exceptions: list[Exception] = []
 
         for model in self.models:
-            customized_model_request_parameters = model.customize_request_parameters(model_request_parameters)
             try:
-                response = await model.request(messages, model_settings, customized_model_request_parameters)
+                response = await model.request(messages, model_settings, model_request_parameters)
             except Exception as exc:
                 if self._fallback_on(exc):
                     exceptions.append(exc)
@@ -90,11 +102,10 @@ class FallbackModel(Model):
         exceptions: list[Exception] = []
 
         for model in self.models:
-            customized_model_request_parameters = model.customize_request_parameters(model_request_parameters)
             async with AsyncExitStack() as stack:
                 try:
                     response = await stack.enter_async_context(
-                        model.request_stream(messages, model_settings, customized_model_request_parameters, run_context)
+                        model.request_stream(messages, model_settings, model_request_parameters, run_context)
                     )
                 except Exception as exc:
                     if self._fallback_on(exc):
@@ -115,19 +126,6 @@ class FallbackModel(Model):
                 attributes = getattr(span, 'attributes', {})
                 if attributes.get('gen_ai.request.model') == self.model_name:  # pragma: no branch
                     span.set_attributes(InstrumentedModel.model_attributes(model))
-
-    @property
-    def model_name(self) -> str:
-        """The model name."""
-        return f'fallback:{",".join(model.model_name for model in self.models)}'
-
-    @property
-    def system(self) -> str:
-        return f'fallback:{",".join(model.system for model in self.models)}'
-
-    @property
-    def base_url(self) -> str | None:
-        return self.models[0].base_url
 
 
 def _default_fallback_condition_factory(exceptions: tuple[type[Exception], ...]) -> Callable[[Exception], bool]:

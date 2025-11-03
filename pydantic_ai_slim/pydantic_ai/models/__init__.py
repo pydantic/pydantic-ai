@@ -7,42 +7,50 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 import base64
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import Any, Generic, TypeVar, overload
+from typing import Any, Generic, Literal, TypeVar, overload
 
 import httpx
-from typing_extensions import Literal, TypeAliasType, TypedDict
+from typing_extensions import TypeAliasType, TypedDict
 
 from .. import _utils
+from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from ..builtin_tools import AbstractBuiltinTool
 from ..exceptions import UserError
 from ..messages import (
-    AgentStreamEvent,
+    BaseToolCallPart,
+    BinaryImage,
+    FilePart,
     FileUrl,
     FinalResultEvent,
+    FinishReason,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     ModelResponseStreamEvent,
+    PartEndEvent,
     PartStartEvent,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     VideoUrl,
 )
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-from ..profiles._json_schema import JsonSchemaTransformer
-from ..settings import ModelSettings
+from ..providers import infer_provider
+from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
-from ..usage import Usage
+from ..usage import RequestUsage
 
 KnownModelName = TypeAliasType(
     'KnownModelName',
@@ -52,6 +60,8 @@ KnownModelName = TypeAliasType(
         'anthropic:claude-3-5-sonnet-20240620',
         'anthropic:claude-3-5-sonnet-20241022',
         'anthropic:claude-3-5-sonnet-latest',
+        'anthropic:claude-haiku-4-5',
+        'anthropic:claude-haiku-4-5-20251001',
         'anthropic:claude-3-7-sonnet-20250219',
         'anthropic:claude-3-7-sonnet-latest',
         'anthropic:claude-3-haiku-20240307',
@@ -64,6 +74,8 @@ KnownModelName = TypeAliasType(
         'anthropic:claude-opus-4-20250514',
         'anthropic:claude-sonnet-4-0',
         'anthropic:claude-sonnet-4-20250514',
+        'anthropic:claude-sonnet-4-5',
+        'anthropic:claude-sonnet-4-5-20250929',
         'bedrock:amazon.titan-tg1-large',
         'bedrock:amazon.titan-text-lite-v1',
         'bedrock:amazon.titan-text-express-v1',
@@ -111,34 +123,19 @@ KnownModelName = TypeAliasType(
         'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
         'bedrock:mistral.mistral-large-2402-v1:0',
         'bedrock:mistral.mistral-large-2407-v1:0',
-        'claude-3-5-haiku-20241022',
-        'claude-3-5-haiku-latest',
-        'claude-3-5-sonnet-20240620',
-        'claude-3-5-sonnet-20241022',
-        'claude-3-5-sonnet-latest',
-        'claude-3-7-sonnet-20250219',
-        'claude-3-7-sonnet-latest',
-        'claude-3-haiku-20240307',
-        'claude-3-opus-20240229',
-        'claude-3-opus-latest',
-        'claude-4-opus-20250514',
-        'claude-4-sonnet-20250514',
-        'claude-opus-4-0',
-        'claude-opus-4-1-20250805',
-        'claude-opus-4-20250514',
-        'claude-sonnet-4-0',
-        'claude-sonnet-4-20250514',
+        'cerebras:gpt-oss-120b',
+        'cerebras:llama3.1-8b',
+        'cerebras:llama-3.3-70b',
+        'cerebras:llama-4-scout-17b-16e-instruct',
+        'cerebras:llama-4-maverick-17b-128e-instruct',
+        'cerebras:qwen-3-235b-a22b-instruct-2507',
+        'cerebras:qwen-3-32b',
+        'cerebras:qwen-3-coder-480b',
+        'cerebras:qwen-3-235b-a22b-thinking-2507',
         'cohere:c4ai-aya-expanse-32b',
         'cohere:c4ai-aya-expanse-8b',
-        'cohere:command',
-        'cohere:command-light',
-        'cohere:command-light-nightly',
         'cohere:command-nightly',
-        'cohere:command-r',
-        'cohere:command-r-03-2024',
         'cohere:command-r-08-2024',
-        'cohere:command-r-plus',
-        'cohere:command-r-plus-04-2024',
         'cohere:command-r-plus-08-2024',
         'cohere:command-r7b-12-2024',
         'deepseek:deepseek-chat',
@@ -146,54 +143,21 @@ KnownModelName = TypeAliasType(
         'google-gla:gemini-2.0-flash',
         'google-gla:gemini-2.0-flash-lite',
         'google-gla:gemini-2.5-flash',
+        'google-gla:gemini-2.5-flash-preview-09-2025',
+        'google-gla:gemini-flash-latest',
         'google-gla:gemini-2.5-flash-lite',
+        'google-gla:gemini-2.5-flash-lite-preview-09-2025',
+        'google-gla:gemini-flash-lite-latest',
         'google-gla:gemini-2.5-pro',
         'google-vertex:gemini-2.0-flash',
         'google-vertex:gemini-2.0-flash-lite',
         'google-vertex:gemini-2.5-flash',
+        'google-vertex:gemini-2.5-flash-preview-09-2025',
+        'google-vertex:gemini-flash-latest',
         'google-vertex:gemini-2.5-flash-lite',
+        'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
+        'google-vertex:gemini-flash-lite-latest',
         'google-vertex:gemini-2.5-pro',
-        'gpt-3.5-turbo',
-        'gpt-3.5-turbo-0125',
-        'gpt-3.5-turbo-0301',
-        'gpt-3.5-turbo-0613',
-        'gpt-3.5-turbo-1106',
-        'gpt-3.5-turbo-16k',
-        'gpt-3.5-turbo-16k-0613',
-        'gpt-4',
-        'gpt-4-0125-preview',
-        'gpt-4-0314',
-        'gpt-4-0613',
-        'gpt-4-1106-preview',
-        'gpt-4-32k',
-        'gpt-4-32k-0314',
-        'gpt-4-32k-0613',
-        'gpt-4-turbo',
-        'gpt-4-turbo-2024-04-09',
-        'gpt-4-turbo-preview',
-        'gpt-4-vision-preview',
-        'gpt-4.1',
-        'gpt-4.1-2025-04-14',
-        'gpt-4.1-mini',
-        'gpt-4.1-mini-2025-04-14',
-        'gpt-4.1-nano',
-        'gpt-4.1-nano-2025-04-14',
-        'gpt-4o',
-        'gpt-4o-2024-05-13',
-        'gpt-4o-2024-08-06',
-        'gpt-4o-2024-11-20',
-        'gpt-4o-audio-preview',
-        'gpt-4o-audio-preview-2024-10-01',
-        'gpt-4o-audio-preview-2024-12-17',
-        'gpt-4o-audio-preview-2025-06-03',
-        'gpt-4o-mini',
-        'gpt-4o-mini-2024-07-18',
-        'gpt-4o-mini-audio-preview',
-        'gpt-4o-mini-audio-preview-2024-12-17',
-        'gpt-4o-mini-search-preview',
-        'gpt-4o-mini-search-preview-2025-03-11',
-        'gpt-4o-search-preview',
-        'gpt-4o-search-preview-2025-03-11',
         'grok:grok-4',
         'grok:grok-4-0709',
         'grok:grok-3',
@@ -254,22 +218,6 @@ KnownModelName = TypeAliasType(
         'moonshotai:kimi-latest',
         'moonshotai:kimi-thinking-preview',
         'moonshotai:kimi-k2-0711-preview',
-        'o1',
-        'o1-2024-12-17',
-        'o1-mini',
-        'o1-mini-2024-09-12',
-        'o1-preview',
-        'o1-preview-2024-09-12',
-        'o1-pro',
-        'o1-pro-2025-03-19',
-        'o3',
-        'o3-2025-04-16',
-        'o3-deep-research',
-        'o3-deep-research-2025-06-26',
-        'o3-mini',
-        'o3-mini-2025-01-31',
-        'o3-pro',
-        'o3-pro-2025-06-10',
         'openai:chatgpt-4o-latest',
         'openai:codex-mini-latest',
         'openai:gpt-3.5-turbo',
@@ -313,11 +261,18 @@ KnownModelName = TypeAliasType(
         'openai:gpt-4o-mini-search-preview-2025-03-11',
         'openai:gpt-4o-search-preview',
         'openai:gpt-4o-search-preview-2025-03-11',
+        'openai:gpt-5',
+        'openai:gpt-5-2025-08-07',
         'openai:o1',
+        'openai:gpt-5-chat-latest',
         'openai:o1-2024-12-17',
+        'openai:gpt-5-mini',
         'openai:o1-mini',
+        'openai:gpt-5-mini-2025-08-07',
         'openai:o1-mini-2024-09-12',
+        'openai:gpt-5-nano',
         'openai:o1-preview',
+        'openai:gpt-5-nano-2025-08-07',
         'openai:o1-preview-2024-09-12',
         'openai:o1-pro',
         'openai:o1-pro-2025-03-19',
@@ -344,7 +299,7 @@ KnownModelName = TypeAliasType(
 """
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
@@ -355,6 +310,7 @@ class ModelRequestParameters:
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list)
     allow_text_output: bool = True
+    allow_image_output: bool = False
 
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
@@ -399,6 +355,16 @@ class Model(ABC):
         """Make a request to the model."""
         raise NotImplementedError()
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        """Make a request to the model for counting tokens."""
+        # This method is not required, but you need to implement it if you want to support `UsageLimits.count_tokens_before_request`.
+        raise NotImplementedError(f'Token counting ahead of the request is not supported by {self.__class__.__name__}')
+
     @asynccontextmanager
     async def request_stream(
         self,
@@ -435,6 +401,31 @@ class Model(ABC):
 
         return model_request_parameters
 
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        """Prepare request inputs before they are passed to the provider.
+
+        This merges the given ``model_settings`` with the model's own ``settings`` attribute and ensures
+        ``customize_request_parameters`` is applied to the resolved
+        [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters]. Subclasses can override this method if
+        they need to customize the preparation flow further, but most implementations should simply call
+        ``self.prepare_request(...)`` at the start of their ``request`` (and related) methods.
+        """
+        model_settings = merge_model_settings(self.settings, model_settings)
+
+        if builtin_tools := model_request_parameters.builtin_tools:
+            # Deduplicate builtin tools
+            model_request_parameters = replace(
+                model_request_parameters,
+                builtin_tools=list({tool.unique_id: tool for tool in builtin_tools}.values()),
+            )
+
+        model_request_parameters = self.customize_request_parameters(model_request_parameters)
+        return model_settings, model_request_parameters
+
     @property
     @abstractmethod
     def model_name(self) -> str:
@@ -456,7 +447,7 @@ class Model(ABC):
     @property
     @abstractmethod
     def system(self) -> str:
-        """The system / model provider, ex: openai.
+        """The model provider, ex: openai.
 
         Use to populate the `gen_ai.system` OpenTelemetry semantic convention attribute,
         so should use well-known values listed in
@@ -519,14 +510,19 @@ class StreamedResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
 
     model_request_parameters: ModelRequestParameters
+
     final_result_event: FinalResultEvent | None = field(default=None, init=False)
 
-    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
-    _event_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
-    _usage: Usage = field(default_factory=Usage, init=False)
+    provider_response_id: str | None = field(default=None, init=False)
+    provider_details: dict[str, Any] | None = field(default=None, init=False)
+    finish_reason: FinishReason | None = field(default=None, init=False)
 
-    def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
-        """Stream the response as an async iterable of [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
+    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
+    _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
+    _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
+
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
 
         This proxies the `_event_iterator()` and emits all events, while also checking for matches
         on the result schema and emitting a [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent] if/when the
@@ -536,7 +532,7 @@ class StreamedResponse(ABC):
 
             async def iterator_with_final_event(
                 iterator: AsyncIterator[ModelResponseStreamEvent],
-            ) -> AsyncIterator[AgentStreamEvent]:
+            ) -> AsyncIterator[ModelResponseStreamEvent]:
                 async for event in iterator:
                     yield event
                     if (
@@ -551,7 +547,44 @@ class StreamedResponse(ABC):
                 async for event in iterator:
                     yield event
 
-            self._event_iterator = iterator_with_final_event(self._get_event_iterator())
+            async def iterator_with_part_end(
+                iterator: AsyncIterator[ModelResponseStreamEvent],
+            ) -> AsyncIterator[ModelResponseStreamEvent]:
+                last_start_event: PartStartEvent | None = None
+
+                def part_end_event(next_part: ModelResponsePart | None = None) -> PartEndEvent | None:
+                    if not last_start_event:
+                        return None
+
+                    index = last_start_event.index
+                    part = self._parts_manager.get_parts()[index]
+                    if not isinstance(part, TextPart | ThinkingPart | BaseToolCallPart):
+                        # Parts other than these 3 don't have deltas, so don't need an end part.
+                        return None
+
+                    return PartEndEvent(
+                        index=index,
+                        part=part,
+                        next_part_kind=next_part.part_kind if next_part else None,
+                    )
+
+                async for event in iterator:
+                    if isinstance(event, PartStartEvent):
+                        if last_start_event:
+                            end_event = part_end_event(event.part)
+                            if end_event:
+                                yield end_event
+
+                            event.previous_part_kind = last_start_event.part.part_kind
+                        last_start_event = event
+
+                    yield event
+
+                end_event = part_end_event()
+                if end_event:
+                    yield end_event
+
+            self._event_iterator = iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
         return self._event_iterator
 
     @abstractmethod
@@ -574,9 +607,14 @@ class StreamedResponse(ABC):
             model_name=self.model_name,
             timestamp=self.timestamp,
             usage=self.usage(),
+            provider_name=self.provider_name,
+            provider_response_id=self.provider_response_id,
+            provider_details=self.provider_details,
+            finish_reason=self.finish_reason,
         )
 
-    def usage(self) -> Usage:
+    # TODO (v2): Make this a property
+    def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self._usage
 
@@ -584,6 +622,12 @@ class StreamedResponse(ABC):
     @abstractmethod
     def model_name(self) -> str:
         """Get the model name of the response."""
+        raise NotImplementedError()
+
+    @property
+    @abstractmethod
+    def provider_name(self) -> str | None:
+        """Get the provider name."""
         raise NotImplementedError()
 
     @property
@@ -643,63 +687,92 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         return TestModel()
 
     try:
-        provider, model_name = model.split(':', maxsplit=1)
+        provider_name, model_name = model.split(':', maxsplit=1)
     except ValueError:
+        provider_name = None
         model_name = model
-        # TODO(Marcelo): We should deprecate this way.
         if model_name.startswith(('gpt', 'o1', 'o3')):
-            provider = 'openai'
+            provider_name = 'openai'
         elif model_name.startswith('claude'):
-            provider = 'anthropic'
+            provider_name = 'anthropic'
         elif model_name.startswith('gemini'):
-            provider = 'google-gla'
+            provider_name = 'google-gla'
+
+        if provider_name is not None:
+            warnings.warn(
+                f"Specifying a model name without a provider prefix is deprecated. Instead of {model_name!r}, use '{provider_name}:{model_name}'.",
+                DeprecationWarning,
+            )
         else:
             raise UserError(f'Unknown model: {model}')
 
-    if provider == 'vertexai':
-        provider = 'google-vertex'  # pragma: no cover
+    if provider_name == 'vertexai':  # pragma: no cover
+        warnings.warn(
+            "The 'vertexai' provider name is deprecated. Use 'google-vertex' instead.",
+            DeprecationWarning,
+        )
+        provider_name = 'google-vertex'
 
-    if provider == 'cohere':
-        from .cohere import CohereModel
+    provider = infer_provider(provider_name)
 
-        return CohereModel(model_name, provider=provider)
-    elif provider in (
+    model_kind = provider_name
+    if model_kind.startswith('gateway/'):
+        model_kind = provider_name.removeprefix('gateway/')
+    if model_kind in (
         'openai',
-        'deepseek',
         'azure',
-        'openrouter',
-        'vercel',
-        'grok',
-        'moonshotai',
+        'deepseek',
+        'cerebras',
         'fireworks',
-        'together',
-        'heroku',
         'github',
+        'grok',
+        'heroku',
+        'moonshotai',
+        'ollama',
+        'openrouter',
+        'together',
+        'vercel',
+        'litellm',
+        'nebius',
+        'ovhcloud',
     ):
-        from .openai import OpenAIModel
+        model_kind = 'openai-chat'
+    elif model_kind in ('google-gla', 'google-vertex'):
+        model_kind = 'google'
 
-        return OpenAIModel(model_name, provider=provider)
-    elif provider in ('google-gla', 'google-vertex'):
+    if model_kind == 'openai-chat':
+        from .openai import OpenAIChatModel
+
+        return OpenAIChatModel(model_name, provider=provider)
+    elif model_kind == 'openai-responses':
+        from .openai import OpenAIResponsesModel
+
+        return OpenAIResponsesModel(model_name, provider=provider)
+    elif model_kind == 'google':
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)
-    elif provider == 'groq':
+    elif model_kind == 'groq':
         from .groq import GroqModel
 
         return GroqModel(model_name, provider=provider)
-    elif provider == 'mistral':
+    elif model_kind == 'cohere':
+        from .cohere import CohereModel
+
+        return CohereModel(model_name, provider=provider)
+    elif model_kind == 'mistral':
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
-    elif provider == 'anthropic':
+    elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 
         return AnthropicModel(model_name, provider=provider)
-    elif provider == 'bedrock':
+    elif model_kind == 'bedrock':
         from .bedrock import BedrockConverseModel
 
         return BedrockConverseModel(model_name, provider=provider)
-    elif provider == 'huggingface':
+    elif model_kind == 'huggingface':
         from .huggingface import HuggingFaceModel
 
         return HuggingFaceModel(model_name, provider=provider)
@@ -713,6 +786,8 @@ def cached_async_http_client(*, provider: str | None = None, timeout: int = 600,
     The client is cached based on the provider parameter. If provider is None, it's used for non-provider specific
     requests (like downloading images). Multiple agents and calls can share the same client when they use the same provider.
 
+    Each client will get its own transport with its own connection pool. The default pool size is defined by `httpx.DEFAULT_LIMITS`.
+
     There are good reasons why in production you should use a `httpx.AsyncClient` as an async context manager as
     described in [encode/httpx#2026](https://github.com/encode/httpx/pull/2026), but when experimenting or showing
     examples, it's very useful not to.
@@ -723,6 +798,8 @@ def cached_async_http_client(*, provider: str | None = None, timeout: int = 600,
     client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
     if client.is_closed:
         # This happens if the context manager is used, so we need to create a new client.
+        # Since there is no API from `functools.cache` to clear the cache for a specific
+        #  key, clear the entire cache here as a workaround.
         _cached_async_http_client.cache_clear()
         client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
     return client
@@ -731,15 +808,9 @@ def cached_async_http_client(*, provider: str | None = None, timeout: int = 600,
 @cache
 def _cached_async_http_client(provider: str | None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
     return httpx.AsyncClient(
-        transport=_cached_async_http_transport(),
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
     )
-
-
-@cache
-def _cached_async_http_transport() -> httpx.AsyncHTTPTransport:
-    return httpx.AsyncHTTPTransport()
 
 
 DataT = TypeVar('DataT', str, bytes)
@@ -859,10 +930,12 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
     """Return an appropriate FinalResultEvent if `e` corresponds to a part that will produce a final result."""
     if isinstance(e, PartStartEvent):
         new_part = e.part
-        if isinstance(new_part, TextPart) and params.allow_text_output:  # pragma: no branch
+        if (isinstance(new_part, TextPart) and params.allow_text_output) or (
+            isinstance(new_part, FilePart) and params.allow_image_output and isinstance(new_part.content, BinaryImage)
+        ):
             return FinalResultEvent(tool_name=None, tool_call_id=None)
         elif isinstance(new_part, ToolCallPart) and (tool_def := params.tool_defs.get(new_part.tool_name)):
             if tool_def.kind == 'output':
                 return FinalResultEvent(tool_name=new_part.tool_name, tool_call_id=new_part.tool_call_id)
-            elif tool_def.kind == 'deferred':
+            elif tool_def.defer:
                 return FinalResultEvent(tool_name=None, tool_call_id=None)

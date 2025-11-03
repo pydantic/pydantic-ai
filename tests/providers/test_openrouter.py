@@ -5,9 +5,9 @@ import pytest
 from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -16,6 +16,7 @@ from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_mode
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
@@ -24,7 +25,7 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     import openai
 
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 
@@ -69,7 +70,7 @@ def test_openrouter_pass_openai_client() -> None:
 
 async def test_openrouter_with_google_model(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenAIModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = OpenAIChatModel('google/gemini-2.0-flash-exp:free', provider=provider)
     agent = Agent(model, instructions='Be helpful.')
     response = await agent.run('Tell me a joke.')
     assert response.output == snapshot("""\
@@ -93,6 +94,7 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     amazon_model_profile_mock = mocker.patch(f'{ns}.amazon_model_profile', wraps=amazon_model_profile)
     deepseek_model_profile_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
     meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
+    moonshotai_model_profile_mock = mocker.patch(f'{ns}.moonshotai_model_profile', wraps=moonshotai_model_profile)
 
     google_profile = provider.model_profile('google/gemini-2.5-pro-preview')
     google_model_profile_mock.assert_called_with('gemini-2.5-pro-preview')
@@ -148,6 +150,12 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     meta_model_profile_mock.assert_called_with('llama-4-maverick')
     assert meta_profile is not None
     assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+
+    moonshotai_profile = provider.model_profile('moonshotai/kimi-k2')
+    moonshotai_model_profile_mock.assert_called_with('kimi-k2')
+    assert moonshotai_profile is not None
+    assert moonshotai_profile.ignore_streamed_leading_whitespace is True
+    assert moonshotai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     unknown_profile = provider.model_profile('unknown/model')
     assert unknown_profile is not None

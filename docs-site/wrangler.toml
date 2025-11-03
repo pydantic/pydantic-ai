@@ -1,9 +1,14 @@
 #:schema node_modules/wrangler/config-schema.json
 name = "pydantic-ai"
-compatibility_date = "2025-01-24"
+compatibility_date = "2025-06-17"
 routes = ["ai.pydantic.dev/*"]
 main = "src/index.ts"
 workers_dev = false
+preview_urls = true
+compatibility_flags = [ "nodejs_compat_v2" ]
+
+[vars]
+LOGFIRE_ENVIRONMENT = "prod"
 
 [assets]
 directory = "../site"

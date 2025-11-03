@@ -1,0 +1,644 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '438'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short
+        role: user
+      instructions: You are a helpful assistant.
+      model: o4-mini
+      stream: true
+      tool_choice: auto
+      tools:
+      - allowed_tools:
+        - ask_question
+        - read_wiki_structure
+        require_approval: never
+        server_label: deepwiki
+        server_url: https://mcp.deepwiki.com/mcp
+        type: mcp
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_00b9cc7a23d047270068faa0e25934819f9c3bfdec80065bc4","object":"response","created_at":1761255650,"status":"in_progress","background":false,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"max_tool_calls":null,"model":"o4-mini-2025-04-16","output":[],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"reasoning":{"effort":"medium","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"mcp","allowed_tools":["ask_question","read_wiki_structure"],"headers":null,"require_approval":"never","server_description":null,"server_label":"deepwiki","server_url":"https://mcp.deepwiki.com/<redacted>"}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_00b9cc7a23d047270068faa0e25934819f9c3bfdec80065bc4","object":"response","created_at":1761255650,"status":"in_progress","background":false,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"max_tool_calls":null,"model":"o4-mini-2025-04-16","output":[],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"reasoning":{"effort":"medium","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"mcp","allowed_tools":["ask_question","read_wiki_structure"],"headers":null,"require_approval":"never","server_description":null,"server_label":"deepwiki","server_url":"https://mcp.deepwiki.com/<redacted>"}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd","type":"mcp_list_tools","server_label":"deepwiki","tools":[]}}
+
+        event: response.mcp_list_tools.in_progress
+        data: {"type":"response.mcp_list_tools.in_progress","sequence_number":3,"output_index":0,"item_id":"mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd"}
+
+        event: response.mcp_list_tools.completed
+        data: {"type":"response.mcp_list_tools.completed","sequence_number":4,"output_index":0,"item_id":"mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd"}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","sequence_number":5,"output_index":0,"item":{"id":"mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd","type":"mcp_list_tools","server_label":"deepwiki","tools":[{"annotations":{"read_only":false},"description":"Get a list of documentation topics for a GitHub repository","input_schema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"}},"required":["repoName"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"},"name":"read_wiki_structure"},{"annotations":{"read_only":false},"description":"Ask any question about a GitHub repository","input_schema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"},"question":{"type":"string","description":"The question to ask about the repository"}},"required":["repoName","question"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"},"name":"ask_question"}]}}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","sequence_number":6,"output_index":1,"item":{"id":"rs_00b9cc7a23d047270068faa0e4cd5c819f8855c183ff0fe957","type":"reasoning","encrypted_content":"gAAAAABo-qDkAWOlmTbSi3dHKOLXoeuhbAOwFJBolrA9MO7xNjYR1LR5Qsw5wETMdI3eEOjwKAblU7dCGv-TG39hSoYCiqdCqAfBbSQeULhcxxTQh94DdushltLeuG7UriT2i0XMt7yGvGcKQiIa_rKMsImTEda3cUTPUIeTLNiQiwk3-aYY10k1Eg8SW3otxXiUHCEWKz6agS-4rzN3-85uzNf_hYhBxlvC3n2qiivCGi897J0uM30FLuEj9Fowd-fXbiq9fQpX1sMh0xrpevVL5Y2H2nQj66bsaLrinRlKQMkPNkFjzDv4Yi9boKPLdNwz6V4ArQPa6jiGk7Acwe4csAplhhImFMNDS-HWBtb1MtYYUVb-zg1DmBUE3H6OHj-tGuM3Ktm4Vf7WrKxG1VsK7FpQAxYT5UGP96v1X7wevjovyJFtownlESVgnSyf9BFmLjYGrrSBpRonR59u5NMNJ5oUEF-2dM8eVSKGfu9-T-aiPcXMProBSoHkFUbNecvl2D071NSHKACighrUfEJUSyXxl0nhPfhuqS28ivSYDi29liIrorZ9OA1hqVCNR9ixkKxkb3EEMfP0S_hNgMFWNWPjw-EZ_gpBb4JIO02Dw8ITqE51GsG1JhB64p8jtd_ZINYo4Oi89OxPg8O9sOel6KdTJA02SN_NgkNH3SJ5Apd10_lwcht5FZbBr15QvhlWvXp9KN6iBYVbVQ8tCjvl1GhohFLTHvpC2Hhb2ABIDnFuolqhj77bCi1lqUWSKdyM8IGrU6bBs7TFAMgIZyoJIDahUjJ8Mbfgg0fvICzCqLtnF-sO-uKBZfsGEsAWTyyOgRY4x-og","summary":[]}}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","sequence_number":7,"output_index":1,"item":{"id":"rs_00b9cc7a23d047270068faa0e4cd5c819f8855c183ff0fe957","type":"reasoning","encrypted_content":"gAAAAABo-qDma-ZMjX6meVDoCLYMqgkbQoEVzx_VFnmBFRLqsq37MiF7LP1HrMpqXqtrZ0R2Knb6lUiGSKhsOjOUAn9IFNUCuJx23cPLObF2CKt86wGLb7vccbCrp8bx-I6-kUtZASjlJx7_eJnvwyr24FLZlaDyGDuqRecGA8H4tXnQSAQTT9fJqy8h8dXvxvYzNj5rgOUWgRGn1NBph164KpiEzVWHADzZ_K0l4fX-DFHgtNFssPDYqOKLs_nU0XO8xaIZOgJ8QTf0XmHYF02GA_KciV6sIlSzVricQkwmu1XfJbjpME8XmRMIzlnLRqC8SAJs2kiaYnA8ObfI-s0RbRd3ztIUrzmAsdeo13ualD3tqC1w1_H6S5F47BB47IufTTbpwe_P6f5dLGpOzcrDPbtfHXv-aAW5YEsGyusXqxk51Wp7EONtADmPmVLJffFbRgnwfvPslbxxpNGfxNkN2pIs3U1FW7g1VvmxUfrF84LJpPKvs3xOaWXGorrPBY5nUyeRckhDFt6hGdS59VICmVy8lT4dL_LNswq7dVRS74HrrkfraXDDm2EhL2rtkwhiMqZtuYFsyIK2ys0lZuhNAkhtfgIoV8IwY6O4Y7iXbODxXUr48oZyvLdgV2J2TCcyqIbWClh3-q8MXMmP5wUJdrqajJ8lMVyhQt0UtMJKyk6EWY1DayGpSEW6t8vkqmuYdhyXQOstluONd31LqnEq58Sh8aHCzrypjcLfjDRo5Om1RlxIa-y8S-6rEIXahcJCX_juSg8uYHzDNJffYdBbcLSVQ5mAVl6OM9hE8gHs7SYqw-k-MCeoYsZwt3MqSV7piAu91SMZqB0gXrRDD67bdhmcLBYKmZYKNmLce60WkLH0eZMPSls-n2yyvmwflJA---IZQZOvYXpNUuS7FgMrh3c7n9oDVp15bUgJ8jDx6Mok4pq9E-MHxboblGUpMlFCJDH3NK_7_iHetcqC6Mp2Vc5KJ0OMpDFhCfT3Bvohsee5dUYZezxAkM67qg0BUFyQykulYLHoayemGxzi1YhiX1Of_PEfijmwV2qkUJodq5-LeBVIv8Nj0WgRO-1Y_QW3AWNfQ80Iy6AVa8j9YfsvQU1vwwE9qiAhzSIEeN1Pm2ub8PaRhVIFRgyMOLPVW7cDoNN8ibcOpX-k9p_SfKA9WSzSXuorAs80CTC9OwJibfcPzFVugnnBjBENExTQRfn4l7nWq-tUQNrT4UNGx-xdNeiSeEFCNZlH50Vr5dMaz5sjQQEw_lcTrvxKAV5Zs1mtDf6Kf29LkqhuUEdlMLEJwnAdz2IHLIy41zWLQctSnzBl9HB3mkw8eHZ1LdaRBQRFH4o7Rumhb3D1HdIqDLWeE3jkA6ZBAh2KadGx1u3AIIh4g3dHUS6UREkmzyRIuImbdTsoin1DrQbuYbaqZwIqU4TTIEmA8VeohMfff0rIL5yyFy7cfgGYurgAyMhARPGAAMAoTrR8ldWwymzPkGOJ_SQlzfNGV8weHOEYUl2BgQe57EDX4n1Uk294GIbvGR7eLRL_TLBUyHQErCaOCi8TkBNlLXIobw4ScN_jqqtURmC0mjRDVZeBi6hfrVShWChpQR8A2HxxHrcuHi2hi_2akgUea3zz6_zbUYVoIRdOa9DvZuN015E8ZSL-v_1_vOzUGvt0MuWPazjiRDWgpgcISYzT8N-Xzu_EbwO1OsaOFIeUqrD8mZ6MKOuBQts68og0DWo8KQaHmCaWi4O-c8-5fbB2q3H6oiIoZtSJIoowAmFGOwyWxn_OPS9svDgEaeFYEYhXZ5wZDphxoHkjJ703opxrWoEfQw==","summary":[]}}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","sequence_number":8,"output_index":2,"item":{"id":"mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac","type":"mcp_call","status":"in_progress","approval_request_id":null,"arguments":"","error":null,"name":"ask_question","output":null,"server_label":"deepwiki"}}
+
+        event: response.mcp_call.in_progress
+        data: {"type":"response.mcp_call.in_progress","sequence_number":9,"output_index":2,"item_id":"mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac"}
+
+        event: response.mcp_call_arguments.delta
+        data: {"type":"response.mcp_call_arguments.delta","sequence_number":10,"output_index":2,"item_id":"mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac","delta":"{\"repoName\":\"pydantic/pydantic-ai\",\"question\":\"What is the pydantic/pydantic-ai repository about?\"}","obfuscation":"YW8dKIvvohK9z"}
+
+        event: response.mcp_call_arguments.done
+        data: {"type":"response.mcp_call_arguments.done","sequence_number":11,"output_index":2,"item_id":"mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac","arguments":"{\"repoName\":\"pydantic/pydantic-ai\",\"question\":\"What is the pydantic/pydantic-ai repository about?\"}"}
+
+        event: response.mcp_call.completed
+        data: {"type":"response.mcp_call.completed","sequence_number":12,"output_index":2,"item_id":"mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac"}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","sequence_number":13,"output_index":2,"item":{"id":"mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac","type":"mcp_call","status":"completed","approval_request_id":null,"arguments":"{\"repoName\":\"pydantic/pydantic-ai\",\"question\":\"What is the pydantic/pydantic-ai repository about?\"}","error":null,"name":"ask_question","output":"The `pydantic/pydantic-ai` repository is a Python agent framework designed to simplify the development of production-grade applications using Generative AI . It aims to bring the ergonomic developer experience and type-safety philosophy of Pydantic and FastAPI to AI agent development .\n\n## Core Purpose and Features\n\nThe framework focuses on providing a robust and type-safe environment for building AI agents . Key features include:\n\n*   **Type-safe Agents**: Agents are generic `Agent[Deps, Output]` for compile-time validation, leveraging Pydantic for output validation and dependency injection .\n*   **Model-agnostic Design**: It supports over 15 LLM providers through a unified `Model` interface, allowing for easy switching between different models and providers  .\n*   **Structured Outputs**: Automatic Pydantic validation and reflection/self-correction ensure structured and reliable outputs from LLMs .\n*   **Comprehensive Observability**: Integration with OpenTelemetry and native Logfire provides real-time debugging, performance monitoring, and cost tracking  .\n*   **Production-ready Tooling**: This includes an evaluation framework (`pydantic-evals`), durable execution capabilities, and various protocol integrations like MCP, A2A, and AG-UI  .\n*   **Graph Support**: It provides a way to define graphs using type hints for complex applications .\n\n## Framework Architecture\n\nThe framework is structured as a UV workspace monorepo, containing several packages .\n\n### Core Packages\n\n*   `pydantic-ai-slim`: Contains the core framework components such as `Agent`, `Model`, and tools .\n*   `pydantic-ai`: A meta-package that includes all optional extras .\n\n### Supporting Packages\n\n*   `pydantic-graph`: Provides the graph execution engine with `Graph` and `BaseNode` .\n*   `pydantic-evals`: An evaluation framework for datasets and evaluators .\n*   `examples`: Contains example applications .\n*   `clai`: Provides a CLI interface .\n\n## Agent Execution Flow\n\nThe `Agent` class serves as the primary orchestrator . Agent execution is graph-based, utilizing a state machine from `pydantic_graph.Graph` . The execution involves three core node types:\n\n*   `UserPromptNode`: Processes user input and creates initial `ModelRequest` .\n*   `ModelRequestNode`: Calls `model.request()` or `model.request_stream()` and handles retries .\n*   `CallToolsNode`: Executes tool functions via `RunContext[Deps]` .\n\nThe `Agent` provides methods like `run()`, `run_sync()`, and `run_stream()` for different execution scenarios .\n\n## Model Provider Support\n\nThe framework offers a unified `Model` abstract base class for various LLM providers . This includes native support for providers like OpenAI, Anthropic, Google, Groq, Mistral, Cohere, and Bedrock . Additionally, many OpenAI-compatible providers can be used with `OpenAIChatModel` .\n\n## Tool System\n\nTools are registered using the `@agent.tool` decorator . The system automatically generates JSON schemas from function signatures and docstrings, validates tool call arguments, and provides context injection via `RunContext[Deps]` .\n\n## Observability Integration\n\nPydantic AI integrates with OpenTelemetry, allowing for instrumentation of agent runs, model requests, and tool executions . It has native integration with Pydantic Logfire for enhanced monitoring and visualization .\n\n## Evaluation Framework\n\nThe `pydantic-evals` package provides a framework for systematically testing and evaluating AI systems . It supports defining datasets with `Case` objects and using various evaluators, including built-in and custom ones .\n\n## Integration Ecosystem\n\nPydantic AI supports various integrations for development and production:\n\n*   **Model Context Protocol (MCP)**: For external tool server access .\n*   **AG-UI Protocol**: For interactive application frontends .\n*   **Agent2Agent (A2A)**: For multi-agent communication and workflows .\n*   **Temporal**: For durable workflow execution .\n*   **DBOS**: For database-backed execution and state persistence .\n\n## Notes\n\nThe `CLAUDE.md` file provides guidance for Claude Code when working with the repository, including development commands and an overview of core components and design patterns . The `mkdocs.yml` file defines the structure and content of the project's documentation, including navigation, plugins, and watch directories for various packages  . The `docs/install.md` file details how to install the `pydantic-ai` package and its optional components, including a \"slim\" installation option for specific model dependencies .\n\nWiki pages you might want to explore:\n- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)\n\nView this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpydanticai_e234e9cf-d4aa-4c67-a257-56034816dd56\n","server_label":"deepwiki"}}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","sequence_number":14,"output_index":3,"item":{"id":"rs_00b9cc7a23d047270068faa0f4ff54819f9fb9ff25bebe7f5f","type":"reasoning","encrypted_content":"gAAAAABo-qD1miEnlv3KYY7Tnd-Zet3qT7T7XT3ICDPUOMFO1oxoegeysmmg644AReWW7dngeD_KVQU47kbVLfC8ML-PoUzyGyDJ18kpnXzusEc1fq4JuI-MeRF__9ca5ttvj5BnnEYygB-pE8ZVYRL6E2fHvS1xvLGkHLAneKaGct7b66NxcRs228MFuhEUyNZqX6pcatwlr_AUY_MerbJhYlr8mugq57Ubp-fFpPte56SrQJMEh6gwQwcJdPiMsMMhdBxlSy5pAusQEkes1ebhKfoSv6J9vZI3VDI30BXBCmHGcB_vlGXBBY4IAKWSOo8W4kq63Z1FCx1KuCigLl683O10-csG6FqacvZk7Gf0_4-LiWO8JC7jpjCAcCXYWltRa-aop30PNUYdpdcTKOc4HnEaDRcxu0-d6D98ogNLeXABDn2ZqZnxdTCciOXrh1Uj3IoLHCHXaeZvpOFFNzr1M6ipCMGTl8aOTGLrSvRq2aUP3TVE2V2ZDNLSSuf61QTP6TN_G6E1k9AijUPfXvzr1gMYjZsGzjTLYYrUWd_kjHwrU0IBg-lkEEr2uNaJfL6HQMkgwaRPEus5DpLEgGqZ79bLKzIh4x91nxAZt7RANgCYaMwNwsVkaRyKmmdekHUXMvUZ6KrN1tt1j_eQtTYIbbwcNisffm3LeaLP09O1mNwpNzMG9I7X3QXReiKJGuIB_dMLtqYhevinp0S1TUphXhmJjNs1RLIc7pYvuffKGp_y7PnBL_Muqso6ya7_6WcIFUEJYJMHrLAux_RDsEpwVW3UwB7dc051AOzs-6dyJvWJblsyIo-P2kycp5i8t6gabtfjXuWj","summary":[]}}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","sequence_number":15,"output_index":3,"item":{"id":"rs_00b9cc7a23d047270068faa0f4ff54819f9fb9ff25bebe7f5f","type":"reasoning","encrypted_content":"gAAAAABo-qD2WTMmhASwWVtFPlo7ILZP_OxHfRvHhda5gZeKL20cUyt0Np6wAHsJ6pyAsXCkLlKBVz3Vwm52JrJuUbqmw-zlXL19rbpvTPRMkiv_GdSfvmxKKNJvSm417OznBDVjsIAqmes2bMq03nRf6Pq2C0oUJnIbpbMwtWzs3jMQqUb0IwyopqXGhn3MWKctLPKZS89nyL4E9kJAx_TyWTQvME8bf8UrV8y2yrNz9odjSQQyZq5YXrlHzpOJjDTfLofVFjsEzM8J29SdLcWnqlv4djJ8xeMpP2ByXuHRnTEyNNuxpYJB7uQbYT0T_eLhwcLv2ZzDZ_hf2Msv7ZdyuPc7Yxc5YWlChB0iaHqQ_8UuMjIVurfgSIjSq2lTvJwdaA365-ZoBMpo4mG04jQDP3XM-0xEM6JTFWc4jZ1OjIXVpkjaXxdOOkYq3t3j8cqBQH69shFCEQr5tnM8jOEl3WHnkvaBg4xEMcd61hiLOKnWbQiYisbFucA8z5ZNbdohUZd-4ww0R8kSjIE5veiyT66gpIte0ItUnTyhIWy8SZYF9bnZGeS-2InDhv5UgjF2iXzgl6dmUrS-_ITgJkwu4Rdf9SBDJhji3_GUO9Za0sBKW8WohP142qY0Tbq4I6-7W1wJ3_gHJqiXVwDLcY90ODSyyC5_I3MgaALRC1wt55sHSeSsDjmNGmiH-m0snaqsI0JnAZwycnWCK17NamjQ9SxVM5tTqJgemkGFQNH1XhZPWvVj56mlj74KKbCJALQpdXD27C8LfdrlBd0v_zEmF1dh7e12I95fYeAlO51xOglBaMCgcMWSDHMGHsJBbJ04eVQSwYTl72rmkASTMaybD-aAm1m8qZnKU-f3xQradhs9l1x9eOfQDIsfWMr1aVMiZi59--VsrgYCbqBj7AGf8n6VNbQWkhO2etozwYZcdGIyiu4TaULX1Xp89Gb28M-tVkIrkQoHO_Z7wzKU1HRBViES1wRKUJ-Sa6wc8UP5orDxeOTFPUr7JL-qaj49cpKzvdlfuoIdbYwpsNvAg69sNbFI3w4jLxOT4yxS6thra1Bit6SY5wAEfrrjtzofLeg49aFqFVGIHeJ8kE3spc1rctpETkdHNyP9fEjZaM3mxR4yz0tPmEgUsd-sdw5BbOKDAVzwconmbeGBmf9KLXMEpRRH7-qSIWUscCi5qIdHXGYoQkStsNGrnhucn_hwqZCSti3Kbzfosud3zQPjW6NyuJCdeTxbDbsnrV7Lkge5j92pyxCHw9j0iuzofRW55_KToBtIvRoPr_37G_6d6TxK42mKqdbgk9GHrcXf27mXszCEzX-VfRVTxyc6JLfEy1iikdo-J2AzXPd4m3zE-zazBU3Z5ey596g8gxwXMkHakLrvwp4_-fQfcvs7sIH34xkEhz7BRdNok3Aqbu_zCt2np69jjHqfPQWZzAy1C-bmMuhAaItPYkkw-LgSu-YP6L89zNofK9Q_S3JwVsLN-fq-9OwhSjy_rQu22Gn4KD6saAu61QMXBPa6z0QJSFUZHJQ_megq1tENfB6wRVtQ0DdAvUwhUsMwx6yE9CT20bma4CloGW__aZuD9gikdQrQ1DCHOvTrfEpvHkl6-wuCImeNjsCvbRFAkx6Xgpc6fdbq4j6WyEVW_4VePNknFWYZ1cw795ka5uJMLc3hVughVlGwDbw60Q3utsjHPbu03pxPle5pdcVEYSQWa0WbFDCrF4ysK0lpmlF7","summary":[]}}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","sequence_number":16,"output_index":4,"item":{"id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","type":"message","status":"in_progress","content":[],"role":"assistant"}}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","sequence_number":17,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":18,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"p","logprobs":[],"obfuscation":"Vk0HCjd5u0Ukrjt"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":19,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"yd","logprobs":[],"obfuscation":"6SpGryhRaxuU0z"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":20,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"antic","logprobs":[],"obfuscation":"raUie3MMXRO"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":21,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"-","logprobs":[],"obfuscation":"SRoCsysoV5hjgF3"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":22,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"ai","logprobs":[],"obfuscation":"6mlirEN7cMtwyk"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":23,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" is","logprobs":[],"obfuscation":"LC0bR3L7jcGal"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":24,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" a","logprobs":[],"obfuscation":"yBhWnwngkzY3Pd"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":25,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" Python","logprobs":[],"obfuscation":"dxoaw5ycm"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":26,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" “","logprobs":[],"obfuscation":"K647qKBMWTs3R2"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":27,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"agent","logprobs":[],"obfuscation":"mQ0BRipYOWP"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":28,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"”","logprobs":[],"obfuscation":"nQggGjehqaILYlW"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":29,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" framework","logprobs":[],"obfuscation":"11aycr"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":30,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" that","logprobs":[],"obfuscation":"kwpW4p1X9tA"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":31,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" brings","logprobs":[],"obfuscation":"xas9pHx9X"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":32,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" P","logprobs":[],"obfuscation":"qSIdJK5RW7zpvm"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":33,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"yd","logprobs":[],"obfuscation":"Bz2DlYgkm1wWeT"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":34,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"antic","logprobs":[],"obfuscation":"J7S5YzOMYV7"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":35,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"’s","logprobs":[],"obfuscation":"Z65SKcwCVrE1gN"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":36,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" type","logprobs":[],"obfuscation":"rS2Kq1pJFD9"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":37,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"-","logprobs":[],"obfuscation":"duyIcQa0XlSj7Q3"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":38,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"s","logprobs":[],"obfuscation":"GWc25zWXEoq0Ksq"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":39,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"afety","logprobs":[],"obfuscation":"s6TWDxCGgEj"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":40,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" and","logprobs":[],"obfuscation":"EW7Uj221LlU4"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":41,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" Fast","logprobs":[],"obfuscation":"fwNlRqdQkXy"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":42,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"API","logprobs":[],"obfuscation":"eoR7MOQMsy8j3"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":43,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"-","logprobs":[],"obfuscation":"5jGwL7h4O8pD6Fh"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":44,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"style","logprobs":[],"obfuscation":"DN8rxIsx3pO"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":45,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" ergonom","logprobs":[],"obfuscation":"2Id0DfHE"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":46,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"ics","logprobs":[],"obfuscation":"aoxJEuoBa2b40"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":47,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" to","logprobs":[],"obfuscation":"D5ZolLYrOJYKW"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":48,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" building","logprobs":[],"obfuscation":"qo3rGX1"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":49,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" production","logprobs":[],"obfuscation":"tKqaM"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":50,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"-","logprobs":[],"obfuscation":"9IndBLsG3x5kSCx"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":51,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"grade","logprobs":[],"obfuscation":"nGJ5ZMlgy6c"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":52,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" Gener","logprobs":[],"obfuscation":"gWRLEicOBO"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":53,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"ative","logprobs":[],"obfuscation":"wxOROxrGESD"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":54,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" AI","logprobs":[],"obfuscation":"JmbJrw6WvYPbF"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":55,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" apps","logprobs":[],"obfuscation":"kvO8ldQx5KJ"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":56,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":".","logprobs":[],"obfuscation":"EYjoFqIBF7NCzJf"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":57,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" It","logprobs":[],"obfuscation":"B5gEGEO7OTeFl"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":58,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" provides","logprobs":[],"obfuscation":"im14xZ8"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":59,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":":\n\n","logprobs":[],"obfuscation":"Q5t4TUjPRWdGO"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":60,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"•","logprobs":[],"obfuscation":"Al1wZ4EcCeieNq5"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":61,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" A","logprobs":[],"obfuscation":"yxqUA9VrQYo7wV"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":62,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" generic","logprobs":[],"obfuscation":"PZ81xh6W"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":63,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" Agent","logprobs":[],"obfuscation":"TpbTbShYtC"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":64,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"[","logprobs":[],"obfuscation":"blAgJ2uz36NAI4W"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":65,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"Deps","logprobs":[],"obfuscation":"Wjp7lTFRZ04v"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":66,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":",","logprobs":[],"obfuscation":"MgWqWRPZQLhpHEI"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":67,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" ","logprobs":[],"obfuscation":"bRauUTk1Qo7zLpV"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":68,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"Output","logprobs":[],"obfuscation":"PZIA5Qc97F"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":69,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"]","logprobs":[],"obfuscation":"MeYkpbC4yzNXwrI"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":70,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" API","logprobs":[],"obfuscation":"6W2CWqJVuzHu"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":71,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" with","logprobs":[],"obfuscation":"O7aeU39ccu1"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":72,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" automatic","logprobs":[],"obfuscation":"x8Xp7l"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":73,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" P","logprobs":[],"obfuscation":"GhSptnlIYZf1n1"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":74,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"yd","logprobs":[],"obfuscation":"z5zORzwibyPUsU"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":75,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"antic","logprobs":[],"obfuscation":"AjdBsN7aLZv"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":76,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" validation","logprobs":[],"obfuscation":"O6cLx"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":77,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"  \n","logprobs":[],"obfuscation":"DldIbZeck1Qim"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":78,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"•","logprobs":[],"obfuscation":"hEEqhMuZjTsDQIS"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":79,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" A","logprobs":[],"obfuscation":"TiFRZM9aofCzTY"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":80,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" unified","logprobs":[],"obfuscation":"ojoxjcAJ"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":81,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" Model","logprobs":[],"obfuscation":"89sUQo1K2O"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":82,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" interface","logprobs":[],"obfuscation":"ul2588"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":83,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" supporting","logprobs":[],"obfuscation":"Jg7iG"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":84,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" ","logprobs":[],"obfuscation":"ODfWoFvaTNXudsc"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":85,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"15","logprobs":[],"obfuscation":"zY9ZUUcQv6verB"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":86,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"+","logprobs":[],"obfuscation":"JDn5ILVBXAv404I"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":87,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" L","logprobs":[],"obfuscation":"xPidc8ZAMxMPSy"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":88,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"LM","logprobs":[],"obfuscation":"21Y3yDKtJzrMte"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":89,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" providers","logprobs":[],"obfuscation":"6ufTEC"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":90,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" (","logprobs":[],"obfuscation":"MsE78OJOE4pKMo"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":91,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"Open","logprobs":[],"obfuscation":"vR0jr5cOYy7f"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":92,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"AI","logprobs":[],"obfuscation":"HrXXJBCsaMOOfy"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":93,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":",","logprobs":[],"obfuscation":"KvtLACZg0ZYe1qW"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":94,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" Anth","logprobs":[],"obfuscation":"OCU6no50mSG"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":95,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"ropic","logprobs":[],"obfuscation":"7wQMMZZKQr7"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":96,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":",","logprobs":[],"obfuscation":"UuhVFh8pc0fN7DC"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":97,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" Google","logprobs":[],"obfuscation":"9yPQBOqNs"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":98,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":",","logprobs":[],"obfuscation":"5TsKkpsTiAt1NGv"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":99,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" etc","logprobs":[],"obfuscation":"eBZrQh12Gksz"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":100,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":".)","logprobs":[],"obfuscation":"Nztw4EMo9Y1sT8"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":101,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"  \n","logprobs":[],"obfuscation":"r7VgQ8ngLHoTI"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":102,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"•","logprobs":[],"obfuscation":"fpL4pKxn1oC9vPh"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":103,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" Structured","logprobs":[],"obfuscation":"MY0CI"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":104,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" output","logprobs":[],"obfuscation":"ZaASMRPXe"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":105,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" correction","logprobs":[],"obfuscation":"Wexsr"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":106,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":",","logprobs":[],"obfuscation":"rJwq5nDTnsFip2f"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":107,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" dependency","logprobs":[],"obfuscation":"fft0N"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":108,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"-","logprobs":[],"obfuscation":"OOaHM38ijBwBYCt"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":109,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"in","logprobs":[],"obfuscation":"EPEETz1wMlLpFz"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":110,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"jection","logprobs":[],"obfuscation":"1r6kMfvNY"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":111,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" tools","logprobs":[],"obfuscation":"EWysz5tJ6M"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":112,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":",","logprobs":[],"obfuscation":"IIMft7M8z7JvLAa"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":113,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" and","logprobs":[],"obfuscation":"jpoC9nnFKLWW"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":114,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" graph","logprobs":[],"obfuscation":"lWIKoy6lhi"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":115,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"-","logprobs":[],"obfuscation":"zt6eZptvrhzILbB"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":116,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"based","logprobs":[],"obfuscation":"TBoP64tFXUa"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":117,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" execution","logprobs":[],"obfuscation":"wMh75h"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":118,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"  \n","logprobs":[],"obfuscation":"vVH0pFi5zkpAn"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":119,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"•","logprobs":[],"obfuscation":"bu6fyXsjDNzLxoA"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":120,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" Built","logprobs":[],"obfuscation":"RIPtMLTNXH"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":121,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"-","logprobs":[],"obfuscation":"zh2kx4pTAZ6XWm9"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":122,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"in","logprobs":[],"obfuscation":"ZTI0jz5VQlRIiF"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":123,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" observ","logprobs":[],"obfuscation":"McJaXhYhq"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":124,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"ability","logprobs":[],"obfuscation":"AlUN7lSYb"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":125,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" (","logprobs":[],"obfuscation":"k5eMyeaTipLmmQ"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":126,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"Open","logprobs":[],"obfuscation":"zdyarhHO8Lad"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":127,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"Telemetry","logprobs":[],"obfuscation":"BVliKci"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":128,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":",","logprobs":[],"obfuscation":"WfNINHscLTtisIs"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":129,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" Log","logprobs":[],"obfuscation":"opPnJswz4zmY"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":130,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"fire","logprobs":[],"obfuscation":"oGEav7Sc76QC"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":131,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"),","logprobs":[],"obfuscation":"RcWchXNmkhoN2z"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":132,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" evaluation","logprobs":[],"obfuscation":"d9aYa"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":133,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" (","logprobs":[],"obfuscation":"xp9lZxC2M7Oyds"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":134,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"p","logprobs":[],"obfuscation":"zqSJB4QkblpE93X"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":135,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"yd","logprobs":[],"obfuscation":"ILexU9cypuvBUG"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":136,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"antic","logprobs":[],"obfuscation":"AdUc1DhC6RW"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":137,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"-","logprobs":[],"obfuscation":"Rm8lGWoIfrDBNgy"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":138,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"eval","logprobs":[],"obfuscation":"lUUtfgctfxko"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":139,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"s","logprobs":[],"obfuscation":"6XRBwbaoIx1jRS0"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":140,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":")","logprobs":[],"obfuscation":"Acy2IsrwbG2T8NN"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":141,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" and","logprobs":[],"obfuscation":"rEYH128M0Kn6"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":142,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" durable","logprobs":[],"obfuscation":"zGq60Z8t"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":143,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" workflows","logprobs":[],"obfuscation":"WRhvpy"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":144,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"  \n","logprobs":[],"obfuscation":"BQl47q1cYlKY4"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":145,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"•","logprobs":[],"obfuscation":"gYOw04z0IgMxFxH"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":146,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" A","logprobs":[],"obfuscation":"WuLCIMqFi6OVMm"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":147,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" mon","logprobs":[],"obfuscation":"yjlw33XQfHhT"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":148,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"ore","logprobs":[],"obfuscation":"HyEsv5mimIA1Z"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":149,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"po","logprobs":[],"obfuscation":"lm5vRlldQ6lZQi"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":150,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" split","logprobs":[],"obfuscation":"Yy3VwjQBBr"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":151,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" into","logprobs":[],"obfuscation":"27TarmAx3Pi"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":152,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" core","logprobs":[],"obfuscation":"bIHC8U5u2QT"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":153,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" (","logprobs":[],"obfuscation":"HXHXCpC8Mn4dkT"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":154,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"p","logprobs":[],"obfuscation":"0S8wbZqXXKNopRK"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":155,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"yd","logprobs":[],"obfuscation":"7M3l9MgnyTiajN"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":156,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"antic","logprobs":[],"obfuscation":"SytueD9Usiw"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":157,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"-","logprobs":[],"obfuscation":"afrAEsUNglokdoW"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":158,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"ai","logprobs":[],"obfuscation":"6uoBBzPDae4wfk"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":159,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"-","logprobs":[],"obfuscation":"uxI9DPqv8MU8HX6"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":160,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"sl","logprobs":[],"obfuscation":"ZMxqWJdxwRI3di"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":161,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"im","logprobs":[],"obfuscation":"j2pzc2ge1Nc46y"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":162,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"),","logprobs":[],"obfuscation":"VglmfJ1eDh4Ef8"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":163,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" graph","logprobs":[],"obfuscation":"MMlPaFP3Nm"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":164,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":",","logprobs":[],"obfuscation":"5sh4qG9p0kheVrl"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":165,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" eval","logprobs":[],"obfuscation":"zON6cUUdXx7"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":166,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"s","logprobs":[],"obfuscation":"2OagaIH4Z4eTVGn"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":167,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":",","logprobs":[],"obfuscation":"SAtcC8qdakYQYkw"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":168,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" CLI","logprobs":[],"obfuscation":"0s2JGMkXMK1l"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":169,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" and","logprobs":[],"obfuscation":"CymCLHx402em"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":170,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" example","logprobs":[],"obfuscation":"X5tQAOjW"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":171,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" packages","logprobs":[],"obfuscation":"b20LEnM"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":172,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"  \n\n","logprobs":[],"obfuscation":"9FsOCnqhXgfu"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":173,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"In","logprobs":[],"obfuscation":"NO7bfpmf5fFH9V"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":174,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" short","logprobs":[],"obfuscation":"7nD6I4HNIx"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":175,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":",","logprobs":[],"obfuscation":"DgTnvSvq2DZmRb8"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":176,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" it","logprobs":[],"obfuscation":"iJ7wylz6lFyCW"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":177,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"’s","logprobs":[],"obfuscation":"BDDgqILDjIWmJq"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":178,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" a","logprobs":[],"obfuscation":"FOH2iogfhVdbxu"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":179,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" turnkey","logprobs":[],"obfuscation":"TAuKB7Vv"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":180,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":",","logprobs":[],"obfuscation":"8vT4MvqENRQTfcu"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":181,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" type","logprobs":[],"obfuscation":"eUsygt1b7HJ"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":182,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"-","logprobs":[],"obfuscation":"5ZaSjzjyI3ZITkz"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":183,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":"safe","logprobs":[],"obfuscation":"ZME2KQ64ls9D"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":184,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" scaffold","logprobs":[],"obfuscation":"YwlsuaO"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":185,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" for","logprobs":[],"obfuscation":"0epVQTynu8sV"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":186,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" AI","logprobs":[],"obfuscation":"SOKdQJ4uX7NqZ"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":187,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" agent","logprobs":[],"obfuscation":"GPazeoLNzO"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":188,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":" development","logprobs":[],"obfuscation":"lbIU"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":189,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"delta":".","logprobs":[],"obfuscation":"53eDhc8T7GOaL0x"}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","sequence_number":190,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"text":"pydantic-ai is a Python “agent” framework that brings Pydantic’s type-safety and FastAPI-style ergonomics to building production-grade Generative AI apps. It provides:\n\n• A generic Agent[Deps, Output] API with automatic Pydantic validation  \n• A unified Model interface supporting 15+ LLM providers (OpenAI, Anthropic, Google, etc.)  \n• Structured output correction, dependency-injection tools, and graph-based execution  \n• Built-in observability (OpenTelemetry, Logfire), evaluation (pydantic-evals) and durable workflows  \n• A monorepo split into core (pydantic-ai-slim), graph, evals, CLI and example packages  \n\nIn short, it’s a turnkey, type-safe scaffold for AI agent development.","logprobs":[]}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","sequence_number":191,"item_id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","output_index":4,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"pydantic-ai is a Python “agent” framework that brings Pydantic’s type-safety and FastAPI-style ergonomics to building production-grade Generative AI apps. It provides:\n\n• A generic Agent[Deps, Output] API with automatic Pydantic validation  \n• A unified Model interface supporting 15+ LLM providers (OpenAI, Anthropic, Google, etc.)  \n• Structured output correction, dependency-injection tools, and graph-based execution  \n• Built-in observability (OpenTelemetry, Logfire), evaluation (pydantic-evals) and durable workflows  \n• A monorepo split into core (pydantic-ai-slim), graph, evals, CLI and example packages  \n\nIn short, it’s a turnkey, type-safe scaffold for AI agent development."}}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","sequence_number":192,"output_index":4,"item":{"id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"pydantic-ai is a Python “agent” framework that brings Pydantic’s type-safety and FastAPI-style ergonomics to building production-grade Generative AI apps. It provides:\n\n• A generic Agent[Deps, Output] API with automatic Pydantic validation  \n• A unified Model interface supporting 15+ LLM providers (OpenAI, Anthropic, Google, etc.)  \n• Structured output correction, dependency-injection tools, and graph-based execution  \n• Built-in observability (OpenTelemetry, Logfire), evaluation (pydantic-evals) and durable workflows  \n• A monorepo split into core (pydantic-ai-slim), graph, evals, CLI and example packages  \n\nIn short, it’s a turnkey, type-safe scaffold for AI agent development."}],"role":"assistant"}}
+
+        event: response.completed
+        data: {"type":"response.completed","sequence_number":193,"response":{"id":"resp_00b9cc7a23d047270068faa0e25934819f9c3bfdec80065bc4","object":"response","created_at":1761255650,"status":"completed","background":false,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"max_tool_calls":null,"model":"o4-mini-2025-04-16","output":[{"id":"mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd","type":"mcp_list_tools","server_label":"deepwiki","tools":[{"annotations":{"read_only":false},"description":"Get a list of documentation topics for a GitHub repository","input_schema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"}},"required":["repoName"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"},"name":"read_wiki_structure"},{"annotations":{"read_only":false},"description":"Ask any question about a GitHub repository","input_schema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"},"question":{"type":"string","description":"The question to ask about the repository"}},"required":["repoName","question"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"},"name":"ask_question"}]},{"id":"rs_00b9cc7a23d047270068faa0e4cd5c819f8855c183ff0fe957","type":"reasoning","encrypted_content":"gAAAAABo-qD3VQyikAL6DCqJekitghySUvSx5cViETKf2rsb94u6S0mbFNnm2mh9aa32GgswtK2C_BqnLLm9L3ivBOFs2dz03CFqhhhZo7GexruY8g4kraqqLyzq-rc51XuGx_qDfkzSUWNXLsZH-DUT-m6kcFps7dBSfduvEmBl9rD0AdHQJ6qiXfFhH8ypvLQ6bzbG1YR5MYdRrp4Pq66_1TVGOIO5Vx41-bKqVcp48tbfR1MGY0HCJr_ILNrxLkhEbe6EeV571xXLLHxe1njl5rFrSY2uGZGJTPyQq3nHKKN3mtJCl98unOjp78G0k9QarFFMdtMVDPddKbn2UJYNdSWb6QummGHTGxRTnYGyuL5fWEr3pAi6KAvHG63rowNA8eyTiv4ESGCJjUUln0JG1WCg2Q_ReZffxGbWLTiTFN293m_hGHXvuBhdiquDkbE-WyDrkehT-CnEbIpykLzokMuN7ZYwtij1kM6YB-zOeJxD5HqmkccqNfq7DfgUMC1kwDwFfq0gfT2UE9Aaec6n7uPGYdhT1jaPXAn2LNAmLbxHcc6trmO7kxKYAZy0PWp_WnXRqvfyIwiULolp1XF83caKbK6Ly1Tv3dJ_m3I0GkT6ZfHnB7Xe198ie0T5Mxo31deY8CycgRhdBDbdOCVnzAVScT8LX5J9rGhtUOvj4J4yutrUHPWoxNn3nXTsOoRvWPI7QI4KmcYHdzPNxlVJFPpNqSdnR4DYZLnTjHbzWxXRDkTGuhKdfixrdpHZbZN1x4CIQNowvwT3uzzCGBknf12srpspSXXs6mi0H0EnEbuwiwGTbdSjaDgxPlVK7yCMDfOnqa2UJe0bIIX8na55o_Au5hxI5Bw323xIdYwkINGMfgy0VVViiGDuYyKSzYrpI1uOVZ7qCCM-Bxh9FwOBLhfa3JiswSfzRCwUYjHb5boDnOFI5d5B5219E0iVKLQ8rkkMNP5KrrTnLqvqJLzwMd588vz1WijLrruV9UIC3e361OitNpIinbTr0MjTV8Qo6Qv9pJ-1hTwiSXkgT-DVwrFSwKuVzCxlEZFEAEhsMXlb1Ea3j7lj-5_AofaInCM5NcYSm-tMRif5t9yYLRiEyb-VRRaLRmpQjyTNtMOZaf8pSYDKrfTTzrWEbA1rp1_btKBcS6pFKsZ7CQQ_nxiRTsjomVjLO7TrmoSu_A9zcxZQnb2aKaVMuavLosKlhxAofnr10AIAUU_to2SErDn23TsLgvpLQz0cjdlyDSf8ixcpaJio0ztgFBT0SJ2iOTT_iBJAeo7JMIFULG8ZFpmFB3EHJWaQEzyXlc_MNDK51pHP-c1K7wJmDnQQT4u8NWejHzGpA90l8TXN8Q8QmDmSRqok24w4PJfQQ8gq87hPDJkMJ-bK_5u-NGq46atVmOvT8G6Zu98wR4ilfjy6IoV1vN_tlvITbyG67ds9smj6qly45LJFZEQQXxltY5OBnxX0qR_7nHlyib8h9R_AdRyUmXVegPtJ-yKXAXYcl_TStDiY-ipyRas8qUR7Sf3yRnsGbsMYiZ5e6HKLWv3yVeBzBgszYTS5NS42VVQWRYlxWU33ufyu-XXJ9_POd-l3ypjguz5f2wcecsV-HumEOB07CowEw0wlvLnOzdJh76Ps1owfqO7KRBFUbU7XjyVDvgt8C_Rk-Ce3oWGhk_mA6n_pcNvTzNW8evx-2QzVIkiO5dVP2aJO1J1rngWPpw4G6PD2AA99wP32c5c8FYpjan7akGZgDCCSLXrdEKUtAZAZtn0BtGCR8zgokW6mx4_628FqyGDjGgsQSSACUBe0hHehlWop5Zx-nQ==","summary":[]},{"id":"mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac","type":"mcp_call","status":"completed","approval_request_id":null,"arguments":"{\"repoName\":\"pydantic/pydantic-ai\",\"question\":\"What is the pydantic/pydantic-ai repository about?\"}","error":null,"name":"ask_question","output":"The `pydantic/pydantic-ai` repository is a Python agent framework designed to simplify the development of production-grade applications using Generative AI . It aims to bring the ergonomic developer experience and type-safety philosophy of Pydantic and FastAPI to AI agent development .\n\n## Core Purpose and Features\n\nThe framework focuses on providing a robust and type-safe environment for building AI agents . Key features include:\n\n*   **Type-safe Agents**: Agents are generic `Agent[Deps, Output]` for compile-time validation, leveraging Pydantic for output validation and dependency injection .\n*   **Model-agnostic Design**: It supports over 15 LLM providers through a unified `Model` interface, allowing for easy switching between different models and providers  .\n*   **Structured Outputs**: Automatic Pydantic validation and reflection/self-correction ensure structured and reliable outputs from LLMs .\n*   **Comprehensive Observability**: Integration with OpenTelemetry and native Logfire provides real-time debugging, performance monitoring, and cost tracking  .\n*   **Production-ready Tooling**: This includes an evaluation framework (`pydantic-evals`), durable execution capabilities, and various protocol integrations like MCP, A2A, and AG-UI  .\n*   **Graph Support**: It provides a way to define graphs using type hints for complex applications .\n\n## Framework Architecture\n\nThe framework is structured as a UV workspace monorepo, containing several packages .\n\n### Core Packages\n\n*   `pydantic-ai-slim`: Contains the core framework components such as `Agent`, `Model`, and tools .\n*   `pydantic-ai`: A meta-package that includes all optional extras .\n\n### Supporting Packages\n\n*   `pydantic-graph`: Provides the graph execution engine with `Graph` and `BaseNode` .\n*   `pydantic-evals`: An evaluation framework for datasets and evaluators .\n*   `examples`: Contains example applications .\n*   `clai`: Provides a CLI interface .\n\n## Agent Execution Flow\n\nThe `Agent` class serves as the primary orchestrator . Agent execution is graph-based, utilizing a state machine from `pydantic_graph.Graph` . The execution involves three core node types:\n\n*   `UserPromptNode`: Processes user input and creates initial `ModelRequest` .\n*   `ModelRequestNode`: Calls `model.request()` or `model.request_stream()` and handles retries .\n*   `CallToolsNode`: Executes tool functions via `RunContext[Deps]` .\n\nThe `Agent` provides methods like `run()`, `run_sync()`, and `run_stream()` for different execution scenarios .\n\n## Model Provider Support\n\nThe framework offers a unified `Model` abstract base class for various LLM providers . This includes native support for providers like OpenAI, Anthropic, Google, Groq, Mistral, Cohere, and Bedrock . Additionally, many OpenAI-compatible providers can be used with `OpenAIChatModel` .\n\n## Tool System\n\nTools are registered using the `@agent.tool` decorator . The system automatically generates JSON schemas from function signatures and docstrings, validates tool call arguments, and provides context injection via `RunContext[Deps]` .\n\n## Observability Integration\n\nPydantic AI integrates with OpenTelemetry, allowing for instrumentation of agent runs, model requests, and tool executions . It has native integration with Pydantic Logfire for enhanced monitoring and visualization .\n\n## Evaluation Framework\n\nThe `pydantic-evals` package provides a framework for systematically testing and evaluating AI systems . It supports defining datasets with `Case` objects and using various evaluators, including built-in and custom ones .\n\n## Integration Ecosystem\n\nPydantic AI supports various integrations for development and production:\n\n*   **Model Context Protocol (MCP)**: For external tool server access .\n*   **AG-UI Protocol**: For interactive application frontends .\n*   **Agent2Agent (A2A)**: For multi-agent communication and workflows .\n*   **Temporal**: For durable workflow execution .\n*   **DBOS**: For database-backed execution and state persistence .\n\n## Notes\n\nThe `CLAUDE.md` file provides guidance for Claude Code when working with the repository, including development commands and an overview of core components and design patterns . The `mkdocs.yml` file defines the structure and content of the project's documentation, including navigation, plugins, and watch directories for various packages  . The `docs/install.md` file details how to install the `pydantic-ai` package and its optional components, including a \"slim\" installation option for specific model dependencies .\n\nWiki pages you might want to explore:\n- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)\n\nView this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpydanticai_e234e9cf-d4aa-4c67-a257-56034816dd56\n","server_label":"deepwiki"},{"id":"rs_00b9cc7a23d047270068faa0f4ff54819f9fb9ff25bebe7f5f","type":"reasoning","encrypted_content":"gAAAAABo-qD3K7EGpLRQ1wIzsTvIeVZdZJsH3vNs16W9DRG-xQgJDG2JMaCu4rFRnWLHsQbqYOhfrPdoWQ2rIcf4g9usyeouSK18fj1gYHZjfad18ere7MQynQXerSFlAqJ7U08_ZDtADGrMhLBBDnavF4yDQ_GpRCDoRDD9Z-0sXr3T57cIBheFHBw4nd6UGaI9zNSLD-rwbmITJp_C7bHeP3Ho0XSwnFd9ekQmulSQwJmLRmTGhrZPIWySG-K6VdzESg1rgz5EV82d3IbRnJkW5mcKNHJq8KtgLpWi9z1BnjEFBcPIL2liXOVG7_yLgFtZNqSMpj625xc0sfr7Le5sYjMsb5kVzinr6DLytefN-Pl7xfGIUIQDayhrwORd5opkSmLnVpFCpDcDWb2WP-Z2OPS7WOtwBli5autVtqztWoWX-dxPWE6ndrJlJGNXCaorvjJXZElp7ZpJHtRCnMfIpgZayU3-OVKJ4D-aqM98VwB-pXeotFf5-mpn93bwmdcM8R8c2WqcJXhnbM6m3v-bZGX_V_Io6nOEjBRWL3XzDJbsPlVTFgofTlsllJhpIDlxxPUPmvq9OchQyPekMYtnfVtXxVOzYZz2_DmM5VobsMoNNZo05LN69PHGzhC5ME9WZZDBzNFl_GMyOU35wTaUYNudwsUiqFiFy-yuuxxHDbrqxedEtlS-bkUVohcA3HM3Mkt5Nb8EzAWndFhZpzCDmADwcDtBYbu4NEUYkIolFoKRg2il_JrqXBard8KNrg_He1amZqDeq_zbFchrDOI2TR0WJf5kZGrPElKI8BV4A47MfuQpzlsn6-5I9UwF4lVW58Te_qEuBvqPhoenFzOVv6LK5WXjV2cSmzqXbfxRLOIad8VPNZxy-kFiyC1flIU_b19WRAh5LwE_far3TwMh23pyw5skqk6tkNCV41qpMxEqU1ZWT_rBG1GCbUsRvlnqmE_01XbHCnmWPtzd7n-oALTf2Ll3HbPis297MxSZLq8yMWPpkbnzbs65KZsu_8g-N5wpRUSzmim31KytQtohQzNDgUxKKnGxYplPkR02LTJzAwMg_0cDSrU6piF2BQUZirEo-mPR9g6IDGl421Ln6b0-q05-Ccd24BwTO1UJ-zgLHgTEanHRtl9dYmR6tguOxz1A_KcolnCKZq599US868kZrMkkR1X4BlrUEVIOzbLdThR8bzqagUy3u2LztGh58sNb4Bf4QsRrWKD42CIP3UoxDkG7mJec2T_jCfLslAQ9HkN_HWgJTbDPCeQHEqgVqJml_sYXQaf2n4bcYNtYAIBAAK-q1LXNOZDaqRPnI4HL29cAh5zIINZCX5E5O7xyzZC-IXoNE2BL5U_aqRUJ5yJscejcQUrOczgZLvEWzYuKBMvCRol-gNb2NdvOO_fEptU5CWOIod-9hvOJhlnNWX0G8VLjSU9ayQs8GfXn6b8QycmMbzrl-EclhzYm0cnLy757hKMiaUKG3ZTOHfZwj0DxiwaM6tTGo4hVEETZ6dYBeXPMii0seN0yHduNdoVKUiWz9sSM6MBzGhFQwjAWzUqQ-4E_islx_MRPcHYaiiKwWnCl5jMuJyBrE-lEi4YCSMn0cIAGQVFp35DvPlvVTKdhnEjGK0ixnXciba4v2L6ewTq3uwFlO_EKCQuz8XTHBOV32sRdJc7l0zD8BjnoZ1AE5tsX4Dz24xLd6stKMxoSsGiWoDx2UIog6WEMd5G_bPUz2P1t","summary":[]},{"id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"pydantic-ai is a Python “agent” framework that brings Pydantic’s type-safety and FastAPI-style ergonomics to building production-grade Generative AI apps. It provides:\n\n• A generic Agent[Deps, Output] API with automatic Pydantic validation  \n• A unified Model interface supporting 15+ LLM providers (OpenAI, Anthropic, Google, etc.)  \n• Structured output correction, dependency-injection tools, and graph-based execution  \n• Built-in observability (OpenTelemetry, Logfire), evaluation (pydantic-evals) and durable workflows  \n• A monorepo split into core (pydantic-ai-slim), graph, evals, CLI and example packages  \n\nIn short, it’s a turnkey, type-safe scaffold for AI agent development."}],"role":"assistant"}],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"reasoning":{"effort":"medium","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"mcp","allowed_tools":["ask_question","read_wiki_structure"],"headers":null,"require_approval":"never","server_description":null,"server_label":"deepwiki","server_url":"https://mcp.deepwiki.com/<redacted>"}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":1401,"input_tokens_details":{"cached_tokens":0},"output_tokens":480,"output_tokens_details":{"reasoning_tokens":256},"total_tokens":1881},"user":null,"metadata":{}}}
+
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '254'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

@@ -7,8 +7,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 from pydantic_core import to_json
 
-from pydantic_ai import Agent, models
-from pydantic_ai.messages import MultiModalContentTypes, UserContent
+from pydantic_ai import Agent, MultiModalContent, UserContent, models
 from pydantic_ai.settings import ModelSettings
 
 __all__ = (
@@ -202,7 +201,7 @@ async def judge_output_expected(
     ).output
 
 
-def set_default_judge_model(model: models.Model | models.KnownModelName) -> None:  # pragma: no cover
+def set_default_judge_model(model: models.Model | models.KnownModelName) -> None:
     """Set the default model used for judging.
 
     This model is used if `None` is passed to the `model` argument of `judge_output` and `judge_input_output`.
@@ -238,11 +237,11 @@ def _build_prompt(
             sections.append('<Input>\n')
             if isinstance(inputs, Sequence):
                 for item in inputs:  # type: ignore
-                    if isinstance(item, (str, MultiModalContentTypes)):
+                    if isinstance(item, str | MultiModalContent):
                         sections.append(item)
                     else:
                         sections.append(_stringify(item))
-            elif isinstance(inputs, MultiModalContentTypes):
+            elif isinstance(inputs, MultiModalContent):
                 sections.append(inputs)
             else:
                 sections.append(_stringify(inputs))

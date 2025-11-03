@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     TextPart,
     TextPartDelta,
@@ -31,9 +32,9 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsNow, IsStr
+from .conftest import IsDatetime, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -45,7 +46,7 @@ async def test_model_request():
             parts=[TextPart(content='success (no tool calls)')],
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
-            usage=Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55),
+            usage=RequestUsage(input_tokens=51, output_tokens=4),
         )
     )
 
@@ -64,7 +65,7 @@ async def test_model_request_tool_call():
             parts=[ToolCallPart(tool_name='tool_name', args={}, tool_call_id=IsStr(regex='pyd_ai_.*'))],
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
-            usage=Usage(requests=1, request_tokens=51, response_tokens=2, total_tokens=53),
+            usage=RequestUsage(input_tokens=51, output_tokens=2),
         )
     )
 
@@ -76,7 +77,7 @@ def test_model_request_sync():
             parts=[TextPart(content='success (no tool calls)')],
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
-            usage=Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55),
+            usage=RequestUsage(input_tokens=51, output_tokens=4),
         )
     )
 
@@ -92,7 +93,17 @@ def test_model_request_stream_sync():
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='(no ')),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='tool ')),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='calls)')),
+                PartEndEvent(index=0, part=TextPart(content='success (no tool calls)')),
             ]
+        )
+        assert stream.response == snapshot(
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+            )
         )
 
         repr_str = repr(stream)
@@ -111,6 +122,7 @@ async def test_model_request_stream():
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='(no ')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='tool ')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='calls)')),
+            PartEndEvent(index=0, part=TextPart(content='success (no tool calls)')),
         ]
     )
 

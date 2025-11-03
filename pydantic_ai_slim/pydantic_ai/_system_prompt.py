@@ -1,9 +1,9 @@
 from __future__ import annotations as _annotations
 
 import inspect
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, cast
+from typing import Any, Generic, cast
 
 from . import _utils
 from ._run_context import AgentDepsT, RunContext

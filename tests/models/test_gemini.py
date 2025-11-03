@@ -4,35 +4,38 @@ from __future__ import annotations as _annotations
 
 import datetime
 import json
+import re
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timezone
 from enum import IntEnum
-from typing import Annotated
+from typing import Annotated, Literal, TypeAlias
 
 import httpx
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
-from typing_extensions import Literal, TypeAlias
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
-from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     BinaryContent,
     DocumentUrl,
     ImageUrl,
     ModelRequest,
     ModelResponse,
+    ModelRetry,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UnexpectedModelBehavior,
+    UserError,
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.gemini import (
     GeminiModel,
@@ -46,6 +49,7 @@ from pydantic_ai.models.gemini import (
     _GeminiFunctionCall,
     _GeminiFunctionCallingConfig,
     _GeminiFunctionCallPart,
+    _GeminiModalityTokenCount,
     _GeminiResponse,
     _GeminiSafetyRating,
     _GeminiTextPart,
@@ -53,11 +57,13 @@ from pydantic_ai.models.gemini import (
     _GeminiToolConfig,
     _GeminiTools,
     _GeminiUsageMetaData,
+    _metadata_as_usage,
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
-from pydantic_ai.result import Usage
+from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RequestUsage
 
 from ..conftest import ClientWithHandler, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
@@ -619,14 +625,14 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
+                usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_details={'finish_reason': 'STOP'},
             ),
         ]
     )
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
     result = await agent.run('Hello', message_history=result.new_messages())
     assert result.output == 'Hello world'
@@ -635,18 +641,18 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
+                usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
+                usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_details={'finish_reason': 'STOP'},
             ),
         ]
     )
@@ -667,10 +673,10 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': [1, 2, 123]}, tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
+                usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(
                 parts=[
@@ -730,10 +736,10 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 parts=[
                     ToolCallPart(tool_name='get_location', args={'loc_name': 'San Fransisco'}, tool_call_id=IsStr())
                 ],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
+                usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(
                 parts=[
@@ -750,10 +756,10 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                     ToolCallPart(tool_name='get_location', args={'loc_name': 'London'}, tool_call_id=IsStr()),
                     ToolCallPart(tool_name='get_location', args={'loc_name': 'New York'}, tool_call_id=IsStr()),
                 ],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
+                usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(
                 parts=[
@@ -773,14 +779,14 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
+                usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_details={'finish_reason': 'STOP'},
             ),
         ]
     )
-    assert result.usage() == snapshot(Usage(requests=3, request_tokens=3, response_tokens=6, total_tokens=9))
+    assert result.usage() == snapshot(RunUsage(requests=3, input_tokens=3, output_tokens=6, tool_calls=2))
 
 
 async def test_unexpected_response(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None):
@@ -811,22 +817,14 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
     agent = Agent(m)
 
     async with agent.run_stream('Hello') as result:
-        chunks = [chunk async for chunk in result.stream(debounce_by=None)]
-        assert chunks == snapshot(
-            [
-                'Hello ',
-                'Hello world',
-                # This last value is repeated due to the debounce_by=None combined with the need to emit
-                # a final empty chunk to signal the end of the stream
-                'Hello world',
-            ]
-        )
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
+        chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
+        assert chunks == snapshot(['Hello ', 'Hello world'])
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_text(delta=True, debounce_by=None)]
         assert chunks == snapshot(['Hello ', 'world'])
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
 
 async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
@@ -856,9 +854,9 @@ async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
     agent = Agent(m)
 
     async with agent.run_stream('Hello') as result:
-        chunks = [chunk async for chunk in result.stream(debounce_by=None)]
-        assert chunks == snapshot(['abc', 'abc€def', 'abc€def'])
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
+        chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
+        assert chunks == snapshot(['abc', 'abc€def'])
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
 
 async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
@@ -886,9 +884,9 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
     agent = Agent(model, output_type=tuple[int, int])
 
     async with agent.run_stream('Hello') as result:
-        chunks = [chunk async for chunk in result.stream(debounce_by=None)]
-        assert chunks == snapshot([(1, 2), (1, 2)])
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
+        chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
+        assert chunks == snapshot([(1, 2)])
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
 
 async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
@@ -929,7 +927,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         response = await result.get_output()
         assert response == snapshot((1, 2))
-    assert result.usage() == snapshot(Usage(requests=2, request_tokens=2, response_tokens=4, total_tokens=6))
+    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=2, output_tokens=4, tool_calls=2))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -938,9 +936,10 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                     ToolCallPart(tool_name='foo', args={'x': 'a'}, tool_call_id=IsStr()),
                     ToolCallPart(tool_name='bar', args={'y': 'b'}, tool_call_id=IsStr()),
                 ],
-                usage=Usage(request_tokens=1, response_tokens=2, total_tokens=3, details={}),
+                usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='google-gla',
             ),
             ModelRequest(
                 parts=[
@@ -954,9 +953,10 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': [1, 2]}, tool_call_id=IsStr())],
-                usage=Usage(request_tokens=1, response_tokens=2, total_tokens=3, details={}),
+                usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='google-gla',
             ),
             ModelRequest(
                 parts=[
@@ -1022,9 +1022,10 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                         tool_call_id=IsStr(),
                     ),
                 ],
-                usage=Usage(request_tokens=1, response_tokens=2, total_tokens=3, details={}),
+                usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
             ),
             ModelRequest(
                 parts=[
@@ -1223,16 +1224,12 @@ I need to use the `get_image` tool to see the image first.
                     ),
                     ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=38,
-                    response_tokens=28,
-                    total_tokens=427,
-                    details={'thoughts_tokens': 361, 'text_prompt_tokens': 38},
+                usage=RequestUsage(
+                    input_tokens=38, output_tokens=389, details={'thoughts_tokens': 361, 'text_prompt_tokens': 38}
                 ),
                 model_name='gemini-2.5-pro-preview-03-25',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(
                 parts=[
@@ -1253,16 +1250,14 @@ I need to use the `get_image` tool to see the image first.
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a kiwi fruit, sliced in half.')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=360,
-                    response_tokens=11,
-                    total_tokens=572,
+                usage=RequestUsage(
+                    input_tokens=360,
+                    output_tokens=212,
                     details={'thoughts_tokens': 201, 'text_prompt_tokens': 102, 'image_prompt_tokens': 258},
                 ),
                 model_name='gemini-2.5-pro-preview-03-25',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_details={'finish_reason': 'STOP'},
             ),
         ]
     )
@@ -1382,16 +1377,12 @@ async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.\n')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=13,
-                    response_tokens=8,
-                    total_tokens=21,
-                    details={'text_prompt_tokens': 13, 'text_candidates_tokens': 8},
+                usage=RequestUsage(
+                    input_tokens=13, output_tokens=8, details={'text_prompt_tokens': 13, 'text_candidates_tokens': 8}
                 ),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_details={'finish_reason': 'STOP'},
             ),
         ]
     )
@@ -1488,18 +1479,17 @@ Here are guidelines for safely crossing a street. Remember that these tips are g
  • Once you've safely reached the other side, continue to be aware of any vehicles that might be turning or reversing.
 
 Always be cautious—even if you have the right-of-way—and understand that it's better to wait a moment longer than risk being caught off guard. Stay safe!\
-"""
+""",
+                        id='msg_68039413525c8191aca9aa8f886eaf5d04f0817ea037a07b',
                     ),
                 ],
-                usage=Usage(
-                    request_tokens=13,
-                    response_tokens=2028,
-                    total_tokens=2041,
-                    details={'reasoning_tokens': 1664, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=13, output_tokens=2028, details={'reasoning_tokens': 1664}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1522,15 +1512,13 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                     IsInstance(ThinkingPart),
                     IsInstance(TextPart),
                 ],
-                usage=Usage(
-                    request_tokens=13,
-                    response_tokens=2028,
-                    total_tokens=2041,
-                    details={'reasoning_tokens': 1664, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=13, output_tokens=2028, details={'reasoning_tokens': 1664}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -1581,16 +1569,12 @@ Just as you wouldn't just run blindly into a busy street, you shouldn't just jum
 """
                     ),
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=801,
-                    response_tokens=1519,
-                    total_tokens=2320,
-                    details={'thoughts_tokens': 794, 'text_prompt_tokens': 801},
+                usage=RequestUsage(
+                    input_tokens=801, output_tokens=2313, details={'thoughts_tokens': 794, 'text_prompt_tokens': 801}
                 ),
                 model_name='gemini-2.5-flash-preview-04-17',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_details={'finish_reason': 'STOP'},
             ),
         ]
     )
@@ -1620,11 +1604,9 @@ async def test_gemini_youtube_video_url_input(allow_model_requests: None, gemini
                         content='The main content of the URL is an analysis of recent 404 HTTP responses. The analysis identifies several patterns, including the most common endpoints with 404 errors, request patterns (such as all requests being GET requests), timeline-related issues, and configuration/authentication problems. The analysis also provides recommendations for addressing the 404 errors.'
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=9,
-                    response_tokens=72,
-                    total_tokens=81,
+                usage=RequestUsage(
+                    input_tokens=9,
+                    output_tokens=72,
                     details={
                         'text_prompt_tokens': 9,
                         'video_prompt_tokens': 0,
@@ -1634,7 +1616,7 @@ async def test_gemini_youtube_video_url_input(allow_model_requests: None, gemini
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_details={'finish_reason': 'STOP'},
             ),
         ]
     )
@@ -1652,7 +1634,7 @@ async def test_gemini_no_finish_reason(get_gemini_client: GetGeminiClient):
 
     for message in result.all_messages():
         if isinstance(message, ModelResponse):
-            assert message.vendor_details is None
+            assert message.provider_details is None
 
 
 async def test_response_with_thought_part(get_gemini_client: GetGeminiClient):
@@ -1672,7 +1654,7 @@ async def test_response_with_thought_part(get_gemini_client: GetGeminiClient):
     result = await agent.run('Test with thought')
 
     assert result.output == 'Hello from thought test'
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
 
 @pytest.mark.vcr()
@@ -1700,17 +1682,13 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='bar', args={}, tool_call_id=IsStr())],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=21,
-                    response_tokens=1,
-                    total_tokens=22,
-                    details={'text_candidates_tokens': 1, 'text_prompt_tokens': 21},
+                usage=RequestUsage(
+                    input_tokens=21, output_tokens=1, details={'text_prompt_tokens': 21, 'text_candidates_tokens': 1}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1730,17 +1708,13 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=27,
-                    response_tokens=5,
-                    total_tokens=32,
-                    details={'text_candidates_tokens': 5, 'text_prompt_tokens': 27},
+                usage=RequestUsage(
+                    input_tokens=27, output_tokens=5, details={'text_prompt_tokens': 27, 'text_candidates_tokens': 5}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1785,17 +1759,13 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=32,
-                    response_tokens=5,
-                    total_tokens=37,
-                    details={'text_prompt_tokens': 32, 'text_candidates_tokens': 5},
+                usage=RequestUsage(
+                    input_tokens=32, output_tokens=5, details={'text_prompt_tokens': 32, 'text_candidates_tokens': 5}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1815,17 +1785,13 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=46,
-                    response_tokens=8,
-                    total_tokens=54,
-                    details={'text_prompt_tokens': 46, 'text_candidates_tokens': 8},
+                usage=RequestUsage(
+                    input_tokens=46, output_tokens=8, details={'text_prompt_tokens': 46, 'text_candidates_tokens': 8}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1877,17 +1843,13 @@ It's the capital of Mexico and one of the largest metropolitan areas in the worl
 """
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=9,
-                    response_tokens=44,
-                    total_tokens=598,
-                    details={'thoughts_tokens': 545, 'text_prompt_tokens': 9},
+                usage=RequestUsage(
+                    input_tokens=9, output_tokens=589, details={'thoughts_tokens': 545, 'text_prompt_tokens': 9}
                 ),
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
-                vendor_id='TT9IaNfGN_DmqtsPzKnE4AE',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='TT9IaNfGN_DmqtsPzKnE4AE',
             ),
         ]
     )
@@ -1907,7 +1869,12 @@ async def test_gemini_native_output_with_tools(allow_model_requests: None, gemin
     async def get_user_country() -> str:
         return 'Mexico'  # pragma: no cover
 
-    with pytest.raises(UserError, match='Gemini does not support structured output and tools at the same time.'):
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+        ),
+    ):
         await agent.run('What is the largest city in the user country?')
 
 
@@ -1947,17 +1914,13 @@ async def test_gemini_native_output(allow_model_requests: None, gemini_api_key: 
 """
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=17,
-                    response_tokens=20,
-                    total_tokens=37,
-                    details={'text_prompt_tokens': 17, 'text_candidates_tokens': 20},
+                usage=RequestUsage(
+                    input_tokens=17, output_tokens=20, details={'text_prompt_tokens': 17, 'text_candidates_tokens': 20}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -2006,17 +1969,13 @@ async def test_gemini_native_output_multiple(allow_model_requests: None, gemini_
 """
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=46,
-                    response_tokens=46,
-                    total_tokens=92,
-                    details={'text_prompt_tokens': 46, 'text_candidates_tokens': 46},
+                usage=RequestUsage(
+                    input_tokens=46, output_tokens=46, details={'text_prompt_tokens': 46, 'text_candidates_tokens': 46}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -2058,17 +2017,13 @@ Don't include any text or Markdown fencing before or after.\
                         content='{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object", "city": "Mexico City", "country": "Mexico"}'
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=80,
-                    response_tokens=56,
-                    total_tokens=136,
-                    details={'text_prompt_tokens': 80, 'text_candidates_tokens': 56},
+                usage=RequestUsage(
+                    input_tokens=80, output_tokens=56, details={'text_prompt_tokens': 80, 'text_candidates_tokens': 56}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -2112,17 +2067,13 @@ Don't include any text or Markdown fencing before or after.\
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=123,
-                    response_tokens=12,
-                    total_tokens=453,
-                    details={'thoughts_tokens': 318, 'text_prompt_tokens': 123},
+                usage=RequestUsage(
+                    input_tokens=123, output_tokens=330, details={'thoughts_tokens': 318, 'text_prompt_tokens': 123}
                 ),
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2143,17 +2094,13 @@ Don't include any text or Markdown fencing before or after.\
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=154,
-                    response_tokens=13,
-                    total_tokens=261,
-                    details={'thoughts_tokens': 94, 'text_prompt_tokens': 154},
+                usage=RequestUsage(
+                    input_tokens=154, output_tokens=107, details={'thoughts_tokens': 94, 'text_prompt_tokens': 154}
                 ),
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -2199,17 +2146,59 @@ Don't include any text or Markdown fencing before or after.\
                         content='{"result": {"kind": "CityLocation", "data": {"city": "Mexico City", "country": "Mexico"}}}'
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=253,
-                    response_tokens=27,
-                    total_tokens=280,
+                usage=RequestUsage(
+                    input_tokens=253,
+                    output_tokens=27,
                     details={'text_prompt_tokens': 253, 'text_candidates_tokens': 27},
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
+
+
+def test_map_usage():
+    response = gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello world')])))
+    assert 'usage_metadata' in response
+    response['usage_metadata']['cached_content_token_count'] = 9100
+    response['usage_metadata']['prompt_tokens_details'] = [
+        _GeminiModalityTokenCount(modality='AUDIO', token_count=9200)
+    ]
+    response['usage_metadata']['cache_tokens_details'] = [
+        _GeminiModalityTokenCount(modality='AUDIO', token_count=9300),
+    ]
+    response['usage_metadata']['candidates_tokens_details'] = [
+        _GeminiModalityTokenCount(modality='AUDIO', token_count=9400)
+    ]
+    response['usage_metadata']['thoughts_token_count'] = 9500
+    response['usage_metadata']['tool_use_prompt_token_count'] = 9600
+
+    assert _metadata_as_usage(response) == snapshot(
+        RequestUsage(
+            input_tokens=1,
+            cache_read_tokens=9100,
+            output_tokens=9502,
+            input_audio_tokens=9200,
+            cache_audio_read_tokens=9300,
+            output_audio_tokens=9400,
+            details={
+                'cached_content_tokens': 9100,
+                'audio_prompt_tokens': 9200,
+                'audio_cache_tokens': 9300,
+                'audio_candidates_tokens': 9400,
+                'thoughts_tokens': 9500,
+                'tool_use_prompt_tokens': 9600,
+            },
+        )
+    )
+
+
+def test_map_empty_usage():
+    response = gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello world')])))
+    assert 'usage_metadata' in response
+    del response['usage_metadata']
+
+    assert _metadata_as_usage(response) == RequestUsage()

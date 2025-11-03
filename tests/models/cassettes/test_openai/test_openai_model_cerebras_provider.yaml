@@ -1,0 +1,69 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '111'
+      content-type:
+      - application/json
+      host:
+      - api.cerebras.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: llama3.3-70b
+      stream: false
+    uri: https://api.cerebras.ai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '558'
+      content-type:
+      - application/json
+      inference-id:
+      - chatcmpl-175bff47-ce89-4fad-bead-62a14f787c49
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=3600; includeSubDomains
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: The capital of France is Paris.
+          role: assistant
+      created: 1756198141
+      id: chatcmpl-175bff47-ce89-4fad-bead-62a14f787c49
+      model: llama-3.3-70b
+      object: chat.completion
+      system_fingerprint: fp_b6a51bb1d26f03ea3772
+      time_info:
+        completion_time: 0.003633212
+        created: 1756198141
+        prompt_time: 0.002251218
+        queue_time: 0.000199151
+        total_time: 0.007346153259277344
+      usage:
+        completion_tokens: 8
+        prompt_tokens: 42
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 50
+    status:
+      code: 200
+      message: OK
+version: 1

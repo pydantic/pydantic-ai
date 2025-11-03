@@ -15,13 +15,13 @@ interactions:
       - api.anthropic.com
     method: POST
     parsed_body:
-      max_tokens: 2048
+      max_tokens: 4096
       messages:
       - content:
         - text: How do I cross the street?
           type: text
         role: user
-      model: claude-3-7-sonnet-latest
+      model: claude-sonnet-4-5
       stream: true
       thinking:
         budget_tokens: 1024
@@ -31,187 +31,226 @@ interactions:
     body:
       string: |+
         event: message_start
-        data: {"type":"message_start","message":{"id":"msg_01K8dnhxH3xD11atV9TZWkNM","type":"message","role":"assistant","model":"claude-3-7-sonnet-20250219","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":42,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5,"service_tier":"standard"}}}
+        data: {"type":"message_start","message":{"id":"msg_01PiJ6i3vjEZjHxojahi2YNc","type":"message","role":"assistant","model":"claude-sonnet-4-5-20250929","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":42,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard"}}          }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}     }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"This question is asking"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The question"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" about how to cross a street"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" is asking about how to safely"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" safely, which is a"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" cross a street, which is a basic"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" basic pedestrian safety skill"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" but important safety skill.\n\nI should provide"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":". Let me provide a"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" clear, step-by-step instructions"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" clear, helpful answer"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" for crossing a street safely:"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" with the standard safety procedures for"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\n1. Find a designate"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" crossing a street."}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"d crossing point if possible (cross"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"ErUBCkYIBBgCIkCvb+W28uqOVW1QcFdQfS4Qmlvhuf3Ji+y2HrT70+C+1Y3+bsJWI7TalhkbNqYrrsiwNiZD/V36NRWv13CwaLU0EgwKvWjc4TaALe+mux4aDBvydYDAXS63lck0WiIwe6i1uYVGUdtG2sDLh0hykB4CFO8QKO2jguCYqNxB3XMC0f/6zTQOsCIGqOUxaDRqKh0Wa/4Poohf60tzp4tl4c3ft1J+02/lKjVXEg28PhgC"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"walk, pedestrian crossing, etc"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":".)\n2. Look"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" both ways (left-"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"right-left in countries"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" where cars drive on the right;"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" right-left-right where"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" they drive on the left)"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n3. Wait for"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" traffic to stop or for a clear"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" gap in traffic\n4"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":". Make eye contact with drivers if"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" possible\n5. Cross at"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" a steady pace without running\n6. Continue"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" watching for traffic while crossing\n7"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":". Use pedestrian signals where"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" available\n\nI'll also mention"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" some additional safety tips and considerations for"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" different situations (busy streets, streets"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" with traffic signals, etc.)."} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"ErUBCkYIBhgCIkA/Y+JwNMtmQyHcoo4/v2dpY6ruQifcu3pAzHbzIwpIrjIyaWaYdJOp9/0vUmBPj+LmqgiDSTktRcn0U75AlpXOEgwzVmYdHgDaZfeyBGcaDFSIZCHzzrZQkolJKCIwhMETosYLx+Dw/vKa83hht943z9R3/ViOqokT25JmMfaGOntuo+33Zxqf5rqUbkQ3Kh34rIqqnKaFSVr7Nn85z8OFN3Cwzz+HmXl2FgCXOxgC"}          }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0     }
+        data: {"type":"content_block_stop","index":0         }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}             }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"# How to Cross a Street Safely"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"# How to Cross a Street Safely"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n1. **Fin"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nFollow these steps to cross a"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"d a designated crossing point** if"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" street safely:\n\n1"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" possible:\n   -"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":". **Find a proper"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Crosswalks"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" crossing point** - Use a crosswalk,"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n   - Pedestrian signals\n   -"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" pedestrian crossing, or intersection"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Pedestrian bridges"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" whenever possible.\n\n2."}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n   - Inters"}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" **Stop at the curb** -"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ections\n\n2. **Before"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Stand slightly back from the edge."}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" crossing:**\n   - Stop"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n3. **Look"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" at the curb or edge of the road"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" both ways** - Look left, right"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n   - Look left,"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", then left again (reverse"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" right, then left again ("}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" in countries where cars drive on"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"or right, left, right again"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the left).\n\n4. **Listen"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" in countries with left"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for traffic** - Remove"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"-side driving)\n   -"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" headphones if you're wearing"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Make eye contact with nearby"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" them.\n\n5."}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" drivers if possible\n   "}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" **Wait for a gap"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"- Listen for approaching vehicles\n\n3. **"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** or for vehicles to stop completely"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"When crossing:**\n   -"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":".\n\n6. **"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Walk, don't run"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Make eye contact** with"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n   - Continue looking in"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" drivers to ensure they see you."}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" both directions as you cross\n   -"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n7. **Cross with"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Use the crosswalk if available"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" purpose** - Walk at a"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n   - Cross in"}               }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" steady pace without stopping or"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" a straight line, not"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" running.\n\n8. **"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" diagonally"}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Continue watching** for traffic as"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n4. **If there"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you cross.\n\n9. **Use signals"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" are pedestrian signals:**\n   "}             }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** - Follow pedestrian crossing"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"- Wait for the \""}           }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" signals where available.\n\nIf"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"WALK\" signal or"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" there's a traffic light or"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" green walking figure\n   - Don't"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" pedestrian signal, only"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" start crossing if the signal is flashing"}        }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" cross when indicated, and always check"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" or showing \"DON'"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for turning vehicles even when you"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"T WALK\""}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" have the right of"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n5. **Avoi"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" way.\n\nIs there a"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"d distractions**"}       }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" specific situation or type of street crossing you"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" like texting, looking"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" at your phone, or"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" wearing headphones that prevent"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you from hearing traffic."}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nIs there a"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" specific situation or location"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you're asking about?"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'re concerned about?"}      }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1          }
+        data: {"type":"content_block_stop","index":1       }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":305}             }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":419}}
 
         event: message_stop
-        data: {"type":"message_stop"              }
+        data: {"type":"message_stop"  }
 
     headers:
       cache-control:

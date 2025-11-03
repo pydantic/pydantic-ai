@@ -8,7 +8,7 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from typing import Any, Generic, TypeVar
 
-from pydantic_ai.profiles import ModelProfile
+from ..profiles import ModelProfile
 
 InterfaceClient = TypeVar('InterfaceClient')
 
@@ -20,7 +20,7 @@ class Provider(ABC, Generic[InterfaceClient]):
 
     Each provider only supports a specific interface. A interface can be supported by multiple providers.
 
-    For example, the OpenAIModel interface can be supported by the OpenAIProvider and the DeepSeekProvider.
+    For example, the `OpenAIChatModel` interface can be supported by the `OpenAIProvider` and the `DeepSeekProvider`.
     """
 
     _client: InterfaceClient
@@ -47,10 +47,13 @@ class Provider(ABC, Generic[InterfaceClient]):
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
 
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}(name={self.name}, base_url={self.base_url})'  # pragma: lax no cover
+
 
 def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     """Infers the provider class from the provider name."""
-    if provider == 'openai':
+    if provider in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
 
         return OpenAIProvider
@@ -70,15 +73,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .azure import AzureProvider
 
         return AzureProvider
-    elif provider == 'google-vertex':
-        from .google_vertex import GoogleVertexProvider  # type: ignore[reportDeprecated]
+    elif provider in ('google-vertex', 'google-gla'):
+        from .google import GoogleProvider
 
-        return GoogleVertexProvider  # type: ignore[reportDeprecated]
-    elif provider == 'google-gla':
-        from .google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
-
-        return GoogleGLAProvider  # type: ignore[reportDeprecated]
-    # NOTE: We don't test because there are many ways the `boto3.client` can retrieve the credentials.
+        return GoogleProvider
     elif provider == 'bedrock':
         from .bedrock import BedrockProvider
 
@@ -95,6 +93,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .mistral import MistralProvider
 
         return MistralProvider
+    elif provider == 'cerebras':
+        from .cerebras import CerebrasProvider
+
+        return CerebrasProvider
     elif provider == 'cohere':
         from .cohere import CohereProvider
 
@@ -123,15 +125,45 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .huggingface import HuggingFaceProvider
 
         return HuggingFaceProvider
+    elif provider == 'ollama':
+        from .ollama import OllamaProvider
+
+        return OllamaProvider
     elif provider == 'github':
         from .github import GitHubProvider
 
         return GitHubProvider
+    elif provider == 'litellm':
+        from .litellm import LiteLLMProvider
+
+        return LiteLLMProvider
+    elif provider == 'nebius':
+        from .nebius import NebiusProvider
+
+        return NebiusProvider
+    elif provider == 'ovhcloud':
+        from .ovhcloud import OVHcloudProvider
+
+        return OVHcloudProvider
+    elif provider == 'outlines':
+        from .outlines import OutlinesProvider
+
+        return OutlinesProvider
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
 
 
 def infer_provider(provider: str) -> Provider[Any]:
     """Infer the provider from the provider name."""
-    provider_class = infer_provider_class(provider)
-    return provider_class()
+    if provider.startswith('gateway/'):
+        from .gateway import gateway_provider
+
+        provider = provider.removeprefix('gateway/')
+        return gateway_provider(provider)
+    elif provider in ('google-vertex', 'google-gla'):
+        from .google import GoogleProvider
+
+        return GoogleProvider(vertexai=provider == 'google-vertex')
+    else:
+        provider_class = infer_provider_class(provider)
+        return provider_class()

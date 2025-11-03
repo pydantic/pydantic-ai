@@ -19,12 +19,13 @@ from . import __version__
 from ._run_context import AgentDepsT
 from .agent import AbstractAgent, Agent
 from .exceptions import UserError
-from .messages import ModelMessage, ModelMessagesTypeAdapter
+from .messages import ModelMessage, ModelMessagesTypeAdapter, ModelResponse
 from .models import KnownModelName, infer_model
 from .output import OutputDataT
 
 try:
     import argcomplete
+    import pyperclip
     from prompt_toolkit import PromptSession
     from prompt_toolkit.auto_suggest import AutoSuggestFromHistory, Suggestion
     from prompt_toolkit.buffer import Buffer
@@ -39,7 +40,7 @@ try:
     from rich.text import Text
 except ImportError as _import_error:
     raise ImportError(
-        'Please install `rich`, `prompt-toolkit` and `argcomplete` to use the Pydantic AI CLI, '
+        'Please install `rich`, `prompt-toolkit`, `pyperclip` and `argcomplete` to use the Pydantic AI CLI, '
         'you can use the `cli` optional group — `pip install "pydantic-ai-slim[cli]"`'
     ) from _import_error
 
@@ -104,7 +105,7 @@ def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
 
 
 def cli(  # noqa: C901
-    args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', default_model: str = 'openai:gpt-4.1'
+    args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', default_model: str = 'openai:gpt-5'
 ) -> int:
     """Run the CLI and return the exit code for the process."""
     parser = argparse.ArgumentParser(
@@ -116,6 +117,7 @@ Special prompts:
 * `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)
 * `/markdown` - show the last markdown output of the last question
 * `/multiline` - toggle multiline mode
+* `/cp` - copy the last response to clipboard
 """,
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -124,7 +126,7 @@ Special prompts:
         '-m',
         '--model',
         nargs='?',
-        help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4.1" or "anthropic:claude-sonnet-4-0". Defaults to "{default_model}".',
+        help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "{default_model}".',
     )
     # we don't want to autocomplete or list models that don't include the provider,
     # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
@@ -258,7 +260,7 @@ async def run_chat(
     prog_name: str,
     config_dir: Path | None = None,
     deps: AgentDepsT = None,
-    history: list[ModelMessage] | None = None,
+    message_history: Sequence[ModelMessage] | None = None,
 ) -> int:
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -266,11 +268,11 @@ async def run_chat(
     session: PromptSession[Any] = PromptSession(history=FileHistory(str(prompt_history_path)))
 
     multiline = False
-    messages: list[ModelMessage] = history or []
+    messages: list[ModelMessage] = list(message_history) if message_history else []
 
     while True:
         try:
-            auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/exit'])
+            auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/exit', '/cp'])
             text = await session.prompt_async(f'{prog_name} ➤ ', auto_suggest=auto_suggest, multiline=multiline)
         except (KeyboardInterrupt, EOFError):  # pragma: no cover
             return 0
@@ -302,7 +304,7 @@ async def ask_agent(
     console: Console,
     code_theme: str,
     deps: AgentDepsT = None,
-    messages: list[ModelMessage] | None = None,
+    messages: Sequence[ModelMessage] | None = None,
     config_dir: Path | None = None,
 ) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
@@ -387,6 +389,16 @@ def handle_slash_command(
     elif ident_prompt == '/exit':
         console.print('[dim]Exiting…[/dim]')
         return 0, multiline
+    elif ident_prompt == '/cp':
+        if not messages or not isinstance(messages[-1], ModelResponse):
+            console.print('[dim]No output available to copy.[/dim]')
+        else:
+            text_to_copy = messages[-1].text
+            if text_to_copy and (text_to_copy := text_to_copy.strip()):
+                pyperclip.copy(text_to_copy)
+                console.print('[dim]Copied last output to clipboard.[/dim]')
+            else:
+                console.print('[dim]No text content to copy.[/dim]')
     else:
         console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
     return None, multiline

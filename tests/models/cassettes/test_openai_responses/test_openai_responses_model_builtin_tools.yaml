@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '217'
+      - '199'
       content-type:
       - application/json
       host:
@@ -18,12 +18,11 @@ interactions:
       input:
       - content: Give me the best news about LLMs from the last 24 hours. Be short.
         role: user
-      instructions: ''
       model: gpt-4o
       stream: false
       tool_choice: auto
       tools:
-      - type: web_search_preview
+      - type: web_search
     uri: https://api.openai.com/v1/responses
   response:
     headers:
@@ -32,13 +31,15 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3210'
+      - '2994'
       content-type:
       - application/json
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '2843'
+      - '8814'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -46,73 +47,82 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1743506361
+      background: false
+      created_at: 1755020432
       error: null
-      id: resp_67ebcbb93728819197f923ff16e98bce04f5055a2a33abc3
+      id: resp_689b7c90010c8196ac0efd68b021490f07450cfc2d48b975
       incomplete_details: null
-      instructions: ''
+      instructions: null
       max_output_tokens: null
+      max_tool_calls: null
       metadata: {}
       model: gpt-4o-2024-08-06
       object: response
       output:
-      - id: ws_67ebcbb9ab4481918bebf63b66dbb67c04f5055a2a33abc3
+      - action:
+          query: latest news on LLMs October 2023
+          type: search
+        id: ws_689b7c90de788196b18c6d68e7894def07450cfc2d48b975
         status: completed
         type: web_search_call
       - content:
         - annotations:
-          - end_index: 571
-            start_index: 404
-            title: OpenAI plans to release open-weight language model in coming months
+          - end_index: 364
+            start_index: 273
+            title: OpenAI's big GPT-5 launch gets bumpy
             type: url_citation
-            url: https://www.reuters.com/technology/artificial-intelligence/openai-plans-release-open-weight-language-model-coming-months-2025-03-31/?utm_source=openai
-          - end_index: 846
-            start_index: 625
-            title: OpenAI plans to release open-weight language model in coming months
+            url: https://www.axios.com/2025/08/12/gpt-5-bumpy-launch-openai?utm_source=openai
+          - end_index: 533
+            start_index: 417
+            title: OpenAI's big GPT-5 launch gets bumpy
             type: url_citation
-            url: https://www.reuters.com/technology/artificial-intelligence/openai-plans-release-open-weight-language-model-coming-months-2025-03-31/?utm_source=openai
-          text: "In the past 24 hours, OpenAI announced plans to release its first open-weight language model with reasoning
-            capabilities since GPT-2. This model will allow developers to fine-tune it for specific applications without needing
-            the original training data. To gather feedback and refine the model, OpenAI will host developer events starting
-            in San Francisco and expanding to Europe and Asia-Pacific regions. ([reuters.com](https://www.reuters.com/technology/artificial-intelligence/openai-plans-release-open-weight-language-model-coming-months-2025-03-31/?utm_source=openai))\n\n\n##
-            OpenAI to Release Open-Weight Language Model:\n- [OpenAI plans to release open-weight language model in coming
-            months](https://www.reuters.com/technology/artificial-intelligence/openai-plans-release-open-weight-language-model-coming-months-2025-03-31/?utm_source=openai) "
+            url: https://www.axios.com/2025/08/12/gpt-5-bumpy-launch-openai?utm_source=openai
+          logprobs: []
+          text: "OpenAI's recent launch of GPT-5 has faced mixed reactions. Despite strong benchmark performance and early
+            praise, users have reported issues like errors in basic math and geography. CEO Sam Altman has acknowledged these
+            concerns and assured that improvements are underway. ([axios.com](https://www.axios.com/2025/08/12/gpt-5-bumpy-launch-openai?utm_source=openai))\n\n\n##
+            OpenAI's GPT-5 Launch Faces Mixed Reactions:\n- [OpenAI's big GPT-5 launch gets bumpy](https://www.axios.com/2025/08/12/gpt-5-bumpy-launch-openai?utm_source=openai) "
           type: output_text
-        id: msg_67ebcbbaf988819192d44919020b82e704f5055a2a33abc3
+        id: msg_689b7c951b7481968513d007e75151fd07450cfc2d48b975
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
       previous_response_id: null
+      prompt_cache_key: null
       reasoning:
         effort: null
-        generate_summary: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
       status: completed
       store: true
       temperature: 1.0
       text:
         format:
           type: text
+        verbosity: medium
       tool_choice: auto
       tools:
       - search_context_size: medium
-        type: web_search_preview
+        type: web_search
         user_location:
           city: null
           country: US
           region: null
           timezone: null
           type: approximate
+      top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
         input_tokens: 320
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 200
+        output_tokens: 159
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 520
+        total_tokens: 479
       user: null
     status:
       code: 200

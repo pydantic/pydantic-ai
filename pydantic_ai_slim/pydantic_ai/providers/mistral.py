@@ -3,11 +3,11 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-from httpx import AsyncClient as AsyncHTTPClient
+import httpx
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.providers import Provider
 
@@ -42,7 +42,7 @@ class MistralProvider(Provider[Mistral]):
     def __init__(self, *, mistral_client: Mistral | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str | None = None, http_client: AsyncHTTPClient | None = None) -> None: ...
+    def __init__(self, *, api_key: str | None = None, http_client: httpx.AsyncClient | None = None) -> None: ...
 
     def __init__(
         self,
@@ -50,7 +50,7 @@ class MistralProvider(Provider[Mistral]):
         api_key: str | None = None,
         mistral_client: Mistral | None = None,
         base_url: str | None = None,
-        http_client: AsyncHTTPClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Create a new Mistral provider.
 
@@ -67,7 +67,7 @@ class MistralProvider(Provider[Mistral]):
             assert base_url is None, 'Cannot provide both `mistral_client` and `base_url`'
             self._client = mistral_client
         else:
-            api_key = api_key or os.environ.get('MISTRAL_API_KEY')
+            api_key = api_key or os.getenv('MISTRAL_API_KEY')
 
             if not api_key:
                 raise UserError(

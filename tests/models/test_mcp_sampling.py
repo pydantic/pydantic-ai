@@ -7,10 +7,9 @@ from unittest.mock import AsyncMock
 import pytest
 from inline_snapshot import snapshot
 
+from pydantic_ai import BinaryContent, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import BinaryContent, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
-from pydantic_ai.usage import Usage
 
 from ..conftest import IsNow, try_import
 
@@ -59,7 +58,6 @@ def test_assistant_text():
             ),
             ModelResponse(
                 parts=[TextPart(content='text content')],
-                usage=Usage(requests=1),
                 model_name='test-model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -93,14 +91,12 @@ def test_assistant_text_history():
             ModelRequest(parts=[UserPromptPart(content='1', timestamp=IsNow(tz=timezone.utc))], instructions='testing'),
             ModelResponse(
                 parts=[TextPart(content='text content')],
-                usage=Usage(requests=1),
                 model_name='test-model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='2', timestamp=IsNow(tz=timezone.utc))], instructions='testing'),
             ModelResponse(
                 parts=[TextPart(content='text content')],
-                usage=Usage(requests=1),
                 model_name='test-model',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -121,7 +117,6 @@ def test_assistant_text_history_complex():
         ),
         ModelResponse(
             parts=[TextPart(content='text content')],
-            usage=Usage(requests=1),
             model_name='test-model',
         ),
     ]

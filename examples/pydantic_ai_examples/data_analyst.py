@@ -26,7 +26,7 @@ class AnalystAgentDeps:
 
 
 analyst_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=AnalystAgentDeps,
     instructions='You are a data analyst and your job is to analyze the data according to the user request.',
 )

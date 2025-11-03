@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from typing_extensions import TypeVar
 
 from pydantic_ai import Agent, models
+from pydantic_ai._utils import strip_markdown_fences
 from pydantic_evals import Dataset
 from pydantic_evals.evaluators.evaluator import Evaluator
 
@@ -59,7 +60,8 @@ async def generate_dataset(
     """
     output_schema = dataset_type.model_json_schema_with_evaluators(custom_evaluator_types)
 
-    # TODO(DavidM): Update this once we add better response_format and/or ResultTool support to Pydantic AI
+    # TODO: Use `output_type=StructuredDict(output_schema)` (and `from_dict` below) once https://github.com/pydantic/pydantic/issues/12145
+    # is fixed and `StructuredDict` no longer needs to use `InlineDefsJsonSchemaTransformer`.
     agent = Agent(
         model,
         system_prompt=(
@@ -72,8 +74,9 @@ async def generate_dataset(
     )
 
     result = await agent.run(extra_instructions or 'Please generate the object.')
+    output = strip_markdown_fences(result.output)
     try:
-        result = dataset_type.from_text(result.output, fmt='json', custom_evaluator_types=custom_evaluator_types)
+        result = dataset_type.from_text(output, fmt='json', custom_evaluator_types=custom_evaluator_types)
     except ValidationError as e:  # pragma: no cover
         print(f'Raw response from model:\n{result.output}')
         raise e

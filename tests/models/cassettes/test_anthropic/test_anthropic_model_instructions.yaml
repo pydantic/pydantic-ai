@@ -15,7 +15,7 @@ interactions:
       - api.anthropic.com
     method: POST
     parsed_body:
-      max_tokens: 1024
+      max_tokens: 4096
       messages:
       - content:
         - text: What is the capital of France?
@@ -32,7 +32,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '354'
+      - '433'
       content-type:
       - application/json
       strict-transport-security:
@@ -43,13 +43,16 @@ interactions:
       content:
       - text: The capital of France is Paris.
         type: text
-      id: msg_01BznVNBje2zyfpCfNQCD5en
+      id: msg_01Fg1JVgvCYUHWsxrj9GkpEv
       model: claude-3-opus-20240229
       role: assistant
       stop_reason: end_turn
       stop_sequence: null
       type: message
       usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 20

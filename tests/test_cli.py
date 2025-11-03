@@ -1,8 +1,9 @@
 import sys
 import types
+from collections.abc import Callable
 from io import StringIO
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 from dirty_equals import IsInstance, IsStr
@@ -11,8 +12,7 @@ from pytest import CaptureFixture
 from pytest_mock import MockerFixture
 from rich.console import Console
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.test import TestModel
 
 from .conftest import TestEnv, try_import
@@ -24,7 +24,7 @@ with try_import() as imports_successful:
     from prompt_toolkit.shortcuts import PromptSession
 
     from pydantic_ai._cli import LAST_CONVERSATION_FILENAME, PYDANTIC_AI_HOME, cli, cli_agent, handle_slash_command
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
 
@@ -117,11 +117,11 @@ def test_agent_flag_set_model(
 
     mocker.patch('pydantic_ai._cli.ask_agent')
 
-    assert cli(['--agent', 'test_module:custom_agent', '--model', 'gpt-4o', 'hello']) == 0
+    assert cli(['--agent', 'test_module:custom_agent', '--model', 'openai:gpt-4o', 'hello']) == 0
 
     assert 'using custom agent test_module:custom_agent with openai:gpt-4o' in capfd.readouterr().out.replace('\n', '')
 
-    assert isinstance(custom_agent.model, OpenAIModel)
+    assert isinstance(custom_agent.model, OpenAIChatModel)
 
 
 def test_agent_flag_non_agent(
@@ -148,6 +148,7 @@ def test_list_models(capfd: CaptureFixture[str]):
         'openai',
         'anthropic',
         'bedrock',
+        'cerebras',
         'google-vertex',
         'google-gla',
         'groq',
@@ -221,10 +222,17 @@ def test_cli_continue_last_conversation_corrupted_file(
 
 def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
+
+    # mocking is needed because of ci does not have xclip or xselect installed
+    def mock_copy(text: str) -> None:
+        pass
+
+    mocker.patch('pyperclip.copy', mock_copy)
     with create_pipe_input() as inp:
         inp.send_text('\n')
         inp.send_text('hello\n')
         inp.send_text('/markdown\n')
+        inp.send_text('/cp\n')
         inp.send_text('/exit\n')
         session = PromptSession[Any](input=inp, output=DummyOutput())
         m = mocker.patch('pydantic_ai._cli.PromptSession', return_value=session)
@@ -238,6 +246,7 @@ def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
                 IsStr(regex='goodbye *Markdown output of last question:'),
                 '',
                 'goodbye',
+                'Copied last output to clipboard.',
                 'Exiting…',
             ]
         )
@@ -266,6 +275,33 @@ def test_handle_slash_command_multiline():
     io = StringIO()
     assert handle_slash_command('/multiline', [], True, Console(file=io), 'default') == (None, False)
     assert io.getvalue() == snapshot('Disabling multiline mode.\n')
+
+
+def test_handle_slash_command_copy(mocker: MockerFixture):
+    io = StringIO()
+    # mocking is needed because of ci does not have xclip or xselect installed
+    mock_clipboard: list[str] = []
+
+    def append_to_clipboard(text: str) -> None:
+        mock_clipboard.append(text)
+
+    mocker.patch('pyperclip.copy', append_to_clipboard)
+    assert handle_slash_command('/cp', [], False, Console(file=io), 'default') == (None, False)
+    assert io.getvalue() == snapshot('No output available to copy.\n')
+    assert len(mock_clipboard) == 0
+
+    messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(''), ToolCallPart('foo', '{}')])]
+    io = StringIO()
+    assert handle_slash_command('/cp', messages, True, Console(file=io), 'default') == (None, True)
+    assert io.getvalue() == snapshot('No text content to copy.\n')
+    assert len(mock_clipboard) == 0
+
+    messages: list[ModelMessage] = [ModelResponse(parts=[TextPart('hello'), ToolCallPart('foo', '{}')])]
+    io = StringIO()
+    assert handle_slash_command('/cp', messages, True, Console(file=io), 'default') == (None, True)
+    assert io.getvalue() == snapshot('Copied last output to clipboard.\n')
+    assert len(mock_clipboard) == 1
+    assert mock_clipboard[0] == snapshot('hello')
 
 
 def test_handle_slash_command_exit():
@@ -312,6 +348,7 @@ def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
         code_theme='monokai',
         prog_name='pydantic-ai',
         deps=None,
+        message_history=None,
     )
 
 
@@ -327,4 +364,44 @@ async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
         code_theme='monokai',
         prog_name='pydantic-ai',
         deps=None,
+        message_history=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_agent_to_cli_with_message_history(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+
+    # Create some test message history - cast to the proper base type
+    test_messages: list[ModelMessage] = [ModelResponse(parts=[TextPart('Hello!')])]
+
+    await cli_agent.to_cli(message_history=test_messages)
+    mock_run_chat.assert_awaited_once_with(
+        stream=True,
+        agent=IsInstance(Agent),
+        console=IsInstance(Console),
+        code_theme='monokai',
+        prog_name='pydantic-ai',
+        deps=None,
+        message_history=test_messages,
+    )
+
+
+def test_agent_to_cli_sync_with_message_history(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+
+    # Create some test message history - cast to the proper base type
+    test_messages: list[ModelMessage] = [ModelResponse(parts=[TextPart('Hello!')])]
+
+    cli_agent.to_cli_sync(message_history=test_messages)
+    mock_run_chat.assert_awaited_once_with(
+        stream=True,
+        agent=IsInstance(Agent),
+        console=IsInstance(Console),
+        code_theme='monokai',
+        prog_name='pydantic-ai',
+        deps=None,
+        message_history=test_messages,
     )

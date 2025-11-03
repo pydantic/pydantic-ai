@@ -5,8 +5,15 @@ from unittest.mock import MagicMock, Mock, patch
 
 import httpx
 import pytest
+from pytest_mock import MockerFixture
 
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
+from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.qwen import qwen_model_profile
 
 from ..conftest import TestEnv, try_import
 
@@ -140,3 +147,43 @@ def test_huggingface_provider_base_url():
     mock_client.model = 'test-model'
     provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
     assert provider.base_url == 'test-model'
+
+
+def test_huggingface_provider_model_profile(mocker: MockerFixture):
+    mock_client = Mock(spec=AsyncInferenceClient)
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+
+    ns = 'pydantic_ai.providers.huggingface'
+    deepseek_model_profile_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
+    meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
+    qwen_model_profile_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
+    mistral_model_profile_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
+    google_model_profile_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
+
+    deepseek_profile = provider.model_profile('deepseek-ai/DeepSeek-R1')
+    deepseek_model_profile_mock.assert_called_with('deepseek-r1')
+    assert deepseek_profile is not None
+    assert deepseek_profile.ignore_streamed_leading_whitespace is True
+
+    meta_profile = provider.model_profile('meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8')
+    meta_model_profile_mock.assert_called_with('llama-4-maverick-17b-128e-instruct-fp8')
+    assert meta_profile is not None
+    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+
+    qwen_profile = provider.model_profile('Qwen/QwQ-32B')
+    qwen_model_profile_mock.assert_called_with('qwq-32b')
+    assert qwen_profile is not None
+    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.ignore_streamed_leading_whitespace is True
+
+    mistral_profile = provider.model_profile('mistralai/Devstral-Small-2505')
+    mistral_model_profile_mock.assert_called_with('devstral-small-2505')
+    assert mistral_profile is None
+
+    google_profile = provider.model_profile('google/gemma-3-27b-it')
+    google_model_profile_mock.assert_called_with('gemma-3-27b-it')
+    assert google_profile is not None
+    assert google_profile.json_schema_transformer == GoogleJsonSchemaTransformer
+
+    unknown_profile = provider.model_profile('unknown/model')
+    assert unknown_profile is None

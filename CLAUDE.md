@@ -5,35 +5,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Development Commands
 
 ### Core Development Tasks
+
 - **Install dependencies**: `make install` (requires uv, pre-commit, and deno)
-- **Run all checks**: `make` (format, lint, typecheck, test with coverage)
-- **Format code**: `make format`
-- **Lint code**: `make lint`
-- **Type checking**: `make typecheck` (uses pyright) or `make typecheck-both` (pyright + mypy)
-- **Run tests**: `make test` (with coverage)
+- **Run all checks**: `pre-commit run --all-files`
+- **Run tests**: `make test`
 - **Build docs**: `make docs` or `make docs-serve` (local development)
 
 ### Single Test Commands
+
 - **Run specific test**: `uv run pytest tests/test_agent.py::test_function_name -v`
 - **Run test file**: `uv run pytest tests/test_agent.py -v`
 - **Run with debug**: `uv run pytest tests/test_agent.py -v -s`
-
-### Multi-Python Testing
-- **Install all Python versions**: `make install-all-python`
-- **Test all Python versions**: `make test-all-python`
 
 ## Project Architecture
 
 ### Core Components
 
-**Agent System (`pydantic_ai_slim/pydantic_ai/agent.py`)**
+**Agent System (`pydantic_ai_slim/pydantic_ai/agent/`)**
 - `Agent[AgentDepsT, OutputDataT]`: Main orchestrator class with generic types for dependency injection and output validation
 - Entry points: `run()`, `run_sync()`, `run_stream()` methods
 - Handles tool management, system prompts, and model interaction
 
 **Model Integration (`pydantic_ai_slim/pydantic_ai/models/`)**
 - Unified interface across providers: OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Bedrock, HuggingFace
-- Model strings: `"openai:gpt-4o"`, `"anthropic:claude-3-5-sonnet"`, `"google:gemini-1.5-pro"`
+- Model strings: `"openai:gpt-5"`, `"anthropic:claude-sonnet-4-5"`, `"google:gemini-2.5-pro"`
 - `ModelRequestParameters` for configuration, `StreamedResponse` for streaming
 
 **Graph-based Execution (`pydantic_graph/` + `_agent_graph.py`)**
@@ -60,7 +55,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 class MyDeps:
     database: DatabaseConn
 
-agent = Agent('openai:gpt-4o', deps_type=MyDeps)
+agent = Agent('openai:gpt-5', deps_type=MyDeps)
 
 @agent.tool
 async def get_data(ctx: RunContext[MyDeps]) -> str:
@@ -74,7 +69,7 @@ class OutputModel(BaseModel):
     confidence: float
 
 agent: Agent[MyDeps, OutputModel] = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=MyDeps,
     output_type=OutputModel
 )
@@ -88,7 +83,6 @@ This is a uv workspace with multiple packages:
 - **`pydantic_graph/`**: Graph execution engine
 - **`examples/`**: Example applications
 - **`clai/`**: CLI tool
-- **`mcp-run-python/`**: MCP server implementation (Deno/TypeScript)
 
 ## Testing Strategy
 
@@ -96,7 +90,7 @@ This is a uv workspace with multiple packages:
 - **VCR cassettes**: `tests/cassettes/` for recorded LLM API interactions
 - **Test models**: Use `TestModel` for deterministic testing
 - **Examples testing**: `tests/test_examples.py` validates all documentation examples
-- **Multi-version testing**: Python 3.9-3.13 support
+- **Multi-version testing**: Python 3.10-3.13 support
 
 ## Key Configuration Files
 
@@ -125,3 +119,43 @@ This is a uv workspace with multiple packages:
 - **Lock file**: `uv.lock` (commit this file)
 - **Sync command**: `make sync` to update dependencies
 - **Optional extras**: Define groups in `pyproject.toml` optional-dependencies
+
+## Best Practices
+
+This is the list of best practices for working with the codebase.
+
+### Rename a class
+
+When asked to rename a class, you need to rename the class in the code and add a deprecation warning to the old class.
+
+```python
+from typing_extensions import deprecated
+
+class NewClass: ...  # This class was renamed from OldClass.
+
+@deprecated("Use `NewClass` instead.")
+class OldClass(NewClass): ...
+```
+
+In the test suite, you MUST use the `NewClass` instead of the `OldClass`, and create a new test to verify the
+deprecation warning:
+
+```python
+def test_old_class_is_deprecated():
+    with pytest.warns(DeprecationWarning, match="Use `NewClass` instead."):
+        OldClass()
+```
+
+In the documentation, you should not have references to the old class, only the new class.
+
+### Writing documentation
+
+Always reference Python objects with the "`" (backticks) around them, and link to the API reference, for example:
+
+```markdown
+The [`Agent`][pydantic_ai.agent.Agent] class is the main entry point for creating and running agents.
+```
+
+### Coverage
+
+Every pull request MUST have 100% coverage. You can check the coverage by running `make test`.

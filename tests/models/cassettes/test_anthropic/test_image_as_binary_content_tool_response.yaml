@@ -15,13 +15,13 @@ interactions:
       - api.anthropic.com
     method: POST
     parsed_body:
-      max_tokens: 1024
+      max_tokens: 4096
       messages:
       - content:
         - text: What fruit is in the image you can get from the get_image tool?
           type: text
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
       tool_choice:
         type: auto
@@ -38,7 +38,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '447'
+      - '546'
       content-type:
       - application/json
       strict-transport-security:
@@ -47,23 +47,26 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: Let me get the image and check.
+      - text: Let me get the image and check what fruit is shown.
         type: text
-      - id: toolu_01YJiJ82nETV7aRdJr9f6Np7
+      - id: toolu_01WALUz3dC75yywrmL6dF3Bc
         input: {}
         name: get_image
         type: tool_use
-      id: msg_01CC59GmUmYXKCV26rHfr32m
-      model: claude-3-5-sonnet-20241022
+      id: msg_01Kwjzggomz7bv9og51qGFuH
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
       stop_sequence: null
       type: message
       usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 372
-        output_tokens: 45
+        output_tokens: 49
         service_tier: standard
     status:
       code: 200
@@ -77,23 +80,23 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2780281'
+      - '2780301'
       content-type:
       - application/json
       host:
       - api.anthropic.com
     method: POST
     parsed_body:
-      max_tokens: 1024
+      max_tokens: 4096
       messages:
       - content:
         - text: What fruit is in the image you can get from the get_image tool?
           type: text
         role: user
       - content:
-        - text: Let me get the image and check.
+        - text: Let me get the image and check what fruit is shown.
           type: text
-        - id: toolu_01YJiJ82nETV7aRdJr9f6Np7
+        - id: toolu_01WALUz3dC75yywrmL6dF3Bc
           input: {}
           name: get_image
           type: tool_use
@@ -101,7 +104,7 @@ interactions:
       - content:
         - content: See file 1c8566
           is_error: false
-          tool_use_id: toolu_01YJiJ82nETV7aRdJr9f6Np7
+          tool_use_id: toolu_01WALUz3dC75yywrmL6dF3Bc
           type: tool_result
         - text: 'This is file 1c8566:'
           type: text
@@ -111,7 +114,7 @@ interactions:
             type: base64
           type: image
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
       tool_choice:
         type: auto
@@ -128,7 +131,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '592'
+      - '761'
       content-type:
       - application/json
       strict-transport-security:
@@ -138,20 +141,24 @@ interactions:
     parsed_body:
       content:
       - text: The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with
-          small black seeds arranged in a circular pattern around a white center core. The fruit's thin, fuzzy brown skin
-          is visible around the edges of the slice.
+          small black seeds arranged in a circular pattern around a white center core. The kiwi's flesh has the typical fuzzy
+          brown skin visible around the edges. The image is a clean, well-lit close-up shot of the kiwi slice against a white
+          background.
         type: text
-      id: msg_014MJqSsWD1pUC23Vvi57LoY
-      model: claude-3-5-sonnet-20241022
+      id: msg_015btMBYLTuDnMP7zAeuHQGi
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
       stop_sequence: null
       type: message
       usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 2021
-        output_tokens: 57
+        input_tokens: 2025
+        output_tokens: 81
         service_tier: standard
     status:
       code: 200

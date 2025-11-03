@@ -10,7 +10,7 @@ env*/
 /TODO.md
 /postgres-data/
 .DS_Store
-examples/pydantic_ai_examples/.chat_app_messages.sqlite
+.chat_app_messages.sqlite
 .cache/
 .vscode/
 /question_graph_history.json
@@ -20,3 +20,4 @@ node_modules/
 .coverage*
 /test_tmp/
 .mcp.json
+.claude/

@@ -15,13 +15,13 @@ interactions:
       - api.anthropic.com
     method: POST
     parsed_body:
-      max_tokens: 1024
+      max_tokens: 4096
       messages:
       - content:
         - text: What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.
           type: text
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
       tool_choice:
         type: auto
@@ -38,7 +38,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '540'
+      - '615'
       content-type:
       - application/json
       strict-transport-security:
@@ -47,24 +47,27 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: I'll help you find the largest city in your country. Let me first check your country using the get_user_country
+      - text: I'll help find the largest city in your country. Let me first check your country using the get_user_country
           tool.
         type: text
-      - id: toolu_01EZuxfc6MsPsPgrAKQohw3e
+      - id: toolu_01JJ8TequDsrEU2pv1QFRWAK
         input: {}
         name: get_user_country
         type: tool_use
-      id: msg_014NE4yfV1Yz2vLAJzapxxef
-      model: claude-3-5-sonnet-20241022
+      id: msg_01MsqUB7ZyhjGkvepS1tCXp3
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
       stop_sequence: null
       type: message
       usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 383
-        output_tokens: 66
+        output_tokens: 65
         service_tier: standard
     status:
       code: 200
@@ -78,24 +81,24 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '814'
+      - '810'
       content-type:
       - application/json
       host:
       - api.anthropic.com
     method: POST
     parsed_body:
-      max_tokens: 1024
+      max_tokens: 4096
       messages:
       - content:
         - text: What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.
           type: text
         role: user
       - content:
-        - text: I'll help you find the largest city in your country. Let me first check your country using the get_user_country
+        - text: I'll help find the largest city in your country. Let me first check your country using the get_user_country
             tool.
           type: text
-        - id: toolu_01EZuxfc6MsPsPgrAKQohw3e
+        - id: toolu_01JJ8TequDsrEU2pv1QFRWAK
           input: {}
           name: get_user_country
           type: tool_use
@@ -103,10 +106,10 @@ interactions:
       - content:
         - content: Mexico
           is_error: false
-          tool_use_id: toolu_01EZuxfc6MsPsPgrAKQohw3e
+          tool_use_id: toolu_01JJ8TequDsrEU2pv1QFRWAK
           type: tool_result
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
       tool_choice:
         type: auto
@@ -123,7 +126,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '801'
+      - '812'
       content-type:
       - application/json
       strict-transport-security:
@@ -133,22 +136,24 @@ interactions:
     parsed_body:
       content:
       - text: Based on the result, you are located in Mexico. The largest city in Mexico is Mexico City (Ciudad de México),
-          which is also the nation's capital. Mexico City has a population of approximately 9.2 million people in the city
-          proper, and over 21 million people in its metropolitan area, making it one of the largest urban agglomerations in
-          the world. It is both the political and economic center of Mexico, located in the Valley of Mexico in the central
-          part of the country.
+          which is both the capital and the most populous city in the country. With a population of approximately 9.2 million
+          people in the city proper and over 21 million people in its metropolitan area, Mexico City is not only the largest
+          city in Mexico but also one of the largest cities in the world.
         type: text
-      id: msg_0193srwo7TCx49h97wDwc7K7
-      model: claude-3-5-sonnet-20241022
+      id: msg_0142umg4diSckrDtV9vAmmPL
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
       stop_sequence: null
       type: message
       usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 461
-        output_tokens: 107
+        input_tokens: 460
+        output_tokens: 91
         service_tier: standard
     status:
       code: 200

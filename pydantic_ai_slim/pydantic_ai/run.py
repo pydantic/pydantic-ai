@@ -1,23 +1,27 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from copy import deepcopy
-from typing import Any, Generic, overload
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Generic, Literal, overload
 
-from typing_extensions import Literal
-
-from pydantic_graph import End, GraphRun, GraphRunContext
+from pydantic_graph import BaseNode, End, GraphRunContext
+from pydantic_graph.beta.graph import EndMarker, GraphRun, GraphTask, JoinItem
+from pydantic_graph.beta.step import NodeStep
 
 from . import (
     _agent_graph,
+    _utils,
     exceptions,
     messages as _messages,
     usage as _usage,
 )
 from .output import OutputDataT
-from .result import FinalResult
 from .tools import AgentDepsT
+
+if TYPE_CHECKING:
+    from .result import FinalResult
 
 
 @dataclasses.dataclass(repr=False)
@@ -47,7 +51,6 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         [
             UserPromptNode(
                 user_prompt='What is the capital of France?',
-                instructions=None,
                 instructions_functions=[],
                 system_prompts=(),
                 system_prompt_functions=[],
@@ -66,9 +69,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             CallToolsNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='The capital of France is Paris.')],
-                    usage=Usage(
-                        requests=1, request_tokens=56, response_tokens=7, total_tokens=63
-                    ),
+                    usage=RequestUsage(input_tokens=56, output_tokens=7),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                 )
@@ -102,7 +103,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def ctx(self) -> GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any]]:
         """The current context of the agent run."""
         return GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any]](
-            self._graph_run.state, self._graph_run.deps
+            state=self._graph_run.state, deps=self._graph_run.deps
         )
 
     @property
@@ -113,12 +114,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
         This is the next node that will be used during async iteration, or if a node is not passed to `self.next(...)`.
         """
-        next_node = self._graph_run.next_node
-        if isinstance(next_node, End):
-            return next_node
-        if _agent_graph.is_agent_node(next_node):
-            return next_node
-        raise exceptions.AgentRunError(f'Unexpected node type: {type(next_node)}')  # pragma: no cover
+        task = self._graph_run.next_task
+        return self._task_to_node(task)
 
     @property
     def result(self) -> AgentRunResult[OutputDataT] | None:
@@ -127,13 +124,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Once the run returns an [`End`][pydantic_graph.nodes.End] node, `result` is populated
         with an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult].
         """
-        graph_run_result = self._graph_run.result
-        if graph_run_result is None:
+        graph_run_output = self._graph_run.output
+        if graph_run_output is None:
             return None
         return AgentRunResult(
-            graph_run_result.output.output,
-            graph_run_result.output.tool_name,
-            graph_run_result.state,
+            graph_run_output.output,
+            graph_run_output.tool_name,
+            self._graph_run.state,
             self._graph_run.deps.new_message_index,
             self._traceparent(required=False),
         )
@@ -148,11 +145,28 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self,
     ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
         """Advance to the next node automatically based on the last returned node."""
-        next_node = await self._graph_run.__anext__()
-        if _agent_graph.is_agent_node(node=next_node):
-            return next_node
-        assert isinstance(next_node, End), f'Unexpected node type: {type(next_node)}'
-        return next_node
+        task = await anext(self._graph_run)
+        return self._task_to_node(task)
+
+    def _task_to_node(
+        self, task: EndMarker[FinalResult[OutputDataT]] | JoinItem | Sequence[GraphTask]
+    ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
+        if isinstance(task, Sequence) and len(task) == 1:
+            first_task = task[0]
+            if isinstance(first_task.inputs, BaseNode):  # pragma: no branch
+                base_node: BaseNode[
+                    _agent_graph.GraphAgentState,
+                    _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT],
+                    FinalResult[OutputDataT],
+                ] = first_task.inputs  # type: ignore[reportUnknownMemberType]
+                if _agent_graph.is_agent_node(node=base_node):  # pragma: no branch
+                    return base_node
+        if isinstance(task, EndMarker):
+            return End(task.value)
+        raise exceptions.AgentRunError(f'Unexpected node: {task}')  # pragma: no cover
+
+    def _node_to_task(self, node: _agent_graph.AgentNode[AgentDepsT, OutputDataT]) -> GraphTask:
+        return GraphTask(NodeStep(type(node)).id, inputs=node, fork_stack=())
 
     async def next(
         self,
@@ -184,7 +198,6 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 [
                     UserPromptNode(
                         user_prompt='What is the capital of France?',
-                        instructions=None,
                         instructions_functions=[],
                         system_prompts=(),
                         system_prompt_functions=[],
@@ -203,12 +216,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     CallToolsNode(
                         model_response=ModelResponse(
                             parts=[TextPart(content='The capital of France is Paris.')],
-                            usage=Usage(
-                                requests=1,
-                                request_tokens=56,
-                                response_tokens=7,
-                                total_tokens=63,
-                            ),
+                            usage=RequestUsage(input_tokens=56, output_tokens=7),
                             model_name='gpt-4o',
                             timestamp=datetime.datetime(...),
                         )
@@ -229,18 +237,20 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         # Note: It might be nice to expose a synchronous interface for iteration, but we shouldn't do it
         # on this class, or else IDEs won't warn you if you accidentally use `for` instead of `async for` to iterate.
-        next_node = await self._graph_run.next(node)
-        if _agent_graph.is_agent_node(next_node):
-            return next_node
-        assert isinstance(next_node, End), f'Unexpected node type: {type(next_node)}'
-        return next_node
+        task = [self._node_to_task(node)]
+        try:
+            task = await self._graph_run.next(task)
+        except StopAsyncIteration:
+            pass
+        return self._task_to_node(task)
 
-    def usage(self) -> _usage.Usage:
+    # TODO (v2): Make this a property
+    def usage(self) -> _usage.RunUsage:
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
         return self._graph_run.state.usage
 
     def __repr__(self) -> str:  # pragma: no cover
-        result = self._graph_run.result
+        result = self._graph_run.output
         result_repr = '<run not finished>' if result is None else repr(result.output)
         return f'<{type(self).__name__} result={result_repr} usage={self.usage()}>'
 
@@ -252,10 +262,12 @@ class AgentRunResult(Generic[OutputDataT]):
     output: OutputDataT
     """The output data from the agent run."""
 
-    _output_tool_name: str | None = dataclasses.field(repr=False)
-    _state: _agent_graph.GraphAgentState = dataclasses.field(repr=False)
-    _new_message_index: int = dataclasses.field(repr=False)
-    _traceparent_value: str | None = dataclasses.field(repr=False)
+    _output_tool_name: str | None = dataclasses.field(repr=False, compare=False, default=None)
+    _state: _agent_graph.GraphAgentState = dataclasses.field(
+        repr=False, compare=False, default_factory=_agent_graph.GraphAgentState
+    )
+    _new_message_index: int = dataclasses.field(repr=False, compare=False, default=0)
+    _traceparent_value: str | None = dataclasses.field(repr=False, compare=False, default=None)
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...
@@ -352,6 +364,36 @@ class AgentRunResult(Generic[OutputDataT]):
             self.new_messages(output_tool_return_content=output_tool_return_content)
         )
 
-    def usage(self) -> _usage.Usage:
+    @property
+    def response(self) -> _messages.ModelResponse:
+        """Return the last response from the message history."""
+        # The response may not be the very last item if it contained an output tool call. See `CallToolsNode._handle_final_result`.
+        for message in reversed(self.all_messages()):
+            if isinstance(message, _messages.ModelResponse):
+                return message
+        raise ValueError('No response found in the message history')  # pragma: no cover
+
+    # TODO (v2): Make this a property
+    def usage(self) -> _usage.RunUsage:
         """Return the usage of the whole run."""
         return self._state.usage
+
+    # TODO (v2): Make this a property
+    def timestamp(self) -> datetime:
+        """Return the timestamp of last response."""
+        return self.response.timestamp
+
+
+@dataclasses.dataclass(repr=False)
+class AgentRunResultEvent(Generic[OutputDataT]):
+    """An event indicating the agent run ended and containing the final result of the agent run."""
+
+    result: AgentRunResult[OutputDataT]
+    """The result of the run."""
+
+    _: dataclasses.KW_ONLY
+
+    event_kind: Literal['agent_run_result'] = 'agent_run_result'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr

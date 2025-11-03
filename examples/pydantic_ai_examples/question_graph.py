@@ -12,6 +12,8 @@ from pathlib import Path
 
 import logfire
 from groq import BaseModel
+
+from pydantic_ai import Agent, ModelMessage, format_as_xml
 from pydantic_graph import (
     BaseNode,
     End,
@@ -20,14 +22,11 @@ from pydantic_graph import (
 )
 from pydantic_graph.persistence.file import FileStatePersistence
 
-from pydantic_ai import Agent, format_as_xml
-from pydantic_ai.messages import ModelMessage
-
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
-ask_agent = Agent('openai:gpt-4o', output_type=str)
+ask_agent = Agent('openai:gpt-5', output_type=str)
 
 
 @dataclass
@@ -66,7 +65,7 @@ class EvaluationOutput(BaseModel, use_attribute_docstrings=True):
 
 
 evaluate_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=EvaluationOutput,
     system_prompt='Given a question and answer, evaluate if the answer is correct.',
 )

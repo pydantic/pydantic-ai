@@ -2,7 +2,9 @@ from __future__ import annotations as _annotations
 
 import json
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from pydantic_core import core_schema
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
@@ -14,17 +16,20 @@ if TYPE_CHECKING:
 
 __all__ = (
     'ModelRetry',
+    'CallDeferred',
+    'ApprovalRequired',
     'UserError',
     'AgentRunError',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'ModelHTTPError',
+    'IncompleteToolCall',
     'FallbackExceptionGroup',
 )
 
 
 class ModelRetry(Exception):
-    """Exception raised when a tool function should be retried.
+    """Exception to raise when a tool function should be retried.
 
     The agent will return the message to the model and ask it to try calling the function/tool again.
     """
@@ -35,6 +40,45 @@ class ModelRetry(Exception):
     def __init__(self, message: str):
         self.message = message
         super().__init__(message)
+
+    def __eq__(self, other: Any) -> bool:
+        return isinstance(other, self.__class__) and other.message == self.message
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, _: Any, __: Any) -> core_schema.CoreSchema:
+        """Pydantic core schema to allow `ModelRetry` to be (de)serialized."""
+        schema = core_schema.typed_dict_schema(
+            {
+                'message': core_schema.typed_dict_field(core_schema.str_schema()),
+                'kind': core_schema.typed_dict_field(core_schema.literal_schema(['model-retry'])),
+            }
+        )
+        return core_schema.no_info_after_validator_function(
+            lambda dct: ModelRetry(dct['message']),
+            schema,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                lambda x: {'message': x.message, 'kind': 'model-retry'},
+                return_schema=schema,
+            ),
+        )
+
+
+class CallDeferred(Exception):
+    """Exception to raise when a tool call should be deferred.
+
+    See [tools docs](../deferred-tools.md#deferred-tools) for more information.
+    """
+
+    pass
+
+
+class ApprovalRequired(Exception):
+    """Exception to raise when a tool call requires human-in-the-loop approval.
+
+    See [tools docs](../deferred-tools.md#human-in-the-loop-tool-approval) for more information.
+    """
+
+    pass
 
 
 class UserError(RuntimeError):
@@ -115,7 +159,7 @@ class ModelHTTPError(AgentRunError):
         super().__init__(message)
 
 
-class FallbackExceptionGroup(ExceptionGroup):
+class FallbackExceptionGroup(ExceptionGroup[Any]):
     """A group of exceptions that can be raised when all fallback models fail."""
 
 
@@ -125,3 +169,7 @@ class ToolRetryError(Exception):
     def __init__(self, tool_retry: RetryPromptPart):
         self.tool_retry = tool_retry
         super().__init__()
+
+
+class IncompleteToolCall(UnexpectedModelBehavior):
+    """Error raised when a model stops due to token limit while emitting a tool call."""

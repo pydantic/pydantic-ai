@@ -1,0 +1,322 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '517'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise. Never use pretty double quotes, just regular ones.
+        role: system
+      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling
+        role: user
+      model: openai/gpt-oss-120b
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_something_by_name
+          parameters:
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+            required:
+            - name
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '401'
+      content-type:
+      - application/json
+      vary:
+      - Origin
+    parsed_body:
+      error:
+        code: tool_use_failed
+        failed_generation: |-
+          {"name": "get_something_by_name", "arguments": {
+            "invalid_param": "test"
+          }}
+        message: 'Tool call validation failed: tool call validation failed: parameters for tool get_something_by_name did
+          not match schema: errors: [missing properties: ''name'', additionalProperties ''invalid_param'' not allowed]'
+        type: invalid_request_error
+    status:
+      code: 400
+      message: Bad Request
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1194'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=WMG3BQS5HkdpU5Z0Li6BHrMf9LpbLVf439yJW6y0o_Y-1756847034-1.0.1.1-QyWCGYlk_BGpqUCXdhczqr0bBq94afUlKTqyv_FDO5ksNzCNdNY5QkKBCi.RoWCRo.oIhWHmFJ3mW_Ab3IyyI3wFCLdQql_yH0EkgoEi31M
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise. Never use pretty double quotes, just regular ones.
+        role: system
+      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"invalid_param":"test"}'
+            name: get_something_by_name
+          id: pyd_ai_ad025dbe97d74d7f8693ee8fe14fa558
+          type: function
+      - content: |-
+          2 validation errors: [
+            {
+              "type": "missing",
+              "loc": [
+                "name"
+              ],
+              "msg": "Field required",
+              "input": {
+                "invalid_param": "test"
+              }
+            },
+            {
+              "type": "extra_forbidden",
+              "loc": [
+                "invalid_param"
+              ],
+              "msg": "Extra inputs are not permitted",
+              "input": "test"
+            }
+          ]
+
+          Fix the errors and try again.
+        role: tool
+        tool_call_id: pyd_ai_ad025dbe97d74d7f8693ee8fe14fa558
+      model: openai/gpt-oss-120b
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_something_by_name
+          parameters:
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+            required:
+            - name
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '827'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          reasoning: 'We need to call with correct param name: name. Provide a non-existent name perhaps "nonexistent".'
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"name":"nonexistent"}'
+              name: get_something_by_name
+            id: fc_c8fd1e7c-0e6b-4a28-8ef2-516c38aa9ba8
+            type: function
+      created: 1756847034
+      id: chatcmpl-01583e50-828f-4759-82e2-08b35493ebe6
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_213abb2467
+      usage:
+        completion_time: 0.097360195
+        completion_tokens: 49
+        prompt_time: 0.01243387
+        prompt_tokens: 283
+        queue_time: 0.245412094
+        total_time: 0.109794065
+        total_tokens: 332
+      usage_breakdown: null
+      x_groq:
+        id: req_01k463wm1xesw9bd2z9mvdrt70
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1500'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=WMG3BQS5HkdpU5Z0Li6BHrMf9LpbLVf439yJW6y0o_Y-1756847034-1.0.1.1-QyWCGYlk_BGpqUCXdhczqr0bBq94afUlKTqyv_FDO5ksNzCNdNY5QkKBCi.RoWCRo.oIhWHmFJ3mW_Ab3IyyI3wFCLdQql_yH0EkgoEi31M
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise. Never use pretty double quotes, just regular ones.
+        role: system
+      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"invalid_param":"test"}'
+            name: get_something_by_name
+          id: pyd_ai_ad025dbe97d74d7f8693ee8fe14fa558
+          type: function
+      - content: |-
+          2 validation errors: [
+            {
+              "type": "missing",
+              "loc": [
+                "name"
+              ],
+              "msg": "Field required",
+              "input": {
+                "invalid_param": "test"
+              }
+            },
+            {
+              "type": "extra_forbidden",
+              "loc": [
+                "invalid_param"
+              ],
+              "msg": "Extra inputs are not permitted",
+              "input": "test"
+            }
+          ]
+
+          Fix the errors and try again.
+        role: tool
+        tool_call_id: pyd_ai_ad025dbe97d74d7f8693ee8fe14fa558
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"name":"nonexistent"}'
+            name: get_something_by_name
+          id: fc_c8fd1e7c-0e6b-4a28-8ef2-516c38aa9ba8
+          type: function
+      - content: 'Something with name: nonexistent'
+        role: tool
+        tool_call_id: fc_c8fd1e7c-0e6b-4a28-8ef2-516c38aa9ba8
+      model: openai/gpt-oss-120b
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_something_by_name
+          parameters:
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+            required:
+            - name
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1019'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: 'Something with name: nonexistent'
+          reasoning: 'The user asked: "Please call the ''get_something_by_name'' tool with non-existent parameters to test
+            error handling". They wanted to test error handling with non-existent parameters, but we corrected to proper parameters.
+            The response from tool: "Something with name: nonexistent". Should we respond? Probably just output the result.
+            Follow developer instruction: be concise, no fancy quotes. Use regular quotes only.'
+          role: assistant
+      created: 1756847037
+      id: chatcmpl-5b729d91-3507-4942-bd0d-27e7732afc6d
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_213abb2467
+      usage:
+        completion_time: 0.205303865
+        completion_tokens: 96
+        prompt_time: 0.018679785
+        prompt_tokens: 319
+        queue_time: 2.222792642
+        total_time: 0.22398365
+        total_tokens: 415
+      usage_breakdown: null
+      x_groq:
+        id: req_01k463wmgvfwwbcdj54311368h
+    status:
+      code: 200
+      message: OK
+version: 1

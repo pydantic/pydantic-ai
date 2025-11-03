@@ -2,31 +2,34 @@ from __future__ import annotations as _annotations
 
 import json
 import os
-from collections.abc import Sequence
+import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import timezone
+from decimal import Decimal
 from functools import cached_property
-from typing import Any, Callable, TypeVar, Union, cast
+from typing import Any, TypeVar, cast
 
 import httpx
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelHTTPError, ModelRetry
-from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
     FinalResultEvent,
     ImageUrl,
+    ModelHTTPError,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelRetry,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
@@ -35,12 +38,20 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebSearchTool
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import (
+    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
+    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+)
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.result import Usage
+from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from ..parts_from_messages import part_types_from_messages
@@ -48,12 +59,19 @@ from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic
+    from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
         BetaContentBlock,
         BetaInputJSONDelta,
+        BetaMemoryTool20250818CreateCommand,
+        BetaMemoryTool20250818DeleteCommand,
+        BetaMemoryTool20250818InsertCommand,
+        BetaMemoryTool20250818RenameCommand,
+        BetaMemoryTool20250818StrReplaceCommand,
+        BetaMemoryTool20250818ViewCommand,
         BetaMessage,
         BetaMessageDeltaUsage,
         BetaRawContentBlockDeltaEvent,
@@ -77,16 +95,23 @@ with try_import() as imports_successful:
         AnthropicModelSettings,
         _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
-    # note: we use Union here so that casting works with Python 3.9
-    MockAnthropicMessage = Union[BetaMessage, Exception]
-    MockRawMessageStreamEvent = Union[BetaRawMessageStreamEvent, Exception]
+    MockAnthropicMessage = BetaMessage | Exception
+    MockRawMessageStreamEvent = BetaRawMessageStreamEvent | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+    ),
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+    ),
 ]
 
 # Type variable for generic AsyncStream
@@ -94,9 +119,10 @@ T = TypeVar('T')
 
 
 def test_init():
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key='foobar'))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='foobar'))
+    assert isinstance(m.client, AsyncAnthropic)
     assert m.client.api_key == 'foobar'
-    assert m.model_name == 'claude-3-5-haiku-latest'
+    assert m.model_name == 'claude-haiku-4-5'
     assert m.system == 'anthropic'
     assert m.base_url == 'https://api.anthropic.com'
 
@@ -167,17 +193,16 @@ def completion_message(content: list[BetaContentBlock], usage: BetaUsage) -> Bet
 async def test_sync_request_text_response(allow_model_requests: None):
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('hello')
     assert result.output == 'world'
     assert result.usage() == snapshot(
-        Usage(
+        RunUsage(
             requests=1,
-            request_tokens=5,
-            response_tokens=10,
-            total_tokens=15,
+            input_tokens=5,
+            output_tokens=10,
             details={'input_tokens': 5, 'output_tokens': 10},
         )
     )
@@ -187,11 +212,10 @@ async def test_sync_request_text_response(allow_model_requests: None):
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
     assert result.usage() == snapshot(
-        Usage(
+        RunUsage(
             requests=1,
-            request_tokens=5,
-            response_tokens=10,
-            total_tokens=15,
+            input_tokens=5,
+            output_tokens=10,
             details={'input_tokens': 5, 'output_tokens': 10},
         )
     )
@@ -200,30 +224,24 @@ async def test_sync_request_text_response(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=5,
-                    response_tokens=10,
-                    total_tokens=15,
-                    details={'input_tokens': 5, 'output_tokens': 10},
-                ),
+                usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_id='123',
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=5,
-                    response_tokens=10,
-                    total_tokens=15,
-                    details={'input_tokens': 5, 'output_tokens': 10},
-                ),
+                usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_id='123',
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -240,17 +258,18 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
         ),
     )
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('hello')
     assert result.output == 'world'
     assert result.usage() == snapshot(
-        Usage(
+        RunUsage(
             requests=1,
-            request_tokens=13,
-            response_tokens=5,
-            total_tokens=18,
+            input_tokens=13,
+            cache_write_tokens=4,
+            cache_read_tokens=6,
+            output_tokens=5,
             details={
                 'input_tokens': 3,
                 'output_tokens': 5,
@@ -259,6 +278,9 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
             },
         )
     )
+    last_message = result.all_messages()[-1]
+    assert isinstance(last_message, ModelResponse)
+    assert last_message.cost().total_price == snapshot(Decimal('0.00002688'))
 
 
 async def test_async_request_text_response(allow_model_requests: None):
@@ -267,17 +289,16 @@ async def test_async_request_text_response(allow_model_requests: None):
         usage=BetaUsage(input_tokens=3, output_tokens=5),
     )
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('hello')
     assert result.output == 'world'
     assert result.usage() == snapshot(
-        Usage(
+        RunUsage(
             requests=1,
-            request_tokens=3,
-            response_tokens=5,
-            total_tokens=8,
+            input_tokens=3,
+            output_tokens=5,
             details={'input_tokens': 3, 'output_tokens': 5},
         )
     )
@@ -289,7 +310,7 @@ async def test_request_structured_response(allow_model_requests: None):
         usage=BetaUsage(input_tokens=3, output_tokens=5),
     )
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, output_type=list[int])
 
     result = await agent.run('hello')
@@ -305,16 +326,13 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=3,
-                    response_tokens=5,
-                    total_tokens=8,
-                    details={'input_tokens': 3, 'output_tokens': 5},
-                ),
+                usage=RequestUsage(input_tokens=3, output_tokens=5, details={'input_tokens': 3, 'output_tokens': 5}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_id='123',
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -347,7 +365,7 @@ async def test_request_tool_call(allow_model_requests: None):
     ]
 
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.tool_plain
@@ -375,16 +393,13 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=2,
-                    response_tokens=1,
-                    total_tokens=3,
-                    details={'input_tokens': 2, 'output_tokens': 1},
-                ),
+                usage=RequestUsage(input_tokens=2, output_tokens=1, details={'input_tokens': 2, 'output_tokens': 1}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_id='123',
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -404,16 +419,13 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=3,
-                    response_tokens=2,
-                    total_tokens=5,
-                    details={'input_tokens': 3, 'output_tokens': 2},
-                ),
+                usage=RequestUsage(input_tokens=3, output_tokens=2, details={'input_tokens': 3, 'output_tokens': 2}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_id='123',
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -427,16 +439,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=3,
-                    response_tokens=5,
-                    total_tokens=8,
-                    details={'input_tokens': 3, 'output_tokens': 5},
-                ),
+                usage=RequestUsage(input_tokens=3, output_tokens=5, details={'input_tokens': 3, 'output_tokens': 5}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_id='123',
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -463,7 +472,7 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
     ]
 
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=ModelSettings(parallel_tool_calls=parallel_tool_calls))
 
     @agent.tool_plain
@@ -499,9 +508,9 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
 
     # If we don't provide some value for the API key, the anthropic SDK will raise an error.
     # However, we do want to use the environment variable if present when rewriting VCR cassettes.
-    api_key = os.environ.get('ANTHROPIC_API_KEY', 'mock-value')
+    api_key = os.getenv('ANTHROPIC_API_KEY', 'mock-value')
     agent = Agent(
-        AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=api_key)),
+        AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=api_key)),
         system_prompt=system_prompt,
         tools=[retrieve_entity_info],
     )
@@ -515,7 +524,7 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
     assert first_response.parts == snapshot(
         [
             TextPart(
-                content="I'll help you find out who is the youngest by retrieving information about each family member.",
+                content="I'll help you find out who is the youngest by retrieving information about each family member. I'll retrieve their entity information to compare their ages.",
                 part_kind='text',
             ),
             ToolCallPart(
@@ -575,7 +584,7 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
 async def test_anthropic_specific_metadata(allow_model_requests: None) -> None:
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_metadata={'user_id': '123'}))
@@ -599,7 +608,7 @@ async def test_stream_structured(allow_model_requests: None):
             type='message_start',
             message=BetaMessage(
                 id='msg_123',
-                model='claude-3-5-haiku-latest',
+                model='claude-3-5-haiku-123',
                 role='assistant',
                 type='message',
                 content=[],
@@ -635,7 +644,7 @@ async def test_stream_structured(allow_model_requests: None):
         BetaRawMessageDeltaEvent(
             type='message_delta',
             delta=Delta(stop_reason='end_turn'),
-            usage=BetaMessageDeltaUsage(output_tokens=5),
+            usage=BetaMessageDeltaUsage(input_tokens=20, output_tokens=5),
         ),
         # Mark message as complete
         BetaRawMessageStopEvent(type='message_stop'),
@@ -646,7 +655,7 @@ async def test_stream_structured(allow_model_requests: None):
             type='message_start',
             message=BetaMessage(
                 id='msg_123',
-                model='claude-3-5-haiku-latest',
+                model='claude-3-5-haiku-123',
                 role='assistant',
                 type='message',
                 content=[],
@@ -661,11 +670,16 @@ async def test_stream_structured(allow_model_requests: None):
             content_block=BetaTextBlock(type='text', text='FINAL_PAYLOAD'),
         ),
         BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='end_turn'),
+            usage=BetaMessageDeltaUsage(input_tokens=0, output_tokens=0),
+        ),
         BetaRawMessageStopEvent(type='message_stop'),
     ]
 
     mock_client = MockAnthropic.create_stream_mock([stream, done_stream])
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     tool_called = False
@@ -678,31 +692,40 @@ async def test_stream_structured(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        chunks = [c async for c in result.stream(debounce_by=None)]
+        chunks = [c async for c in result.stream_output(debounce_by=None)]
 
         # The tool output doesn't echo any content to the stream, so we only get the final payload once when
         # the block starts and once when it ends.
-        assert chunks == snapshot(
-            [
-                'FINAL_PAYLOAD',
-                'FINAL_PAYLOAD',
-            ]
-        )
+        assert chunks == snapshot(['FINAL_PAYLOAD'])
         assert result.is_complete
         assert result.usage() == snapshot(
-            Usage(
+            RunUsage(
                 requests=2,
-                request_tokens=20,
-                response_tokens=5,
-                total_tokens=25,
+                input_tokens=20,
+                output_tokens=5,
+                tool_calls=1,
                 details={'input_tokens': 20, 'output_tokens': 5},
             )
         )
         assert tool_called
+        async for response, is_last in result.stream_responses(debounce_by=None):
+            if is_last:
+                assert response == snapshot(
+                    ModelResponse(
+                        parts=[TextPart(content='FINAL_PAYLOAD')],
+                        usage=RequestUsage(details={'input_tokens': 0, 'output_tokens': 0}),
+                        model_name='claude-3-5-haiku-123',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={'finish_reason': 'end_turn'},
+                        provider_response_id='msg_123',
+                        finish_reason='stop',
+                    )
+                )
 
 
 async def test_image_url_input(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     result = await agent.run(
@@ -712,13 +735,13 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
         ]
     )
     assert result.output == snapshot(
-        "This is a potato. It's a yellow/golden-colored potato with a characteristic oblong, slightly irregular shape and a skin covered in small eyes or indentations. Potatoes are a starchy root vegetable that belongs to the nightshade family and are a staple food in many cuisines around the world. This particular potato looks like it's in good condition, with a smooth, unblemished skin and a uniform yellow color."
+        "This is a potato. It's a yellow/golden-colored potato with a smooth, slightly bumpy skin typical of many potato varieties. The potato appears to be a whole, unpeeled tuber with a classic oblong or oval shape. Potatoes are starchy root vegetables that are widely consumed around the world and can be prepared in many ways, such as boiling, baking, frying, or mashing."
     )
 
 
 async def test_extra_headers(allow_model_requests: None, anthropic_api_key: str):
     # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         m,
         model_settings=AnthropicModelSettings(
@@ -729,7 +752,7 @@ async def test_extra_headers(allow_model_requests: None, anthropic_api_key: str)
 
 
 async def test_image_url_input_invalid_mime_type(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     result = await agent.run(
@@ -741,14 +764,14 @@ async def test_image_url_input_invalid_mime_type(allow_model_requests: None, ant
         ]
     )
     assert result.output == snapshot(
-        'This is a Great Horned Owl (Bubo virginianus), a large and powerful owl species native to the Americas. The owl is shown sitting on a branch surrounded by yellow-green foliage, with its distinctive mottled gray-brown feathers and prominent ear tufts (often called "horns"). It has striking yellow eyes that are looking directly at the camera, giving it an intense and alert appearance. Great Horned Owls are known for their excellent camouflage, powerful talons, and nocturnal hunting habits. They are widespread across North and South America and are one of the most common and adaptable owl species.'
+        'This is a Great Horned Owl (Bubo virginianus), a large and powerful owl species native to the Americas. The image shows the owl perched on a log or branch, surrounded by soft yellow and green vegetation. The owl has distinctive ear tufts (the "horns"), large yellow eyes, and a mottled gray-brown plumage that provides excellent camouflage in woodland and grassland environments. Great Horned Owls are known for their impressive size, sharp talons, and nocturnal hunting habits. They are formidable predators that can hunt animals as large as skunks, rabbits, and even other birds of prey.'
     )
 
 
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, anthropic_api_key: str, image_content: BinaryContent
 ):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -768,31 +791,32 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content='Let me get the image and check.'),
-                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01YJiJ82nETV7aRdJr9f6Np7'),
+                    TextPart(content='Let me get the image and check what fruit is shown.'),
+                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01WALUz3dC75yywrmL6dF3Bc'),
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=372,
-                    response_tokens=45,
-                    total_tokens=417,
+                usage=RequestUsage(
+                    input_tokens=372,
+                    output_tokens=49,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 372,
-                        'output_tokens': 45,
+                        'output_tokens': 49,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01CC59GmUmYXKCV26rHfr32m',
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id='msg_01Kwjzggomz7bv9og51qGFuH',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file 1c8566',
-                        tool_call_id='toolu_01YJiJ82nETV7aRdJr9f6Np7',
+                        tool_call_id='toolu_01WALUz3dC75yywrmL6dF3Bc',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -807,24 +831,25 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The fruit's thin, fuzzy brown skin is visible around the edges of the slice."
+                        content="The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The kiwi's flesh has the typical fuzzy brown skin visible around the edges. The image is a clean, well-lit close-up shot of the kiwi slice against a white background."
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=2021,
-                    response_tokens=57,
-                    total_tokens=2078,
+                usage=RequestUsage(
+                    input_tokens=2025,
+                    output_tokens=81,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 2021,
-                        'output_tokens': 57,
+                        'input_tokens': 2025,
+                        'output_tokens': 81,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
-                vendor_id='msg_014MJqSsWD1pUC23Vvi57LoY',
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_015btMBYLTuDnMP7zAeuHQGi',
+                finish_reason='stop',
             ),
         ]
     )
@@ -834,7 +859,7 @@ async def test_image_as_binary_content_tool_response(
 async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     base64_content = b'//uQZ'
@@ -851,64 +876,54 @@ def test_model_status_error(allow_model_requests: None) -> None:
             body={'error': 'test error'},
         )
     )
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     assert str(exc_info.value) == snapshot(
-        "status_code: 500, model_name: claude-3-5-sonnet-latest, body: {'error': 'test error'}"
+        "status_code: 500, model_name: claude-sonnet-4-5, body: {'error': 'test error'}"
     )
 
 
 async def test_document_binary_content_input(
     allow_model_requests: None, anthropic_api_key: str, document_content: BinaryContent
 ):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     result = await agent.run(['What is the main content on this document?', document_content])
     assert result.output == snapshot(
-        'The document shows only the text "Dummy PDF file" at the top of what appears to be a blank white page.'
+        'The document simply contains the text "Dummy PDF file" at the top of what appears to be an otherwise blank page.'
     )
 
 
 async def test_document_url_input(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     document_url = DocumentUrl(url='https://pdfobject.com/pdf/sample.pdf')
 
     result = await agent.run(['What is the main content on this document?', document_url])
     assert result.output == snapshot(
-        'This document appears to be a sample PDF file that contains Lorem ipsum text, which is placeholder text commonly used in design and publishing. The document starts with "Sample PDF" and includes the line "This is a simple PDF file. Fun fun fun." followed by several paragraphs of Lorem ipsum text. Lorem ipsum is dummy text that has no meaningful content - it\'s typically used to demonstrate the visual form of a document or typeface without the distraction of meaningful content.'
+        'This document appears to be a sample PDF file that mainly contains Lorem ipsum text, which is placeholder text commonly used in design and publishing. The document starts with "Sample PDF" as its title, followed by the line "This is a simple PDF file. Fun fun fun." The rest of the content consists of several paragraphs of Lorem ipsum text, which is Latin-looking but essentially meaningless text used to demonstrate the visual form of a document without the distraction of meaningful content.'
     )
 
 
 async def test_text_document_url_input(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     text_document_url = DocumentUrl(url='https://example-files.online-convert.com/document/txt/example.txt')
 
     result = await agent.run(['What is the main content on this document?', text_document_url])
     assert result.output == snapshot("""\
-This document is primarily about the use of placeholder names, specifically focusing on "John Doe" and its variants. The content explains how these placeholder names are used in legal contexts and other situations when a person's identity is unknown or needs to be withheld. The text describes:
+This document is a TXT test file that contains example content about the use of placeholder names like "John Doe," "Jane Doe," and their variants in legal and cultural contexts. The main content is divided into three main paragraphs explaining:
 
-1. Various placeholder names like:
-- "John Doe" (for males)
-- "Jane Doe" or "Jane Roe" (for females)
-- "Jonnie Doe" and "Janie Doe" (for children)
-- "Baby Doe" (for unidentified children)
+1. The use of "Doe" names as placeholders for unknown parties in legal actions
+2. The use of "John Doe" as a reference to a typical male in various contexts
+3. The use of variations like "Baby Doe" and numbered "John Doe"s in specific cases
 
-2. The usage of these names in:
-- Legal actions and cases
-- Hospital settings for unidentified patients
-- Forms and examples
-- Popular culture
-
-3. Regional variations, noting that while this practice is common in the United States and Canada, other English-speaking countries like the UK use alternatives such as "Joe Bloggs" or "John Smith."
-
-The document appears to be a test file with example content sourced from Wikipedia, including licensing information and attribution details at the end.\
+The document also includes metadata about the file itself, including its purpose, type, and version, as well as attribution information indicating that the example content is from Wikipedia and is licensed under Attribution-ShareAlike 4.0.\
 """)
 
 
@@ -943,11 +958,9 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=20,
-                    response_tokens=10,
-                    total_tokens=30,
+                usage=RequestUsage(
+                    input_tokens=20,
+                    output_tokens=10,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -957,14 +970,17 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 ),
                 model_name='claude-3-opus-20240229',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01BznVNBje2zyfpCfNQCD5en',
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01Fg1JVgvCYUHWsxrj9GkpEv',
+                finish_reason='stop',
             ),
         ]
     )
 
 
 async def test_anthropic_model_thinking_part(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-7-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
     agent = Agent(m, model_settings=settings)
 
@@ -975,26 +991,40 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content="This is a basic question about pedestrian safety when crossing a street. I'll provide a clear, step-by-step explanation of how to safely cross a street. This is important safety information that applies to most places, though specific rules might vary slightly by country.",
-                        signature='ErUBCkYIBBgCIkDdtS5sPfAhQSct3TDKHzeqm87m7bk/P0ecMKVxqofk9q15fEDVWXxuIzQIYZCLUfcJzFi4/IYnpQYrgP34x4pnEgzeA7mWRCy/f1bK+IYaDH5i0Q5hgZkqPeMdwSIwMzHMBPM4Xae4czWnzjHGLR9Xg7DN+sb+MXKFgdXY4bcaOKzhImS05aqIjqBs4CHyKh1dTzSnHd76MAHgM1qjBQ2eIZJJ7s5WGkRkbvWzTxgC',
+                        content="""\
+This is a straightforward question about a common everyday task - crossing the street safely. I should provide clear, helpful instructions that emphasize safety.
+
+The basic steps for crossing a street safely include:
+1. Find a designated crossing area if possible (crosswalk, pedestrian crossing)
+2. Look both ways before crossing
+3. Make eye contact with drivers if possible
+4. Follow traffic signals if present
+5. Cross quickly but don't run
+6. Continue to be aware of traffic while crossing
+
+I'll provide this information in a clear, helpful way, emphasizing safety without being condescending.\
+""",
+                        signature='ErUBCkYIBhgCIkB9AyHADyBknnHL4dh+Yj3rg3javltU/bz1MLHKCQTEVZwvjis+DKTOFSYqZU0F2xasSofECVAmYmgtRf87AL52EgyXRs8lh+1HtZ0V+wAaDBo0eAabII+t1pdHzyIweFpD2l4j1eeUwN8UQOW+bxcN3mwu144OdOoUxmEKeOcU97wv+VF2pCsm07qcvucSKh1P/rZzWuYm7vxdnD4EVFHdBeewghoO0Ngc1MTNsxgC',
+                        provider_name='anthropic',
                     ),
                     TextPart(content=IsStr()),
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=42,
-                    response_tokens=302,
-                    total_tokens=344,
+                usage=RequestUsage(
+                    input_tokens=42,
+                    output_tokens=363,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 42,
-                        'output_tokens': 302,
+                        'output_tokens': 363,
                     },
                 ),
-                model_name='claude-3-7-sonnet-20250219',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01FWiSVNCRHvHUYU21BRandY',
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01BnZvs3naGorn93wjjCDwbd',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1003,27 +1033,8 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
         'Considering the way to cross the street, analogously, how do I cross the river?',
         message_history=result.all_messages(),
     )
-    assert result.all_messages() == snapshot(
+    assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=42,
-                    response_tokens=302,
-                    total_tokens=344,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 42,
-                        'output_tokens': 302,
-                    },
-                ),
-                model_name='claude-3-7-sonnet-20250219',
-                timestamp=IsDatetime(),
-                vendor_id=IsStr(),
-            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(
@@ -1036,43 +1047,396 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                 parts=[
                     ThinkingPart(
                         content="""\
-This is an interesting analogy question. The person is asking how to cross a river by comparing it to crossing a street. I should outline the key principles of river crossing that parallel street crossing safety, while adapting for the unique challenges of a river environment.
+The person is asking me to draw an analogy between crossing a street and crossing a river. I'll structure my response similarly to my street-crossing guidelines, but adapt it for river crossing, which has different safety considerations and methods.
 
-For crossing a river, I should consider:
-1. Finding the right spot (like shallow areas, bridges, or ferry crossings)
-2. Assessing the conditions (river speed, depth, width, obstacles)
-3. Choosing the appropriate method based on the river conditions
-4. Safety precautions specific to water crossings
+For crossing a river, I should include:
+1. Finding the right spot (bridges, shallow areas, ferry points)
+2. Assessing safety (current speed, depth, obstacles)
+3. Choosing the appropriate method (walking across shallow areas, using bridges, boats, etc.)
+4. Safety precautions (life vests, ropes, etc.)
 5. The actual crossing technique
+6. What to do in emergencies
 
-I'll structure this as a parallel to the street crossing guide, highlighting the similarities in approach while acknowledging the different hazards and considerations.\
+I'll keep the format similar to my street-crossing response for consistency.\
 """,
-                        signature='ErUBCkYIBBgCIkCNPEqIUXmAqiaqIqaHEmtiTi5sG6jBLYWmyfr9ELAh9dLAPPiq0Bnp2YQFJB2kz0aWYC8pJW9ylay8cJPFOGdIEgwcoJGGceEVCihog7MaDBZNwmI8LweQANgdvCIwvYrhAAqUDGHfQUYWuVB3ay4ySnmnROCDhtjOe6zTA2N2NC+BCePcZQBGQh/tnuoXKh37QqP3KRrKdVU5j1x4vAtUNtxQhbh4ip5qU5J12xgC',
+                        signature='ErUBCkYIBhgCIkDvSvKCs5ePyYmR6zFw5i+jF7KEmortSIleqDa4gfa3pbuBclQt0TPdacouhdXFHdVSqR4qOAAAOpN7RQEUz2o6Egy9MPee6H8U4SW/G2QaDP/9ysoEvk+yNyVYZSIw+/+5wuRyc3oajwV3w0EdL9CIAXXd5thQH7DwAe3HTFvoJuF4oZ4fU+Kh6LRqxnEaKh3SSRqAH4UH/sD86duzg0jox4J/NH4C9iILVesEERgC',
+                        provider_name='anthropic',
                     ),
                     TextPart(content=IsStr()),
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=303,
-                    response_tokens=486,
-                    total_tokens=789,
+                usage=RequestUsage(
+                    input_tokens=291,
+                    output_tokens=471,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 303,
-                        'output_tokens': 486,
+                        'input_tokens': 291,
+                        'output_tokens': 471,
                     },
                 ),
-                model_name='claude-3-7-sonnet-20250219',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
-                vendor_id=IsStr(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-5-20250929', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
+    agent = Agent(m, model_settings=settings)
+
+    result = await agent.run(
+        'ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(
+                    input_tokens=92,
+                    output_tokens=196,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 92,
+                        'output_tokens': 196,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01TbZ1ZKNMPq28AgBLyLX3c4',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'What was that?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What was that?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(
+                    input_tokens=168,
+                    output_tokens=232,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 168,
+                        'output_tokens': 232,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_012oSSVsQdwoGH6b2fryM4fF',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_anthropic_model_thinking_part_redacted_stream(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-5-20250929', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
+    agent = Agent(m, model_settings=settings)
+
+    event_parts: list[Any] = []
+    async with agent.iter(
+        user_prompt='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB'
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(
+                    input_tokens=92,
+                    output_tokens=189,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 92,
+                        'output_tokens': 189,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_018XZkwvj9asBiffg3fXt88s',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_thinking',
+                    signature=IsStr(),
+                    provider_name='anthropic',
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_thinking',
+                    signature='EqkECkYIBxgCKkA8AZ4noDfV5VcOJe/p3JTRB6Xz5297mrWhl3MbHSXDKTMfuB/Z52U2teiWWTN0gg4eQ4bGS9TPilFX/xWTIq9HEgyOmstSPriNwyn1G7AaDC51r0hQ062qEd55IiIwYQj3Z3MSBBv0bSVdXi60LEHDvC7tzzmpQfw5Hb6R9rtyOz/6vC/xPw9/E1mUqfBqKpADO2HS2QlE/CnuzR901nZOn0TOw7kEXwH7kg30c85b9W7iKALgEejY9sELMBdPyIZNlTgKqNOKtY3R/aV5rGIRPTHh2Wh9Ijmqsf/TT7i//Z+InaYTo6f/fxF8R0vFXMRPOBME4XIscb05HcNhh4c9FDkpqQGYKaq31IR1NNwPWA0BsvdDz7SIo1nfx4H+X0qKKqqegKnQ3ynaXiD5ydT1C4U7fku4ftgF0LGwIk4PwXBE+4BP0DcKr1HV3cn7YSyNakBSDTvRJMKcXW6hl7X3w2a4//sxjC1Cjq0uzkIHkhzRWirN0OSXt+g3m6b1ex0wGmSyuO17Ak6kgVBpxwPugtrqsflG0oujFem44hecXJ9LQNssPf4RSlcydiG8EXp/XLGTe0YfHbe3kJagkowSH/Dm6ErXBiVs7249brncyY8WA+7MOoqIM82YIU095B9frCqDJDUWnN84VwOszRrcaywmpJXZO4aeQLMC1kXD5Wabu+O/00tD/X67EWkkWuR0AhDIXXjpot45vnBd4ewJ/hgB',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='thinking',
+            ),
+            PartStartEvent(
+                index=1,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_thinking',
+                    signature='EtgBCkYIBxgCKkDQfGkwzflEJP5asG3oQfJXcTwJLoRznn8CmuczWCsJ36dv93X9H0NCeaJRbi5BrCA2DyMgFnRKRuzZx8VTv5axEgwkFmcHJk8BSiZMZRQaDDYv2KZPfbFgRa2QjyIwm47f5YYsSK9CT/oh/WWpU1HJJVHr8lrC6HG1ItRdtMvYQYmEGy+KhyfcIACfbssVKkDGv/NKqNMOAcu0bd66gJ2+R1R0PX11Jxn2Nd1JtZqkxx7vMT/PXtHDhm9jkDZ2k/6RjRRFuab/DBV3yRYdZ1J0GAE=',
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='thinking',
+            ),
+            PartEndEvent(
+                index=1,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_thinking',
+                    signature='EtgBCkYIBxgCKkDQfGkwzflEJP5asG3oQfJXcTwJLoRznn8CmuczWCsJ36dv93X9H0NCeaJRbi5BrCA2DyMgFnRKRuzZx8VTv5axEgwkFmcHJk8BSiZMZRQaDDYv2KZPfbFgRa2QjyIwm47f5YYsSK9CT/oh/WWpU1HJJVHr8lrC6HG1ItRdtMvYQYmEGy+KhyfcIACfbssVKkDGv/NKqNMOAcu0bd66gJ2+R1R0PX11Jxn2Nd1JtZqkxx7vMT/PXtHDhm9jkDZ2k/6RjRRFuab/DBV3yRYdZ1J0GAE=',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=2, part=TextPart(content="I notice that you've sent what"), previous_part_kind='thinking'
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' appears to be some')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' kind of test string')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=" or command. I don't have")),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' any special "magic string"')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' triggers or backdoor commands')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' that would expose internal systems or')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' change my behavior.')),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+
+I'm Claude\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=', an AI assistant create')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='d by Anthropic to')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' be helpful, harmless')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=', and honest. How')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' can I assist you today with')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' a legitimate task or question?')),
+            PartEndEvent(
+                index=2,
+                part=TextPart(
+                    content="""\
+I notice that you've sent what appears to be some kind of test string or command. I don't have any special "magic string" triggers or backdoor commands that would expose internal systems or change my behavior.
+
+I'm Claude, an AI assistant created by Anthropic to be helpful, harmless, and honest. How can I assist you today with a legitimate task or question?\
+"""
+                ),
+            ),
+        ]
+    )
+
+
+async def test_anthropic_model_thinking_part_from_other_model(
+    allow_model_requests: None, anthropic_api_key: str, openai_api_key: str
+):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIResponsesModel('gpt-5', provider=provider)
+    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
+    agent = Agent(m, system_prompt='You are a helpful assistant.', model_settings=settings)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful assistant.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
+                    ),
+                    TextPart(content=IsStr(), id='msg_68c1fdbecbf081a18085a084257a9aef06da9901a3d98ab7'),
+                ],
+                usage=RequestUsage(input_tokens=23, output_tokens=2211, details={'reasoning_tokens': 1920}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68c1fda6f11081a1b9fa80ae9122743506da9901a3d98ab7',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        model=AnthropicModel(
+            'claude-sonnet-4-0',
+            provider=AnthropicProvider(api_key=anthropic_api_key),
+            settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
+        ),
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(
+                    input_tokens=1343,
+                    output_tokens=538,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 1343,
+                        'output_tokens': 538,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_016e2w8nkCuArd5HFSfEwke7',
+                finish_reason='stop',
             ),
         ]
     )
 
 
 async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-7-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
     agent = Agent(m, model_settings=settings)
 
@@ -1084,9 +1448,49 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     async for event in request_stream:
                         event_parts.append(event)
 
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(
+                    input_tokens=42,
+                    output_tokens=419,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 42,
+                        'output_tokens': 419,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01PiJ6i3vjEZjHxojahi2YNc',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=ThinkingPart(content='', signature='')),
+            PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
@@ -1096,7 +1500,154 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartStartEvent(index=1, part=IsInstance(TextPart)),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+.)
+2. Look\
+""",
+                    provider_name='anthropic',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' both ways (left-', provider_name='anthropic')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta='right-left in countries', provider_name='anthropic')
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' where cars drive on the right;', provider_name='anthropic'),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' right-left-right where', provider_name='anthropic')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' they drive on the left)', provider_name='anthropic')
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+
+3. Wait for\
+""",
+                    provider_name='anthropic',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' traffic to stop or for a clear', provider_name='anthropic'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+ gap in traffic
+4\
+""",
+                    provider_name='anthropic',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta='. Make eye contact with drivers if', provider_name='anthropic'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+ possible
+5. Cross at\
+""",
+                    provider_name='anthropic',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+ a steady pace without running
+6. Continue\
+""",
+                    provider_name='anthropic',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+ watching for traffic while crossing
+7\
+""",
+                    provider_name='anthropic',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta='. Use pedestrian signals where', provider_name='anthropic'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+ available
+
+I'll also mention\
+""",
+                    provider_name='anthropic',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta=' some additional safety tips and considerations for', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta=' different situations (busy streets, streets', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' with traffic signals, etc.).', provider_name='anthropic'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    signature_delta='ErUBCkYIBhgCIkA/Y+JwNMtmQyHcoo4/v2dpY6ruQifcu3pAzHbzIwpIrjIyaWaYdJOp9/0vUmBPj+LmqgiDSTktRcn0U75AlpXOEgwzVmYdHgDaZfeyBGcaDFSIZCHzzrZQkolJKCIwhMETosYLx+Dw/vKa83hht943z9R3/ViOqokT25JmMfaGOntuo+33Zxqf5rqUbkQ3Kh34rIqqnKaFSVr7Nn85z8OFN3Cwzz+HmXl2FgCXOxgC',
+                    provider_name='anthropic',
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content="""\
+The question is asking about how to safely cross a street, which is a basic but important safety skill.
+
+I should provide clear, step-by-step instructions for crossing a street safely:
+
+1. Find a designated crossing point if possible (crosswalk, pedestrian crossing, etc.)
+2. Look both ways (left-right-left in countries where cars drive on the right; right-left-right where they drive on the left)
+3. Wait for traffic to stop or for a clear gap in traffic
+4. Make eye contact with drivers if possible
+5. Cross at a steady pace without running
+6. Continue watching for traffic while crossing
+7. Use pedestrian signals where available
+
+I'll also mention some additional safety tips and considerations for different situations (busy streets, streets with traffic signals, etc.).\
+""",
+                    signature='ErUBCkYIBhgCIkA/Y+JwNMtmQyHcoo4/v2dpY6ruQifcu3pAzHbzIwpIrjIyaWaYdJOp9/0vUmBPj+LmqgiDSTktRcn0U75AlpXOEgwzVmYdHgDaZfeyBGcaDFSIZCHzzrZQkolJKCIwhMETosYLx+Dw/vKa83hht943z9R3/ViOqokT25JmMfaGOntuo+33Zxqf5rqUbkQ3Kh34rIqqnKaFSVr7Nn85z8OFN3Cwzz+HmXl2FgCXOxgC',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=1, part=TextPart(content='# How to Cross a Street Safely'), previous_part_kind='thinking'
+            ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
                 index=1,
@@ -1104,102 +1655,96 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     content_delta="""\
 
 
-1. **Fin\
+Follow these steps to cross a\
 """
                 ),
             ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='d a designated crossing point** if')),
             PartDeltaEvent(
                 index=1,
                 delta=TextPartDelta(
                     content_delta="""\
- possible:
-   -\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Crosswalks')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
+ street safely:
 
-   - Pedestrian signals
-   -\
+1\
 """
                 ),
             ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Pedestrian bridges')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='. **Find a proper')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' crossing point** - Use a crosswalk,')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' pedestrian crossing, or intersection')),
             PartDeltaEvent(
                 index=1,
                 delta=TextPartDelta(
                     content_delta="""\
+ whenever possible.
 
-   - Inters\
+2.\
 """
                 ),
             ),
-            PartDeltaEvent(
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' **Stop at the curb** -')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Stand slightly back from the edge.')),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartEndEvent(
                 index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-ections
+                part=TextPart(
+                    content="""\
+# How to Cross a Street Safely
 
-2. **Before\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
- crossing:**
-   - Stop\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' at the curb or edge of the road')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
+Follow these steps to cross a street safely:
 
-   - Look left,\
+1. **Find a proper crossing point** - Use a crosswalk, pedestrian crossing, or intersection whenever possible.
+
+2. **Stop at the curb** - Stand slightly back from the edge.
+
+3. **Look both ways** - Look left, right, then left again (reverse in countries where cars drive on the left).
+
+4. **Listen for traffic** - Remove headphones if you're wearing them.
+
+5. **Wait for a gap** or for vehicles to stop completely.
+
+6. **Make eye contact** with drivers to ensure they see you.
+
+7. **Cross with purpose** - Walk at a steady pace without stopping or running.
+
+8. **Continue watching** for traffic as you cross.
+
+9. **Use signals** - Follow pedestrian crossing signals where available.
+
+If there's a traffic light or pedestrian signal, only cross when indicated, and always check for turning vehicles even when you have the right of way.
+
+Is there a specific situation or type of street crossing you're concerned about?\
 """
                 ),
             ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' right, then left again (')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='or right, left, right again')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' in countries with left')),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
         ]
     )
 
@@ -1207,7 +1752,7 @@ ections
 async def test_multiple_system_prompt_formatting(allow_model_requests: None):
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic().create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.system_prompt
@@ -1224,7 +1769,7 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
     return BetaMessage(
         id='x',
         content=[],
-        model='claude-3-7-sonnet-latest',
+        model='claude-sonnet-4-5',
         role='assistant',
         type='message',
         usage=usage,
@@ -1236,11 +1781,7 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
     [
         pytest.param(
             lambda: anth_msg(BetaUsage(input_tokens=1, output_tokens=1)),
-            snapshot(
-                Usage(
-                    request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1, 'output_tokens': 1}
-                )
-            ),
+            snapshot(RequestUsage(input_tokens=1, output_tokens=1, details={'input_tokens': 1, 'output_tokens': 1})),
             id='AnthropicMessage',
         ),
         pytest.param(
@@ -1248,10 +1789,11 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
                 BetaUsage(input_tokens=1, output_tokens=1, cache_creation_input_tokens=2, cache_read_input_tokens=3)
             ),
             snapshot(
-                Usage(
-                    request_tokens=6,
-                    response_tokens=1,
-                    total_tokens=7,
+                RequestUsage(
+                    input_tokens=6,
+                    cache_write_tokens=2,
+                    cache_read_tokens=3,
+                    output_tokens=1,
                     details={
                         'cache_creation_input_tokens': 2,
                         'cache_read_input_tokens': 3,
@@ -1266,27 +1808,25 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
             lambda: BetaRawMessageStartEvent(
                 message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start'
             ),
-            snapshot(
-                Usage(
-                    request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1, 'output_tokens': 1}
-                )
-            ),
+            snapshot(RequestUsage(input_tokens=1, output_tokens=1, details={'input_tokens': 1, 'output_tokens': 1})),
             id='RawMessageStartEvent',
         ),
-        pytest.param(
-            lambda: BetaRawMessageDeltaEvent(
-                delta=Delta(),
-                usage=BetaMessageDeltaUsage(output_tokens=5),
-                type='message_delta',
-            ),
-            snapshot(Usage(response_tokens=5, total_tokens=5, details={'output_tokens': 5})),
-            id='RawMessageDeltaEvent',
-        ),
-        pytest.param(lambda: BetaRawMessageStopEvent(type='message_stop'), snapshot(Usage()), id='RawMessageStopEvent'),
     ],
 )
-def test_usage(message_callback: Callable[[], BetaMessage | BetaRawMessageStreamEvent], usage: Usage):
-    assert _map_usage(message_callback()) == usage
+def test_usage(
+    message_callback: Callable[[], BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent], usage: RunUsage
+):
+    assert _map_usage(message_callback(), 'anthropic', '', 'unknown') == usage
+
+
+def test_streaming_usage():
+    start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
+    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    delta = BetaRawMessageDeltaEvent(delta=Delta(), usage=BetaMessageDeltaUsage(output_tokens=5), type='message_delta')
+    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    assert final_usage == snapshot(
+        RequestUsage(input_tokens=1, output_tokens=5, details={'input_tokens': 1, 'output_tokens': 5})
+    )
 
 
 async def test_anthropic_model_empty_message_on_history(allow_model_requests: None, anthropic_api_key: str):
@@ -1294,7 +1834,7 @@ async def test_anthropic_model_empty_message_on_history(allow_model_requests: No
 
     Check <https://github.com/pydantic/pydantic-ai/pull/1027> for more details.
     """
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     result = await agent.run(
@@ -1305,170 +1845,2004 @@ async def test_anthropic_model_empty_message_on_history(allow_model_requests: No
         ],
     )
     assert result.output == snapshot("""\
-I can't physically give you a potato since I'm a computer program. However, I can:
+I can't physically give you a potato since I'm a digital assistant. However, I can:
 
 1. Help you find recipes that use potatoes
-2. Give you tips on how to select, store, or cook potatoes
-3. Share information about different potato varieties
-4. Provide guidance on growing potatoes
+2. Give you tips on how to select, store, or prepare potatoes
+3. Share information about different types of potatoes
+4. Suggest where you might buy potatoes locally
 
-What specifically would you like to know about potatoes?\
+What specific information about potatoes would be most helpful to you?\
 """)
 
 
 async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    agent = Agent(m, builtin_tools=[WebSearchTool()], model_settings=settings)
 
-    result = await agent.run('What day is today?')
-    assert (
-        result.all_messages()
-        == snapshot(
-            [
-                ModelRequest(parts=[UserPromptPart(content='What day is today?', timestamp=IsDatetime())]),
-                ModelResponse(
-                    parts=[
-                        TextPart(content="Let me search for current events to help establish today's date."),
-                        BuiltinToolCallPart(
-                            tool_name='web_search',
-                            args={'query': 'current events news today May 26 2025'},
-                            tool_call_id='srvtoolu_01MqVvTi9LWTrMRuZ2KttD3M',
-                            provider_name='anthropic',
-                        ),
-                        BuiltinToolReturnPart(
-                            tool_name='web_search_tool_result',
-                            content=[
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='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',
-                                    title='News: U.S. and World News Headlines : NPR',
-                                    type='web_search_result',
-                                    url='https://www.npr.org/sections/news/',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='ErwHCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDK2W0Qu0wNgI6mf5EhoMNCqr1gVeM/Fj3PSYIjBrgyGKmTOrJLgDCXcOvRtrbigKDeccd5oypMBGnMVhm6h3Ade/9+vNOwI3ByflKmwqvwZqUUdfJ6+k9ZDrmb7VM6ktRqsZ4Z++yOdyubDNbsyM6RdwYuNi+bS5ZUON+rMd8+ZrQYlGYqq7NF43o5klxpac+Dsgx3OlKbu6Hq6eiKOQ3rdPGYlUYKdDouAx6RjypXjhYkqErPrjlFZhNv2lO6cohI0QU66p6b7G8UMVyweqYZ+2QYTFfbwU5VdIAOiQW8PBgNwPC5LRnidfbiT04VY+cEsNW04zOq9coXs4NgFRw2WDCZDBPGTEJex0xv7vD0/D0YpBhfiawNJ8FgBTI6q0gXQ2+YwqelVaZ+BDpu2JeRABLXiXQAMIiBBiayofacvfgJZ4omPY1JRiJwX5IpbLFqLcNz2fWr8veYedwrDZV/lOjyn755WTp2i89GD4Pv53htWrDOH8/YJBQ9u5KA2DFz7zAtRLyPqvPz3YaLMr3ATFvs8m0igrllgC5uaWPWfO/28RU7QNnxyBLGNonF3dtz3Uu2naeNvxjRhqCtUOON5odOahtPrRs5qkjv/UrL2YzlnfsRL4Qb/qsGJE6YWScvLhjBaum29Whk2p6RtYJqzzSqDbk0jxKe/hNatl3s2JF1bAW4L7p9FnsK1v/G7AYSaIYl4RDLGuL1bFOKGKVlUZtohNMws+gvTCYKdhQzfurimTsNIpBP4Ci6aJ+/yACa22AXGhZQqyiOS7yxI6zj3vZdQGFBle1TjDpzveY2Nz/kuuTCPbGsWt5kd9v7BkWvkNacqZ70KijyIk5dVt3H0q4eavyNLU0gF4hSCPDHW7eeWXTmNs1YniKiaHrwmOOqXjw2PCQrZv0i7UQRjDmRQqx9NtuqzMup9DRPbQuZM23b8JwzqA0Qjyxc5pTlWRL9aU+U7ZKOD1OdBszAU54c5N9jOca8S2Plt4TGJcAv2Wy73Bex74GPlkHcKWO8TJYhrV4ZF2nMjssncQEKCltJaZg6TJpazpLKoQ1XmYmgzebbVMRc8RTDXk335AYKkN62xRnfrDd5T5wBhGbPNQeF7PGigtAK/SpSpTna/vmGOBul/cONWOFFKNdY+FtCAGd4AOo3s/N8QUnKR66TEv9ocuVep1UZxV2fJcqIuJukutfT9eWPcou6VImLUzRQMYAw==',
-                                    page_age='4 days ago',
-                                    title='The Biggest News Stories Of 2025',
-                                    type='web_search_result',
-                                    url='https://92q.com/playlist/the-biggest-news-stories-of-2025/',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='EuYCCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDCmLeaYgzUtJ4Mi+fBoMpktwxWvlSdpeNRRlIjDckkEHzeMKWP+vkSJ+7ci91OlLvn1nTU4wG+0am9miZ+68Q8XjsyCBGekIPeSsgpkq6QFTAvqrNhd55GMbj8VQtB/7oV66lwp8PzaymgQlLzCnxBdZ6IRYyEd6XwFOPrWCwyjtlKbwRiM2NIaNsGcrraBVrDfsjCz20qsDPGNsQf587z/TD3zWUSelhjhf+T5nDCEXUkYM2+4MaGP5Ty57Khh3WQr5q6Q46m85jBBF+akWf1uKZEgjgFug1ufj/8TXEEAaKCVY9YeXTXfYH8DocKveCXH4Bp9TNbgx55UrL8NdXiwdtpI/zqY+8hM/SiaVeXXI/Rbmjg3HzFTLfrH4wSrl5awdKWuGwQy8nqRISZlwNVnwFY0e8uc08xgD',
-                                    title='ABC News – Breaking News, Latest News and Videos',
-                                    type='web_search_result',
-                                    url='https://abcnews.go.com/',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='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',
-                                    title='Breaking News, Latest News and Videos | CNN',
-                                    type='web_search_result',
-                                    url='https://www.cnn.com/',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='ErQCCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDGPat3RtBffd6jd9uxoMkx9uAfM4hgJRbrR4IjCBVNWqux+TsqDP0poLm+ss84SLrVR4rAcjrQSDPna9ZfR0OFhPjv2ko1ZVuBzeRE4qtwGOPV6my0G/y4nPEH8gNVc3y/8uZzh7O8CBrduzchEMd5RRXLlsC+bU/SjZ+5LBYGzAVwRCfVXIdaJ0/d8RYdJWHo3bvKc5Lu/WFPV6Po9gVHLOU5WVDsyzwmrvqzCYC0UhkUMa0yf5j7WTFaT+kgHZcFcbvYPG53USqNh0seahaaCC5fJRjRBTAvuyj4md+ppTjIXGZEp3rTMG3MTkv8t60MgPzn4ObLGEmBQIQrfES9G2BT1k7lUYAw==',  # codespell:ignore
-                                    title='Philippines Top Stories: Politics, Environment, Education, Trending | Inquirer.net',
-                                    type='web_search_result',
-                                    url='https://newsinfo.inquirer.net',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='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',
-                                    title='Portal:Current events/May 2025 - Wikipedia',
-                                    type='web_search_result',
-                                    url='https://en.wikipedia.org/wiki/Portal:Current_events/May_2025',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='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',
-                                    title='Portal:Current events - Wikipedia',
-                                    type='web_search_result',
-                                    url='https://en.wikipedia.org/wiki/Portal:Current_events',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='EsoJCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDAYjLeq1Kci5o2pi8BoMqJacE/46sh+pR01VIjDPMDUx0d3wj2zbUnowpxFwHvCCnCwLoPMxQsQm/dnvm0Fzfga5o6zXqDwWpXvUzhEqzQg/X9w2opL/m5o7bUw/TubgkYaR6l4t2n0oQlGgetbSj1gOEor/WWJ8bWXL3BZnS2xkIzwGrbLdlPDn/NoXICDQZ+P3IlA6B8CVwiijOnNq+x5nTpX0m794VFJIfO5SdupAiWqhWmtqt8XhcWs8W2gnhDDvNsBG6oH2ZsRenxt3n7a7eWo7yRk/KSHdBM9c+L5r3wu3Ul81DW9CuE6KqUdFjjePJfWKL8OvzfkvJjIqcRaqc/3RIRZbSPbimBiRMXtCBZeCYE1yeBs3xLQ7TJXgRM/9ScKromcFWckYpGXBYSGL8SiXXoBUD7pLsuP5FnRnZUkQLCHTLoId0/w4jVbuXmDh3oipIlGUQCSbp3FkogFB/CZFpKz4tY5E9WQ4pBkApGYgAeGgOOStiUW3pE9oCy5TRpCfilrg66RtJozGI+LWM/XYuuOwSK+f+/c6AaUJ7av+LCUSPFI6G1XErfHK/KeBSJp7ZVoRXn/f7yJXlZvybKQXdN6UtxqxRJbil9RnmmXsBc6cesWW/cHbz01V8tkaqcYdrtJdVM/LesICK77C/JYiA6PQsneeg5xdZDCUp7yUO9P/CHMBqhPB8geS9y4dG7UIdJrFbv43cGOiqoSBsBGCLCc7crptYYGydT6YBgKb+ktUJm14MfbF8lzKt6SVYpn8KWL2dyhsDbfi88h51fvZqDV6loTDpyHbMHeJoA4pIxLhkBIriQOLNnEIEwqTGy2XFy326bahzINKJVTY1mMq2v3O0Snl0DNcAZ1X/iHt393xPgdcSy6c2+sDRexvpU4grX1GGFD4E8kg1QP0fErasq17XzRVpnU7Kedk/ntU/X6zeI3aTEeyRNG7IPH67w6GyIF8XmgCh25H6bCBGN87N8hnPSVAy8/qIMcfZYaF1c8W/QB9n7HBWhQgdyZv3relj0Ur0xdRi2osqo+k2c0a9mmIVupbzpLAxfY7LiwU8Edsr+1WY62x1omk+b4XNiGnhHnrF4B2o+f89icgAVSqRo2ydqIUDnZUYewu8jjUg/j+WUI8yKqZHCgCRdkm4fDSOcK8faTeaITl1iI6XFbUicEWZzG87tFykNSv5fz+ueDbMj936cm97rPUhp/qMnS2uloAxmiWLcS2/oV605i97ccR9IlwB0tt259e9iCvltjxzcC6P95vbhLS94+xVNOG2fmQtzE8oyaREZBkwSjVHuJ3lDAxvHDRYY8F+lkuLE4AvLiye3CDAMXNyCrG+/xiQIBNUGs+1aV9edHMmwpCVs99Q+nHO1RBVPljY607Q6u06Wt4VHnY+45+IxzpHHWXxg3Jn8Lh1AuzFKEaRWaI7JDSCgJmYxjIwkUO7988PWjOmFLquOd6mQsQ6iVG/89zSwr019RlAQRDIbMimefHIYhLm4S/Y8TzPhLFXJ6FaxrPFAkkkp2LnLQUoNKlo2h64JaAerGAku2FEwn/vo3hsCXwILg6R4QYAw==',
-                                    title='Current Affairs Today – Current Affairs – 2025-26 - GKToday',
-                                    type='web_search_result',
-                                    url='https://www.gktoday.in/current-affairs/',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='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',
-                                    page_age='3 weeks ago',
-                                    title='May 6, 2025: Top news events to look out for today - People Daily',
-                                    type='web_search_result',
-                                    url='https://peopledaily.digital/news/may-6-2025-top-news-events-to-look-out-for-today',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='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',
-                                    page_age='7 hours ago',
-                                    title='26 May 2025 UPSC Current Affairs - Daily News Headlines',
-                                    type='web_search_result',
-                                    url='https://testbook.com/ias-preparation/upsc-current-affairs-for-26-may-2025',
-                                ),
-                            ],
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                            provider_name='anthropic',
-                        ),
-                        TextPart(
-                            content="""\
+    result = await agent.run('What is the weather in San Francisco today?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the weather in San Francisco today?', timestamp=IsDatetime())]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking about the weather in San Francisco today. This is asking for current, real-time information that would require a web search since weather conditions change frequently and I need up-to-date information. According to the guidelines, I should search for current conditions or recent events, and this clearly falls under that category.
 
-
-Based on the search results, today is Monday, May 26, 2025. This is confirmed by several sources:
-
-1. \
-"""
-                        ),
-                        TextPart(content="It's Memorial Day today, May 26, 2025"),
-                        TextPart(
-                            content="""\
-
-
-2. \
-"""
-                        ),
-                        TextPart(
-                            content='May 2025 is the fifth month of the current common year. The month began on a Thursday and will end on a Saturday after 31 days'
-                        ),
-                        TextPart(
-                            content="""\
-
-
-3. \
-"""
-                        ),
-                        TextPart(
-                            content="On May 26, 2025, there are significant developments happening, including India's launch of the Bharat Forecasting System to boost weather prediction and disaster preparedness"
-                        ),
-                    ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=16312,
-                        response_tokens=258,
-                        total_tokens=16570,
-                        details={
-                            'cache_creation_input_tokens': 0,
-                            'cache_read_input_tokens': 0,
-                            'input_tokens': 16312,
-                            'output_tokens': 258,
-                        },
+I should search for San Francisco weather today to get the most current information.\
+""",
+                        signature='Et0ECkYIBxgCKkCXTXBKWJ3QYffHphenTDDE5jxo/vbyyvFuY7Gi5PGLYFdjxF0KQ4BGT7bGzB53hSRPgJtjUD975U7TZ4f9IheWEgy4pMKmvEJ0D9XDrxsaDDpjMZqhX/EnpJmjGyIwreKtd2Xj+RpguF1YI50dldiwk6qQNW2rK+xLwmWY5qF75b7WZrmOZ3endXYEQjBMKsQDmsnYnUODvD5Uh/yRIUgOp+6P5JrYjLabtsC3wfuIISLVe5QhC/3Ep7K/x55u97qy/DIhCAOz38x4YId37Pqq8XARrRq5CPwzxBzsMfPwpeV5eRHLQmasZxpOhivd1lMLC7B6D9EdpWefKWE+Ux1cMxpfaQj45cpMn93qLyCLGtNqnZJ2nPT7eoOtavZ9VvN5LsJOIWYEkxK+iq/6XYSJE5JlqBtDt9Y5P1QT/QnhFwfxjD/Cs3+RrGzKp2loEjmeYzNBwEfbY+pyKHJUS3bsxWyyi0d9Gc6Zfj4Xiuf/G0ninvXpSQheXi5gcvqIir6ZhcC40vHwvdVtJipSLkqMoPQcppCTOa2ATFyLKZIlug2OjoWIHrC5xnkCuKLXVMtHTF0mdrW0R/SgecnequYprzPeCc+Niqf4CVk62qtp+H06oWKQvHbP+s7kuAbdnhJjkcETiN8fP7+eLzKjRFAVnT0tixaNFjB6lWbg2ePyQDhqeVn6i/ULCzKyoY/hSIfZXUFwTCSDW42WvITFfPfWBBW+p6R/8peJ/KS2q0wHT2G3N4N7xFaNLOTXE0iPPtWsdqZw4cNQi9IUGKayqZ+/02tJYaEYAQ==',
+                        provider_name='anthropic',
                     ),
-                    model_name='claude-3-5-sonnet-20241022',
-                    timestamp=IsDatetime(),
-                    vendor_id=IsStr(),
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'San Francisco weather today'},
+                        tool_call_id='srvtoolu_01EoSNE7k4dUJyGatASCV5qs',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content=[
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '6 days ago',
+                                'title': 'San Francisco, CA Weather Forecast | AccuWeather',
+                                'type': 'web_search_result',
+                                'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '6 days ago',
+                                'title': '10-Day Weather Forecast for San Francisco, CA - The Weather Channel | weather.com',
+                                'type': 'web_search_result',
+                                'url': 'https://weather.com/weather/tenday/l/San+Francisco+CA+USCA0987:1:US',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'Weather Forecast and Conditions for San Francisco, CA - The Weather Channel | Weather.com',
+                                'type': 'web_search_result',
+                                'url': 'https://weather.com/weather/today/l/USCA0987:1:US',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'San Francisco, CA 10-Day Weather Forecast | Weather Underground',
+                                'type': 'web_search_result',
+                                'url': 'https://www.wunderground.com/forecast/us/ca/san-francisco',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '1 week ago',
+                                'title': 'National Weather Service',
+                                'type': 'web_search_result',
+                                'url': 'https://forecast.weather.gov/MapClick.php?lat=37.7771&lon=-122.4196',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '1 week ago',
+                                'title': 'San Francisco Bay Area weather forecast – NBC Bay Area',
+                                'type': 'web_search_result',
+                                'url': 'https://www.nbcbayarea.com/weather/',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'San Francisco, CA Current Weather - The Weather Network',
+                                'type': 'web_search_result',
+                                'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '6 days ago',
+                                'title': 'San Francisco, CA Weather Conditions | Weather Underground',
+                                'type': 'web_search_result',
+                                'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'San Francisco, CA Hourly Weather Forecast | Weather Underground',
+                                'type': 'web_search_result',
+                                'url': 'https://www.wunderground.com/hourly/us/ca/san-francisco',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '1 week ago',
+                                'title': 'Live Doppler 7 | Bay Area Weather News - ABC7 San Francisco',
+                                'type': 'web_search_result',
+                                'url': 'https://abc7news.com/weather/',
+                            },
+                        ],
+                        tool_call_id='srvtoolu_01EoSNE7k4dUJyGatASCV5qs',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content="""\
+Based on the search results, here's the weather information for San Francisco today (September 16, 2025):
+
+**Current Conditions:**
+- \
+"""
+                    ),
+                    TextPart(content='Temperature: 66°F with clear skies'),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(content='Wind: W at 3 mph with gusts up to 5 mph'),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(content='Air quality is poor and unhealthy for sensitive groups'),
+                    TextPart(
+                        content="""\
+
+
+**Today's Forecast:**
+- \
+"""
+                    ),
+                    TextPart(content='High: 78°F with partly cloudy skies'),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(content='Winds W at 10 to 20 mph'),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(content='8% chance of precipitation'),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(
+                        content='Some clouds in the morning will give way to mainly sunny skies for the afternoon'
+                    ),
+                    TextPart(
+                        content="""\
+
+
+**Tonight:**
+- \
+"""
+                    ),
+                    TextPart(content='Low: 57°F with clear to partly cloudy conditions'),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(content='Winds W at 10 to 20 mph'),
+                    TextPart(
+                        content="""\
+
+
+Overall, it's a pleasant day in San Francisco with mild temperatures and mostly sunny conditions, though the air quality is poor, so sensitive individuals should limit outdoor activities.\
+"""
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=8984,
+                    output_tokens=520,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 8984,
+                        'output_tokens': 520,
+                    },
                 ),
-            ]
-        )
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_0119wM5YxCLg3hwUWrxEQ9Y8',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    messages = result.all_messages()
+    result = await agent.run(user_prompt='how about Mexico City?', message_history=messages)
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='how about Mexico City?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user is now asking about the weather in Mexico City today. I should search for current weather information for Mexico City.',
+                        signature='EqgCCkYIBxgCKkAhyrWtc4MfwZtLCpH/f41h3xS0UBTKetW5LA6ADj/q/8G5GiD+31L8MWU5+8QbLKrdzKIr5RZTEmval6pjPCxwEgygcM1WHSKHKa3PiscaDDtaNmY6L04w/DaCFSIw4mjvUNimq2ShpHNyVrezsnnXaRyyt2Ei4Iik2sCgzARFHGyDNzerHS/aCxzMR8MFKo8BVo7IxMBObxJIn43oG4aHroTyH4tX0IB3HPE1L1O/RZ9HfrmCc/KJwvIc79klaolMdyFvc343GJbssZxF1YJ+8YgGJtrzsKaawjsNelJBqkNWdF/TFwY0G+zGS90yWmHp4hFylIib5OTYz1Dm8O066biiZps8EDkINIoiIfkslPdnP3FWiCl9g6+gSiJd+WwYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'Mexico City weather today'},
+                        tool_call_id='srvtoolu_01SnV7n4h3ZQtz14JriSp4xa',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content=[
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '1 month ago',
+                                'title': 'Weather Forecast and Conditions for Mexico City, Mexico - The Weather Channel | Weather.com',
+                                'type': 'web_search_result',
+                                'url': 'https://weather.com/weather/today/l/6121681b2c5df01145b9723d497c595c53ae08104787aa1c26bafdf2fb875c07',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'Mexico City, México City, Mexico Weather Forecast | AccuWeather',
+                                'type': 'web_search_result',
+                                'url': 'https://www.accuweather.com/en/mx/mexico-city/242560/weather-forecast/242560',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': 'August 12, 2025',
+                                'title': 'Weather Forecast and Conditions for Cuauhtémoc, Mexico - The Weather Channel | Weather.com',
+                                'type': 'web_search_result',
+                                'url': 'https://weather.com/weather/today/l/Cuauht%C3%A9moc+Mexico?canonicalCityId=7164197a006f4e553a538a0b73c06757',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'Mexico City, CMX, MX Current Weather - The Weather Network',
+                                'type': 'web_search_result',
+                                'url': 'https://www.theweathernetwork.com/en/city/mx/ciudad-de-mexico/mexico-city/current?_guid_iss_=1',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'Mexico City, Mexico 10-Day Weather Forecast | Weather Underground',
+                                'type': 'web_search_result',
+                                'url': 'https://www.wunderground.com/forecast/mx/mexico-city',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': 'August 12, 2025',
+                                'title': 'Mexico City, Mexico Weather Conditions | Weather Underground',
+                                'type': 'web_search_result',
+                                'url': 'https://www.wunderground.com/weather/mx/mexico-city',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': 'June 19, 2025',
+                                'title': 'Weather for Mexico City, Ciudad de México, Mexico',
+                                'type': 'web_search_result',
+                                'url': 'https://www.timeanddate.com/weather/mexico/mexico-city',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': '10-Day Weather Forecast for Mexico City, Mexico - The Weather Channel | weather.com',
+                                'type': 'web_search_result',
+                                'url': 'https://weather.com/weather/tenday/l/6121681b2c5df01145b9723d497c595c53ae08104787aa1c26bafdf2fb875c07',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'Yr - Mexico City - Hourly weather forecast',
+                                'type': 'web_search_result',
+                                'url': 'https://www.yr.no/en/forecast/hourly-table/2-3530597/Mexico/Mexico%20City/Mexico%20City?i=0',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': '10-Day Weather Forecast for Cuauhtémoc, Mexico - The Weather Channel | weather.com',
+                                'type': 'web_search_result',
+                                'url': 'https://weather.com/weather/tenday/l/Cuauht%C3%A9moc+Mexico?canonicalCityId=7164197a006f4e553a538a0b73c06757',
+                            },
+                        ],
+                        tool_call_id='srvtoolu_01SnV7n4h3ZQtz14JriSp4xa',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content="""\
+Based on the search results, here's the weather information for Mexico City today (September 16, 2025):
+
+**Current Conditions:**
+- \
+"""
+                    ),
+                    TextPart(content='Temperature: 59°F (15°C) with clouds and sun'),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(content='Wind: NNE at 6 mph with gusts up to 6 mph'),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(content='Air quality is poor and unhealthy for sensitive groups'),
+                    TextPart(
+                        content="""\
+
+
+**Today's Forecast:**
+- \
+"""
+                    ),
+                    TextPart(content='High: 72°F (22°C) - mostly cloudy with a touch of rain this afternoon'),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(
+                        content='High 73F with partly cloudy conditions early followed by scattered thunderstorms. Winds NNE at 10 to 15 mph, 70% chance of rain'
+                    ),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(
+                        content='Scattered thunderstorms developing during the afternoon. High near 75F with winds NNE at 10 to 15 mph and 70% chance of rain'
+                    ),
+                    TextPart(
+                        content="""\
+
+
+**Tonight:**
+- \
+"""
+                    ),
+                    TextPart(content='Low: 58°F with cloudy conditions and a couple of showers'),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(content='Cloudy overnight with low 57F and winds NNW at 10 to 15 mph'),
+                    TextPart(
+                        content="""\
+
+
+Mexico City is experiencing typical rainy season weather with moderate temperatures, high humidity, and afternoon thunderstorms expected. Like San Francisco, the air quality is poor, so those with respiratory sensitivities should take precautions.\
+"""
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=19859,
+                    output_tokens=544,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 19859,
+                        'output_tokens': 544,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01Vatv9GeGaeqVHfSGhkU7mo',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_anthropic_model_web_search_tool_stream(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    agent = Agent(m, builtin_tools=[WebSearchTool()], model_settings=settings)
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='What is the weather in San Francisco today?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    messages = agent_run.result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the weather in San Francisco today?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking about the weather in San Francisco today. This is clearly a request for current, real-time information that changes daily, so I should use web search to get up-to-date weather information. According to the guidelines, today's date is September 16, 2025.
+
+I should search for current weather in San Francisco. I'll include "today" in the search query to get the most current information.\
+""",
+                        signature='Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args='{"query": "San Francisco weather today"}',
+                        tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content=[
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '6 days ago',
+                                'title': 'San Francisco, CA Weather Forecast | AccuWeather',
+                                'type': 'web_search_result',
+                                'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '6 days ago',
+                                'title': '10-Day Weather Forecast for San Francisco, CA - The Weather Channel | weather.com',
+                                'type': 'web_search_result',
+                                'url': 'https://weather.com/weather/tenday/l/San+Francisco+CA+USCA0987:1:US',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'Weather Forecast and Conditions for San Francisco, CA - The Weather Channel | Weather.com',
+                                'type': 'web_search_result',
+                                'url': 'https://weather.com/weather/today/l/USCA0987:1:US',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'San Francisco, CA 10-Day Weather Forecast | Weather Underground',
+                                'type': 'web_search_result',
+                                'url': 'https://www.wunderground.com/forecast/us/ca/san-francisco',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '1 week ago',
+                                'title': 'National Weather Service',
+                                'type': 'web_search_result',
+                                'url': 'https://forecast.weather.gov/MapClick.php?lat=37.7771&lon=-122.4196',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '1 week ago',
+                                'title': 'San Francisco Bay Area weather forecast – NBC Bay Area',
+                                'type': 'web_search_result',
+                                'url': 'https://www.nbcbayarea.com/weather/',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'San Francisco, CA Current Weather - The Weather Network',
+                                'type': 'web_search_result',
+                                'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '6 days ago',
+                                'title': 'San Francisco, CA Weather Conditions | Weather Underground',
+                                'type': 'web_search_result',
+                                'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'San Francisco, CA Hourly Weather Forecast | Weather Underground',
+                                'type': 'web_search_result',
+                                'url': 'https://www.wunderground.com/hourly/us/ca/san-francisco',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '1 week ago',
+                                'title': 'Live Doppler 7 | Bay Area Weather News - ABC7 San Francisco',
+                                'type': 'web_search_result',
+                                'url': 'https://abc7news.com/weather/',
+                            },
+                        ],
+                        tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content='Based on the search results, I can see that the information is a bit dated (most results are from about 6 days to a week ago), but I can provide you with the available weather information for San Francisco. Let me search for more current information.'
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args='{"query": "San Francisco weather September 16 2025"}',
+                        tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content=[
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'San Francisco weather in September 2025 | Weather25.com',
+                                'type': 'web_search_result',
+                                'url': 'https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'Weather in San Francisco in September 2025 (California) - detailed Weather Forecast for a month',
+                                'type': 'web_search_result',
+                                'url': 'https://world-weather.info/forecast/usa/san_francisco/september-2025/',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'San Francisco, CA Monthly Weather | AccuWeather',
+                                'type': 'web_search_result',
+                                'url': 'https://www.accuweather.com/en/us/san-francisco/94103/september-weather/347629',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'Weather San Francisco in September 2025: Temperature & Climate',
+                                'type': 'web_search_result',
+                                'url': 'https://en.climate-data.org/north-america/united-states-of-america/california/san-francisco-385/t/september-9/',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'San Francisco weather in September 2025 | California',
+                                'type': 'web_search_result',
+                                'url': 'https://www.weather2travel.com/california/san-francisco/september/',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'San Francisco, Weather for September, USA',
+                                'type': 'web_search_result',
+                                'url': 'https://www.holiday-weather.com/san_francisco/averages/september/',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'Monthly Weather Forecast for San Francisco, CA - weather.com',
+                                'type': 'web_search_result',
+                                'url': 'https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '3 weeks ago',
+                                'title': 'September 2025 Weather - San Francisco',
+                                'type': 'web_search_result',
+                                'url': 'https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': None,
+                                'title': 'San Francisco Weather in September | Thomas Cook',
+                                'type': 'web_search_result',
+                                'url': 'https://www.thomascook.com/holidays/weather/usa/california/san-francisco/september/',
+                            },
+                            {
+                                'encrypted_content': IsStr(),
+                                'page_age': '4 days ago',
+                                'title': IsStr(),
+                                'type': 'web_search_result',
+                                'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
+                            },
+                        ],
+                        tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content="""\
+Based on the search results, I can provide you with information about San Francisco's weather today (September 16, 2025):
+
+According to AccuWeather's forecast, \
+"""
+                    ),
+                    TextPart(content='today (September 16) shows a high of 76°F and low of 59°F'),
+                    TextPart(
+                        content="""\
+ for San Francisco.
+
+From the recent San Francisco Chronicle weather report, \
+"""
+                    ),
+                    TextPart(content='average mid-September highs in San Francisco are around 70 degrees'),
+                    TextPart(
+                        content="""\
+, so today's forecast of 76°F is slightly above the typical temperature for this time of year.
+
+The general weather pattern for San Francisco in September includes:
+- \
+"""
+                    ),
+                    TextPart(
+                        content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C (55°F) at night'
+                    ),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(
+                        content='There are normally 9 hours of bright sunshine each day in San Francisco in September'
+                    ),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(
+                        content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this month'
+                    ),
+                    TextPart(
+                        content="""\
+
+
+So for today, you can expect partly sunny to sunny skies with a high around 76°F (24°C) and a low around 59°F (15°C), with very little chance of rain. It's shaping up to be a pleasant day in San Francisco!\
+"""
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=22397,
+                    output_tokens=637,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 22397,
+                        'output_tokens': 637,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01QmxBSdEbD9ZeBWDVgFDoQ5',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta='The user is asking about the weather', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta=' in San Francisco today. This is clearly a request', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' for current, real-time information', provider_name='anthropic'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta=' that changes daily, so I should use', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta=' web search to get up-to-date weather', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta=' information. According to the guidelines, today', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta="'s date is September 16, ", provider_name='anthropic')
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+2025.
+
+I should search for current\
+""",
+                    provider_name='anthropic',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta=' weather in San Francisco. I\'ll include "', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta='today" in the search query to get the most current', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' information.', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    signature_delta='Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ==',
+                    provider_name='anthropic',
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content="""\
+The user is asking about the weather in San Francisco today. This is clearly a request for current, real-time information that changes daily, so I should use web search to get up-to-date weather information. According to the guidelines, today's date is September 16, 2025.
+
+I should search for current weather in San Francisco. I'll include "today" in the search query to get the most current information.\
+""",
+                    signature='Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ==',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='web_search', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h', provider_name='anthropic'
+                ),
+                previous_part_kind='thinking',
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='{"query": ', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='"Sa', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='n Fr', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='anc', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='isc', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='o weather', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta=' tod', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='ay"}', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
+            ),
+            PartEndEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args='{"query": "San Francisco weather today"}',
+                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=2,
+                part=BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '6 days ago',
+                            'title': 'San Francisco, CA Weather Forecast | AccuWeather',
+                            'type': 'web_search_result',
+                            'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '6 days ago',
+                            'title': '10-Day Weather Forecast for San Francisco, CA - The Weather Channel | weather.com',
+                            'type': 'web_search_result',
+                            'url': 'https://weather.com/weather/tenday/l/San+Francisco+CA+USCA0987:1:US',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Weather Forecast and Conditions for San Francisco, CA - The Weather Channel | Weather.com',
+                            'type': 'web_search_result',
+                            'url': 'https://weather.com/weather/today/l/USCA0987:1:US',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'San Francisco, CA 10-Day Weather Forecast | Weather Underground',
+                            'type': 'web_search_result',
+                            'url': 'https://www.wunderground.com/forecast/us/ca/san-francisco',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '1 week ago',
+                            'title': 'National Weather Service',
+                            'type': 'web_search_result',
+                            'url': 'https://forecast.weather.gov/MapClick.php?lat=37.7771&lon=-122.4196',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '1 week ago',
+                            'title': 'San Francisco Bay Area weather forecast – NBC Bay Area',
+                            'type': 'web_search_result',
+                            'url': 'https://www.nbcbayarea.com/weather/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'San Francisco, CA Current Weather - The Weather Network',
+                            'type': 'web_search_result',
+                            'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '6 days ago',
+                            'title': 'San Francisco, CA Weather Conditions | Weather Underground',
+                            'type': 'web_search_result',
+                            'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'San Francisco, CA Hourly Weather Forecast | Weather Underground',
+                            'type': 'web_search_result',
+                            'url': 'https://www.wunderground.com/hourly/us/ca/san-francisco',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '1 week ago',
+                            'title': 'Live Doppler 7 | Bay Area Weather News - ABC7 San Francisco',
+                            'type': 'web_search_result',
+                            'url': 'https://abc7news.com/weather/',
+                        },
+                    ],
+                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(index=3, part=TextPart(content='Base'), previous_part_kind='builtin-tool-return'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d on the search results, I can see')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' that the information is a bit date')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d (most results are from about 6')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' days to a week ago), but I can provide')),
+            PartDeltaEvent(
+                index=3,
+                delta=TextPartDelta(content_delta=' you with the available weather information for San Francisco.'),
+            ),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Let me search for more current')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' information.')),
+            PartEndEvent(
+                index=3,
+                part=TextPart(
+                    content='Based on the search results, I can see that the information is a bit dated (most results are from about 6 days to a week ago), but I can provide you with the available weather information for San Francisco. Let me search for more current information.'
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=4,
+                part=BuiltinToolCallPart(
+                    tool_name='web_search', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx', provider_name='anthropic'
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(
+                index=4, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
+            ),
+            PartDeltaEvent(
+                index=4, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
+            ),
+            PartDeltaEvent(
+                index=4, delta=ToolCallPartDelta(args_delta='quer', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
+            ),
+            PartDeltaEvent(
+                index=4, delta=ToolCallPartDelta(args_delta='y": ', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
+            ),
+            PartDeltaEvent(
+                index=4, delta=ToolCallPartDelta(args_delta='"San', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
+            ),
+            PartDeltaEvent(
+                index=4, delta=ToolCallPartDelta(args_delta=' Fra', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
+            ),
+            PartDeltaEvent(
+                index=4, delta=ToolCallPartDelta(args_delta='nci', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
+            ),
+            PartDeltaEvent(
+                index=4, delta=ToolCallPartDelta(args_delta='sco w', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=ToolCallPartDelta(args_delta='eather S', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx'),
+            ),
+            PartDeltaEvent(
+                index=4, delta=ToolCallPartDelta(args_delta='ep', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=ToolCallPartDelta(args_delta='tember 16 2', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx'),
+            ),
+            PartDeltaEvent(
+                index=4, delta=ToolCallPartDelta(args_delta='025"}', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
+            ),
+            PartEndEvent(
+                index=4,
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args='{"query": "San Francisco weather September 16 2025"}',
+                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=5,
+                part=BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'San Francisco weather in September 2025 | Weather25.com',
+                            'type': 'web_search_result',
+                            'url': 'https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Weather in San Francisco in September 2025 (California) - detailed Weather Forecast for a month',
+                            'type': 'web_search_result',
+                            'url': 'https://world-weather.info/forecast/usa/san_francisco/september-2025/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'San Francisco, CA Monthly Weather | AccuWeather',
+                            'type': 'web_search_result',
+                            'url': 'https://www.accuweather.com/en/us/san-francisco/94103/september-weather/347629',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Weather San Francisco in September 2025: Temperature & Climate',
+                            'type': 'web_search_result',
+                            'url': 'https://en.climate-data.org/north-america/united-states-of-america/california/san-francisco-385/t/september-9/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'San Francisco weather in September 2025 | California',
+                            'type': 'web_search_result',
+                            'url': 'https://www.weather2travel.com/california/san-francisco/september/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'San Francisco, Weather for September, USA',
+                            'type': 'web_search_result',
+                            'url': 'https://www.holiday-weather.com/san_francisco/averages/september/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Monthly Weather Forecast for San Francisco, CA - weather.com',
+                            'type': 'web_search_result',
+                            'url': 'https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '3 weeks ago',
+                            'title': 'September 2025 Weather - San Francisco',
+                            'type': 'web_search_result',
+                            'url': 'https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'San Francisco Weather in September | Thomas Cook',
+                            'type': 'web_search_result',
+                            'url': 'https://www.thomascook.com/holidays/weather/usa/california/san-francisco/september/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '4 days ago',
+                            'title': IsStr(),
+                            'type': 'web_search_result',
+                            'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
+                        },
+                    ],
+                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(index=6, part=TextPart(content='Base'), previous_part_kind='builtin-tool-return'),
+            PartDeltaEvent(
+                index=6,
+                delta=TextPartDelta(
+                    content_delta="d on the search results, I can provide you with information about San Francisco's weather"
+                ),
+            ),
+            PartDeltaEvent(
+                index=6,
+                delta=TextPartDelta(
+                    content_delta="""\
+ today (September 16, 2025):
+
+According\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta=" to AccuWeather's forecast, ")),
+            PartEndEvent(
+                index=6,
+                part=TextPart(
+                    content="""\
+Based on the search results, I can provide you with information about San Francisco's weather today (September 16, 2025):
+
+According to AccuWeather's forecast, \
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=7,
+                part=TextPart(content='today (September 16) shows a high of 76°F and low of 59°F'),
+                previous_part_kind='text',
+            ),
+            PartEndEvent(
+                index=7,
+                part=TextPart(content='today (September 16) shows a high of 76°F and low of 59°F'),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=8,
+                part=TextPart(
+                    content="""\
+ for San Francisco.
+
+From the recent San\
+"""
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' Francisco Chronicle weather report, ')),
+            PartEndEvent(
+                index=8,
+                part=TextPart(
+                    content="""\
+ for San Francisco.
+
+From the recent San Francisco Chronicle weather report, \
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=9,
+                part=TextPart(content='average mid-September highs in San Francisco are around 70 degrees'),
+                previous_part_kind='text',
+            ),
+            PartEndEvent(
+                index=9,
+                part=TextPart(content='average mid-September highs in San Francisco are around 70 degrees'),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=10, part=TextPart(content=", so today's forecast of 76°F is"), previous_part_kind='text'
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=TextPartDelta(
+                    content_delta="""\
+ slightly above the typical temperature for this time of year.
+
+The\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=TextPartDelta(
+                    content_delta="""\
+ general weather pattern for San Francisco in September includes:
+- \
+"""
+                ),
+            ),
+            PartEndEvent(
+                index=10,
+                part=TextPart(
+                    content="""\
+, so today's forecast of 76°F is slightly above the typical temperature for this time of year.
+
+The general weather pattern for San Francisco in September includes:
+- \
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=11,
+                part=TextPart(
+                    content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C'
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=11, delta=TextPartDelta(content_delta=' (55°F) at night')),
+            PartEndEvent(
+                index=11,
+                part=TextPart(
+                    content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C (55°F) at night'
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=12,
+                part=TextPart(
+                    content="""\
+
+- \
+"""
+                ),
+                previous_part_kind='text',
+            ),
+            PartEndEvent(
+                index=12,
+                part=TextPart(
+                    content="""\
+
+- \
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=13,
+                part=TextPart(content='There are normally 9 hours of bright sunshine each day in San Francisco in'),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' September')),
+            PartEndEvent(
+                index=13,
+                part=TextPart(
+                    content='There are normally 9 hours of bright sunshine each day in San Francisco in September'
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=14,
+                part=TextPart(
+                    content="""\
+
+- \
+"""
+                ),
+                previous_part_kind='text',
+            ),
+            PartEndEvent(
+                index=14,
+                part=TextPart(
+                    content="""\
+
+- \
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=15,
+                part=TextPart(
+                    content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm.'
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' Typically, there are no rainy days')),
+            PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' during this month')),
+            PartEndEvent(
+                index=15,
+                part=TextPart(
+                    content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this month'
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=16,
+                part=TextPart(
+                    content="""\
+
+
+So for today, you can expect partly sunny to sunny skies with a\
+"""
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=' high around 76°F (24°C)')),
+            PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=' and a low around 59°F (15°C),')),
+            PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=" with very little chance of rain. It's sh")),
+            PartDeltaEvent(
+                index=16, delta=TextPartDelta(content_delta='aping up to be a pleasant day in San Francisco!')
+            ),
+            PartEndEvent(
+                index=16,
+                part=TextPart(
+                    content="""\
+
+
+So for today, you can expect partly sunny to sunny skies with a high around 76°F (24°C) and a low around 59°F (15°C), with very little chance of rain. It's shaping up to be a pleasant day in San Francisco!\
+"""
+                ),
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args='{"query": "San Francisco weather today"}',
+                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                    provider_name='anthropic',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '6 days ago',
+                            'title': 'San Francisco, CA Weather Forecast | AccuWeather',
+                            'type': 'web_search_result',
+                            'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '6 days ago',
+                            'title': '10-Day Weather Forecast for San Francisco, CA - The Weather Channel | weather.com',
+                            'type': 'web_search_result',
+                            'url': 'https://weather.com/weather/tenday/l/San+Francisco+CA+USCA0987:1:US',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Weather Forecast and Conditions for San Francisco, CA - The Weather Channel | Weather.com',
+                            'type': 'web_search_result',
+                            'url': 'https://weather.com/weather/today/l/USCA0987:1:US',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'San Francisco, CA 10-Day Weather Forecast | Weather Underground',
+                            'type': 'web_search_result',
+                            'url': 'https://www.wunderground.com/forecast/us/ca/san-francisco',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '1 week ago',
+                            'title': 'National Weather Service',
+                            'type': 'web_search_result',
+                            'url': 'https://forecast.weather.gov/MapClick.php?lat=37.7771&lon=-122.4196',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '1 week ago',
+                            'title': 'San Francisco Bay Area weather forecast – NBC Bay Area',
+                            'type': 'web_search_result',
+                            'url': 'https://www.nbcbayarea.com/weather/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'San Francisco, CA Current Weather - The Weather Network',
+                            'type': 'web_search_result',
+                            'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '6 days ago',
+                            'title': 'San Francisco, CA Weather Conditions | Weather Underground',
+                            'type': 'web_search_result',
+                            'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'San Francisco, CA Hourly Weather Forecast | Weather Underground',
+                            'type': 'web_search_result',
+                            'url': 'https://www.wunderground.com/hourly/us/ca/san-francisco',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '1 week ago',
+                            'title': 'Live Doppler 7 | Bay Area Weather News - ABC7 San Francisco',
+                            'type': 'web_search_result',
+                            'url': 'https://abc7news.com/weather/',
+                        },
+                    ],
+                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                )
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args='{"query": "San Francisco weather September 16 2025"}',
+                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    provider_name='anthropic',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'San Francisco weather in September 2025 | Weather25.com',
+                            'type': 'web_search_result',
+                            'url': 'https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Weather in San Francisco in September 2025 (California) - detailed Weather Forecast for a month',
+                            'type': 'web_search_result',
+                            'url': 'https://world-weather.info/forecast/usa/san_francisco/september-2025/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'San Francisco, CA Monthly Weather | AccuWeather',
+                            'type': 'web_search_result',
+                            'url': 'https://www.accuweather.com/en/us/san-francisco/94103/september-weather/347629',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Weather San Francisco in September 2025: Temperature & Climate',
+                            'type': 'web_search_result',
+                            'url': 'https://en.climate-data.org/north-america/united-states-of-america/california/san-francisco-385/t/september-9/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'San Francisco weather in September 2025 | California',
+                            'type': 'web_search_result',
+                            'url': 'https://www.weather2travel.com/california/san-francisco/september/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'San Francisco, Weather for September, USA',
+                            'type': 'web_search_result',
+                            'url': 'https://www.holiday-weather.com/san_francisco/averages/september/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Monthly Weather Forecast for San Francisco, CA - weather.com',
+                            'type': 'web_search_result',
+                            'url': 'https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '3 weeks ago',
+                            'title': 'September 2025 Weather - San Francisco',
+                            'type': 'web_search_result',
+                            'url': 'https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'San Francisco Weather in September | Thomas Cook',
+                            'type': 'web_search_result',
+                            'url': 'https://www.thomascook.com/holidays/weather/usa/california/san-francisco/september/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '4 days ago',
+                            'title': IsStr(),
+                            'type': 'web_search_result',
+                            'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
+                        },
+                    ],
+                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                )
+            ),
+        ]
+    )
+
+
+async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    agent = Agent(
+        m,
+        builtin_tools=[
+            MCPServerTool(
+                id='deepwiki',
+                url='https://mcp.deepwiki.com/mcp',
+            )
+        ],
+        model_settings=settings,
+    )
+
+    result = await agent.run('Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user is asking about the pydantic/pydantic-ai repository and wants me to keep the answer short. I should use the deepwiki tools to get information about this repository. Let me start by asking a general question about what this repository is about.',
+                        signature='EqUDCkYICBgCKkCTiLjx5Rzw9zXo4pFDhFAc9Ci1R+d2fpkiqw7IPt1PgxBankr7bhRfh2iQOFEUy7sYVtsBxvnHW8zfBRxH1j6lEgySvdOyObrcFdJX3qkaDMAMCdLHIevZ/mSx/SIwi917U34N5jLQH1yMoCx/k72klLG5v42vcwUTG4ngKDI69Ddaf0eeDpgg3tL5FHfvKowCnslWg3Pd3ITe+TLlzu+OVZhRKU9SEwDJbjV7ZF954Ls6XExAfjdXhrhvXDB+hz6fZFPGFEfXV7jwElFT5HcGPWy84xvlwzbklZ2zH3XViik0B5dMErMAKs6IVwqXo3s+0p9xtX5gCBuvLkalET2upNsmdKGJv7WQWoaLch5N07uvSgWkO8AkGuVtBgqZH+uRGlPfYlnAgifNHu00GSAVK3beeyZfpnSQ6LQKcH+wVmrOi/3UvzA5f1LvsXG32gQKUCxztATnlBaI+7GMs1IAloaRHBndyRoe8Lwv79zZe9u9gnF9WCgK3yQsAR5hGZXlBKiIWfnRrXQ7QmA2hVO+mhEOCnz7OQkMIEUlfxgB',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:deepwiki',
+                        args={
+                            'action': 'call_tool',
+                            'tool_name': 'ask_question',
+                            'tool_args': {
+                                'repoName': 'pydantic/pydantic-ai',
+                                'question': 'What is pydantic-ai and what does this repository do?',
+                            },
+                        },
+                        tool_call_id='mcptoolu_01SAss3KEwASziHZoMR6HcZU',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:deepwiki',
+                        content={
+                            'content': [
+                                {
+                                    'citations': None,
+                                    'text': IsStr(),
+                                    'type': 'text',
+                                }
+                            ],
+                            'is_error': False,
+                        },
+                        tool_call_id='mcptoolu_01SAss3KEwASziHZoMR6HcZU',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content="""\
+**Pydantic AI** is a Python agent framework for building production-grade applications with Generative AI. It provides:
+
+- **Type-safe agents** with compile-time validation using `Agent[Deps, Output]`
+- **Model-agnostic design** supporting 15+ LLM providers (OpenAI, Anthropic, Google, etc.)
+- **Structured outputs** with automatic Pydantic validation and self-correction
+- **Built-in observability** via OpenTelemetry and Logfire integration
+- **Production tooling** including evaluation framework, durable execution, and tool system
+
+The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (core framework), `pydantic-graph` (execution engine), and `pydantic-evals` (evaluation tools). It emphasizes developer ergonomics and type safety, similar to Pydantic and FastAPI.\
+"""
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2674,
+                    output_tokens=373,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 2674,
+                        'output_tokens': 373,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01MYDjkvBDRaKsY6PDwQz3n6',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run('How about the pydantic repo in the same org?', message_history=messages)
+    messages = result.new_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='How about the pydantic repo in the same org?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user is asking about the pydantic repo in the same org, so that would be pydantic/pydantic. I should ask about what this repository does and provide a short answer.',
+                        signature='EtECCkYICBgCKkAkKy+K3Z/q4dGwZGr1MdsH8HLaULElUSaa/Y8A1L/Jp7y1AfJd1zrTL7Zfa2KoPr0HqO/AI/cJJreheuwcn/dWEgw0bPLie900a4h9wS0aDACnsdbr+adzpUyExiIwyuNjV82BVkK/kU+sMyrfbhgb6ob/DUgudJPaK5zR6cINAAGQnIy3iOXTwu3OUfPAKrgBzF9HD5HjiPSJdsxlkI0RA5Yjiol05/hR3fUB6WWrs0aouxIzlriJ6NzmzvqctkFJdRgAL9Mh06iK1A61PLyBWRdo1f5TBziFP1c6z7iQQzH9DdcaHvG8yLoaadbyTxMvTn2PtfEcSPjuZcLgv7QcF+HZXbDVjsHJW78OK2ta0M6/xuU1p4yG3qgoss3b0G6fAyvUVgVbb1wknkE/9W9gd2k/ZSh4P7F6AcvLTXQScTyMfWRtAWQqABgB',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:deepwiki',
+                        args={
+                            'action': 'call_tool',
+                            'tool_name': 'ask_question',
+                            'tool_args': {
+                                'repoName': 'pydantic/pydantic',
+                                'question': 'What is Pydantic and what does this repository do?',
+                            },
+                        },
+                        tool_call_id='mcptoolu_01A9RvAqDeoUnaMgQc6Nn75y',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:deepwiki',
+                        content={
+                            'content': [
+                                {
+                                    'citations': None,
+                                    'text': """\
+Pydantic is a Python library for data validation, parsing, and serialization using type hints  . This repository, `pydantic/pydantic`, contains the source code for the Pydantic library itself, including its core validation logic, documentation, and continuous integration/continuous deployment (CI/CD) pipelines  .
+
+## What is Pydantic
+
+Pydantic is designed to ensure that data conforms to specified types and constraints at runtime . It leverages Python type hints to define data schemas and provides mechanisms for data conversion and validation . The library's core validation logic is implemented in Rust within a separate package called `pydantic-core`, which contributes to its performance .
+
+Pydantic offers several user-facing APIs for validation:
+*   `BaseModel`: Used for defining class-based models with fields, suitable for domain models, API schemas, and configuration .
+*   `TypeAdapter`: Provides a flexible way to validate and serialize arbitrary Python types, including primitive types and dataclasses .
+*   `@dataclass`: Enhances Python's built-in dataclasses with Pydantic's validation capabilities .
+*   `@validate_call`: Used for validating function arguments and return values .
+
+## What this Repository Does
+
+The `pydantic/pydantic` repository serves as the development hub for the Pydantic library. Its primary functions include:
+
+### Core Library Development
+The repository contains the Python source code for the Pydantic library, including modules for `BaseModel` , `Field` definitions , configuration management , and type adapters . It also includes internal modules responsible for model construction and schema generation .
+
+### Documentation
+The repository hosts the documentation for Pydantic, which is built using MkDocs . The documentation covers installation instructions , core concepts like models , fields, and JSON Schema generation . It also includes information on contributing to the project .
+
+### Continuous Integration and Deployment (CI/CD)
+The repository utilizes GitHub Actions for its CI/CD pipeline . This pipeline includes:
+*   **Linting**: Checks code quality and style .
+*   **Testing**: Runs a comprehensive test suite across multiple operating systems and Python versions . This includes memory profiling tests, Mypy plugin tests, and type-checking integration tests   .
+*   **Coverage**: Aggregates test coverage data and posts comments to pull requests .
+*   **Release Process**: Automates publishing new versions to PyPI and sending release announcements .
+*   **Third-Party Integration Testing**: Tests Pydantic's compatibility with other popular libraries like FastAPI, SQLModel, and Beanie .
+*   **Dependency Management**: Uses `uv` for managing dependencies and includes workflows to check compatibility with various dependency versions  .
+*   **Performance Benchmarking**: Utilizes CodSpeed to track and analyze performance .
+
+## Versioning and Compatibility
+Pydantic maintains strict version compatibility between the pure Python package (`pydantic`) and its Rust-based validation core (`pydantic-core`)  . A `SystemError` is raised if there's a mismatch in `pydantic-core` versions, ensuring a stable environment . The `version_info()` function provides detailed version information for Pydantic and its dependencies .
+
+Notes:
+The `CITATION.cff` file also provides a concise description of Pydantic as "the most widely used data validation library for Python" . The `README.md` and `docs/index.md` files reiterate this, emphasizing its speed and extensibility  .
+
+Wiki pages you might want to explore:
+- [Overview (pydantic/pydantic)](/wiki/pydantic/pydantic#1)
+- [Development and Deployment (pydantic/pydantic)](/wiki/pydantic/pydantic#7)
+
+View this search on DeepWiki: https://deepwiki.com/search/what-is-pydantic-and-what-does_dab96efa-752a-4688-a630-3f4658084a88
+""",
+                                    'type': 'text',
+                                }
+                            ],
+                            'is_error': False,
+                        },
+                        tool_call_id='mcptoolu_01A9RvAqDeoUnaMgQc6Nn75y',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content="""\
+**Pydantic** is Python's most widely used data validation library for parsing, validation, and serialization using type hints. The repository contains:
+
+**Core Features:**
+- **Data validation** with automatic type conversion and constraint checking
+- **Multiple APIs**: `BaseModel` for class-based models, `TypeAdapter` for arbitrary types, `@dataclass` decorator, and `@validate_call` for functions
+- **High performance** via Rust-based validation core (`pydantic-core`)
+- **JSON Schema generation** and comprehensive serialization support
+
+**Repository Contents:**
+- Python source code for the main Pydantic library
+- Comprehensive documentation built with MkDocs
+- Extensive CI/CD pipeline with testing across multiple Python versions and OS
+- Integration testing with popular libraries (FastAPI, SQLModel, etc.)
+- Performance benchmarking and dependency compatibility checks
+
+Pydantic ensures runtime data integrity through type hints and is foundational to many Python frameworks, especially in web APIs and data processing applications.\
+"""
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=5262,
+                    output_tokens=369,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 5262,
+                        'output_tokens': 369,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01DSGib8F7nNoYprfYSGp1sd',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    agent = Agent(
+        m,
+        builtin_tools=[
+            MCPServerTool(
+                id='deepwiki',
+                url='https://mcp.deepwiki.com/mcp',
+                allowed_tools=['ask_question'],
+            )
+        ],
+        model_settings=settings,
+    )
+
+    event_parts: list[Any] = []
+    async with agent.iter(
+        user_prompt='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        if (
+                            isinstance(event, PartStartEvent)
+                            and isinstance(event.part, BuiltinToolCallPart | BuiltinToolReturnPart)
+                        ) or (isinstance(event, PartDeltaEvent) and isinstance(event.delta, ToolCallPartDelta)):
+                            event_parts.append(event)
+
+    assert agent_run.result is not None
+    messages = agent_run.result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user is asking about the pydantic/pydantic-ai repository. They want a short answer about the repo. I should use the deepwiki_ask_question function to get information about this repository.',
+                        signature='EuoCCkYICBgCKkDPqznnPHupi9rVXvaQQqrMprXof9wtQsCqw7Yw687UIk/FvF65omU22QO+CmIcYqTwhBfifPEp9A3/lM9C8cIcEgzGsjorcyNe2H0ZFf8aDCA4iLG6qgUL6fLhzCIwVWcg65CrvSFusXtMH18p+XiF+BUxT+rvnCFsnLbFsxtjGyKh1j4UW6V0Tk0O7+3sKtEBEzvxztXkMkeXkXRsQFJ00jTNhkUHu74sqnh6QxgV8wK2vlJRnBnes/oh7QdED0h/pZaUbxplYJiPFisWx/zTJQvOv29I46sM2CdY5ggGO1KWrEF/pognyod+jdCdb481XUET9T7nl/VMz/Og2QkyGf+5MvSecKQhujlS0VFhCgaYv68sl0Fv3hj2AkeE4vcYu3YdDaNDLXerbIaLCMkkn08NID/wKZTwtLSL+N6+kOi+4peGqXDNps8oa3mqIn7NAWFlwEUrFZd5kjtDkQ5dw/IYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:deepwiki',
+                        args='{"action":"call_tool","tool_name":"ask_question","tool_args":{"repoName": "pydantic/pydantic-ai", "question": "What is this repository about? What are its main features and purpose?"}}',
+                        tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:deepwiki',
+                        content={
+                            'content': [
+                                {
+                                    'citations': None,
+                                    'text': IsStr(),
+                                    'type': 'text',
+                                }
+                            ],
+                            'is_error': False,
+                        },
+                        tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content="""\
+**Pydantic-AI** is a framework for building Generative AI applications with type safety. It provides:
+
+- **Unified LLM interface** - Works with OpenAI, Anthropic, Google, Groq, Cohere, Mistral, AWS Bedrock, and more
+- **Type-safe agents** - Uses Pydantic for validation and type checking throughout
+- **Tool integration** - Easily add custom functions/tools agents can call
+- **Graph-based execution** - Manages agent workflows as finite state machines
+- **Multiple output formats** - Text, structured data, and multimodal content
+- **Durable execution** - Integration with systems like DBOS and Temporal for fault tolerance
+- **Streaming support** - Stream responses in real-time
+
+It's designed to simplify building robust, production-ready AI agents while abstracting away provider-specific complexities.\
+"""
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=3042,
+                    output_tokens=354,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 3042,
+                        'output_tokens': 354,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01Xf6SmUVY1mDrSwFc5RsY3n',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:deepwiki',
+                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='thinking',
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='{"action":"call_tool","tool_name":"ask_question","tool_args":',
+                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                ),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='{"repoName"', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta=': "', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='pydantic', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='/pydantic-ai', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='"', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta=', "question', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='": "What', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta=' is ', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='this repo', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='sitory about', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='? Wha', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='t are i', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='ts main feat', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='ure', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='s and purpo', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='se?"}', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='}', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartStartEvent(
+                index=2,
+                part=BuiltinToolReturnPart(
+                    tool_name='mcp_server:deepwiki',
+                    content={
+                        'content': [
+                            {
+                                'citations': None,
+                                'text': """\
+This repository, `pydantic/pydantic-ai`, is a GenAI Agent Framework that leverages Pydantic for building Generative AI applications. Its main purpose is to provide a unified and type-safe way to interact with various large language models (LLMs) from different providers, manage agent execution flows, and integrate with external tools and services. \n\
+
+## Main Features and Purpose
+
+The `pydantic-ai` repository offers several core features:
+
+### 1. Agent System
+The `Agent` class serves as the main orchestrator for managing interactions with LLMs and executing tasks.  Agents can be configured with generic types for dependency injection (`Agent[AgentDepsT, OutputDataT]`) and output validation, ensuring type safety throughout the application. \n\
+
+Agents support various execution methods:
+*   `agent.run()`: An asynchronous function that returns a completed `RunResult`. \n\
+*   `agent.run_sync()`: A synchronous function that internally calls `run()` to return a completed `RunResult`. \n\
+*   `agent.run_stream()`: An asynchronous context manager for streaming text and structured output. \n\
+*   `agent.run_stream_events()`: Returns an asynchronous iterable of `AgentStreamEvent`s and a final `AgentRunResultEvent`. \n\
+*   `agent.iter()`: A context manager that provides an asynchronous iterable over the nodes of the agent's underlying `Graph`, allowing for deeper control and insight into the execution flow. \n\
+
+### 2. Model Integration
+The framework provides a unified interface for integrating with various LLM providers, including OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Bedrock, and HuggingFace.  Each model integration follows a consistent settings pattern with provider-specific prefixes (e.g., `google_*`, `anthropic_*`). \n\
+
+Examples of supported models and their capabilities include:
+*   `GoogleModel`: Integrates with Google's Gemini API, supporting both Gemini API (`google-gla`) and Vertex AI (`google-vertex`) providers.  It supports token counting, streaming, built-in tools like `WebSearchTool`, `UrlContextTool`, `CodeExecutionTool`, and native JSON schema output. \n\
+*   `AnthropicModel`: Uses Anthropic's beta API for advanced features like "Thinking Blocks" and built-in tools. \n\
+*   `GroqModel`: Offers high-speed inference and specialized reasoning support with configurable reasoning formats. \n\
+*   `MistralModel`: Supports customizable JSON schema prompting and thinking support. \n\
+*   `BedrockConverseModel`: Utilizes AWS Bedrock's Converse API for unified access to various foundation models like Claude, Titan, Llama, and Mistral. \n\
+*   `CohereModel`: Integrates with Cohere's v2 API for chat completions, including thinking support and tool calling. \n\
+
+The framework also supports multimodal inputs such as `AudioUrl`, `DocumentUrl`, `ImageUrl`, and `VideoUrl`, allowing agents to process and respond to diverse content types. \n\
+
+### 3. Graph-based Execution
+Pydantic AI uses `pydantic-graph` to manage the execution flow of agents, representing it as a finite state machine.  The execution typically flows through `UserPromptNode` → `ModelRequestNode` → `CallToolsNode`.  This allows for detailed tracking of message history and usage. \n\
+
+### 4. Tool System
+Function tools enable models to perform actions and retrieve additional information.  Tools can be registered using decorators like `@agent.tool` (for tools needing `RunContext` access) or `@agent.tool_plain` (for tools without `RunContext` access).  The framework also supports toolsets for managing collections of tools. \n\
+
+Tools can return various types of output, including anything Pydantic can serialize to JSON, as well as multimodal content like `AudioUrl`, `VideoUrl`, `ImageUrl`, or `DocumentUrl`.  The `ToolReturn` object allows for separating the `return_value` (for the model), `content` (for additional context), and `metadata` (for application-specific use). \n\
+
+Built-in tools like `UrlContextTool` allow agents to pull web content into their context. \n\
+
+### 5. Output Handling
+The framework supports various output types:
+*   `TextOutput`: Plain text responses. \n\
+*   `ToolOutput`: Structured data via tool calls. \n\
+*   `NativeOutput`: Provider-specific structured output. \n\
+*   `PromptedOutput`: Prompt-based structured extraction. \n\
+
+### 6. Durable Execution
+Pydantic AI integrates with durable execution systems like DBOS and Temporal.  This allows agents to maintain state and resume execution after failures or restarts, making them suitable for long-running or fault-tolerant applications. \n\
+
+### 7. Multi-Agent Patterns and Integrations
+The repository supports multi-agent applications and various integrations, including:
+*   Pydantic Evals: For evaluating agent performance. \n\
+*   Pydantic Graph: The underlying graph execution engine. \n\
+*   Logfire: For debugging and monitoring. \n\
+*   Agent-User Interaction (AG-UI) and Agent2Agent (A2A): For facilitating interactions between agents and users, and between agents themselves. \n\
+*   Clai: A CLI tool. \n\
+
+## Purpose
+
+The overarching purpose of `pydantic-ai` is to simplify the development of robust and reliable Generative AI applications by providing a structured, type-safe, and extensible framework. It aims to abstract away the complexities of interacting with different LLM providers and managing agent workflows, allowing developers to focus on application logic. \n\
+
+Notes:
+The `CLAUDE.md` file provides guidance for Claude Code when working with the repository, outlining development commands and project architecture.  The `mkdocs.yml` file defines the structure and content of the project's documentation, further detailing the features and organization of the repository. \n\
+
+Wiki pages you might want to explore:
+- [Google, Anthropic and Other Providers (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.3)
+
+View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repository-about_5104a64d-2f5e-4461-80d8-eb0892242441
+""",
+                                'type': 'text',
+                            }
+                        ],
+                        'is_error': False,
+                    },
+                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+        ]
     )
 
 
 async def test_anthropic_code_execution_tool(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    agent = Agent(
+        m,
+        builtin_tools=[CodeExecutionTool()],
+        model_settings=settings,
+        instructions='Always use the code execution tool for math.',
+    )
 
     result = await agent.run('How much is 3 * 12390?')
-    assert result.all_messages() == snapshot(
+    messages = result.all_messages()
+    assert messages == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How much is 3 * 12390?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How much is 3 * 12390?', timestamp=IsDatetime())],
+                instructions='Always use the code execution tool for math.',
+            ),
             ModelResponse(
                 parts=[
-                    TextPart(content="I'll calculate 3 * 12390 for you."),
+                    ThinkingPart(
+                        content='The user is asking for a simple multiplication: 3 * 12390. This is a mathematical calculation, and according to my guidelines, I should always use the code execution tool for math. Even though this is a relatively simple calculation that could be done mentally, the instruction is clear that I should use the code execution tool for math.',
+                        signature='EvsDCkYIBxgCKkCSFDXODoOrOHU14Yv7+TNxuR4sDsJKw9y9C1gGPIWqslF6apNZ1xwJ94E9KsQBfXlZ/ELoBSTj3YT0liwueN6kEgxrakXTN1a+YafcnckaDC2EYhQsezxdE/P7XSIwczAl/PquNGpiOLqC5DnYKvD2+F0JhBQsbLe1bQi/VR0XCQdd+4DZ5dBU5AmuDcntKuICIMg145F3vP8bFnTdUMOIQY0NASypKRnHj6owIkuqWJ+pwu6OdpDt2a+Lr7R1dw860hcPjEp65eg5nwtyi8bw1pzfQJmC48DoiQn/OYeiXMWeNv5HoKEK/lkikqVPcTnD03MytUsNGRqUBfDvr4bxNgxqeAENi5pZ21ySnjxhC879gN0G3uriEM8o4LXj/X2DotKO1lvIEL/2RQZGrFulDLq5I2FW51YBY3kzHerK7zwFgs3t39VLsy7Q3T6sLi4yh4BbFxF4RaSOCicTRbMYC8UO85uhArSSm/0EDDhX+kxIGJZ91F6Vv0vSS4qLy+55buZ8Jj4/P86t9YMxBeylQ/tUNGzhISqc1+CZeQ4aZKiRyQmlfkA6bcM42JAFQT/c0EbM2JmDsiSpkM8d021E9hqrr2eIhasaOo4vG5yUz7f9aSaRc/Muy02mckNxxxS7UshBCxr8veoMa0HYnB/rBNFeGAE=',
+                        provider_name='anthropic',
+                    ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
                         args={
@@ -1477,39 +3851,693 @@ result = 3 * 12390
 print(f"3 * 12390 = {result}")\
 """
                         },
-                        tool_call_id=IsStr(),
+                        tool_call_id='srvtoolu_01Pc4vcD1JPUDcVhHaskFUfn',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='code_execution_tool_result',
-                        content=BetaCodeExecutionResultBlock(
-                            content=[],
-                            return_code=0,
-                            stderr='',
-                            stdout='3 * 12390 = 37170\n',
-                            type='code_execution_result',
-                        ),
-                        tool_call_id=IsStr(),
+                        tool_name='code_execution',
+                        content={
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': '3 * 12390 = 37170\n',
+                            'type': 'code_execution_result',
+                        },
+                        tool_call_id='srvtoolu_01Pc4vcD1JPUDcVhHaskFUfn',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
-                    TextPart(content='The answer is **37,170**.'),
+                    TextPart(content='3 * 12390 = 37170'),
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=1630,
-                    response_tokens=105,
-                    total_tokens=1735,
+                usage=RequestUsage(
+                    input_tokens=1771,
+                    output_tokens=171,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 1630,
-                        'output_tokens': 105,
+                        'input_tokens': 1771,
+                        'output_tokens': 171,
                     },
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
-                vendor_id=IsStr(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_018bVTPr9khzuds31rFDuqW4',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run('How about 4 * 12390?')
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='How about 4 * 12390?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Always use the code execution tool for math.',
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user is asking for a simple multiplication: 4 * 12390. This is a computational task that requires precise calculation, so I should use the code execution tool to get the accurate result.',
+                        signature='EucCCkYIBxgCKkDrAwZF3dM/a2UiJFMD/+Z5mdZOkFXxJ1vmAg7GWzC2YUTBKtKvys1yFaWmkUuBSYBC/kaTPYVj28qa94V0Q/ngEgw+4333itH5QH/0B6gaDHxUZy/HGNpU04RbZiIwmQeS7P+gLHlV9b0tRYciwVbpjZl8WkrunyWyD5xXTC7bzv/tQKv8kMjxRsRGZZH1Ks4BDiNK1tuAlz4x5LDAsui8/8vBDY1c+NRtc6y0bOgxSXFXSemv2BHm7VokC7JG8+iCQEY9HIyFtyjLeJ93niDCszU8YHPtAa4o2Orw8K4Tc4Y18U/TqfgnZulkjkeONhDJP9uUk4Db4woJiLpAx13X8W5TriwqHWMRM2+D0coqTTWTovC/xbVFFZZmwyqaz/h6V6qqokyLpbqb+5B5kw/uQfybUv28h3GqxFyuD62zM9OPyMqbd2GrAPbSLE2JETkJsp6GzxVEh1vNI3DMgdQYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+result = 4 * 12390
+print(f"4 * 12390 = {result}")\
+"""
+                        },
+                        tool_call_id='srvtoolu_017iCje5DPMZEdgBkxj1osgt',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': '4 * 12390 = 49560\n',
+                            'type': 'code_execution_result',
+                        },
+                        tool_call_id='srvtoolu_017iCje5DPMZEdgBkxj1osgt',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content='4 * 12390 = 49560'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=1741,
+                    output_tokens=143,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 1741,
+                        'output_tokens': 143,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01VngRFBcNddwrYQoKUmdePY',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()], model_settings=settings)
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='what is 65465-6544 * 65464-6+1.02255') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='what is 65465-6544 * 65464-6+1.02255',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking me to calculate a mathematical expression: 65465-6544 * 65464-6+1.02255
+
+This involves multiplication and subtraction operations, and I need to be careful about the order of operations (PEMDAS/BODMAS). Let me break this down:
+
+65465-6544 * 65464-6+1.02255
+
+Following order of operations:
+1. First, multiplication: 6544 * 65464
+2. Then left to right for addition and subtraction: 65465 - (result from step 1) - 6 + 1.02255
+
+This is a computational task that requires precise calculations, so I should use the code_execution tool to get an accurate result.\
+""",
+                        signature='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content="I'll calculate this mathematical expression for you. Let me break it down step by step following the order of operations."
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
+                        tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': """\
+Expression: 65465-6544 * 65464-6+1.02255
+Step 1 - Multiplication: 6544 * 65464 = 428396416
+Step 2 - First subtraction: 65465 - 428396416 = -428330951
+Step 3 - Second subtraction: -428330951 - 6 = -428330957
+Step 4 - Final addition: -428330957 + 1.02255 = -428330955.97745
+
+Direct calculation: -428330955.97745
+Results match: True
+""",
+                            'type': 'code_execution_result',
+                        },
+                        tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content="""\
+The answer to **65465-6544 * 65464-6+1.02255** is **-428,330,955.97745**.
+
+Here's how it breaks down following the order of operations:
+1. First, multiplication: 6,544 × 65,464 = 428,396,416
+2. Then left to right: 65,465 - 428,396,416 = -428,330,951
+3. Continue: -428,330,951 - 6 = -428,330,957
+4. Finally: -428,330,957 + 1.02255 = -428,330,955.97745\
+"""
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2316,
+                    output_tokens=733,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 2316,
+                        'output_tokens': 733,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01TaPV5KLA8MsCPDuJNKPLF4',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta='The user is asking me to calculate', provider_name='anthropic'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta=' a mathematical expression: 65465-6544 *', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+ 65464-6+1.02255
+
+This\
+""",
+                    provider_name='anthropic',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta=' involves multiplication and subtraction operations, and I need to be careful about the order of',
+                    provider_name='anthropic',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' operations (PEMDAS/BODMAS).', provider_name='anthropic'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+ Let me break this down:
+
+65\
+""",
+                    provider_name='anthropic',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta='465-6544 * 65464-6+1.02255', provider_name='anthropic')
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+
+
+Following order of operations:
+1. First, multiplication:\
+""",
+                    provider_name='anthropic',
+                ),
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 6544 * 65464', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+
+2. Then left to right for\
+""",
+                    provider_name='anthropic',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' addition and subtraction: 65465', provider_name='anthropic'),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' - (result from step 1)', provider_name='anthropic')
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+ - 6 + 1.02255
+
+This\
+""",
+                    provider_name='anthropic',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta=' is a computational task that requires precise', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta=' calculations, so I should use the code_execution', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' tool to get an accurate result.', provider_name='anthropic'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    signature_delta='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ==',
+                    provider_name='anthropic',
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content="""\
+The user is asking me to calculate a mathematical expression: 65465-6544 * 65464-6+1.02255
+
+This involves multiplication and subtraction operations, and I need to be careful about the order of operations (PEMDAS/BODMAS). Let me break this down:
+
+65465-6544 * 65464-6+1.02255
+
+Following order of operations:
+1. First, multiplication: 6544 * 65464
+2. Then left to right for addition and subtraction: 65465 - (result from step 1) - 6 + 1.02255
+
+This is a computational task that requires precise calculations, so I should use the code_execution tool to get an accurate result.\
+""",
+                    signature='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ==',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=1,
+                part=TextPart(content="I'll calculate this mathematical expression for you. Let me break"),
+                previous_part_kind='thinking',
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(
+                index=1, delta=TextPartDelta(content_delta=' it down step by step following the order of operations.')
+            ),
+            PartEndEvent(
+                index=1,
+                part=TextPart(
+                    content="I'll calculate this mathematical expression for you. Let me break it down step by step following the order of operations."
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=2,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG')
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta=')\\n\\nexpression = \\"65465-6544 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta='* 65464-6+1', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='.02255\\"\\nprint(f\\"Expression: {expression',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='}\\")\\n\\n# Let\'s break it down', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta=' step by step\\nstep1 = ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta='6544 * 65464  ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='# Multiplication first\\nprint', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta='(f\\"Step 1 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='- Multiplication: ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta='6544 * 65464 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='= {step1}\\")\\n\\nstep2', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta=' = 65465 - step1  ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='# First subtraction\\nprint(f\\"Step', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta=' 2 - First subtraction:', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta=' 65465 - {step1', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='} = {step2}\\")\\n\\nstep', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='3 = step2 - 6  # Second subtraction\\nprint',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='(f\\"Step 3 - Second subtraction: {step2}',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta=' - 6 = {step3', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='}\\")\\n\\nfinal_result = step3 + ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='1.02255  # Final addition\\nprint(f\\"Step ',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='4 - Final addition: {step3', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta='} + 1.02255 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='= {final_result}\\")\\n\\n#', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta=" Let's also verify with", tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta=' direct calculation\\ndirect_result = 65',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='465-6544 * 65464-', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='6+1.02255\\nprint(f\\"\\\\nDirect calculation:',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta=' {direct_result}\\")\\nprint', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='(f\\"Results match: {final_result == direct',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta='_result}\\")', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG')
+            ),
+            PartEndEvent(
+                index=2,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=3,
+                part=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={
+                        'content': [],
+                        'return_code': 0,
+                        'stderr': '',
+                        'stdout': """\
+Expression: 65465-6544 * 65464-6+1.02255
+Step 1 - Multiplication: 6544 * 65464 = 428396416
+Step 2 - First subtraction: 65465 - 428396416 = -428330951
+Step 3 - Second subtraction: -428330951 - 6 = -428330957
+Step 4 - Final addition: -428330957 + 1.02255 = -428330955.97745
+
+Direct calculation: -428330955.97745
+Results match: True
+""",
+                        'type': 'code_execution_result',
+                    },
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(index=4, part=TextPart(content='The answer to'), previous_part_kind='builtin-tool-return'),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' **65465-6544 * ')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='65464-6+1.02255** is **')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-428,330,955.97745**.')),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+
+Here's how it breaks down following the order of operations:
+1. First\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=', multiplication: 6,544 × 65,464 ')),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta="""\
+= 428,396,416
+2. Then left\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' to right: 65,465 - 428')),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta="""\
+,396,416 = -428,330,951
+3\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='. Continue: -428,330,951 -')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' 6 = -428,330')),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta="""\
+,957
+4. Finally: -428,330,957 + \
+"""
+                ),
+            ),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='1.02255 = -428,330,955.97745')),
+            PartEndEvent(
+                index=4,
+                part=TextPart(
+                    content="""\
+The answer to **65465-6544 * 65464-6+1.02255** is **-428,330,955.97745**.
+
+Here's how it breaks down following the order of operations:
+1. First, multiplication: 6,544 × 65,464 = 428,396,416
+2. Then left to right: 65,465 - 428,396,416 = -428,330,951
+3. Continue: -428,330,951 - 6 = -428,330,957
+4. Finally: -428,330,957 + 1.02255 = -428,330,955.97745\
+"""
+                ),
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    provider_name='anthropic',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={
+                        'content': [],
+                        'return_code': 0,
+                        'stderr': '',
+                        'stdout': """\
+Expression: 65465-6544 * 65464-6+1.02255
+Step 1 - Multiplication: 6544 * 65464 = 428396416
+Step 2 - First subtraction: 65465 - 428396416 = -428330951
+Step 3 - Second subtraction: -428330951 - 6 = -428330957
+Step 4 - Final addition: -428330957 + 1.02255 = -428330955.97745
+
+Direct calculation: -428330955.97745
+Results match: True
+""",
+                        'type': 'code_execution_result',
+                    },
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                )
             ),
         ]
     )
@@ -1522,44 +4550,43 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
     from pydantic_ai.providers.openai import OpenAIProvider
 
     openai_model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
-    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    anthropic_model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()])
 
     result = await agent.run('What day is today?')
     assert result.output == snapshot("""\
-Let me search for today's date.
+Based on the search results, today is Thursday, August 14, 2025. Here are some additional details about the date:
 
+It is the 226th day of the year 2025 in the Gregorian calendar, with 139 days remaining until the end of the year.
 
-
-Based on the search results, \n\
-
-today is Monday, May 26, 2025 (Week 22)
-
-. This is notably \n\
-
-Memorial Day, which was originally known as Decoration Day
-
-. \n\
-
-The year 2025 is a regular year with 365 days
-
-.\
+Some interesting observances for today include:
+It's being celebrated as:
+- Color Book Day
+- National Creamsicle Day
+- National Financial Awareness Day
+- National Navajo Code Talkers Day
+- National Tattoo Removal Day
+- National Wiffle Ball Day
+- Social Security Day\
 """)
     result = await agent.run('What day is tomorrow?', model=openai_model, message_history=result.all_messages())
     assert result.new_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())]),
             ModelResponse(
-                parts=[TextPart(content='Tomorrow will be **Tuesday, May 27, 2025**.')],
-                usage=Usage(
-                    request_tokens=410,
-                    response_tokens=17,
-                    total_tokens=427,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                parts=[
+                    TextPart(
+                        content='Tomorrow will be **Friday, August 15, 2025**.',
+                        id='msg_689dc4acfa488196a6b1ec0ebd3bd9520afe80ec3d42722e',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=458, output_tokens=17, details={'reasoning_tokens': 0}),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
-                vendor_id='resp_6834631faf2481918638284f62855ddf040b4e5d7e74f261',
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_689dc4abe31c81968ed493d15d8810fe0afe80ec3d42722e',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1596,7 +4623,7 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
 
     # Initialize model for all tests
     env.set('ANTHROPIC_API_KEY', 'test-key')
-    model = AnthropicModel('claude-3-5-sonnet-latest', provider='anthropic')
+    model = AnthropicModel('claude-sonnet-4-5', provider='anthropic')
 
     # Test _map_message with empty string in user prompt
     messages_empty_string: list[ModelMessage] = [
@@ -1633,7 +4660,7 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
 
 
 async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     class CityLocation(BaseModel):
         city: str
@@ -1660,13 +4687,11 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_019pMboNVRg5jkw4PKkofQ6Y')
+                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01X9wcHKKAZD9tBC711xipPa')
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=445,
-                    response_tokens=23,
-                    total_tokens=468,
+                usage=RequestUsage(
+                    input_tokens=445,
+                    output_tokens=23,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -1674,16 +4699,19 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         'output_tokens': 23,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01EnfsDTixCmHjqvk9QarBj4',
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id='msg_012TXW181edhmR5JCsQRsBKx',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='toolu_019pMboNVRg5jkw4PKkofQ6Y',
+                        tool_call_id='toolu_01X9wcHKKAZD9tBC711xipPa',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -1693,14 +4721,12 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                     ToolCallPart(
                         tool_name='final_result',
                         args={'city': 'Mexico City', 'country': 'Mexico'},
-                        tool_call_id='toolu_01V4d2H4EWp5LDM2aXaeyR6W',
+                        tool_call_id='toolu_01LZABsgreMefH2Go8D5PQbW',
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=497,
-                    response_tokens=56,
-                    total_tokens=553,
+                usage=RequestUsage(
+                    input_tokens=497,
+                    output_tokens=56,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -1708,16 +4734,19 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         'output_tokens': 56,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01Hbm5BtKzfVtWs8Eb7rCNNx',
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id='msg_01K4Fzcf1bhiyLzHpwLdrefj',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='toolu_01V4d2H4EWp5LDM2aXaeyR6W',
+                        tool_call_id='toolu_01LZABsgreMefH2Go8D5PQbW',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -1727,7 +4756,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
 
 
 async def test_anthropic_text_output_function(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     def upcase(text: str) -> str:
         return text.upper()
@@ -1742,7 +4771,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
         'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.'
     )
     assert result.output == snapshot(
-        "BASED ON THE RESULT, YOU ARE LOCATED IN MEXICO. THE LARGEST CITY IN MEXICO IS MEXICO CITY (CIUDAD DE MÉXICO), WHICH IS ALSO THE NATION'S CAPITAL. MEXICO CITY HAS A POPULATION OF APPROXIMATELY 9.2 MILLION PEOPLE IN THE CITY PROPER, AND OVER 21 MILLION PEOPLE IN ITS METROPOLITAN AREA, MAKING IT ONE OF THE LARGEST URBAN AGGLOMERATIONS IN THE WORLD. IT IS BOTH THE POLITICAL AND ECONOMIC CENTER OF MEXICO, LOCATED IN THE VALLEY OF MEXICO IN THE CENTRAL PART OF THE COUNTRY."
+        'BASED ON THE RESULT, YOU ARE LOCATED IN MEXICO. THE LARGEST CITY IN MEXICO IS MEXICO CITY (CIUDAD DE MÉXICO), WHICH IS BOTH THE CAPITAL AND THE MOST POPULOUS CITY IN THE COUNTRY. WITH A POPULATION OF APPROXIMATELY 9.2 MILLION PEOPLE IN THE CITY PROPER AND OVER 21 MILLION PEOPLE IN ITS METROPOLITAN AREA, MEXICO CITY IS NOT ONLY THE LARGEST CITY IN MEXICO BUT ALSO ONE OF THE LARGEST CITIES IN THE WORLD.'
     )
 
     assert result.all_messages() == snapshot(
@@ -1758,32 +4787,33 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="I'll help you find the largest city in your country. Let me first check your country using the get_user_country tool."
+                        content="I'll help find the largest city in your country. Let me first check your country using the get_user_country tool."
                     ),
-                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01EZuxfc6MsPsPgrAKQohw3e'),
+                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01JJ8TequDsrEU2pv1QFRWAK'),
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=383,
-                    response_tokens=66,
-                    total_tokens=449,
+                usage=RequestUsage(
+                    input_tokens=383,
+                    output_tokens=65,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 383,
-                        'output_tokens': 66,
+                        'output_tokens': 65,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
-                vendor_id='msg_014NE4yfV1Yz2vLAJzapxxef',
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id='msg_01MsqUB7ZyhjGkvepS1tCXp3',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='toolu_01EZuxfc6MsPsPgrAKQohw3e',
+                        tool_call_id='toolu_01JJ8TequDsrEU2pv1QFRWAK',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -1791,31 +4821,32 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="Based on the result, you are located in Mexico. The largest city in Mexico is Mexico City (Ciudad de México), which is also the nation's capital. Mexico City has a population of approximately 9.2 million people in the city proper, and over 21 million people in its metropolitan area, making it one of the largest urban agglomerations in the world. It is both the political and economic center of Mexico, located in the Valley of Mexico in the central part of the country."
+                        content='Based on the result, you are located in Mexico. The largest city in Mexico is Mexico City (Ciudad de México), which is both the capital and the most populous city in the country. With a population of approximately 9.2 million people in the city proper and over 21 million people in its metropolitan area, Mexico City is not only the largest city in Mexico but also one of the largest cities in the world.'
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=461,
-                    response_tokens=107,
-                    total_tokens=568,
+                usage=RequestUsage(
+                    input_tokens=460,
+                    output_tokens=91,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 461,
-                        'output_tokens': 107,
+                        'input_tokens': 460,
+                        'output_tokens': 91,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
-                vendor_id='msg_0193srwo7TCx49h97wDwc7K7',
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_0142umg4diSckrDtV9vAmmPL',
+                finish_reason='stop',
             ),
         ]
     )
 
 
 async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     class CityLocation(BaseModel):
         city: str
@@ -1851,13 +4882,11 @@ Don't include any text or Markdown fencing before or after.\
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_017UryVwtsKsjonhFV3cgV3X')
+                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01ArHq5f2wxRpRF2PVQcKExM')
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=459,
-                    response_tokens=38,
-                    total_tokens=497,
+                usage=RequestUsage(
+                    input_tokens=459,
+                    output_tokens=38,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -1865,16 +4894,19 @@ Don't include any text or Markdown fencing before or after.\
                         'output_tokens': 38,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
-                vendor_id='msg_014CpBKzioMqUyLWrMihpvsz',
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id='msg_018YiNXULHGpoKoHkTt6GivG',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='toolu_017UryVwtsKsjonhFV3cgV3X',
+                        tool_call_id='toolu_01ArHq5f2wxRpRF2PVQcKExM',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1888,11 +4920,9 @@ Don't include any text or Markdown fencing before or after.\
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=510,
-                    response_tokens=17,
-                    total_tokens=527,
+                usage=RequestUsage(
+                    input_tokens=510,
+                    output_tokens=17,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -1900,16 +4930,19 @@ Don't include any text or Markdown fencing before or after.\
                         'output_tokens': 17,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
-                vendor_id='msg_014JeWCouH6DpdqzMTaBdkpJ',
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01WiRVmLhCrJbJZRqmAWKv3X',
+                finish_reason='stop',
             ),
         ]
     )
 
 
 async def test_anthropic_prompted_output_multiple(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     class CityLocation(BaseModel):
         city: str
@@ -1947,28 +4980,29 @@ Don't include any text or Markdown fencing before or after.\
                         content='{"result": {"kind": "CityLocation", "data": {"city": "Mexico City", "country": "Mexico"}}}'
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=281,
-                    response_tokens=31,
-                    total_tokens=312,
+                usage=RequestUsage(
+                    input_tokens=265,
+                    output_tokens=31,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 281,
+                        'input_tokens': 265,
                         'output_tokens': 31,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
-                vendor_id='msg_013ttUi3HCcKt7PkJpoWs5FT',
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01N2PwwVQo2aBtt6UFhMDtEX',
+                finish_reason='stop',
             ),
         ]
     )
 
 
 async def test_anthropic_native_output(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     class CityLocation(BaseModel):
         city: str
@@ -1976,8 +5010,31 @@ async def test_anthropic_native_output(allow_model_requests: None, anthropic_api
 
     agent = Agent(m, output_type=NativeOutput(CityLocation))
 
-    with pytest.raises(UserError, match='Native structured output is not supported by the model.'):
+    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
         await agent.run('What is the largest city in the user country?')
+
+
+async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel(
+        'claude-sonnet-4-0',
+        provider=AnthropicProvider(api_key=anthropic_api_key),
+        settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000}),
+    )
+
+    agent = Agent(m, output_type=int)
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Anthropic does not support thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+        ),
+    ):
+        await agent.run('What is 3 + 3?')
+
+    agent = Agent(m, output_type=PromptedOutput(int))
+
+    result = await agent.run('What is 3 + 3?')
+    assert result.output == snapshot(6)
 
 
 async def test_anthropic_tool_with_thinking(allow_model_requests: None, anthropic_api_key: str):
@@ -1997,7 +5054,9 @@ async def test_anthropic_tool_with_thinking(allow_model_requests: None, anthropi
     assert result.output == snapshot("""\
 Based on the information that you're in Mexico, the largest city in your country is **Mexico City** (Ciudad de México). \n\
 
-Mexico City is not only the largest city in Mexico but also one of the largest metropolitan areas in the world, with a metropolitan population of over 21 million people. The city proper has a population of approximately 9 million people and serves as the capital and political, cultural, and economic center of Mexico.\
+Mexico City is not only the largest city in Mexico but also one of the largest metropolitan areas in the world. The city proper has a population of approximately 9.2 million people, while the greater Mexico City metropolitan area has over 21 million inhabitants, making it the most populous metropolitan area in North America.
+
+Mexico City serves as the country's capital and is the political, economic, and cultural center of Mexico.\
 """)
 
 
@@ -2034,7 +5093,7 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
     )
 
     mock_client = MockAnthropic.create_mock([first_response, second_response])
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
 
     # First run to get server tool history
@@ -2046,7 +5105,7 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
     assert len(server_tool_calls) == 1
     assert len(server_tool_returns) == 1
     assert server_tool_calls[0].tool_name == 'web_search'
-    assert server_tool_returns[0].tool_name == 'web_search_tool_result'
+    assert server_tool_returns[0].tool_name == 'web_search'
 
     # Pass the history back to another Anthropic agent run
     agent2 = Agent(m)
@@ -2086,7 +5145,7 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
     )
 
     mock_client = MockAnthropic.create_mock([first_response, second_response])
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
     # First run to get server tool history
@@ -2098,36 +5157,12 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
     assert len(server_tool_calls) == 1
     assert len(server_tool_returns) == 1
     assert server_tool_calls[0].tool_name == 'code_execution'
-    assert server_tool_returns[0].tool_name == 'code_execution_tool_result'
+    assert server_tool_returns[0].tool_name == 'code_execution'
 
     # Pass the history back to another Anthropic agent run
     agent2 = Agent(m)
     result2 = await agent2.run('What was the code execution result?', message_history=result.all_messages())
     assert result2.output == 'The code execution returned the result: 4'
-
-
-async def test_anthropic_unsupported_server_tool_name_error(anthropic_api_key: str):
-    """Test that unsupported server tool names raise an error."""
-
-    model = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
-
-    # Create a message with an unsupported server tool name
-    messages: list[ModelMessage] = [
-        ModelResponse(
-            parts=[
-                BuiltinToolReturnPart(
-                    tool_name='unsupported_tool',  # This should trigger the error
-                    content='some content',
-                    tool_call_id='test_id',
-                    provider_name='anthropic',  # Need to set provider_name for validation
-                )
-            ]
-        )
-    ]
-
-    # This should raise a ValueError
-    with pytest.raises(ValueError, match='Unsupported tool name: unsupported_tool'):
-        await model._map_message(messages)  # type: ignore[attr-defined]
 
 
 async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anthropic_api_key: str):
@@ -2142,24 +5177,913 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                     async for event in request_stream:
                         event_parts.append(event)
 
-    assert event_parts.pop(0) == snapshot(
-        PartStartEvent(index=0, part=TextPart(content="I'll search for the latest world"))
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='web_search', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='{"q', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta='uery": "top', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY'),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' w', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='orld n', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='ew', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta='s today"}', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY'),
+            ),
+            PartEndEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args='{"query": "top world news today"}',
+                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '4 hours ago',
+                            'title': 'World news - breaking news, video, headlines and opinion | CNN',
+                            'type': 'web_search_result',
+                            'url': 'https://www.cnn.com/world',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '1 hour ago',
+                            'title': 'Breaking News, World News and Video from Al Jazeera',
+                            'type': 'web_search_result',
+                            'url': 'https://www.aljazeera.com/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '1 hour ago',
+                            'title': 'News: U.S. and World News Headlines : NPR',
+                            'type': 'web_search_result',
+                            'url': 'https://www.npr.org/sections/news/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '7 hours ago',
+                            'title': 'NBC News - Breaking News & Top Stories - Latest World, US & Local News | NBC News',
+                            'type': 'web_search_result',
+                            'url': 'https://www.nbcnews.com/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '3 hours ago',
+                            'title': 'Breaking News, Latest News and Videos | CNN',
+                            'type': 'web_search_result',
+                            'url': 'https://www.cnn.com/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '14 hours ago',
+                            'title': "World news: Latest news, breaking news, today's news stories from around the world, updated daily from CBS News",
+                            'type': 'web_search_result',
+                            'url': 'https://www.cbsnews.com/world/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '4 hours ago',
+                            'title': 'International News | Latest World News, Videos & Photos -ABC News - ABC News',
+                            'type': 'web_search_result',
+                            'url': 'https://abcnews.go.com/International',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '1 hour ago',
+                            'title': 'Google News',
+                            'type': 'web_search_result',
+                            'url': 'https://news.google.com/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '2 days ago',
+                            'title': 'World News Headlines - US News and World Report',
+                            'type': 'web_search_result',
+                            'url': 'https://www.usnews.com/news/world',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '2 hours ago',
+                            'title': 'Fox News - Breaking News Updates | Latest News Headlines | Photos & News Videos',
+                            'type': 'web_search_result',
+                            'url': 'https://www.foxnews.com/',
+                        },
+                    ],
+                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=2,
+                part=TextPart(content='Let me search for more specific breaking'),
+                previous_part_kind='builtin-tool-return',
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' news stories to get clearer headlines.')),
+            PartEndEvent(
+                index=2,
+                part=TextPart(
+                    content='Let me search for more specific breaking news stories to get clearer headlines.'
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=3,
+                part=BuiltinToolCallPart(
+                    tool_name='web_search', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T', provider_name='anthropic'
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(
+                index=3, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
+            ),
+            PartDeltaEvent(
+                index=3, delta=ToolCallPartDelta(args_delta='{"query', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
+            ),
+            PartDeltaEvent(
+                index=3,
+                delta=ToolCallPartDelta(args_delta='": "breaki', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T'),
+            ),
+            PartDeltaEvent(
+                index=3,
+                delta=ToolCallPartDelta(args_delta='ng news ', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T'),
+            ),
+            PartDeltaEvent(
+                index=3, delta=ToolCallPartDelta(args_delta='headl', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
+            ),
+            PartDeltaEvent(
+                index=3,
+                delta=ToolCallPartDelta(args_delta='ines August ', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T'),
+            ),
+            PartDeltaEvent(
+                index=3, delta=ToolCallPartDelta(args_delta='14 2025', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
+            ),
+            PartDeltaEvent(
+                index=3, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
+            ),
+            PartEndEvent(
+                index=3,
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args='{"query": "breaking news headlines August 14 2025"}',
+                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=4,
+                part=BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Breaking News, Latest News and Videos | CNN',
+                            'type': 'web_search_result',
+                            'url': 'https://edition.cnn.com/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'News: U.S. and World News Headlines : NPR',
+                            'type': 'web_search_result',
+                            'url': 'https://www.npr.org/sections/news/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'ABC News – Breaking News, Latest News and Videos',
+                            'type': 'web_search_result',
+                            'url': 'https://abcnews.go.com/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '4 hours ago',
+                            'title': 'Newspaper headlines: Thursday, August 14, 2025 - Adomonline.com',
+                            'type': 'web_search_result',
+                            'url': 'https://www.adomonline.com/newspaper-headlines-thursday-august-14-2025/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Global News - Breaking International News And Headlines | Inquirer.net',
+                            'type': 'web_search_result',
+                            'url': 'https://globalnation.inquirer.net',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'News – The White House',
+                            'type': 'web_search_result',
+                            'url': 'https://www.whitehouse.gov/news/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '1 hour ago',
+                            'title': 'Latest News: Top News, Breaking News, LIVE News Headlines from India & World | Business Standard',
+                            'type': 'web_search_result',
+                            'url': 'https://www.business-standard.com/latest-news',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '10 hours ago',
+                            'title': 'Ukraine News Today: Breaking Updates & Live Coverage - August 14, 2025 from Kyiv Post',
+                            'type': 'web_search_result',
+                            'url': 'https://www.kyivpost.com/thread/58085',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': 'July 14, 2025',
+                            'title': '5 things to know for July 14: Immigration, Gaza, Epstein files, Kentucky shooting, Texas flooding | CNN',
+                            'type': 'web_search_result',
+                            'url': 'https://www.cnn.com/2025/07/14/us/5-things-to-know-for-july-14-immigration-gaza-epstein-files-kentucky-shooting-texas-flooding',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Daily Show for July 14, 2025 | Democracy Now!',
+                            'type': 'web_search_result',
+                            'url': 'https://www.democracynow.org/shows/2025/7/14',
+                        },
+                    ],
+                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(index=5, part=TextPart(content='Base'), previous_part_kind='builtin-tool-return'),
+            PartDeltaEvent(
+                index=5, delta=TextPartDelta(content_delta='d on the search results, I can identify the top')
+            ),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' 3 major news stories from aroun')),
+            PartDeltaEvent(
+                index=5,
+                delta=TextPartDelta(
+                    content_delta="""\
+d the world today (August 14, 2025):
+
+## Top\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=5,
+                delta=TextPartDelta(
+                    content_delta="""\
+ 3 World News Stories Today
+
+**\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='1. Trump-Putin Summit and Ukraine Crisis')),
+            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='**\n')),
+            PartEndEvent(
+                index=5,
+                part=TextPart(
+                    content="""\
+Based on the search results, I can identify the top 3 major news stories from around the world today (August 14, 2025):
+
+## Top 3 World News Stories Today
+
+**1. Trump-Putin Summit and Ukraine Crisis**
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=6,
+                part=TextPart(
+                    content='European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine'
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="'s Volodymyr Zel")),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="enskyy and NATO's chief ahea")),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="d of Friday's U.S.-")),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta='Russia summit')),
+            PartEndEvent(
+                index=6,
+                part=TextPart(
+                    content="European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine's Volodymyr Zelenskyy and NATO's chief ahead of Friday's U.S.-Russia summit"
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=7, part=TextPart(content='. '), previous_part_kind='text'),
+            PartEndEvent(index=7, part=TextPart(content='. '), next_part_kind='text'),
+            PartStartEvent(
+                index=8,
+                part=TextPart(content='The White House lowered its expectations surrounding'),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' the Trump-Putin summit on Friday')),
+            PartEndEvent(
+                index=8,
+                part=TextPart(
+                    content='The White House lowered its expectations surrounding the Trump-Putin summit on Friday'
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=9, part=TextPart(content='. '), previous_part_kind='text'),
+            PartEndEvent(index=9, part=TextPart(content='. '), next_part_kind='text'),
+            PartStartEvent(
+                index=10,
+                part=TextPart(content='In a surprise move just days before the Trump-Putin summit'),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=', the White House swapped out pro')),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta="-EU PM Tusk for Poland's new president –")),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=" a political ally who once opposed Ukraine's")),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=' NATO and EU bids')),
+            PartEndEvent(
+                index=10,
+                part=TextPart(
+                    content="In a surprise move just days before the Trump-Putin summit, the White House swapped out pro-EU PM Tusk for Poland's new president – a political ally who once opposed Ukraine's NATO and EU bids"
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=11,
+                part=TextPart(
+                    content="""\
+.
+
+**2. Trump's Federal Takeover of Washington D\
+"""
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=11, delta=TextPartDelta(content_delta='.C.**')),
+            PartDeltaEvent(index=11, delta=TextPartDelta(content_delta='\n')),
+            PartEndEvent(
+                index=11,
+                part=TextPart(
+                    content="""\
+.
+
+**2. Trump's Federal Takeover of Washington D.C.**
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=12,
+                part=TextPart(
+                    content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's tak"
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta="eover of the city's police entered its thir")),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta='d night')),
+            PartEndEvent(
+                index=12,
+                part=TextPart(
+                    content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's takeover of the city's police entered its third night"
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=13, part=TextPart(content='. '), previous_part_kind='text'),
+            PartEndEvent(index=13, part=TextPart(content='. '), next_part_kind='text'),
+            PartStartEvent(
+                index=14,
+                part=TextPart(
+                    content="National Guard troops arrived in Washington, D.C., following President Trump's deployment an"
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(
+                index=14, delta=TextPartDelta(content_delta='d federalization of local police to crack down on crime')
+            ),
+            PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=" in the nation's capital")),
+            PartEndEvent(
+                index=14,
+                part=TextPart(
+                    content="National Guard troops arrived in Washington, D.C., following President Trump's deployment and federalization of local police to crack down on crime in the nation's capital"
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=15, part=TextPart(content='. '), previous_part_kind='text'),
+            PartEndEvent(index=15, part=TextPart(content='. '), next_part_kind='text'),
+            PartStartEvent(
+                index=16,
+                part=TextPart(content='Over 100 arrests made as National Guard rolls into DC under'),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=" Trump's federal takeover")),
+            PartEndEvent(
+                index=16,
+                part=TextPart(
+                    content="Over 100 arrests made as National Guard rolls into DC under Trump's federal takeover"
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=17,
+                part=TextPart(
+                    content="""\
+.
+
+**3. Air\
+"""
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=17, delta=TextPartDelta(content_delta=' Canada Flight Disruption')),
+            PartDeltaEvent(index=17, delta=TextPartDelta(content_delta='**\n')),
+            PartEndEvent(
+                index=17,
+                part=TextPart(
+                    content="""\
+.
+
+**3. Air Canada Flight Disruption**
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=18,
+                part=TextPart(
+                    content='Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend'
+                ),
+                previous_part_kind='text',
+            ),
+            PartEndEvent(
+                index=18,
+                part=TextPart(
+                    content='Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend'
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=19, part=TextPart(content='. '), previous_part_kind='text'),
+            PartEndEvent(index=19, part=TextPart(content='. '), next_part_kind='text'),
+            PartStartEvent(
+                index=20,
+                part=TextPart(
+                    content='Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations'
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(
+                index=20,
+                delta=TextPartDelta(
+                    content_delta=" with a complete cessation of flights for the country's largest airline by"
+                ),
+            ),
+            PartDeltaEvent(
+                index=20, delta=TextPartDelta(content_delta=' Saturday as it faces a potential work stoppage by')
+            ),
+            PartDeltaEvent(index=20, delta=TextPartDelta(content_delta=' its flight attendants')),
+            PartEndEvent(
+                index=20,
+                part=TextPart(
+                    content="Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations with a complete cessation of flights for the country's largest airline by Saturday as it faces a potential work stoppage by its flight attendants"
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=21,
+                part=TextPart(
+                    content="""\
+.
+
+These stories represent major international diplomatic developments, significant domestic policy\
+"""
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=21, delta=TextPartDelta(content_delta=' changes in the US, and major transportation')),
+            PartDeltaEvent(index=21, delta=TextPartDelta(content_delta=' disruptions affecting North America.')),
+            PartEndEvent(
+                index=21,
+                part=TextPart(
+                    content="""\
+.
+
+These stories represent major international diplomatic developments, significant domestic policy changes in the US, and major transportation disruptions affecting North America.\
+"""
+                ),
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args='{"query": "top world news today"}',
+                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                    provider_name='anthropic',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '4 hours ago',
+                            'title': 'World news - breaking news, video, headlines and opinion | CNN',
+                            'type': 'web_search_result',
+                            'url': 'https://www.cnn.com/world',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '1 hour ago',
+                            'title': 'Breaking News, World News and Video from Al Jazeera',
+                            'type': 'web_search_result',
+                            'url': 'https://www.aljazeera.com/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '1 hour ago',
+                            'title': 'News: U.S. and World News Headlines : NPR',
+                            'type': 'web_search_result',
+                            'url': 'https://www.npr.org/sections/news/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '7 hours ago',
+                            'title': 'NBC News - Breaking News & Top Stories - Latest World, US & Local News | NBC News',
+                            'type': 'web_search_result',
+                            'url': 'https://www.nbcnews.com/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '3 hours ago',
+                            'title': 'Breaking News, Latest News and Videos | CNN',
+                            'type': 'web_search_result',
+                            'url': 'https://www.cnn.com/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '14 hours ago',
+                            'title': "World news: Latest news, breaking news, today's news stories from around the world, updated daily from CBS News",
+                            'type': 'web_search_result',
+                            'url': 'https://www.cbsnews.com/world/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '4 hours ago',
+                            'title': 'International News | Latest World News, Videos & Photos -ABC News - ABC News',
+                            'type': 'web_search_result',
+                            'url': 'https://abcnews.go.com/International',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '1 hour ago',
+                            'title': 'Google News',
+                            'type': 'web_search_result',
+                            'url': 'https://news.google.com/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '2 days ago',
+                            'title': 'World News Headlines - US News and World Report',
+                            'type': 'web_search_result',
+                            'url': 'https://www.usnews.com/news/world',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '2 hours ago',
+                            'title': 'Fox News - Breaking News Updates | Latest News Headlines | Photos & News Videos',
+                            'type': 'web_search_result',
+                            'url': 'https://www.foxnews.com/',
+                        },
+                    ],
+                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                )
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args='{"query": "breaking news headlines August 14 2025"}',
+                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    provider_name='anthropic',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Breaking News, Latest News and Videos | CNN',
+                            'type': 'web_search_result',
+                            'url': 'https://edition.cnn.com/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'News: U.S. and World News Headlines : NPR',
+                            'type': 'web_search_result',
+                            'url': 'https://www.npr.org/sections/news/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'ABC News – Breaking News, Latest News and Videos',
+                            'type': 'web_search_result',
+                            'url': 'https://abcnews.go.com/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '4 hours ago',
+                            'title': 'Newspaper headlines: Thursday, August 14, 2025 - Adomonline.com',
+                            'type': 'web_search_result',
+                            'url': 'https://www.adomonline.com/newspaper-headlines-thursday-august-14-2025/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Global News - Breaking International News And Headlines | Inquirer.net',
+                            'type': 'web_search_result',
+                            'url': 'https://globalnation.inquirer.net',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'News – The White House',
+                            'type': 'web_search_result',
+                            'url': 'https://www.whitehouse.gov/news/',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '1 hour ago',
+                            'title': 'Latest News: Top News, Breaking News, LIVE News Headlines from India & World | Business Standard',
+                            'type': 'web_search_result',
+                            'url': 'https://www.business-standard.com/latest-news',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': '10 hours ago',
+                            'title': 'Ukraine News Today: Breaking Updates & Live Coverage - August 14, 2025 from Kyiv Post',
+                            'type': 'web_search_result',
+                            'url': 'https://www.kyivpost.com/thread/58085',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': 'July 14, 2025',
+                            'title': '5 things to know for July 14: Immigration, Gaza, Epstein files, Kentucky shooting, Texas flooding | CNN',
+                            'type': 'web_search_result',
+                            'url': 'https://www.cnn.com/2025/07/14/us/5-things-to-know-for-july-14-immigration-gaza-epstein-files-kentucky-shooting-texas-flooding',
+                        },
+                        {
+                            'encrypted_content': IsStr(),
+                            'page_age': None,
+                            'title': 'Daily Show for July 14, 2025 | Democracy Now!',
+                            'type': 'web_search_result',
+                            'url': 'https://www.democracynow.org/shows/2025/7/14',
+                        },
+                    ],
+                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                )
+            ),
+        ]
     )
-    assert event_parts.pop(0) == snapshot(FinalResultEvent(tool_name=None, tool_call_id=None))
-    assert ''.join(event.delta.content_delta for event in event_parts) == snapshot("""\
- news to get you the top 3 stories from today.Let me search for more specific and recent global news stories from today.Let me search for more specific global news stories from today.Based on my search results, here are the top 3 global news stories from today, July 16, 2025:
 
-## 1. Trump's Ukraine Special Envoy Visits Kyiv
 
-U.S. President Donald Trump's special envoy to Ukraine, retired Lt. Gen. Keith Kellogg, arrived in Kyiv on Monday. This high-profile diplomatic visit comes as tensions continue over the ongoing conflict, with President Trump threatening to punish Russia with heavy tariffs on countries that trade with Moscow if the Kremlin fails to reach a ceasefire deal with Ukraine, while promising Kyiv weapons.
+async def test_anthropic_text_parts_ahead_of_built_in_tool_call(allow_model_requests: None, anthropic_api_key: str):
+    # Verify that text parts ahead of the built-in tool call are not included in the output
 
-## 2. EU Trade Ministers Meet Over U.S. Tariffs
+    anthropic_model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()], instructions='Be very concise.')
 
-European trade ministers are meeting in Brussels after U.S. President Donald Trump announced 30% tariffs on the European Union. The EU is America's biggest business partner and the world's largest trading block. The U.S. decision will have repercussions for governments, companies and consumers on both sides of the Atlantic.
+    result = await agent.run('Briefly mention 1 event that happened today in history?')
+    assert result.output == snapshot("""\
+Here's one significant historical event that occurred on September 17:
 
-## 3. Syria Violence Escalates
+In 1939, Finnish runner Taisto Mäki made history by becoming the first person to run 10,000 meters in less than 30 minutes, completing the distance in 29 minutes and 52 seconds.\
+""")
 
-Clashes between Druze militias and Sunni Bedouin clans in Syria's Sweida province have killed more than 30 people and injured nearly 100. This represents a significant escalation in sectarian violence in the region.
+    async with agent.run_stream('Briefly mention 1 event that happened tomorrow in history?') as result:
+        chunks = [c async for c in result.stream_output(debounce_by=None)]
+        assert chunks == snapshot(
+            [
+                'Let',
+                'Let me search for a significant',
+                'Let me search for a significant historical event that occurred on',
+                'Let me search for a significant historical event that occurred on September 18th.',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                'Here',
+                "Here's one notable historical event that occurred on September",
+                "Here's one notable historical event that occurred on September 18th: ",
+                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marke",
+                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building",
+                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he",
+                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its",
+                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally",
+                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally.",
+            ]
+        )
 
-Additional notable stories include Vietnam's plan to ban fossil-fuel motorcycles in the heart of Hanoi starting July 2026, aiming to cut air pollution and move toward cleaner transport, and ongoing restoration efforts for Copenhagen's Old Stock Exchange, which is taking shape 15 months after a fire destroyed more than half of the 400-year-old building.\
+    assert await result.get_output() == snapshot(
+        "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally."
+    )
+
+    async with agent.run_stream('Briefly mention 1 event that happened yesterday in history?') as result:
+        chunks = [c async for c in result.stream_text(debounce_by=None)]
+        assert chunks == snapshot(
+            [
+                'Let',
+                'Let me search for a historical',
+                'Let me search for a historical event that occurred on September',
+                "Let me search for a historical event that occurred on September 16th (yesterday's date since",
+                "Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17,",
+                "Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025",
+                "Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Base\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), \
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, \
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, an\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, and a notable court case involving\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, and a notable court case involving a British aristoc\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, and a notable court case involving a British aristocrat\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, and a notable court case involving a British aristocrat.\
+""",
+            ]
+        )
+
+    assert await result.get_output() == snapshot(
+        "Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, and a notable court case involving a British aristocrat."
+    )
+
+    async with agent.run_stream('Briefly mention 1 event that happened the day after tomorrow in history?') as result:
+        chunks = [c async for c in result.stream_text(debounce_by=None, delta=True)]
+        assert chunks == snapshot(
+            [
+                'Let',
+                ' me search for historical',
+                ' events that occurred on',
+                ' September 19th.',
+                """\
+
+
+""",
+                'Here',
+                "'s one significant historical event that occurred on September",
+                ' 19th: ',
+                'New Zealand made history by becoming the first self-governing nation to grant women the right',
+                ' to vote in national elections. It',
+                ' would take 27 more',
+                ' years before American women gained the',
+                ' same right.',
+            ]
+        )
+
+    assert await result.get_output() == snapshot(
+        "Here's one significant historical event that occurred on September 19th: New Zealand made history by becoming the first self-governing nation to grant women the right to vote in national elections. It would take 27 more years before American women gained the same right."
+    )
+
+
+async def test_anthropic_memory_tool(allow_model_requests: None, anthropic_api_key: str):
+    anthropic_model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(api_key=anthropic_api_key),
+        settings=AnthropicModelSettings(extra_headers={'anthropic-beta': 'context-1m-2025-08-07'}),
+    )
+    agent = Agent(anthropic_model, builtin_tools=[MemoryTool()])
+
+    with pytest.raises(UserError, match="Built-in `MemoryTool` requires a 'memory' tool to be defined."):
+        await agent.run('Where do I live?')
+
+    class FakeMemoryTool(BetaAbstractMemoryTool):
+        def view(self, command: BetaMemoryTool20250818ViewCommand) -> str:
+            return 'The user lives in Mexico City.'
+
+        def create(self, command: BetaMemoryTool20250818CreateCommand) -> str:
+            return f'File created successfully at {command.path}'  # pragma: no cover
+
+        def str_replace(self, command: BetaMemoryTool20250818StrReplaceCommand) -> str:
+            return f'File {command.path} has been edited'  # pragma: no cover
+
+        def insert(self, command: BetaMemoryTool20250818InsertCommand) -> str:
+            return f'Text inserted at line {command.insert_line} in {command.path}'  # pragma: no cover
+
+        def delete(self, command: BetaMemoryTool20250818DeleteCommand) -> str:
+            return f'File deleted: {command.path}'  # pragma: no cover
+
+        def rename(self, command: BetaMemoryTool20250818RenameCommand) -> str:
+            return f'Renamed {command.old_path} to {command.new_path}'  # pragma: no cover
+
+        def clear_all_memory(self) -> str:
+            return 'All memory cleared'  # pragma: no cover
+
+    fake_memory = FakeMemoryTool()
+
+    @agent.tool_plain
+    def memory(**command: Any) -> Any:
+        return fake_memory.call(command)
+
+    result = await agent.run('Where do I live?')
+    assert result.output == snapshot("""\
+
+
+According to my memory, you live in **Mexico City**.\
 """)

@@ -1,0 +1,249 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '639'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Just call tools without asking for confirmation.
+        role: system
+      - content: Delete the file `.env` and create `test.txt`
+        role: user
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: create_file
+          parameters:
+            additionalProperties: false
+            properties:
+              path:
+                type: string
+            required:
+            - path
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: delete_file
+          parameters:
+            additionalProperties: false
+            properties:
+              path:
+                type: string
+            required:
+            - path
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1319'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '737'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"path": ".env"}'
+              name: delete_file
+            id: call_jYdIdRZHxZTn5bWCq5jlMrJi
+            type: function
+          - function:
+              arguments: '{"path": "test.txt"}'
+              name: create_file
+            id: call_TmlTVWQbzrXCZ4jNsCVNbNqu
+            type: function
+      created: 1756419063
+      id: chatcmpl-C9f7f1SbHRzcwlJwrYKdSonTRWPvV
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_df0f7b956c
+      usage:
+        completion_tokens: 46
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 71
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 117
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1109'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=mLR5rPRuew3fXXRgovBj3Ir6vRflwQucmAT8xYCnZaA-1756419064-1.0.1.1-HvvEmDcDOmavm0vBqLo_ZG_Bjh6B2CgT.etvrYCBiezHow_0xNZ64xqybhJl_NViSVDNXuaXviCcDgIZg13KgsWp0J_qNORRiVIHxO2UAO4;
+        _cfuvid=536Zye1eyyVQS9C8BV6AAFwv4vaW.H4o2O4LK_228oc-1756419064420-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Just call tools without asking for confirmation.
+        role: system
+      - content: Delete the file `.env` and create `test.txt`
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"path": ".env"}'
+            name: delete_file
+          id: call_jYdIdRZHxZTn5bWCq5jlMrJi
+          type: function
+        - function:
+            arguments: '{"path": "test.txt"}'
+            name: create_file
+          id: call_TmlTVWQbzrXCZ4jNsCVNbNqu
+          type: function
+      - content: 'true'
+        role: tool
+        tool_call_id: call_jYdIdRZHxZTn5bWCq5jlMrJi
+      - content: Success
+        role: tool
+        tool_call_id: call_TmlTVWQbzrXCZ4jNsCVNbNqu
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: create_file
+          parameters:
+            additionalProperties: false
+            properties:
+              path:
+                type: string
+            required:
+            - path
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: ''
+          name: delete_file
+          parameters:
+            additionalProperties: false
+            properties:
+              path:
+                type: string
+            required:
+            - path
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '882'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '624'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The file `.env` has been deleted and `test.txt` has been created successfully.
+          refusal: null
+          role: assistant
+      created: 1756419066
+      id: chatcmpl-C9f7iBeeNNBazDCMa7RSx3EFtiZoR
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_80956533cb
+      usage:
+        completion_tokens: 19
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 133
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 152
+    status:
+      code: 200
+      message: OK
+version: 1

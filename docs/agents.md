@@ -9,10 +9,10 @@ The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptua
 
 | **Component**                                             | **Description**                                                                                           |
 | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| [System prompt(s)](#system-prompts)                       | A set of instructions for the LLM written by the developer.                                               |
+| [Instructions](#instructions)                             | A set of instructions for the LLM written by the developer.                                               |
 | [Function tool(s)](tools.md) and [toolsets](toolsets.md)  | Functions that the LLM may call to get information while generating a response.                           |
 | [Structured output type](output.md)                       | The structured datatype the LLM must return at the end of a run, if specified.                            |
-| [Dependency type constraint](dependencies.md)             | System prompt functions, tools, and output validators may all use dependencies when they're run.          |
+| [Dependency type constraint](dependencies.md)             | Dynamic instructions functions, tools, and output functions may all use dependencies when they're run.          |
 | [LLM model](api/models/base.md)                           | Optional default LLM model associated with the agent. Can also be specified when running the agent.       |
 | [Model Settings](#additional-configuration)               | Optional default model settings to help fine tune requests. Can also be specified when running the agent. |
 
@@ -24,7 +24,7 @@ Here's a toy example of an agent that simulates a roulette wheel:
 from pydantic_ai import Agent, RunContext
 
 roulette_agent = Agent(  # (1)!
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=int,
     output_type=bool,
     system_prompt=(
@@ -61,19 +61,20 @@ print(result.output)
 
 ## Running Agents
 
-There are four ways to run an agent:
+There are five ways to run an agent:
 
 1. [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] — an async function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response.
 2. [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] — a plain, synchronous function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response (internally, this just calls `loop.run_until_complete(self.run())`).
 3. [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] — an async context manager which returns a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], which contains methods to stream text and structured output as an async iterable.
-4. [`agent.iter()`][pydantic_ai.Agent.iter] — a context manager which returns an [`AgentRun`][pydantic_ai.agent.AgentRun], an async-iterable over the nodes of the agent's underlying [`Graph`][pydantic_graph.graph.Graph].
+4. [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] — a function which returns an async iterable of [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] and a [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] containing the final run result.
+5. [`agent.iter()`][pydantic_ai.Agent.iter] — a context manager which returns an [`AgentRun`][pydantic_ai.agent.AgentRun], an async iterable over the nodes of the agent's underlying [`Graph`][pydantic_graph.graph.Graph].
 
-Here's a simple example demonstrating the first three:
+Here's a simple example demonstrating the first four:
 
 ```python {title="run_agent.py"}
-from pydantic_ai import Agent
+from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 result_sync = agent.run_sync('What is the capital of Italy?')
 print(result_sync.output)
@@ -91,6 +92,25 @@ async def main():
             #> The capital of
             #> The capital of the UK is
             #> The capital of the UK is London.
+
+    events: list[AgentStreamEvent | AgentRunResultEvent] = []
+    async for event in agent.run_stream_events('What is the capital of Mexico?'):
+        events.append(event)
+    print(events)
+    """
+    [
+        PartStartEvent(index=0, part=TextPart(content='The capital of ')),
+        FinalResultEvent(tool_name=None, tool_call_id=None),
+        PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='Mexico is Mexico ')),
+        PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='City.')),
+        PartEndEvent(
+            index=0, part=TextPart(content='The capital of Mexico is Mexico City.')
+        ),
+        AgentRunResultEvent(
+            result=AgentRunResult(output='The capital of Mexico is Mexico City.')
+        ),
+    ]
+    """
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -105,35 +125,33 @@ It also takes an optional `event_stream_handler` argument that you can use to ga
 The example below shows how to stream events and text output. You can also [stream structured output](output.md#streaming-structured-output).
 
 !!! note
-    As the `run_stream()` method will consider the first output matching the `output_type` to be the final output,
+    As the `run_stream()` method will consider the first output matching the [output type](output.md#structured-output) to be the final output,
     it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
 
     If you want to always run the agent graph to completion and stream all events from the model's streaming response and the agent's execution of tools,
-    use [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] with an `event_stream_handler` or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] instead, as described in the following sections.
+    use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] instead, as described in the following sections.
 
-```python {title="run_stream_events.py"}
+```python {title="run_stream_event_stream_handler.py"}
 import asyncio
 from collections.abc import AsyncIterable
 from datetime import date
-from typing import Union
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     AgentStreamEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    HandleResponseEvent,
     PartDeltaEvent,
     PartStartEvent,
+    RunContext,
     TextPartDelta,
     ThinkingPartDelta,
     ToolCallPartDelta,
 )
-from pydantic_ai.tools import RunContext
 
 weather_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     system_prompt='Providing a weather forecast at the locations the user provides.',
 )
 
@@ -149,30 +167,32 @@ async def weather_forecast(
 
 output_messages: list[str] = []
 
+async def handle_event(event: AgentStreamEvent):
+    if isinstance(event, PartStartEvent):
+        output_messages.append(f'[Request] Starting part {event.index}: {event.part!r}')
+    elif isinstance(event, PartDeltaEvent):
+        if isinstance(event.delta, TextPartDelta):
+            output_messages.append(f'[Request] Part {event.index} text delta: {event.delta.content_delta!r}')
+        elif isinstance(event.delta, ThinkingPartDelta):
+            output_messages.append(f'[Request] Part {event.index} thinking delta: {event.delta.content_delta!r}')
+        elif isinstance(event.delta, ToolCallPartDelta):
+            output_messages.append(f'[Request] Part {event.index} args delta: {event.delta.args_delta}')
+    elif isinstance(event, FunctionToolCallEvent):
+        output_messages.append(
+            f'[Tools] The LLM calls tool={event.part.tool_name!r} with args={event.part.args} (tool_call_id={event.part.tool_call_id!r})'
+        )
+    elif isinstance(event, FunctionToolResultEvent):
+        output_messages.append(f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}')
+    elif isinstance(event, FinalResultEvent):
+        output_messages.append(f'[Result] The model starting producing a final result (tool_name={event.tool_name})')
+
 
 async def event_stream_handler(
     ctx: RunContext,
-    event_stream: AsyncIterable[Union[AgentStreamEvent, HandleResponseEvent]],
+    event_stream: AsyncIterable[AgentStreamEvent],
 ):
     async for event in event_stream:
-        if isinstance(event, PartStartEvent):
-            output_messages.append(f'[Request] Starting part {event.index}: {event.part!r}')
-        elif isinstance(event, PartDeltaEvent):
-            if isinstance(event.delta, TextPartDelta):
-                output_messages.append(f'[Request] Part {event.index} text delta: {event.delta.content_delta!r}')
-            elif isinstance(event.delta, ThinkingPartDelta):
-                output_messages.append(f'[Request] Part {event.index} thinking delta: {event.delta.content_delta!r}')
-            elif isinstance(event.delta, ToolCallPartDelta):
-                output_messages.append(f'[Request] Part {event.index} args delta: {event.delta.args_delta}')
-        elif isinstance(event, FunctionToolCallEvent):
-            output_messages.append(
-                f'[Tools] The LLM calls tool={event.part.tool_name!r} with args={event.part.args} (tool_call_id={event.part.tool_call_id!r})'
-            )
-        elif isinstance(event, FunctionToolResultEvent):
-            output_messages.append(f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}')
-        elif isinstance(event, FinalResultEvent):
-            output_messages.append(f'[Result] The model starting producing a final result (tool_name={event.tool_name})')
-
+        await handle_event(event)
 
 async def main():
     user_prompt = 'What will the weather be like in Paris on Tuesday?'
@@ -211,24 +231,29 @@ Like `agent.run_stream()`, [`agent.run()`][pydantic_ai.agent.AbstractAgent.run_s
 argument that lets you stream all events from the model's streaming response and the agent's execution of tools.
 Unlike `run_stream()`, it always runs the agent graph to completion even if text was received ahead of tool calls that looked like it could've been the final result.
 
+For convenience, a [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] method is also available as a wrapper around `run(event_stream_handler=...)`, which returns an async iterable of [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] and a [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] containing the final run result.
+
 !!! note
-    When used with an `event_stream_handler`, the `run()` method currently requires you to piece together the streamed text yourself from the `PartStartEvent` and subsequent `PartDeltaEvent`s instead of providing a `stream_text()` convenience method.
+    As they return raw events as they come in, the `run_stream_events()` and `run(event_stream_handler=...)` methods require you to piece together the streamed text and structured output yourself from the `PartStartEvent` and subsequent `PartDeltaEvent`s.
 
     To get the best of both worlds, at the expense of some additional complexity, you can use [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] as described in the next section, which lets you [iterate over the agent graph](#iterating-over-an-agents-graph) and [stream both events and output](#streaming-all-events-and-output) at every step.
 
-```python {title="run_events.py" requires="run_stream_events.py"}
-from run_stream_events import weather_agent, event_stream_handler, output_messages
-
+```python {title="run_events.py" requires="run_stream_event_stream_handler.py"}
 import asyncio
+
+from pydantic_ai import AgentRunResultEvent
+
+from run_stream_event_stream_handler import handle_event, output_messages, weather_agent
 
 
 async def main():
     user_prompt = 'What will the weather be like in Paris on Tuesday?'
 
-    run = await weather_agent.run(user_prompt, event_stream_handler=event_stream_handler)
-
-    output_messages.append(f'[Final Output] {run.output}')
-
+    async for event in weather_agent.run_stream_events(user_prompt):
+        if isinstance(event, AgentRunResultEvent):
+            output_messages.append(f'[Final Output] {event.result.output}')
+        else:
+            await handle_event(event)
 
 if __name__ == '__main__':
     asyncio.run(main())
@@ -268,7 +293,7 @@ Here's an example of using `async for` with `iter` to record each node the agent
 ```python {title="agent_iter_async_for.py"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 
 async def main():
@@ -283,7 +308,6 @@ async def main():
     [
         UserPromptNode(
             user_prompt='What is the capital of France?',
-            instructions=None,
             instructions_functions=[],
             system_prompts=(),
             system_prompt_functions=[],
@@ -302,10 +326,8 @@ async def main():
         CallToolsNode(
             model_response=ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
-                usage=Usage(
-                    requests=1, request_tokens=56, response_tokens=7, total_tokens=63
-                ),
-                model_name='gpt-4o',
+                usage=RequestUsage(input_tokens=56, output_tokens=7),
+                model_name='gpt-5',
                 timestamp=datetime.datetime(...),
             )
         ),
@@ -329,7 +351,7 @@ You can also drive the iteration manually by passing the node you want to run ne
 from pydantic_ai import Agent
 from pydantic_graph import End
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 
 async def main():
@@ -348,7 +370,6 @@ async def main():
         [
             UserPromptNode(
                 user_prompt='What is the capital of France?',
-                instructions=None,
                 instructions_functions=[],
                 system_prompts=(),
                 system_prompt_functions=[],
@@ -367,13 +388,8 @@ async def main():
             CallToolsNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='The capital of France is Paris.')],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=56,
-                        response_tokens=7,
-                        total_tokens=63,
-                    ),
-                    model_name='gpt-4o',
+                    usage=RequestUsage(input_tokens=56, output_tokens=7),
+                    model_name='gpt-5',
                     timestamp=datetime.datetime(...),
                 )
             ),
@@ -391,7 +407,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 #### Accessing usage and final output
 
-You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage()`. This method returns a [`Usage`][pydantic_ai.usage.Usage] object containing the usage data.
+You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage()`. This method returns a [`RunUsage`][pydantic_ai.usage.RunUsage] object containing the usage data.
 
 Once the run finishes, `agent_run.result` becomes a [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
 
@@ -404,18 +420,18 @@ import asyncio
 from dataclasses import dataclass
 from datetime import date
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartDeltaEvent,
     PartStartEvent,
+    RunContext,
     TextPartDelta,
     ThinkingPartDelta,
     ToolCallPartDelta,
 )
-from pydantic_ai.tools import RunContext
 
 
 @dataclass
@@ -430,7 +446,7 @@ class WeatherService:
 
 
 weather_agent = Agent[WeatherService, str](
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=WeatherService,
     output_type=str,  # We'll produce a final answer as plain text
     system_prompt='Providing a weather forecast at the locations the user provides.',
@@ -550,18 +566,16 @@ _(This example is complete, it can be run "as is")_
 #### Usage Limits
 
 Pydantic AI offers a [`UsageLimits`][pydantic_ai.usage.UsageLimits] structure to help you limit your
-usage (tokens and/or requests) on model runs.
+usage (tokens, requests, and tool calls) on model runs.
 
 You can apply these settings by passing the `usage_limits` argument to the `run{_sync,_stream}` functions.
 
 Consider the following example, where we limit the number of response tokens:
 
 ```py
-from pydantic_ai import Agent
-from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
 
-agent = Agent('anthropic:claude-3-5-sonnet-latest')
+agent = Agent('anthropic:claude-sonnet-4-5')
 
 result_sync = agent.run_sync(
     'What is the capital of Italy? Answer with just the city.',
@@ -570,7 +584,7 @@ result_sync = agent.run_sync(
 print(result_sync.output)
 #> Rome
 print(result_sync.usage())
-#> Usage(requests=1, request_tokens=62, response_tokens=1, total_tokens=63)
+#> RunUsage(input_tokens=62, output_tokens=1, requests=1)
 
 try:
     result_sync = agent.run_sync(
@@ -579,7 +593,7 @@ try:
     )
 except UsageLimitExceeded as e:
     print(e)
-    #> Exceeded the response_tokens_limit of 10 (response_tokens=32)
+    #> Exceeded the output_tokens_limit of 10 (output_tokens=32)
 ```
 
 Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling:
@@ -587,9 +601,7 @@ Restricting the number of requests can be useful in preventing infinite loops or
 ```py
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry
-from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai import Agent, ModelRetry, UsageLimitExceeded, UsageLimits
 
 
 class NeverOutputType(TypedDict):
@@ -601,7 +613,7 @@ class NeverOutputType(TypedDict):
 
 
 agent = Agent(
-    'anthropic:claude-3-5-sonnet-latest',
+    'anthropic:claude-sonnet-4-5',
     retries=3,
     output_type=NeverOutputType,
     system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
@@ -625,8 +637,32 @@ except UsageLimitExceeded as e:
 1. This tool has the ability to retry 5 times before erroring, simulating a tool that might get stuck in a loop.
 2. This run will error after 3 requests, preventing the infinite tool calling.
 
+##### Capping tool calls
+
+If you need a limit on the number of successful tool invocations within a single run, use `tool_calls_limit`:
+
+```py
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.usage import UsageLimits
+
+agent = Agent('anthropic:claude-sonnet-4-5')
+
+@agent.tool_plain
+def do_work() -> str:
+    return 'ok'
+
+try:
+    # Allow at most one executed tool call in this run
+    agent.run_sync('Please call the tool twice', usage_limits=UsageLimits(tool_calls_limit=1))
+except UsageLimitExceeded as e:
+    print(e)
+    #> The next tool call(s) would exceed the tool_calls_limit of 1 (tool_calls=2).
+```
+
 !!! note
-    This is especially relevant if you've registered many tools. The `request_limit` can be used to prevent the model from calling them in a loop too many times.
+    - Usage limits are especially relevant if you've registered many tools. Use `request_limit` to bound the number of model turns, and `tool_calls_limit` to cap the number of successful tool executions within a run.
+    - The `tool_calls_limit` is checked before executing tool calls. If the model returns parallel tool calls that would exceed the limit, no tools will be executed.
 
 #### Model (Run) Settings
 
@@ -644,13 +680,12 @@ For example, if you'd like to set the `temperature` setting to `0.0` to ensure l
 you can do the following:
 
 ```py
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai import Agent, ModelSettings
+from pydantic_ai.models.openai import OpenAIChatModel
 
 # 1. Model-level defaults
-model = OpenAIModel(
-    'gpt-4o',
+model = OpenAIChatModel(
+    'gpt-5',
     settings=ModelSettings(temperature=0.8, max_tokens=500)  # Base defaults
 )
 
@@ -682,7 +717,7 @@ For example:
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models.google import GoogleModelSettings
 
-agent = Agent('google-gla:gemini-1.5-flash')
+agent = Agent('google-gla:gemini-2.5-flash')
 
 try:
     result = agent.run_sync(
@@ -704,7 +739,7 @@ try:
 except UnexpectedModelBehavior as e:
     print(e)  # (1)!
     """
-    Safety settings triggered, body:
+    Content filter 'SAFETY' triggered, body:
     <safety settings details>
     """
 ```
@@ -720,7 +755,7 @@ Here's an example of a conversation comprised of multiple runs:
 ```python {title="conversation_example.py" hl_lines="13"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 # First run
 result1 = agent.run_sync('Who was Albert Einstein?')
@@ -828,7 +863,7 @@ from datetime import date
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=str,  # (1)!
     system_prompt="Use the customer's name while replying to them.",  # (2)!
 )
@@ -884,7 +919,7 @@ from datetime import date
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=str,  # (1)!
     instructions="Use the customer's name while replying to them.",  # (2)!
 )
@@ -920,10 +955,10 @@ Note that returning an empty string will result in no instruction message added.
 
 Validation errors from both function tool parameter validation and [structured output validation](output.md#structured-output) can be passed back to the model with a request to retry.
 
-You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](tools.md) or [output validator function](output.md#output-validator-functions) to tell the model it should retry generating a response.
+You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](tools.md) or [output function](output.md#output-functions) to tell the model it should retry generating a response.
 
-- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.Agent.__init__], a [specific tool][pydantic_ai.Agent.tool], or an [output validator][pydantic_ai.Agent.__init__].
-- You can access the current retry count from within a tool or output validator via [`ctx.retry`][pydantic_ai.tools.RunContext].
+- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.Agent.__init__], a [specific tool][pydantic_ai.Agent.tool], or [outputs][pydantic_ai.Agent.__init__].
+- You can access the current retry count from within a tool or output function via [`ctx.retry`][pydantic_ai.tools.RunContext].
 
 Here's an example:
 
@@ -941,7 +976,7 @@ class ChatResult(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=DatabaseConn,
     output_type=ChatResult,
 )
@@ -979,7 +1014,7 @@ In these cases, [`capture_run_messages`][pydantic_ai.capture_run_messages] can b
 ```python {title="agent_model_errors.py"}
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, capture_run_messages
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 
 @agent.tool_plain
@@ -1018,10 +1053,8 @@ with capture_run_messages() as messages:  # (2)!
                         tool_call_id='pyd_ai_tool_call_id',
                     )
                 ],
-                usage=Usage(
-                    requests=1, request_tokens=62, response_tokens=4, total_tokens=66
-                ),
-                model_name='gpt-4o',
+                usage=RequestUsage(input_tokens=62, output_tokens=4),
+                model_name='gpt-5',
                 timestamp=datetime.datetime(...),
             ),
             ModelRequest(
@@ -1042,10 +1075,8 @@ with capture_run_messages() as messages:  # (2)!
                         tool_call_id='pyd_ai_tool_call_id',
                     )
                 ],
-                usage=Usage(
-                    requests=1, request_tokens=72, response_tokens=8, total_tokens=80
-                ),
-                model_name='gpt-4o',
+                usage=RequestUsage(input_tokens=72, output_tokens=8),
+                model_name='gpt-5',
                 timestamp=datetime.datetime(...),
             ),
         ]

@@ -17,6 +17,7 @@ from ..exceptions import UserError
 from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    FilePart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -31,7 +32,7 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from ..usage import Usage
+from ..usage import RequestUsage
 from . import Model, ModelRequestParameters, StreamedResponse
 from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
 
@@ -43,11 +44,14 @@ class _WrappedTextOutput:
     value: str | None
 
 
-@dataclass
+@dataclass(init=False)
 class _WrappedToolOutput:
     """A wrapper class to tag an output that came from the custom_output_args field."""
 
-    value: Any | None
+    value: dict[str, Any] | None
+
+    def __init__(self, value: Any | None):
+        self.value = pydantic_core.to_jsonable_python(value)
 
 
 @dataclass(init=False)
@@ -110,10 +114,13 @@ class TestModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         self.last_model_request_parameters = model_request_parameters
         model_response = self._request(messages, model_settings, model_request_parameters)
         model_response.usage = _estimate_usage([*messages, model_response])
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -124,6 +131,10 @@ class TestModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         self.last_model_request_parameters = model_request_parameters
 
         model_response = self._request(messages, model_settings, model_request_parameters)
@@ -132,6 +143,7 @@ class TestModel(Model):
             _model_name=self._model_name,
             _structured_response=model_response,
             _messages=messages,
+            _provider_name=self._system,
         )
 
     @property
@@ -141,7 +153,7 @@ class TestModel(Model):
 
     @property
     def system(self) -> str:
-        """The system / model provider."""
+        """The model provider."""
         return self._system
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
@@ -195,7 +207,10 @@ class TestModel(Model):
         # if there are tools, the first thing we want to do is call all of them
         if tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
             return ModelResponse(
-                parts=[ToolCallPart(name, self.gen_tool_args(args)) for name, args in tool_calls],
+                parts=[
+                    ToolCallPart(name, self.gen_tool_args(args), tool_call_id=f'pyd_ai_tool_call_id__{name}')
+                    for name, args in tool_calls
+                ],
                 model_name=self._model_name,
             )
 
@@ -220,6 +235,7 @@ class TestModel(Model):
                                 output_wrapper.value
                                 if isinstance(output_wrapper, _WrappedToolOutput) and output_wrapper.value is not None
                                 else self.gen_tool_args(tool),
+                                tool_call_id=f'pyd_ai_tool_call_id__{tool.name}',
                             )
                             for tool in output_tools
                             if tool.name in new_retry_names
@@ -250,11 +266,27 @@ class TestModel(Model):
             output_tool = output_tools[self.seed % len(output_tools)]
             if custom_output_args is not None:
                 return ModelResponse(
-                    parts=[ToolCallPart(output_tool.name, custom_output_args)], model_name=self._model_name
+                    parts=[
+                        ToolCallPart(
+                            output_tool.name,
+                            custom_output_args,
+                            tool_call_id=f'pyd_ai_tool_call_id__{output_tool.name}',
+                        )
+                    ],
+                    model_name=self._model_name,
                 )
             else:
                 response_args = self.gen_tool_args(output_tool)
-                return ModelResponse(parts=[ToolCallPart(output_tool.name, response_args)], model_name=self._model_name)
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            output_tool.name,
+                            response_args,
+                            tool_call_id=f'pyd_ai_tool_call_id__{output_tool.name}',
+                        )
+                    ],
+                    model_name=self._model_name,
+                )
 
 
 @dataclass
@@ -264,6 +296,7 @@ class TestStreamedResponse(StreamedResponse):
     _model_name: str
     _structured_response: ModelResponse
     _messages: InitVar[Iterable[ModelMessage]]
+    _provider_name: str
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     def __post_init__(self, _messages: Iterable[ModelMessage]):
@@ -292,12 +325,15 @@ class TestStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_tool_call_part(
                     vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
                 )
-            elif isinstance(part, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+            elif isinstance(part, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                 # NOTE: These parts are not generated by TestModel, but we need to handle them for type checking
                 assert False, f'Unexpected part type in TestModel: {type(part).__name__}'
             elif isinstance(part, ThinkingPart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate ThinkingPart on TestModel.
                 assert False, "This should be unreachable — we don't generate ThinkingPart on TestModel."
+            elif isinstance(part, FilePart):  # pragma: no cover
+                # NOTE: There's no way to reach this part of the code, since we don't generate FilePart on TestModel.
+                assert False, "This should be unreachable — we don't generate FilePart on TestModel."
             else:
                 assert_never(part)
 
@@ -305,6 +341,11 @@ class TestStreamedResponse(StreamedResponse):
     def model_name(self) -> str:
         """Get the model name of the response."""
         return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
 
     @property
     def timestamp(self) -> datetime:
@@ -326,7 +367,7 @@ class _JsonSchemaTestData:
         self.defs = schema.get('$defs', {})
         self.seed = seed
 
-    def generate(self) -> Any:
+    def generate(self) -> dict[str, Any]:
         """Generate data for the JSON schema."""
         return self._gen_any(self.schema)
 
@@ -468,6 +509,6 @@ class _JsonSchemaTestData:
         return s
 
 
-def _get_string_usage(text: str) -> Usage:
+def _get_string_usage(text: str) -> RequestUsage:
     response_tokens = _estimate_string_tokens(text)
-    return Usage(response_tokens=response_tokens, total_tokens=response_tokens)
+    return RequestUsage(output_tokens=response_tokens)
