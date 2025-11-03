@@ -2,8 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from typing_extensions import TypeVar
+
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.tools import RunContext
+
+AgentDepsT = TypeVar('AgentDepsT', default=None, covariant=True)
+"""Type variable for the agent dependencies in `RunContext`."""
+
+T = TypeVar('T', default=None)
 
 
 class TemporalRunContext(RunContext[AgentDepsT]):
@@ -46,7 +53,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             'run_step': ctx.run_step,
         }
 
-    @classmethod
-    def deserialize_run_context(cls, ctx: dict[str, Any], deps: AgentDepsT) -> TemporalRunContext[AgentDepsT]:
+    @staticmethod
+    def deserialize_run_context(ctx: dict[str, Any], deps: T) -> TemporalRunContext[T]:
         """Deserialize the run context from a `dict[str, Any]`."""
-        return cls(**ctx, deps=deps)
+        return TemporalRunContext(**ctx, deps=deps)
