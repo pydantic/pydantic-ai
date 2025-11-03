@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from .models import Model
     from .result import RunUsage
 
+# TODO (v2): Change the default for all typevars like this from `None` to `object`
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 """Type variable for agent dependencies."""
 

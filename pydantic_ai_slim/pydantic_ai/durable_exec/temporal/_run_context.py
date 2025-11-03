@@ -10,8 +10,6 @@ from pydantic_ai.tools import RunContext
 AgentDepsT = TypeVar('AgentDepsT', default=None, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
 
-T = TypeVar('T', default=None)
-
 
 class TemporalRunContext(RunContext[AgentDepsT]):
     """The [`RunContext`][pydantic_ai.tools.RunContext] subclass to use to serialize and deserialize the run context for use inside a Temporal activity.
@@ -53,7 +51,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             'run_step': ctx.run_step,
         }
 
-    @staticmethod
-    def deserialize_run_context(ctx: dict[str, Any], deps: T) -> TemporalRunContext[T]:
+    @classmethod
+    def deserialize_run_context(cls, ctx: dict[str, Any], deps: Any) -> TemporalRunContext[Any]:
         """Deserialize the run context from a `dict[str, Any]`."""
-        return TemporalRunContext(**ctx, deps=deps)
+        return cls(**ctx, deps=deps)
