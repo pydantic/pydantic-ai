@@ -953,16 +953,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @overload
     def output_validator(
-        self, func: Callable[[RunContext[AgentDepsT], OutputDataT, bool], OutputDataT], /
-    ) -> Callable[[RunContext[AgentDepsT], OutputDataT, bool], OutputDataT]: ...
-
-    @overload
-    def output_validator(
-        self, func: Callable[[RunContext[AgentDepsT], OutputDataT, bool], Awaitable[OutputDataT]], /
-    ) -> Callable[[RunContext[AgentDepsT], OutputDataT, bool], Awaitable[OutputDataT]]: ...
-
-    @overload
-    def output_validator(
         self, func: Callable[[RunContext[AgentDepsT], OutputDataT], OutputDataT], /
     ) -> Callable[[RunContext[AgentDepsT], OutputDataT], OutputDataT]: ...
 
