@@ -10,11 +10,10 @@ edit_uri: edit/main/docs/
 copyright: © Pydantic Services Inc. 2024 to present
 
 nav:
-  - Introduction: index.md
+  - index.md
   - install.md
   - help.md
   - troubleshooting.md
-  - changelog.md
 
   - Documentation:
       - Core Concepts:
@@ -34,6 +33,7 @@ nav:
           - models/groq.md
           - models/mistral.md
           - models/huggingface.md
+          - models/outlines.md
       - Tools & Toolsets:
           - tools.md
           - tools-advanced.md
@@ -49,15 +49,40 @@ nav:
       - MCP:
           - Overview: mcp/overview.md
           - mcp/client.md
+          - mcp/fastmcp-client.md
           - mcp/server.md
       - Multi-Agent Patterns: multi-agent-applications.md
       - Testing: testing.md
 
   - Pydantic Evals:
       - Overview: evals.md
+      - Getting Started:
+          - Quick Start: evals/quick-start.md
+          - Core Concepts: evals/core-concepts.md
+      - Evaluators:
+          - Overview: evals/evaluators/overview.md
+          - Built-in Evaluators: evals/evaluators/built-in.md
+          - LLM Judge: evals/evaluators/llm-judge.md
+          - Custom Evaluators: evals/evaluators/custom.md
+          - Span-Based: evals/evaluators/span-based.md
+      - How-To Guides:
+          - Logfire Integration: evals/how-to/logfire-integration.md
+          - Dataset Management: evals/how-to/dataset-management.md
+          - Dataset Serialization: evals/how-to/dataset-serialization.md
+          - Concurrency & Performance: evals/how-to/concurrency.md
+          - Retry Strategies: evals/how-to/retry-strategies.md
+          - Metrics & Attributes: evals/how-to/metrics-attributes.md
+      - Examples:
+          - Simple Validation: evals/examples/simple-validation.md
 
   - Pydantic Graph:
       - Overview: graph.md
+      - Beta API:
+          - Getting Started: graph/beta/index.md
+          - Steps: graph/beta/steps.md
+          - Joins & Reducers: graph/beta/joins.md
+          - Decisions: graph/beta/decisions.md
+          - Parallel Execution: graph/beta/parallel.md
 
   - Integrations:
       - Debugging & Monitoring with Pydantic Logfire: logfire.md
@@ -65,7 +90,11 @@ nav:
         - Overview: durable_execution/overview.md
         - Temporal: durable_execution/temporal.md
         - DBOS: durable_execution/dbos.md
-      - Agent-User Interaction (AG-UI): ag-ui.md
+        - Prefect: durable_execution/prefect.md
+      - UI Event Streams:
+        - Overview: ui/overview.md
+        - AG-UI: ui/ag-ui.md
+        - Vercel AI: ui/vercel-ai.md
       - Agent2Agent (A2A): a2a.md
 
   - Related Packages:
@@ -96,7 +125,6 @@ nav:
 
   - API Reference:
       - pydantic_ai:
-          - api/ag_ui.md
           - api/agent.md
           - api/tools.md
           - api/toolsets.md
@@ -123,6 +151,7 @@ nav:
           - api/models/huggingface.md
           - api/models/instrumented.md
           - api/models/mistral.md
+          - api/models/outlines.md
           - api/models/test.md
           - api/models/function.md
           - api/models/fallback.md
@@ -131,6 +160,11 @@ nav:
           - api/profiles.md
           - api/providers.md
           - api/retries.md
+          - api/run.md
+          - api/ag_ui.md
+          - api/ui/base.md
+          - api/ui/ag_ui.md
+          - api/ui/vercel_ai.md
       - pydantic_evals:
           - api/pydantic_evals/dataset.md
           - api/pydantic_evals/evaluators.md
@@ -143,11 +177,21 @@ nav:
           - api/pydantic_graph/persistence.md
           - api/pydantic_graph/mermaid.md
           - api/pydantic_graph/exceptions.md
+          - Beta API:
+              - api/pydantic_graph/beta.md
+              - api/pydantic_graph/beta_graph.md
+              - api/pydantic_graph/beta_graph_builder.md
+              - api/pydantic_graph/beta_step.md
+              - api/pydantic_graph/beta_join.md
+              - api/pydantic_graph/beta_decision.md
+              - api/pydantic_graph/beta_node.md
       - fasta2a:
           - api/fasta2a.md
 
   - Project:
       - contributing.md
+      - changelog.md
+      - version-policy.md
 
 extra:
   # hide the "Made with Material for MkDocs" message
@@ -285,14 +329,30 @@ plugins:
         Pydantic AI is a Python agent framework designed to make it less painful to build production grade
         applications with Generative AI.
       sections:
+        Introduction:
+          - index.md
+          - install.md
+          - help.md
+          - troubleshooting.md
         Concepts documentation:
+          - a2a.md
+          - ag-ui.md
           - agents.md
+          - builtin-tools.md
           - dependencies.md
+          - deferred-tools.md
+          - direct.md
+          - input.md
           - tools.md
           - common-tools.md
-          - results.md
+          - output.md
+          - retries.md
           - message-history.md
           - multi-agent-applications.md
+          - thinking.md
+          - third-party-tools.md
+          - tools-advanced.md
+          - toolsets.md
         Models:
           - models/*.md
         Graphs:
@@ -301,18 +361,23 @@ plugins:
           - api/*.md
         Evals:
           - evals.md
+        Durable Execution:
+          - durable_execution/*.md
         MCP:
           - mcp/*.md
+        UI Event Streams:
+          - ui/*.md
         Optional:
           - testing.md
           - cli.md
           - logfire.md
+          - contributing.md
+          - changelog.md
+          - version-policy.md
+        Examples:
           - examples/*.md
-  - redirects:
-      redirect_maps:
-        "examples/index.md": "examples/setup.md"
-        "mcp/index.md": "mcp/overview.md"
-        "models/index.md": "models/overview.md"
+
+# DON'T PUT REDIRECTS IN THIS FILE! Instead add them to docs-site/src/index.ts
 
 hooks:
   - "docs/.hooks/main.py"

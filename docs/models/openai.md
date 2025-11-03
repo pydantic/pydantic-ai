@@ -25,7 +25,7 @@ You can then use `OpenAIChatModel` by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 ...
 ```
 
@@ -35,7 +35,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 
-model = OpenAIChatModel('gpt-4o')
+model = OpenAIChatModel('gpt-5')
 agent = Agent(model)
 ...
 ```
@@ -52,7 +52,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='your-api-key'))
+model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='your-api-key'))
 agent = Agent(model)
 ...
 ```
@@ -69,7 +69,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 client = AsyncOpenAI(max_retries=3)
-model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=client))
+model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(openai_client=client))
 agent = Agent(model)
 ...
 ```
@@ -91,7 +91,7 @@ client = AsyncAzureOpenAI(
 )
 
 model = OpenAIChatModel(
-    'gpt-4o',
+    'gpt-5',
     provider=OpenAIProvider(openai_client=client),
 )
 agent = Agent(model)
@@ -101,13 +101,23 @@ agent = Agent(model)
 ## OpenAI Responses API
 
 Pydantic AI also supports OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) through the
-[`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] class.
+
+You can use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai-responses:gpt-5')
+...
+```
+
+Or initialise the model directly with just the model name:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 
-model = OpenAIResponsesModel('gpt-4o')
+model = OpenAIResponsesModel('gpt-5')
 agent = Agent(model)
 ...
 ```
@@ -120,17 +130,15 @@ The Responses API has built-in tools that you can use instead of building your o
 
 - [Web search](https://platform.openai.com/docs/guides/tools-web-search): allow models to search the web for the latest information before generating a response.
 - [Code interpreter](https://platform.openai.com/docs/guides/tools-code-interpreter): allow models to write and run Python code in a sandboxed environment before generating a response.
+- [Image generation](https://platform.openai.com/docs/guides/tools-image-generation): allow models to generate images based on a text prompt.
 - [File search](https://platform.openai.com/docs/guides/tools-file-search): allow models to search your files for relevant information before generating a response.
 - [Computer use](https://platform.openai.com/docs/guides/tools-computer-use): allow models to use a computer to perform tasks on your behalf.
-- [Image generation](https://platform.openai.com/docs/guides/tools-image-generation): allow models to generate images based on a text prompt.
 
-Web search and Code interpreter are natively supported through the [Built-in tools](../builtin-tools.md) feature.
-
-Image generation is not currently supported. If you need this feature, please comment on [this issue](https://github.com/pydantic/pydantic-ai/issues/2140).
+Web search, Code interpreter, and Image generation are natively supported through the [Built-in tools](../builtin-tools.md) feature.
 
 File search and Computer use can be enabled by passing an [`openai.types.responses.FileSearchToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/file_search_tool_param.py) or [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_builtin_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. They don't currently generate [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for these built-in tools.
 
-```python{title="file_search_tool.py"}
+```python {title="file_search_tool.py"}
 from openai.types.responses import FileSearchToolParam
 
 from pydantic_ai import Agent
@@ -144,7 +152,7 @@ model_settings = OpenAIResponsesModelSettings(
         )
     ],
 )
-model = OpenAIResponsesModel('gpt-4o')
+model = OpenAIResponsesModel('gpt-5')
 agent = Agent(model=model, model_settings=model_settings)
 
 result = agent.run_sync('Who was Albert Einstein?')
@@ -217,7 +225,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 model = OpenAIChatModel(
     'model_name',
     provider=OpenAIProvider(
-        base_url='https://<openai-compatible-api-endpoint>.com', api_key='your-api-key'
+        base_url='https://<openai-compatible-api-endpoint>', api_key='your-api-key'
     ),
 )
 agent = Agent(model)
@@ -235,9 +243,8 @@ When using an alternative provider class provided by Pydantic AI, an appropriate
 If the model you're using is not working correctly out of the box, you can tweak various aspects of how model requests are constructed by providing your own [`ModelProfile`][pydantic_ai.profiles.ModelProfile] (for behaviors shared among all model classes) or [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (for behaviors specific to `OpenAIChatModel`):
 
 ```py
-from pydantic_ai import Agent
+from pydantic_ai import Agent, InlineDefsJsonSchemaTransformer
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -257,7 +264,17 @@ agent = Agent(model)
 ### DeepSeek
 
 To use the [DeepSeek](https://deepseek.com) provider, first create an API key by following the [Quick Start guide](https://api-docs.deepseek.com/).
-Once you have the API key, you can use it with the [`DeepSeekProvider`][pydantic_ai.providers.deepseek.DeepSeekProvider]:
+
+You can then set the `DEEPSEEK_API_KEY` environment variable and use [`DeepSeekProvider`][pydantic_ai.providers.deepseek.DeepSeekProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('deepseek:deepseek-chat')
+...
+```
+
+Or initialise the model and provider directly:
 
 ```python
 from pydantic_ai import Agent
@@ -294,23 +311,20 @@ agent = Agent(model)
 
 ### Ollama
 
-To use [Ollama](https://ollama.com/), you must first download the Ollama client, and then download a model using the [Ollama model library](https://ollama.com/library).
+Pydantic AI supports both self-hosted [Ollama](https://ollama.com/) servers (running locally or remotely) and [Ollama Cloud](https://ollama.com/cloud).
 
-You must also ensure the Ollama server is running when trying to make requests to it. For more information, please see the [Ollama documentation](https://github.com/ollama/ollama/tree/main/docs).
+For servers running locally, use the `http://localhost:11434/v1` base URL. For Ollama Cloud, use `https://ollama.com/v1` and ensure an API key is set.
 
-You can then use the model with the [`OllamaProvider`][pydantic_ai.providers.ollama.OllamaProvider].
+You can set the `OLLAMA_BASE_URL` and (optionally) `OLLAMA_API_KEY` environment variables and use [`OllamaProvider`][pydantic_ai.providers.ollama.OllamaProvider] by name:
 
-#### Example local usage
+```python
+from pydantic_ai import Agent
 
-With `ollama` installed, you can run the server with the model you want to use:
-
-```bash
-ollama run llama3.2
+agent = Agent('ollama:gpt-oss:20b')
+...
 ```
 
-(this will pull the `llama3.2` model if you don't already have it downloaded)
-
-Then run your code, here's a minimal example:
+Or initialise the model and provider directly:
 
 ```python
 from pydantic import BaseModel
@@ -326,8 +340,8 @@ class CityLocation(BaseModel):
 
 
 ollama_model = OpenAIChatModel(
-    model_name='llama3.2',
-    provider=OllamaProvider(base_url='http://localhost:11434/v1'),
+    model_name='gpt-oss:20b',
+    provider=OllamaProvider(base_url='http://localhost:11434/v1'),  # (1)!
 )
 agent = Agent(ollama_model, output_type=CityLocation)
 
@@ -338,42 +352,21 @@ print(result.usage())
 #> RunUsage(input_tokens=57, output_tokens=8, requests=1)
 ```
 
-#### Example using a remote server
+1. For Ollama Cloud, use the `base_url='https://ollama.com/v1'` and set the `OLLAMA_API_KEY` environment variable.
 
-```python
-from pydantic import BaseModel
-
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.ollama import OllamaProvider
-
-ollama_model = OpenAIChatModel(
-    model_name='qwen2.5-coder:7b',  # (1)!
-    provider=OllamaProvider(base_url='http://192.168.1.74:11434/v1'),  # (2)!
-)
-
-
-class CityLocation(BaseModel):
-    city: str
-    country: str
-
-
-agent = Agent(model=ollama_model, output_type=CityLocation)
-
-result = agent.run_sync('Where were the olympics held in 2012?')
-print(result.output)
-#> city='London' country='United Kingdom'
-print(result.usage())
-#> RunUsage(input_tokens=57, output_tokens=8, requests=1)
-```
-
-1. The name of the model running on the remote server
-2. The url of the remote server
 
 ### Azure AI Foundry
 
-If you want to use [Azure AI Foundry](https://ai.azure.com/) as your provider, you can do so by using the
-[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] class.
+To use [Azure AI Foundry](https://ai.azure.com/) as your provider, you can set the `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `OPENAI_API_VERSION` environment variables and use [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('azure:gpt-5')
+...
+```
+
+Or initialise the model and provider directly:
 
 ```python
 from pydantic_ai import Agent
@@ -381,7 +374,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.azure import AzureProvider
 
 model = OpenAIChatModel(
-    'gpt-4o',
+    'gpt-5',
     provider=AzureProvider(
         azure_endpoint='your-azure-endpoint',
         api_version='your-api-version',
@@ -396,7 +389,16 @@ agent = Agent(model)
 
 To use [OpenRouter](https://openrouter.ai), first create an API key at [openrouter.ai/keys](https://openrouter.ai/keys).
 
-Once you have the API key, you can use it with the [`OpenRouterProvider`][pydantic_ai.providers.openrouter.OpenRouterProvider]:
+You can set the `OPENROUTER_API_KEY` environment variable and use [`OpenRouterProvider`][pydantic_ai.providers.openrouter.OpenRouterProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openrouter:anthropic/claude-3.5-sonnet')
+...
+```
+
+Or initialise the model and provider directly:
 
 ```python
 from pydantic_ai import Agent
@@ -415,29 +417,22 @@ agent = Agent(model)
 
 To use [Vercel's AI Gateway](https://vercel.com/docs/ai-gateway), first follow the [documentation](https://vercel.com/docs/ai-gateway) instructions on obtaining an API key or OIDC token.
 
-You can set your credentials using one of these environment variables:
+You can set the `VERCEL_AI_GATEWAY_API_KEY` and `VERCEL_OIDC_TOKEN` environment variables and use [`VercelProvider`][pydantic_ai.providers.vercel.VercelProvider] by name:
 
-```bash
-export VERCEL_AI_GATEWAY_API_KEY='your-ai-gateway-api-key'
-# OR
-export VERCEL_OIDC_TOKEN='your-oidc-token'
+```python
+from pydantic_ai import Agent
+
+agent = Agent('vercel:anthropic/claude-4-sonnet')
+...
 ```
 
-Once you have set the environment variable, you can use it with the [`VercelProvider`][pydantic_ai.providers.vercel.VercelProvider]:
+Or initialise the model and provider directly:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.vercel import VercelProvider
 
-# Uses environment variable automatically
-model = OpenAIChatModel(
-    'anthropic/claude-4-sonnet',
-    provider=VercelProvider(),
-)
-agent = Agent(model)
-
-# Or pass the API key directly
 model = OpenAIChatModel(
     'anthropic/claude-4-sonnet',
     provider=VercelProvider(api_key='your-vercel-ai-gateway-api-key'),
@@ -449,7 +444,17 @@ agent = Agent(model)
 ### Grok (xAI)
 
 Go to [xAI API Console](https://console.x.ai/) and create an API key.
-Once you have the API key, you can use it with the [`GrokProvider`][pydantic_ai.providers.grok.GrokProvider]:
+
+You can set the `GROK_API_KEY` environment variable and use [`GrokProvider`][pydantic_ai.providers.grok.GrokProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('grok:grok-2-1212')
+...
+```
+
+Or initialise the model and provider directly:
 
 ```python
 from pydantic_ai import Agent
@@ -467,7 +472,17 @@ agent = Agent(model)
 ### MoonshotAI
 
 Create an API key in the [Moonshot Console](https://platform.moonshot.ai/console).
-With that key you can instantiate the [`MoonshotAIProvider`][pydantic_ai.providers.moonshotai.MoonshotAIProvider]:
+
+You can set the `MOONSHOTAI_API_KEY` environment variable and use [`MoonshotAIProvider`][pydantic_ai.providers.moonshotai.MoonshotAIProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('moonshotai:kimi-k2-0711-preview')
+...
+```
+
+Or initialise the model and provider directly:
 
 ```python
 from pydantic_ai import Agent
@@ -486,7 +501,16 @@ agent = Agent(model)
 
 To use [GitHub Models](https://docs.github.com/en/github-models), you'll need a GitHub personal access token with the `models: read` permission.
 
-Once you have the token, you can use it with the [`GitHubProvider`][pydantic_ai.providers.github.GitHubProvider]:
+You can set the `GITHUB_API_KEY` environment variable and use [`GitHubProvider`][pydantic_ai.providers.github.GitHubProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('github:xai/grok-3-mini')
+...
+```
+
+Or initialise the model and provider directly:
 
 ```python
 from pydantic_ai import Agent
@@ -501,18 +525,12 @@ agent = Agent(model)
 ...
 ```
 
-You can also set the `GITHUB_API_KEY` environment variable:
-
-```bash
-export GITHUB_API_KEY='your-github-token'
-```
-
 GitHub Models supports various model families with different prefixes. You can see the full list on the [GitHub Marketplace](https://github.com/marketplace?type=models) or the public [catalog endpoint](https://models.github.ai/catalog/models).
 
 ### Perplexity
 
 Follow the Perplexity [getting started](https://docs.perplexity.ai/guides/getting-started)
-guide to create an API key. Then, you can query the Perplexity API with the following:
+guide to create an API key.
 
 ```python
 from pydantic_ai import Agent
@@ -533,7 +551,17 @@ agent = Agent(model)
 ### Fireworks AI
 
 Go to [Fireworks.AI](https://fireworks.ai/) and create an API key in your account settings.
-Once you have the API key, you can use it with the [`FireworksProvider`][pydantic_ai.providers.fireworks.FireworksProvider]:
+
+You can set the `FIREWORKS_API_KEY` environment variable and use [`FireworksProvider`][pydantic_ai.providers.fireworks.FireworksProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('fireworks:accounts/fireworks/models/qwq-32b')
+...
+```
+
+Or initialise the model and provider directly:
 
 ```python
 from pydantic_ai import Agent
@@ -551,7 +579,17 @@ agent = Agent(model)
 ### Together AI
 
 Go to [Together.ai](https://www.together.ai/) and create an API key in your account settings.
-Once you have the API key, you can use it with the [`TogetherProvider`][pydantic_ai.providers.together.TogetherProvider]:
+
+You can set the `TOGETHER_API_KEY` environment variable and use [`TogetherProvider`][pydantic_ai.providers.together.TogetherProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('together:meta-llama/Llama-3.3-70B-Instruct-Turbo-Free')
+...
+```
+
+Or initialise the model and provider directly:
 
 ```python
 from pydantic_ai import Agent
@@ -568,7 +606,18 @@ agent = Agent(model)
 
 ### Heroku AI
 
-To use [Heroku AI](https://www.heroku.com/ai), you can use the [`HerokuProvider`][pydantic_ai.providers.heroku.HerokuProvider]:
+To use [Heroku AI](https://www.heroku.com/ai), first create an API key.
+
+You can set the `HEROKU_INFERENCE_KEY` and (optionally )`HEROKU_INFERENCE_URL` environment variables and use [`HerokuProvider`][pydantic_ai.providers.heroku.HerokuProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('heroku:claude-sonnet-4-5')
+...
+```
+
+Or initialise the model and provider directly:
 
 ```python
 from pydantic_ai import Agent
@@ -576,25 +625,18 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.heroku import HerokuProvider
 
 model = OpenAIChatModel(
-    'claude-3-7-sonnet',
+    'claude-sonnet-4-5',
     provider=HerokuProvider(api_key='your-heroku-inference-key'),
 )
 agent = Agent(model)
 ...
 ```
 
-You can set the `HEROKU_INFERENCE_KEY` and `HEROKU_INFERENCE_URL` environment variables to set the API key and base URL, respectively:
-
-```bash
-export HEROKU_INFERENCE_KEY='your-heroku-inference-key'
-export HEROKU_INFERENCE_URL='https://us.inference.heroku.com'
-```
-
 ### Cerebras
 
 To use [Cerebras](https://cerebras.ai/), you need to create an API key in the [Cerebras Console](https://cloud.cerebras.ai/).
 
-Once you've set the `CEREBRAS_API_KEY` environment variable, you can run the following:
+You can set the `CEREBRAS_API_KEY` environment variable and use [`CerebrasProvider`][pydantic_ai.providers.cerebras.CerebrasProvider] by name:
 
 ```python
 from pydantic_ai import Agent
@@ -605,7 +647,7 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
-If you need to configure the provider, you can use the [`CerebrasProvider`][pydantic_ai.providers.cerebras.CerebrasProvider] class:
+Or initialise the model and provider directly:
 
 ```python
 from pydantic_ai import Agent
@@ -637,7 +679,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.litellm import LiteLLMProvider
 
 model = OpenAIChatModel(
-    'openai/gpt-3.5-turbo',
+    'openai/gpt-5',
     provider=LiteLLMProvider(
         api_base='<api-base-url>',
         api_key='<api-key>'
@@ -649,4 +691,70 @@ result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
 ...
+```
+
+### Nebius AI Studio
+
+Go to [Nebius AI Studio](https://studio.nebius.com/) and create an API key.
+
+You can set the `NEBIUS_API_KEY` environment variable and use [`NebiusProvider`][pydantic_ai.providers.nebius.NebiusProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('nebius:Qwen/Qwen3-32B-fast')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+Or initialise the model and provider directly:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.nebius import NebiusProvider
+
+model = OpenAIChatModel(
+    'Qwen/Qwen3-32B-fast',
+    provider=NebiusProvider(api_key='your-nebius-api-key'),
+)
+agent = Agent(model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+### OVHcloud AI Endpoints
+
+To use OVHcloud AI Endpoints, you need to create a new API key. To do so, go to the [OVHcloud manager](https://ovh.com/manager), then in Public Cloud > AI Endpoints > API keys. Click on `Create a new API key` and copy your new key.
+
+You can explore the [catalog](https://endpoints.ai.cloud.ovh.net/catalog) to find which models are available.
+
+You can set the `OVHCLOUD_API_KEY` environment variable and use [`OVHcloudProvider`][pydantic_ai.providers.ovhcloud.OVHcloudProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('ovhcloud:gpt-oss-120b')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+If you need to configure the provider, you can use the [`OVHcloudProvider`][pydantic_ai.providers.ovhcloud.OVHcloudProvider] class:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.ovhcloud import OVHcloudProvider
+
+model = OpenAIChatModel(
+    'gpt-oss-120b',
+    provider=OVHcloudProvider(api_key='your-api-key'),
+)
+agent = Agent(model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
 ```

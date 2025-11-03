@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     TextPart,
     TextPartDelta,
@@ -33,7 +34,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsNow, IsStr
+from .conftest import IsDatetime, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -92,7 +93,17 @@ def test_model_request_stream_sync():
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='(no ')),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='tool ')),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='calls)')),
+                PartEndEvent(index=0, part=TextPart(content='success (no tool calls)')),
             ]
+        )
+        assert stream.response == snapshot(
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+            )
         )
 
         repr_str = repr(stream)
@@ -111,6 +122,7 @@ async def test_model_request_stream():
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='(no ')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='tool ')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='calls)')),
+            PartEndEvent(index=0, part=TextPart(content='success (no tool calls)')),
         ]
     )
 

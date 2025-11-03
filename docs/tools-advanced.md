@@ -20,7 +20,7 @@ class User(BaseModel):
     age: int
 
 
-agent = Agent(model=OpenAIResponsesModel('gpt-4o'))
+agent = Agent(model=OpenAIResponsesModel('gpt-5'))
 
 
 @agent.tool_plain
@@ -77,9 +77,9 @@ Here's an example of a computer automation tool that captures screenshots and pr
 ```python {title="advanced_tool_return.py" test="skip" lint="skip"}
 import time
 from pydantic_ai import Agent
-from pydantic_ai.messages import ToolReturn, BinaryContent
+from pydantic_ai import ToolReturn, BinaryContent
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 @agent.tool_plain
 def click_and_capture(x: int, y: int) -> ToolReturn:

@@ -37,7 +37,7 @@ from fake_database import DatabaseConn  # (1)!
 from weather_service import WeatherService  # (2)!
 
 weather_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=WeatherService,
     system_prompt='Providing a weather forecast at the locations the user provides.',
 )
@@ -88,7 +88,7 @@ from dirty_equals import IsNow, IsStr
 
 from pydantic_ai import models, capture_run_messages, RequestUsage
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.messages import (
+from pydantic_ai import (
     ModelResponse,
     SystemPromptPart,
     TextPart,
@@ -196,7 +196,7 @@ import re
 import pytest
 
 from pydantic_ai import models
-from pydantic_ai.messages import (
+from pydantic_ai import (
     ModelMessage,
     ModelResponse,
     TextPart,

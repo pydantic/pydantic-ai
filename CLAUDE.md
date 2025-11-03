@@ -28,7 +28,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Model Integration (`pydantic_ai_slim/pydantic_ai/models/`)**
 - Unified interface across providers: OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Bedrock, HuggingFace
-- Model strings: `"openai:gpt-4o"`, `"anthropic:claude-3-5-sonnet"`, `"google:gemini-1.5-pro"`
+- Model strings: `"openai:gpt-5"`, `"anthropic:claude-sonnet-4-5"`, `"google:gemini-2.5-pro"`
 - `ModelRequestParameters` for configuration, `StreamedResponse` for streaming
 
 **Graph-based Execution (`pydantic_graph/` + `_agent_graph.py`)**
@@ -55,7 +55,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 class MyDeps:
     database: DatabaseConn
 
-agent = Agent('openai:gpt-4o', deps_type=MyDeps)
+agent = Agent('openai:gpt-5', deps_type=MyDeps)
 
 @agent.tool
 async def get_data(ctx: RunContext[MyDeps]) -> str:
@@ -69,7 +69,7 @@ class OutputModel(BaseModel):
     confidence: float
 
 agent: Agent[MyDeps, OutputModel] = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=MyDeps,
     output_type=OutputModel
 )

@@ -34,7 +34,7 @@ import random
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'google-gla:gemini-1.5-flash',  # (1)!
+    'google-gla:gemini-2.5-flash',  # (1)!
     deps_type=str,  # (2)!
     system_prompt=(
         "You're a dice game, you should roll the die and see if the number "
@@ -96,7 +96,7 @@ print(dice_result.all_messages())
             )
         ],
         usage=RequestUsage(input_tokens=90, output_tokens=2),
-        model_name='gemini-1.5-flash',
+        model_name='gemini-2.5-flash',
         timestamp=datetime.datetime(...),
     ),
     ModelRequest(
@@ -116,7 +116,7 @@ print(dice_result.all_messages())
             )
         ],
         usage=RequestUsage(input_tokens=91, output_tokens=4),
-        model_name='gemini-1.5-flash',
+        model_name='gemini-2.5-flash',
         timestamp=datetime.datetime(...),
     ),
     ModelRequest(
@@ -136,7 +136,7 @@ print(dice_result.all_messages())
             )
         ],
         usage=RequestUsage(input_tokens=92, output_tokens=12),
-        model_name='gemini-1.5-flash',
+        model_name='gemini-2.5-flash',
         timestamp=datetime.datetime(...),
     ),
 ]
@@ -206,13 +206,13 @@ def get_player_name(ctx: RunContext[str]) -> str:
 
 
 agent_a = Agent(
-    'google-gla:gemini-1.5-flash',
+    'google-gla:gemini-2.5-flash',
     deps_type=str,
     tools=[roll_dice, get_player_name],  # (1)!
     system_prompt=system_prompt,
 )
 agent_b = Agent(
-    'google-gla:gemini-1.5-flash',
+    'google-gla:gemini-2.5-flash',
     deps_type=str,
     tools=[  # (2)!
         Tool(roll_dice, takes_ctx=False),
@@ -250,8 +250,7 @@ Even better, Pydantic AI extracts the docstring from functions and (thanks to [g
 To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
 
 ```python {title="tool_schema.py"}
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 agent = Agent()

@@ -12,31 +12,40 @@ from typing import Literal
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelSettings, RunContext
-from pydantic_ai.direct import model_request_stream
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
+    AgentRunResultEvent,
     AgentStreamEvent,
+    BinaryImage,
+    ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    FunctionToolset,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSettings,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
+    RunContext,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
+    WebSearchTool,
+    WebSearchUserLocation,
 )
+from pydantic_ai.direct import model_request_stream
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import Model, cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
 from pydantic_ai.usage import RequestUsage
 
 try:
@@ -72,7 +81,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
@@ -362,16 +371,22 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_kind":"tool-call"},"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_kind":"tool-call"},"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"part_kind":"tool-call"},"next_part_kind":"tool-call","event_kind":"part_end"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"part_kind":"tool-call"},"previous_part_kind":"tool-call","event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                                ),
+                                                BasicSpan(
+                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -387,7 +402,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -401,7 +416,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -420,7 +435,7 @@ async def test_complex_agent_run_in_workflow(
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
                                                     content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
+                                                        regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
                                                     )
                                                 ),
                                             ],
@@ -449,7 +464,7 @@ async def test_complex_agent_run_in_workflow(
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
                                                     content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
+                                                        regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
                                                     )
                                                 ),
                                             ],
@@ -475,7 +490,7 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_kind":"tool-call"},"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
@@ -495,6 +510,9 @@ async def test_complex_agent_run_in_workflow(
                                                 BasicSpan(
                                                     content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
+                                                BasicSpan(
+                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                                ),
                                             ],
                                         )
                                     ],
@@ -509,7 +527,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -540,7 +558,7 @@ async def test_complex_agent_run_in_workflow(
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
                                                     content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
+                                                        regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
                                                     )
                                                 ),
                                             ],
@@ -566,7 +584,7 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=3'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_kind":"tool-call"},"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","id":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"tool_name":"final_result","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","event_kind":"final_result"}'
@@ -691,6 +709,9 @@ async def test_complex_agent_run_in_workflow(
                                                 BasicSpan(
                                                     content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
+                                                BasicSpan(
+                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","id":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
+                                                ),
                                             ],
                                         )
                                     ],
@@ -739,12 +760,24 @@ async def test_complex_agent_run(allow_model_requests: None):
             PartDeltaEvent(
                 index=0, delta=ToolCallPartDelta(args_delta='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z')
             ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z'),
+                next_part_kind='tool-call',
+            ),
             PartStartEvent(
                 index=1,
                 part=ToolCallPart(tool_name='get_product_name', args='', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5'),
+                previous_part_kind='tool-call',
             ),
             PartDeltaEvent(
                 index=1, delta=ToolCallPartDelta(args_delta='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5')
+            ),
+            PartEndEvent(
+                index=1,
+                part=ToolCallPart(
+                    tool_name='get_product_name', args='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5'
+                ),
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z')
@@ -789,6 +822,12 @@ async def test_complex_agent_run(allow_model_requests: None):
             ),
             PartDeltaEvent(
                 index=0, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'
+                ),
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
@@ -967,6 +1006,14 @@ async def test_complex_agent_run(allow_model_requests: None):
             PartDeltaEvent(
                 index=0, delta=ToolCallPartDelta(args_delta=']}', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
             ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='final_result',
+                    args='{"answers":[{"label":"Capital","answer":"The capital of Mexico is Mexico City."},{"label":"Weather","answer":"The weather in Mexico City is currently sunny."},{"label":"Product Name","answer":"The product name is Pydantic AI."}]}',
+                    tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
+                ),
+            ),
         ]
     )
 
@@ -1120,6 +1167,25 @@ async def test_temporal_agent_run_stream(allow_model_requests: None):
         )
 
 
+async def test_temporal_agent_run_stream_events(allow_model_requests: None):
+    events = [event async for event in simple_temporal_agent.run_stream_events('What is the capital of Mexico?')]
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='The')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' capital')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' Mexico')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' Mexico')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' City')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='.')),
+            PartEndEvent(index=0, part=TextPart(content='The capital of Mexico is Mexico City.')),
+            AgentRunResultEvent(result=AgentRunResult(output='The capital of Mexico is Mexico City.')),
+        ]
+    )
+
+
 async def test_temporal_agent_iter(allow_model_requests: None):
     output: list[str] = []
     async with simple_temporal_agent.iter('What is the capital of Mexico?') as run:
@@ -1188,13 +1254,41 @@ async def test_temporal_agent_run_stream_in_workflow(allow_model_requests: None,
         with workflow_raises(
             UserError,
             snapshot(
-                '`agent.run_stream()` cannot currently be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead. Please file an issue if this is not sufficient for your use case.'
+                '`agent.run_stream()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             ),
         ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
                 SimpleAgentWorkflowWithRunStream.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunStream.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+
+@workflow.defn
+class SimpleAgentWorkflowWithRunStreamEvents:
+    @workflow.run
+    async def run(self, prompt: str) -> list[AgentStreamEvent | AgentRunResultEvent]:
+        return [event async for event in simple_temporal_agent.run_stream_events(prompt)]
+
+
+async def test_temporal_agent_run_stream_events_in_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SimpleAgentWorkflowWithRunStreamEvents],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                '`agent.run_stream_events()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+            ),
+        ):
+            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+                SimpleAgentWorkflowWithRunStreamEvents.run,
+                args=['What is the capital of Mexico?'],
+                id=SimpleAgentWorkflowWithRunStreamEvents.__name__,
                 task_queue=TASK_QUEUE,
             )
 
@@ -1219,7 +1313,7 @@ async def test_temporal_agent_iter_in_workflow(allow_model_requests: None, clien
         with workflow_raises(
             UserError,
             snapshot(
-                '`agent.iter()` cannot currently be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead. Please file an issue if this is not sufficient for your use case.'
+                '`agent.iter()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             ),
         ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
@@ -1943,9 +2037,9 @@ def return_settings(messages: list[ModelMessage], agent_info: AgentInfo) -> Mode
 
 
 model_settings = CustomModelSettings(max_tokens=123, custom_setting='custom_value')
-model = FunctionModel(return_settings, settings=model_settings)
+return_settings_model = FunctionModel(return_settings, settings=model_settings)
 
-settings_agent = Agent(model, name='settings_agent')
+settings_agent = Agent(return_settings_model, name='settings_agent')
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
 settings_temporal_agent = TemporalAgent(settings_agent, activity_config=BASE_ACTIVITY_CONFIG)
@@ -1973,3 +2067,88 @@ async def test_custom_model_settings(allow_model_requests: None, client: Client)
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot("{'max_tokens': 123, 'custom_setting': 'custom_value'}")
+
+
+image_agent = Agent(model, name='image_agent', output_type=BinaryImage)
+
+# This needs to be done before the `TemporalAgent` is bound to the workflow.
+image_temporal_agent = TemporalAgent(image_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class ImageAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> BinaryImage:
+        result = await image_temporal_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_image_agent(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ImageAgentWorkflow],
+        plugins=[AgentPlugin(image_temporal_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot('Image output is not supported with Temporal because of the 2MB payload size limit.'),
+        ):
+            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+                ImageAgentWorkflow.run,
+                args=['Generate an image of an axolotl.'],
+                id=ImageAgentWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+
+# Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
+web_search_model = OpenAIResponsesModel(
+    'gpt-5',
+    provider=OpenAIProvider(
+        api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key'),
+        http_client=http_client,
+    ),
+)
+
+web_search_agent = Agent(
+    web_search_model,
+    name='web_search_agent',
+    builtin_tools=[WebSearchTool(user_location=WebSearchUserLocation(city='Mexico City', country='MX'))],
+)
+
+# This needs to be done before the `TemporalAgent` is bound to the workflow.
+web_search_temporal_agent = TemporalAgent(
+    web_search_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+    model_activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=300)),
+)
+
+
+@workflow.defn
+class WebSearchAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await web_search_temporal_agent.run(prompt)
+        return result.output
+
+
+@pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
+    'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
+)
+async def test_web_search_agent_run_in_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WebSearchAgentWorkflow],
+        plugins=[AgentPlugin(web_search_temporal_agent)],
+    ):
+        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            WebSearchAgentWorkflow.run,
+            args=['In one sentence, what is the top news story in my country today?'],
+            id=WebSearchAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot(
+            'Severe floods and landslides across Veracruz, Hidalgo, and Puebla have cut off hundreds of communities and left dozens dead and many missing, prompting a major federal emergency response. ([apnews.com](https://apnews.com/article/5d036e18057361281e984b44402d3b1b?utm_source=openai))'
+        )

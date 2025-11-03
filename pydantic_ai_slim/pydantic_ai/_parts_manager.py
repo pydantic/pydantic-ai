@@ -20,7 +20,6 @@ from typing import Any
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     ModelResponsePart,
     ModelResponseStreamEvent,
     PartDeltaEvent,
@@ -313,6 +312,7 @@ class ModelResponsePartsManager:
         tool_name: str,
         args: str | dict[str, Any] | None,
         tool_call_id: str | None = None,
+        id: str | None = None,
     ) -> ModelResponseStreamEvent:
         """Immediately create or fully-overwrite a ToolCallPart with the given information.
 
@@ -324,6 +324,7 @@ class ModelResponsePartsManager:
             tool_name: The name of the tool being invoked.
             args: The arguments for the tool call, either as a string, a dictionary, or None.
             tool_call_id: An optional string identifier for this tool call.
+            id: An optional identifier for this tool call part.
 
         Returns:
             ModelResponseStreamEvent: A `PartStartEvent` indicating that a new tool call part
@@ -333,6 +334,7 @@ class ModelResponsePartsManager:
             tool_name=tool_name,
             args=args,
             tool_call_id=tool_call_id or _generate_tool_call_id(),
+            id=id,
         )
         if vendor_part_id is None:
             # vendor_part_id is None, so we unconditionally append a new ToolCallPart to the end of the list
@@ -350,64 +352,31 @@ class ModelResponsePartsManager:
             self._vendor_id_to_part_index[vendor_part_id] = new_part_index
         return PartStartEvent(index=new_part_index, part=new_part)
 
-    def handle_builtin_tool_call_part(
+    def handle_part(
         self,
         *,
         vendor_part_id: Hashable | None,
-        part: BuiltinToolCallPart,
+        part: ModelResponsePart,
     ) -> ModelResponseStreamEvent:
-        """Create or overwrite a BuiltinToolCallPart.
+        """Create or overwrite a ModelResponsePart.
 
         Args:
             vendor_part_id: The vendor's ID for this tool call part. If not
                 None and an existing part is found, that part is overwritten.
-            part: The BuiltinToolCallPart.
+            part: The ModelResponsePart.
 
         Returns:
-            ModelResponseStreamEvent: A `PartStartEvent` indicating that a new tool call part
+            ModelResponseStreamEvent: A `PartStartEvent` indicating that a new part
             has been added to the manager, or replaced an existing part.
         """
         if vendor_part_id is None:
-            # vendor_part_id is None, so we unconditionally append a new BuiltinToolCallPart to the end of the list
+            # vendor_part_id is None, so we unconditionally append a new part to the end of the list
             new_part_index = len(self._parts)
             self._parts.append(part)
         else:
-            # vendor_part_id is provided, so find and overwrite or create a new BuiltinToolCallPart.
+            # vendor_part_id is provided, so find and overwrite or create a new part.
             maybe_part_index = self._vendor_id_to_part_index.get(vendor_part_id)
-            if maybe_part_index is not None and isinstance(self._parts[maybe_part_index], BuiltinToolCallPart):
-                new_part_index = maybe_part_index
-                self._parts[new_part_index] = part
-            else:
-                new_part_index = len(self._parts)
-                self._parts.append(part)
-            self._vendor_id_to_part_index[vendor_part_id] = new_part_index
-        return PartStartEvent(index=new_part_index, part=part)
-
-    def handle_builtin_tool_return_part(
-        self,
-        *,
-        vendor_part_id: Hashable | None,
-        part: BuiltinToolReturnPart,
-    ) -> ModelResponseStreamEvent:
-        """Create or overwrite a BuiltinToolReturnPart.
-
-        Args:
-            vendor_part_id: The vendor's ID for this tool call part. If not
-                None and an existing part is found, that part is overwritten.
-            part: The BuiltinToolReturnPart.
-
-        Returns:
-            ModelResponseStreamEvent: A `PartStartEvent` indicating that a new tool call part
-            has been added to the manager, or replaced an existing part.
-        """
-        if vendor_part_id is None:
-            # vendor_part_id is None, so we unconditionally append a new BuiltinToolReturnPart to the end of the list
-            new_part_index = len(self._parts)
-            self._parts.append(part)
-        else:
-            # vendor_part_id is provided, so find and overwrite or create a new BuiltinToolReturnPart.
-            maybe_part_index = self._vendor_id_to_part_index.get(vendor_part_id)
-            if maybe_part_index is not None and isinstance(self._parts[maybe_part_index], BuiltinToolReturnPart):
+            if maybe_part_index is not None and isinstance(self._parts[maybe_part_index], type(part)):
                 new_part_index = maybe_part_index
                 self._parts[new_part_index] = part
             else:

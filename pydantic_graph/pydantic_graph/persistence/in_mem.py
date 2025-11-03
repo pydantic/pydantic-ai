@@ -65,7 +65,7 @@ class SimpleStatePersistence(BaseStatePersistence[StateT, RunEndT]):
         start = perf_counter()
         try:
             yield
-        except Exception:
+        except Exception:  # pragma: no cover
             self.last_snapshot.duration = perf_counter() - start
             self.last_snapshot.status = 'error'
             raise
@@ -76,7 +76,7 @@ class SimpleStatePersistence(BaseStatePersistence[StateT, RunEndT]):
     async def load_next(self) -> NodeSnapshot[StateT, RunEndT] | None:
         if isinstance(self.last_snapshot, NodeSnapshot) and self.last_snapshot.status == 'created':
             self.last_snapshot.status = 'pending'
-            return self.last_snapshot
+            return copy.deepcopy(self.last_snapshot)
 
     async def load_all(self) -> list[Snapshot[StateT, RunEndT]]:
         raise NotImplementedError('load is not supported for SimpleStatePersistence')
@@ -143,7 +143,7 @@ class FullStatePersistence(BaseStatePersistence[StateT, RunEndT]):
     async def load_next(self) -> NodeSnapshot[StateT, RunEndT] | None:
         if snapshot := next((s for s in self.history if isinstance(s, NodeSnapshot) and s.status == 'created'), None):
             snapshot.status = 'pending'
-            return snapshot
+            return copy.deepcopy(snapshot)
 
     async def load_all(self) -> list[Snapshot[StateT, RunEndT]]:
         return self.history

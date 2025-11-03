@@ -13,9 +13,8 @@ The toolsets that will be available during an agent run can be specified in four
 * as a contextual override, via the `toolsets` keyword argument to the [`agent.override()`][pydantic_ai.Agent.iter] context manager. These toolsets will replace those provided at agent construction or run time during the life of the context manager
 
 ```python {title="toolsets.py"}
-from pydantic_ai import Agent
+from pydantic_ai import Agent, FunctionToolset
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import FunctionToolset
 
 
 def agent_tool():
@@ -72,9 +71,8 @@ Functions registered in any of these ways can define an initial `ctx: RunContext
 ```python {title="function_toolset.py"}
 from datetime import datetime
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, FunctionToolset, RunContext
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import FunctionToolset
 
 
 def temperature_celsius(city: str) -> float:
@@ -124,9 +122,8 @@ Toolsets can be composed to dynamically filter which tools are available, modify
 [`CombinedToolset`][pydantic_ai.toolsets.CombinedToolset] takes a list of toolsets and lets them be used as one.
 
 ```python {title="combined_toolset.py" requires="function_toolset.py"}
-from pydantic_ai import Agent
+from pydantic_ai import Agent, CombinedToolset
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import CombinedToolset
 
 from function_toolset import datetime_toolset, weather_toolset
 
@@ -175,9 +172,8 @@ _(This example is complete, it can be run "as is")_
 To easily chain different modifications, you can also call [`prefixed()`][pydantic_ai.toolsets.AbstractToolset.prefixed] on any toolset instead of directly constructing a `PrefixedToolset`.
 
 ```python {title="combined_toolset.py" requires="function_toolset.py"}
-from pydantic_ai import Agent
+from pydantic_ai import Agent, CombinedToolset
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import CombinedToolset
 
 from function_toolset import datetime_toolset, weather_toolset
 
@@ -397,9 +393,8 @@ import asyncio
 
 from typing_extensions import Any
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, ToolsetTool, WrapperToolset
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
 
 from prepared_toolset import prepared_toolset
 
@@ -459,8 +454,7 @@ To demonstrate, let us first define a simple agent _without_ deferred tools:
 ```python {title="deferred_toolset_agent.py"}
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
-from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai import Agent, FunctionToolset
 
 toolset = FunctionToolset()
 
@@ -480,7 +474,7 @@ class PersonalizedGreeting(BaseModel):
     language_code: str
 
 
-agent = Agent('openai:gpt-4o', toolsets=[toolset], output_type=PersonalizedGreeting)
+agent = Agent('openai:gpt-5', toolsets=[toolset], output_type=PersonalizedGreeting)
 
 result = agent.run_sync('Greet the user in a personalized way')
 print(repr(result.output))
@@ -490,9 +484,13 @@ print(repr(result.output))
 Next, let's define a function that represents a hypothetical "run agent" API endpoint that can be called by the frontend and takes a list of messages to send to the model, a list of frontend tool definitions, and optional deferred tool results. This is where `ExternalToolset`, `DeferredToolRequests`, and `DeferredToolResults` come in:
 
 ```python {title="deferred_toolset_api.py" requires="deferred_toolset_agent.py"}
-from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.messages import ModelMessage
-from pydantic_ai.toolsets import ExternalToolset
+from pydantic_ai import (
+    DeferredToolRequests,
+    DeferredToolResults,
+    ExternalToolset,
+    ModelMessage,
+    ToolDefinition,
+)
 
 from deferred_toolset_agent import PersonalizedGreeting, agent
 
@@ -522,10 +520,12 @@ Now, imagine that the code below is implemented on the frontend, and `run_agent`
 from pydantic_ai import (
     DeferredToolRequests,
     DeferredToolResults,
+    ModelMessage,
+    ModelRequest,
     ModelRetry,
     ToolDefinition,
+    UserPromptPart,
 )
-from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 
 from deferred_toolset_api import run_agent
 
@@ -661,7 +661,10 @@ If you want to reuse a network connection or session across tool listings and ca
 
 ### MCP Servers
 
-See the [MCP Client](./mcp/client.md) documentation for how to use MCP servers with Pydantic AI.
+Pydantic AI provides two toolsets that allow an agent to connect to and call tools on local and remote MCP Servers:
+
+1. `MCPServer`: the [MCP SDK-based Client](./mcp/client.md) which offers more direct control by leveraging the MCP SDK directly
+2. `FastMCPToolset`: the [FastMCP-based Client](./mcp/fastmcp-client.md) which offers additional capabilities like Tool Transformation, simpler OAuth configuration, and more.
 
 ### LangChain Tools {#langchain-tools}
 
@@ -678,7 +681,7 @@ from pydantic_ai.ext.langchain import LangChainToolset
 toolkit = SlackToolkit()
 toolset = LangChainToolset(toolkit.get_tools())
 
-agent = Agent('openai:gpt-4o', toolsets=[toolset])
+agent = Agent('openai:gpt-5', toolsets=[toolset])
 # ...
 ```
 
@@ -702,5 +705,5 @@ toolset = ACIToolset(
     linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
 )
 
-agent = Agent('openai:gpt-4o', toolsets=[toolset])
+agent = Agent('openai:gpt-5', toolsets=[toolset])
 ```

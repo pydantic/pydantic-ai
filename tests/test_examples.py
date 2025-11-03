@@ -9,7 +9,6 @@ import sys
 from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass, field
 from inspect import FrameInfo
-from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -20,27 +19,30 @@ from devtools import debug
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_examples.config import ExamplesConfig as BaseExamplesConfig
 from pytest_mock import MockerFixture
-from rich.console import Console
 
-from pydantic_ai import ModelHTTPError
-from pydantic_ai._run_context import RunContext
-from pydantic_ai._utils import group_by_temporal
-from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    AbstractToolset,
+    BinaryImage,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
+    FilePart,
+    ModelHTTPError,
     ModelMessage,
     ModelResponse,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolsetTool,
     UserPromptPart,
 )
+from pydantic_ai._run_context import RunContext
+from pydantic_ai._utils import group_by_temporal
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from .conftest import ClientWithHandler, TestEnv, try_import
 
@@ -109,8 +111,11 @@ def tmp_path_cwd(tmp_path: Path):
 
 
 @pytest.mark.xdist_group(name='doc_tests')
+@pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
+    'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
+)
 @pytest.mark.parametrize('example', find_filter_examples())
-def test_docs_examples(  # noqa: C901
+def test_docs_examples(
     example: CodeExample,
     eval_example: EvalExample,
     mocker: MockerFixture,
@@ -137,12 +142,8 @@ def test_docs_examples(  # noqa: C901
 
     class CustomEvaluationReport(EvaluationReport):
         def print(self, *args: Any, **kwargs: Any) -> None:
-            if 'width' in kwargs:  # pragma: lax no cover
-                raise ValueError('width should not be passed to CustomEvaluationReport')
-            table = self.console_table(*args, **kwargs)
-            io_file = StringIO()
-            Console(file=io_file, width=150).print(table)
-            print(io_file.getvalue())
+            kwargs['width'] = 150
+            super().print(*args, **kwargs)
 
     mocker.patch('pydantic_evals.dataset.EvaluationReport', side_effect=CustomEvaluationReport)
 
@@ -163,6 +164,21 @@ def test_docs_examples(  # noqa: C901
     env.set('AWS_DEFAULT_REGION', 'us-east-1')
     env.set('VERCEL_AI_GATEWAY_API_KEY', 'testing')
     env.set('CEREBRAS_API_KEY', 'testing')
+    env.set('NEBIUS_API_KEY', 'testing')
+    env.set('HEROKU_INFERENCE_KEY', 'testing')
+    env.set('FIREWORKS_API_KEY', 'testing')
+    env.set('TOGETHER_API_KEY', 'testing')
+    env.set('OLLAMA_API_KEY', 'testing')
+    env.set('OLLAMA_BASE_URL', 'http://localhost:11434/v1')
+    env.set('AZURE_OPENAI_API_KEY', 'testing')
+    env.set('AZURE_OPENAI_ENDPOINT', 'https://your-azure-endpoint.openai.azure.com')
+    env.set('OPENAI_API_VERSION', '2024-05-01')
+    env.set('OPENROUTER_API_KEY', 'testing')
+    env.set('GITHUB_API_KEY', 'testing')
+    env.set('GROK_API_KEY', 'testing')
+    env.set('MOONSHOTAI_API_KEY', 'testing')
+    env.set('DEEPSEEK_API_KEY', 'testing')
+    env.set('OVHCLOUD_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
@@ -301,7 +317,6 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
-    'Calculate the factorial of 15 and show your work': 'The factorial of 15 is **1,307,674,368,000**.',
     'Use the web to get the current time.': "In San Francisco, it's 8:21:41 pm PDT on Wednesday, August 6, 2025.",
     'Give me a sentence with the biggest news in AI this week.': 'Scientists have developed a universal AI detector that can identify deepfake videos.',
     'How many days between 2000-01-01 and 2025-03-18?': 'There are 9,208 days between January 1, 2000, and March 18, 2025.',
@@ -319,10 +334,12 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What is the capital of France?': 'The capital of France is Paris.',
     'What is the capital of Italy?': 'The capital of Italy is Rome.',
     'What is the capital of the UK?': 'The capital of the UK is London.',
+    'What is the capital of Mexico?': 'The capital of Mexico is Mexico City.',
     'Who was Albert Einstein?': 'Albert Einstein was a German-born theoretical physicist.',
     'What was his most famous equation?': "Albert Einstein's most famous equation is (E = mc^2).",
     'What is the date?': 'Hello Frank, the date today is 2032-01-02.',
     'What is this? https://ai.pydantic.dev': 'A Python agent framework for building Generative AI applications.',
+    'Give me some examples of my products.': 'Here are some examples of my data: Pen, Paper, Pencil.',
     'Put my money on square eighteen': ToolCallPart(
         tool_name='roulette_wheel', args={'square': 18}, tool_call_id='pyd_ai_tool_call_id'
     ),
@@ -387,7 +404,10 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         'The capital of Italy is Rome (Roma, in Italian), which has been a cultural and political center for centuries.'
         'Rome is known for its rich history, stunning architecture, and delicious cuisine.'
     ),
-    'Please call the tool twice': ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id'),
+    'Please call the tool twice': [
+        ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id_1'),
+        ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id_2'),
+    ],
     'Begin infinite retry loop!': ToolCallPart(
         tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id'
     ),
@@ -498,6 +518,10 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         args={'question': 'the ultimate question of life, the universe, and everything'},
         tool_call_id='pyd_ai_tool_call_id',
     ),
+    'Remember that I live in Mexico City': "Got it! I've recorded that you live in Mexico City. I'll remember this for future reference.",
+    'Where do I live?': 'You live in Mexico City.',
+    'Tell me about the pydantic/pydantic-ai repo.': 'The pydantic/pydantic-ai repo is a Python agent framework for building Generative AI applications.',
+    'What do I have on my calendar today?': "You're going to spend all day playing with Pydantic AI.",
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -543,7 +567,7 @@ async def model_logic(  # noqa: C901
                 ]
             )
         elif m.content.startswith('Write a list of 5 very rude things that I might say'):
-            raise UnexpectedModelBehavior('Safety settings triggered', body='<safety settings details>')
+            raise UnexpectedModelBehavior("Content filter 'SAFETY' triggered", body='<safety settings details>')
         elif m.content.startswith('<user>\n  <name>John Doe</name>'):
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result_EmailOk', args={}, tool_call_id='pyd_ai_tool_call_id')]
@@ -626,6 +650,63 @@ async def model_logic(  # noqa: C901
             return ModelResponse(parts=[TextPart('The secret is safe with me')])
         elif m.content == 'What is the secret code?':
             return ModelResponse(parts=[TextPart('1234')])
+        elif m.content == 'Tell me a two-sentence story about an axolotl with an illustration.':
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        'Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip who loved to explore. One day, while venturing further than usual, Pip discovered a shimmering, ancient coin that granted wishes! '
+                    ),
+                    FilePart(
+                        content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47'),
+                    ),
+                ]
+            )
+        elif m.content == 'Tell me a two-sentence story about an axolotl, no image please.':
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        'Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip who loved to explore. One day, while venturing further than usual, Pip discovered a shimmering, ancient coin that granted wishes! '
+                    )
+                ]
+            )
+        elif m.content == 'Generate an image of an axolotl.':
+            return ModelResponse(
+                parts=[
+                    FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
+                ]
+            )
+        elif m.content == 'Generate a chart of y=x^2 for x=-5 to 5.':
+            return ModelResponse(
+                parts=[
+                    FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
+                ]
+            )
+        elif m.content == 'Calculate the factorial of 15.':
+            return ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': 'import math\n\n# Calculate factorial of 15\nresult = math.factorial(15)\nprint(f"15! = {result}")\n\n# Let\'s also show it in a more readable format with commas\nprint(f"15! = {result:,}")'
+                        },
+                        tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': '15! = 1307674368000\n15! = 1,307,674,368,000',
+                            'type': 'code_execution_result',
+                        },
+                        tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content='The factorial of 15 is **1,307,674,368,000**.'),
+                ]
+            )
 
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'

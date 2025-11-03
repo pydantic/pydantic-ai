@@ -25,13 +25,14 @@ from fastapi import Depends, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from typing_extensions import LiteralString, ParamSpec, TypedDict
 
-from pydantic_ai import Agent, UnexpectedModelBehavior
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     TextPart,
+    UnexpectedModelBehavior,
     UserPromptPart,
 )
 
@@ -39,7 +40,7 @@ from pydantic_ai.messages import (
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 THIS_DIR = Path(__file__).parent
 
 

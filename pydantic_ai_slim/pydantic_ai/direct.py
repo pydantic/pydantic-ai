@@ -10,7 +10,7 @@ from __future__ import annotations as _annotations
 
 import queue
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -35,7 +35,7 @@ STREAM_INITIALIZATION_TIMEOUT = 30
 
 async def model_request(
     model: models.Model | models.KnownModelName | str,
-    messages: list[messages.ModelMessage],
+    messages: Sequence[messages.ModelMessage],
     *,
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
@@ -44,13 +44,13 @@ async def model_request(
     """Make a non-streamed request to a model.
 
     ```py title="model_request_example.py"
+    from pydantic_ai import ModelRequest
     from pydantic_ai.direct import model_request
-    from pydantic_ai.messages import ModelRequest
 
 
     async def main():
         model_response = await model_request(
-            'anthropic:claude-3-5-haiku-latest',
+            'anthropic:claude-haiku-4-5',
             [ModelRequest.user_text_prompt('What is the capital of France?')]  # (1)!
         )
         print(model_response)
@@ -58,7 +58,7 @@ async def model_request(
         ModelResponse(
             parts=[TextPart(content='The capital of France is Paris.')],
             usage=RequestUsage(input_tokens=56, output_tokens=7),
-            model_name='claude-3-5-haiku-latest',
+            model_name='claude-haiku-4-5',
             timestamp=datetime.datetime(...),
         )
         '''
@@ -79,15 +79,15 @@ async def model_request(
     """
     model_instance = _prepare_model(model, instrument)
     return await model_instance.request(
-        messages,
+        list(messages),
         model_settings,
-        model_instance.customize_request_parameters(model_request_parameters or models.ModelRequestParameters()),
+        model_request_parameters or models.ModelRequestParameters(),
     )
 
 
 def model_request_sync(
     model: models.Model | models.KnownModelName | str,
-    messages: list[messages.ModelMessage],
+    messages: Sequence[messages.ModelMessage],
     *,
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
@@ -99,11 +99,11 @@ def model_request_sync(
     `loop.run_until_complete(...)`. You therefore can't use this method inside async code or if there's an active event loop.
 
     ```py title="model_request_sync_example.py"
+    from pydantic_ai import ModelRequest
     from pydantic_ai.direct import model_request_sync
-    from pydantic_ai.messages import ModelRequest
 
     model_response = model_request_sync(
-        'anthropic:claude-3-5-haiku-latest',
+        'anthropic:claude-haiku-4-5',
         [ModelRequest.user_text_prompt('What is the capital of France?')]  # (1)!
     )
     print(model_response)
@@ -111,7 +111,7 @@ def model_request_sync(
     ModelResponse(
         parts=[TextPart(content='The capital of France is Paris.')],
         usage=RequestUsage(input_tokens=56, output_tokens=7),
-        model_name='claude-3-5-haiku-latest',
+        model_name='claude-haiku-4-5',
         timestamp=datetime.datetime(...),
     )
     '''
@@ -133,7 +133,7 @@ def model_request_sync(
     return _get_event_loop().run_until_complete(
         model_request(
             model,
-            messages,
+            list(messages),
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
             instrument=instrument,
@@ -143,7 +143,7 @@ def model_request_sync(
 
 def model_request_stream(
     model: models.Model | models.KnownModelName | str,
-    messages: list[messages.ModelMessage],
+    messages: Sequence[messages.ModelMessage],
     *,
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
@@ -153,8 +153,8 @@ def model_request_stream(
 
     ```py {title="model_request_stream_example.py"}
 
+    from pydantic_ai import ModelRequest
     from pydantic_ai.direct import model_request_stream
-    from pydantic_ai.messages import ModelRequest
 
 
     async def main():
@@ -172,6 +172,12 @@ def model_request_stream(
                     index=0, delta=TextPartDelta(content_delta='a German-born theoretical ')
                 ),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='physicist.')),
+                PartEndEvent(
+                    index=0,
+                    part=TextPart(
+                        content='Albert Einstein was a German-born theoretical physicist.'
+                    ),
+                ),
             ]
             '''
     ```
@@ -191,15 +197,15 @@ def model_request_stream(
     """
     model_instance = _prepare_model(model, instrument)
     return model_instance.request_stream(
-        messages,
+        list(messages),
         model_settings,
-        model_instance.customize_request_parameters(model_request_parameters or models.ModelRequestParameters()),
+        model_request_parameters or models.ModelRequestParameters(),
     )
 
 
 def model_request_stream_sync(
     model: models.Model | models.KnownModelName | str,
-    messages: list[messages.ModelMessage],
+    messages: Sequence[messages.ModelMessage],
     *,
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
@@ -212,8 +218,8 @@ def model_request_stream_sync(
 
     ```py {title="model_request_stream_sync_example.py"}
 
+    from pydantic_ai import ModelRequest
     from pydantic_ai.direct import model_request_stream_sync
-    from pydantic_ai.messages import ModelRequest
 
     messages = [ModelRequest.user_text_prompt('Who was Albert Einstein?')]
     with model_request_stream_sync('openai:gpt-4.1-mini', messages) as stream:
@@ -229,6 +235,12 @@ def model_request_stream_sync(
                 index=0, delta=TextPartDelta(content_delta='a German-born theoretical ')
             ),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='physicist.')),
+            PartEndEvent(
+                index=0,
+                part=TextPart(
+                    content='Albert Einstein was a German-born theoretical physicist.'
+                ),
+            ),
         ]
         '''
     ```
@@ -246,7 +258,7 @@ def model_request_stream_sync(
     """
     async_stream_cm = model_request_stream(
         model=model,
-        messages=messages,
+        messages=list(messages),
         model_settings=model_settings,
         model_request_parameters=model_request_parameters,
         instrument=instrument,
@@ -364,10 +376,17 @@ class StreamedResponseSync:
         if self._thread and self._thread.is_alive():
             self._thread.join()
 
+    # TODO (v2): Drop in favor of `response` property
     def get(self) -> messages.ModelResponse:
         """Build a ModelResponse from the data received from the stream so far."""
         return self._ensure_stream_ready().get()
 
+    @property
+    def response(self) -> messages.ModelResponse:
+        """Get the current state of the response."""
+        return self.get()
+
+    # TODO (v2): Make this a property
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far."""
         return self._ensure_stream_ready().usage()
