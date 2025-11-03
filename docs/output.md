@@ -470,7 +470,7 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-#### Validating partial output during streaming {#partial-output}
+#### Handling partial output in output validators {#partial-output}
 
 You can use the `partial_output` field on `RunContext` to handle validation differently for partial outputs during streaming (e.g. skip validation altogether).
 
