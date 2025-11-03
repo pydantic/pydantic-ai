@@ -21,7 +21,7 @@ interactions:
         - text: Alice, Bob, Charlie and Daisy are a family. Who is the youngest?
           type: text
         role: user
-      model: claude-3-5-haiku-latest
+      model: claude-haiku-4-5
       stream: false
       system: "\n    Use the `retrieve_entity_info` tool to get information about a specific person.\n    If you need to use
         `retrieve_entity_info` to get information about multiple people, try\n    to call them in parallel as much as possible.\n
@@ -78,7 +78,7 @@ interactions:
         name: retrieve_entity_info
         type: tool_use
       id: msg_011S3wxtqL5CVescWqS3zeg2
-      model: claude-3-5-haiku-20241022
+      model: claude-haiku-4-5-20251001
       role: assistant
       stop_reason: tool_use
       stop_sequence: null
@@ -160,7 +160,7 @@ interactions:
           tool_use_id: toolu_013mnQZbgtK2oe3Mo3XKJsx3
           type: tool_result
         role: user
-      model: claude-3-5-haiku-latest
+      model: claude-haiku-4-5
       stream: false
       system: "\n    Use the `retrieve_entity_info` tool to get information about a specific person.\n    If you need to use
         `retrieve_entity_info` to get information about multiple people, try\n    to call them in parallel as much as possible.\n
@@ -202,7 +202,7 @@ interactions:
           Therefore, Daisy is the youngest in the family. She is described as Charlie's younger sister, which indicates she is the youngest among the four family members.
         type: text
       id: msg_01JVqZPgDwmnyb2kKC3MwCVf
-      model: claude-3-5-haiku-20241022
+      model: claude-haiku-4-5-20251001
       role: assistant
       stop_reason: end_turn
       stop_sequence: null

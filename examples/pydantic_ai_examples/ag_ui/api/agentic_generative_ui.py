@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from ag_ui.core import EventType, StateDeltaEvent, StateSnapshotEvent
 from pydantic_ai import Agent
+from pydantic_ai.ui.ag_ui.app import AGUIApp
 
 StepStatus = Literal['pending', 'completed']
 
@@ -48,7 +49,7 @@ class JSONPatchOp(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-4o-mini',
+    'openai:gpt-5-mini',
     instructions=dedent(
         """
         When planning use tools only, without any other messages.
@@ -116,4 +117,4 @@ async def update_plan_step(
     )
 
 
-app = agent.to_ag_ui()
+app = AGUIApp(agent)

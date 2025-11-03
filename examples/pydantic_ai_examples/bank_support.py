@@ -51,7 +51,7 @@ class SupportOutput(BaseModel):
 
 
 support_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=SupportDependencies,
     output_type=SupportOutput,
     instructions=(

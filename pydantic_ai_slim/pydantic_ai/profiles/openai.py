@@ -44,6 +44,13 @@ class OpenAIModelProfile(ModelProfile):
     openai_supports_encrypted_reasoning_content: bool = False
     """Whether the model supports including encrypted reasoning content in the response."""
 
+    openai_responses_requires_function_call_status_none: bool = False
+    """Whether the Responses API requires the `status` field on function tool calls to be `None`.
+
+    This is required by vLLM Responses API versions before https://github.com/vllm-project/vllm/pull/26706.
+    See https://github.com/pydantic/pydantic-ai/issues/3245 for more details.
+    """
+
     def __post_init__(self):  # pragma: no cover
         if not self.openai_supports_sampling_settings:
             warnings.warn(

@@ -25,7 +25,7 @@ interactions:
             url: https://lh3.googleusercontent.com/proxy/YngsuS8jQJysXxeucAgVBcSgIdwZlSQ-HvsNxGjHS0SrUKXI161bNKh6SOcMsNUGsnxoOrS3AYX--MT4T3S3SoCgSD1xKrtBwwItcgexaX_7W-qHo-VupmYgjjzWO-BuORLp9-pj8Kjr
           type: image
         role: user
-      model: claude-3-5-haiku-latest
+      model: claude-haiku-4-5
       stream: false
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
@@ -50,7 +50,7 @@ interactions:
           other birds of prey.
         type: text
       id: msg_01GaiWFEWdsvc73B9fnAQ3sS
-      model: claude-3-5-haiku-20241022
+      model: claude-haiku-4-5-20251001
       role: assistant
       stop_reason: end_turn
       stop_sequence: null

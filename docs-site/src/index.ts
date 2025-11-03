@@ -55,6 +55,7 @@ const redirect_lookup: Record<string, string> = {
   '/examples': 'examples/setup/',
   '/mcp': '/mcp/overview/',
   '/models': '/models/overview/',
+  '/ag-ui': '/ui/ag-ui/'
 }
 
 function redirect(pathname: string): string | null {

@@ -21,7 +21,7 @@ interactions:
         - text: What fruit is in the image you can get from the get_image tool?
           type: text
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
       tool_choice:
         type: auto
@@ -54,7 +54,7 @@ interactions:
         name: get_image
         type: tool_use
       id: msg_01Kwjzggomz7bv9og51qGFuH
-      model: claude-3-5-sonnet-20241022
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
       stop_sequence: null
@@ -114,7 +114,7 @@ interactions:
             type: base64
           type: image
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
       tool_choice:
         type: auto
@@ -146,7 +146,7 @@ interactions:
           background.
         type: text
       id: msg_015btMBYLTuDnMP7zAeuHQGi
-      model: claude-3-5-sonnet-20241022
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
       stop_sequence: null

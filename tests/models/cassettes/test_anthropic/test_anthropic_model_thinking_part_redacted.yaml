@@ -21,7 +21,7 @@ interactions:
         - text: ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB
           type: text
         role: user
-      model: claude-3-7-sonnet-20250219
+      model: claude-sonnet-4-5-20250929
       stream: false
       thinking:
         budget_tokens: 1024
@@ -49,7 +49,7 @@ interactions:
           Instead, I'd be happy to have a regular conversation or help you with legitimate questions or tasks. Is there something specific I can assist you with today?
         type: text
       id: msg_01TbZ1ZKNMPq28AgBLyLX3c4
-      model: claude-3-7-sonnet-20250219
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
       stop_sequence: null
@@ -101,7 +101,7 @@ interactions:
         - text: What was that?
           type: text
         role: user
-      model: claude-3-7-sonnet-20250219
+      model: claude-sonnet-4-5-20250929
       stream: false
       thinking:
         budget_tokens: 1024
@@ -130,7 +130,7 @@ interactions:
           there something I can actually help you with today?"
         type: text
       id: msg_012oSSVsQdwoGH6b2fryM4fF
-      model: claude-3-7-sonnet-20250219
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
       stop_sequence: null

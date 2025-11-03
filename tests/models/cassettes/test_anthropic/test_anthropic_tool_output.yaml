@@ -21,7 +21,7 @@ interactions:
         - text: What is the largest city in the user country?
           type: text
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
       tool_choice:
         type: any
@@ -65,7 +65,7 @@ interactions:
         name: get_user_country
         type: tool_use
       id: msg_012TXW181edhmR5JCsQRsBKx
-      model: claude-3-5-sonnet-20241022
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
       stop_sequence: null
@@ -116,7 +116,7 @@ interactions:
           tool_use_id: toolu_01X9wcHKKAZD9tBC711xipPa
           type: tool_result
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
       tool_choice:
         type: any
@@ -162,7 +162,7 @@ interactions:
         name: final_result
         type: tool_use
       id: msg_01K4Fzcf1bhiyLzHpwLdrefj
-      model: claude-3-5-sonnet-20241022
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
       stop_sequence: null

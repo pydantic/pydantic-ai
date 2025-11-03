@@ -82,7 +82,7 @@ from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectAgent
 
 agent = Agent(
-    'gpt-4o',
+    'gpt-5',
     instructions="You're an expert in geography.",
     name='geography',  # (1)!
 )
@@ -125,7 +125,7 @@ You can customize tool task behavior using `tool_task_config` (applies to all to
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectAgent, TaskConfig
 
-agent = Agent('gpt-4o', name='my_agent')
+agent = Agent('gpt-5', name='my_agent')
 
 @agent.tool_plain
 def fetch_data(url: str) -> str:
@@ -183,7 +183,7 @@ from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectAgent, TaskConfig
 
 agent = Agent(
-    'gpt-4o',
+    'gpt-5',
     instructions="You're an expert in geography.",
     name='geography',
 )
@@ -255,19 +255,22 @@ from prefect import flow
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectAgent
 
-agent = Agent(
-    'openai:gpt-4o',
-    name='daily_report_agent',
-    instructions='Generate a daily summary report.',
-)
-
-prefect_agent = PrefectAgent(agent)
 
 @flow
 async def daily_report_flow(user_prompt: str):
     """Generate a daily report using the agent."""
+    agent = Agent(  # (1)!
+        'openai:gpt-5',
+        name='daily_report_agent',
+        instructions='Generate a daily summary report.',
+    )
+
+    prefect_agent = PrefectAgent(agent)
+
     result = await prefect_agent.run(user_prompt)
     return result.output
+
+
 
 # Serve the flow with a daily schedule
 if __name__ == '__main__':
@@ -278,6 +281,8 @@ if __name__ == '__main__':
         tags=['production', 'reports'],
     )
 ```
+
+1. Each flow run executes in an isolated process, and all inputs and dependencies must be serializable. Because Agent instances cannot be serialized, instantiate the agent inside the flow rather than at the module level.
 
 The `serve()` method accepts scheduling options:
 

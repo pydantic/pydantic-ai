@@ -141,7 +141,7 @@ class GroqModel(Model):
         self,
         model_name: GroqModelName,
         *,
-        provider: Literal['groq'] | Provider[AsyncGroq] = 'groq',
+        provider: Literal['groq', 'gateway'] | Provider[AsyncGroq] = 'groq',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -159,7 +159,7 @@ class GroqModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(provider)
+            provider = infer_provider('gateway/groq' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
@@ -330,7 +330,7 @@ class GroqModel(Model):
                 if call_part and return_part:  # pragma: no branch
                     items.append(call_part)
                     items.append(return_part)
-        if choice.message.content is not None:
+        if choice.message.content:
             # NOTE: The `<think>` tag is only present if `groq_reasoning_format` is set to `raw`.
             items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
         if choice.message.tool_calls is not None:
@@ -524,6 +524,8 @@ class GroqStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         try:
             executed_tool_call_id: str | None = None
+            reasoning_index = 0
+            reasoning = False
             async for chunk in self._response:
                 self._usage += _map_usage(chunk)
 
@@ -540,10 +542,16 @@ class GroqStreamedResponse(StreamedResponse):
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
                 if choice.delta.reasoning is not None:
+                    if not reasoning:
+                        reasoning_index += 1
+                        reasoning = True
+
                     # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
                     yield self._parts_manager.handle_thinking_delta(
-                        vendor_part_id='reasoning', content=choice.delta.reasoning
+                        vendor_part_id=f'reasoning-{reasoning_index}', content=choice.delta.reasoning
                     )
+                else:
+                    reasoning = False
 
                 if choice.delta.executed_tools:
                     for tool in choice.delta.executed_tools:
@@ -563,7 +571,7 @@ class GroqStreamedResponse(StreamedResponse):
 
                 # Handle the text part of the response
                 content = choice.delta.content
-                if content is not None:
+                if content:
                     maybe_event = self._parts_manager.handle_text_delta(
                         vendor_part_id='content',
                         content=content,

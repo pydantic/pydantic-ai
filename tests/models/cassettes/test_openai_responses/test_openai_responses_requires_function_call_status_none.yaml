@@ -1,0 +1,259 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '331'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the meaning of life?
+        role: user
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_meaning_of_life
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3684'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '8638'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1761324027
+      error: null
+      id: resp_01d311e2633707df0068fbabfb646481a2ac6e226bbbb42ca6
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABo-6wE6H4S9A886ZkwXcvvHqZ6Vx5BtpYvvNAJV5Ijq7pz-mTBJxfdjilNSzBj0ruy7NOsMRMhWzNahRf-n3KDQ2x1p-PjVCHM5IAGqHqae8A-aAUn_FDRiTbAT5N5FXTrZ80DAtdDv17z2HlODmTTYRvBU2-rX7opysjc4rf7-rvy6j4cUcNbM0ntT5DH8UHxC9LCM_s7Cb2unEV0jaDt7NzFxgfWN2u24Avs2EnjPoxOjd6BR-PWHJk_7kGGkVBub8NU7ZOyHsci3T8DAq_eX38DgkHJBJCPT4EqvlNP-VjPdecYEFUCw5G_Pye6h55-77g8LjkrFO43f8p6wscQ0iM601i1Ugmqbzxyv1ogPIN-YuSk2tkCw-D7xBD7I4fum2AmvyN-fR58lWcn-Z0WTqACA4baTJiCtW5b7uVeAp8vm8-gWzFR5BdDHVdQqu1TAKVWl_1P8NauDtd5M24MjVZd6WC0WrbTDPY9i2gieMMjFek2M8aoQFO0CG7r3JHn2zxfFB3THWCpl4VqZAQp6Ok7rymeY0Oayj--OLpNMBXIYUWc51eyYeurwQ943BSkf-m6PPVKO8T5U__Bx-biCNCePSlFKp7V0Du6h7UgYoqqonH2S3Jrg87c6dk7VJ7ca2i8sZqhy0rG6Kb7ENDVvwkMOdpnaFgdWd3VINp6P8j69kBQg-qwWP-YHPC9LnsjT2j1ktMowVO97eOpV4j2BhiThxunmu_SOIAEbghmjJEkLuRxLxBUPFRIajke2CvvFeIuReJr53isPKOxOjVzsc6oG5ZeykDlfz_mfEap7AByPNY0987zwG58tGueNxXjdpd7NQFcn_6DKj60SvUg0sk49V_QrDY3cAhSRvZoEeqA8XR97pEe7CByYMl80b9fzgyahc4NCdUwK8es2ll-lsJwEx1ZGdC8cB45QOrTnw8tJAUsSM44rLKwAQY-KsuN4UygO99d1CQZEm2YWtnPAvA9I-EhY87UIDx0CpPsEyxxFu2GZCTy7ceSnpcmQbAFWXzfBSpM7k42xVV8G8IK_bHpoF1enF5Vbc37_L_aWd4AgzuAwF_RVyd8exVh3NVJtO3BqPv72kTukr2Fok3KEaSeU0whP_dxr-thP2exS0F2Jdn13ZtB_pqxwKVWEsvzdbN92Q9qs10BAgYs2SA4cq66semwRl-1n-dr7XJyZzPOEiA9TQYgUCw0ueIc0ciMOZ0Waaj094bKIylw_TD5Bu1diXpzbTma_AVO-NZn7INhAZN3guSme-zIUEMrh66w0VJP-DbDA-ecSD41eMRSadyV4g86wLL4NOBE5NwSiSkwd2xJ9NqG7YohFM8BlPdEV4zhmqHcIKpVwAitFItqnAaUSU42Aebdritt9oNVnpKCeeA4QQv_8W7rOXJlLfGXRJUBCrh3Rv7KCVC3yncAOIU8FWu3jyaAqhLrWHLW958wjF8ka7lw80YZbToPjIuiii0UXu2w3Tv5EGVdkhf05A3Yj6M_LXStns8iBMzcU4-mJ1649FnnImLnW5AeohoWPBB6WYhW9gfwjuxejTI3Q5R0mo9jUSP3_tFiawlC2zFgvkNFufC6Kry8-Burjf8l6rpAX7_sjtCu1AlAbI6PEFtxcKhNWHfQp4mUATR6P4k68jk_Kl-FpRBtNOf8YOlLGrKE-WbwCoIV7VAgK2CTZJOxaslxVZRCLObNrA3XuEtc3jo8pMzqx8GJWshIgmF4XiQcmgh65U_kjB07adlgnbCZvGUXdIIQiA2vqIWC6Qu8SSO20nOOR65hGXyIgf4aOolU0Ljbi4slXnJKjbcPaX5O3cXvKHbkVFwXmHK2Ymaqb6fZcap78_On8jLK_GRlw3jV18SLeOcJiG2LqtHzcUawY4K7bPDNY2QX89yL5d4qxRF577QgzalmdQDsKyC_N-wk
+        id: rs_01d311e2633707df0068fbac0050ec81a2ad76fd9256abcaf7
+        summary: []
+        type: reasoning
+      - arguments: '{}'
+        call_id: call_cp3x6W9eeyMIryJUNhgMaP5w
+        id: fc_01d311e2633707df0068fbac038f1c81a29847e80d6a1a3f60
+        name: get_meaning_of_life
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_meaning_of_life
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 40
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 148
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 188
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2657'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=a20Nzrk7DTPpmRffw18ZpyCrLHf7HDhqYWngumbFJ4o-1761324036-1.0.1.1-Skw5UKbxI7AAqeNwB.D2cjauVZMIxIxsewLmY9nVhUABO3i7atOpfBiPBFr1A4il.9jDlLHMwAbalm9g2YmBglrxZuFlqTscp7wDayD3Hy8;
+        _cfuvid=HNbo_nGCkQWJ8w2Px0MeYi9revYT4bEhukssgSPPJiw-1761324036053-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the meaning of life?
+        role: user
+      - encrypted_content: gAAAAABo-6wE6H4S9A886ZkwXcvvHqZ6Vx5BtpYvvNAJV5Ijq7pz-mTBJxfdjilNSzBj0ruy7NOsMRMhWzNahRf-n3KDQ2x1p-PjVCHM5IAGqHqae8A-aAUn_FDRiTbAT5N5FXTrZ80DAtdDv17z2HlODmTTYRvBU2-rX7opysjc4rf7-rvy6j4cUcNbM0ntT5DH8UHxC9LCM_s7Cb2unEV0jaDt7NzFxgfWN2u24Avs2EnjPoxOjd6BR-PWHJk_7kGGkVBub8NU7ZOyHsci3T8DAq_eX38DgkHJBJCPT4EqvlNP-VjPdecYEFUCw5G_Pye6h55-77g8LjkrFO43f8p6wscQ0iM601i1Ugmqbzxyv1ogPIN-YuSk2tkCw-D7xBD7I4fum2AmvyN-fR58lWcn-Z0WTqACA4baTJiCtW5b7uVeAp8vm8-gWzFR5BdDHVdQqu1TAKVWl_1P8NauDtd5M24MjVZd6WC0WrbTDPY9i2gieMMjFek2M8aoQFO0CG7r3JHn2zxfFB3THWCpl4VqZAQp6Ok7rymeY0Oayj--OLpNMBXIYUWc51eyYeurwQ943BSkf-m6PPVKO8T5U__Bx-biCNCePSlFKp7V0Du6h7UgYoqqonH2S3Jrg87c6dk7VJ7ca2i8sZqhy0rG6Kb7ENDVvwkMOdpnaFgdWd3VINp6P8j69kBQg-qwWP-YHPC9LnsjT2j1ktMowVO97eOpV4j2BhiThxunmu_SOIAEbghmjJEkLuRxLxBUPFRIajke2CvvFeIuReJr53isPKOxOjVzsc6oG5ZeykDlfz_mfEap7AByPNY0987zwG58tGueNxXjdpd7NQFcn_6DKj60SvUg0sk49V_QrDY3cAhSRvZoEeqA8XR97pEe7CByYMl80b9fzgyahc4NCdUwK8es2ll-lsJwEx1ZGdC8cB45QOrTnw8tJAUsSM44rLKwAQY-KsuN4UygO99d1CQZEm2YWtnPAvA9I-EhY87UIDx0CpPsEyxxFu2GZCTy7ceSnpcmQbAFWXzfBSpM7k42xVV8G8IK_bHpoF1enF5Vbc37_L_aWd4AgzuAwF_RVyd8exVh3NVJtO3BqPv72kTukr2Fok3KEaSeU0whP_dxr-thP2exS0F2Jdn13ZtB_pqxwKVWEsvzdbN92Q9qs10BAgYs2SA4cq66semwRl-1n-dr7XJyZzPOEiA9TQYgUCw0ueIc0ciMOZ0Waaj094bKIylw_TD5Bu1diXpzbTma_AVO-NZn7INhAZN3guSme-zIUEMrh66w0VJP-DbDA-ecSD41eMRSadyV4g86wLL4NOBE5NwSiSkwd2xJ9NqG7YohFM8BlPdEV4zhmqHcIKpVwAitFItqnAaUSU42Aebdritt9oNVnpKCeeA4QQv_8W7rOXJlLfGXRJUBCrh3Rv7KCVC3yncAOIU8FWu3jyaAqhLrWHLW958wjF8ka7lw80YZbToPjIuiii0UXu2w3Tv5EGVdkhf05A3Yj6M_LXStns8iBMzcU4-mJ1649FnnImLnW5AeohoWPBB6WYhW9gfwjuxejTI3Q5R0mo9jUSP3_tFiawlC2zFgvkNFufC6Kry8-Burjf8l6rpAX7_sjtCu1AlAbI6PEFtxcKhNWHfQp4mUATR6P4k68jk_Kl-FpRBtNOf8YOlLGrKE-WbwCoIV7VAgK2CTZJOxaslxVZRCLObNrA3XuEtc3jo8pMzqx8GJWshIgmF4XiQcmgh65U_kjB07adlgnbCZvGUXdIIQiA2vqIWC6Qu8SSO20nOOR65hGXyIgf4aOolU0Ljbi4slXnJKjbcPaX5O3cXvKHbkVFwXmHK2Ymaqb6fZcap78_On8jLK_GRlw3jV18SLeOcJiG2LqtHzcUawY4K7bPDNY2QX89yL5d4qxRF577QgzalmdQDsKyC_N-wk
+        id: rs_01d311e2633707df0068fbac0050ec81a2ad76fd9256abcaf7
+        summary: []
+        type: reasoning
+      - arguments: '{}'
+        call_id: call_cp3x6W9eeyMIryJUNhgMaP5w
+        id: fc_01d311e2633707df0068fbac038f1c81a29847e80d6a1a3f60
+        name: get_meaning_of_life
+        status: null
+        type: function_call
+      - call_id: call_cp3x6W9eeyMIryJUNhgMaP5w
+        output: '42'
+        type: function_call_output
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_meaning_of_life
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1658'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '5376'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1761324036
+      error: null
+      id: resp_01d311e2633707df0068fbac042e3081a2a3839798d93d7bad
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: '42'
+          type: output_text
+        id: msg_01d311e2633707df0068fbac094ff481a297b1f4fdafb6ebd9
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_meaning_of_life
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 257
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 262
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

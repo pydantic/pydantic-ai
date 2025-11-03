@@ -31,7 +31,7 @@ or to use a custom prompt:
 python/uv-run -m pydantic_ai_examples.sql_gen "find me errors"
 ```
 
-This model uses `gemini-1.5-flash` by default since Gemini is good at single shot queries of this kind.
+This model uses `gemini-2.5-flash` by default since Gemini is good at single shot queries of this kind.
 
 ## Example Code
 

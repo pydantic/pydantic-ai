@@ -1,7 +1,6 @@
 # Upgrade Guide
 
-In September 2025, Pydantic AI reached V1, which means we're committed to API stability: we will not introduce changes that break your code until V2 (if we do, you can shout at us as it's definitely a mistake).
-Once we release V2, in April 2026 at the earliest, we'll continue to provide security fixes for V1 for another 6 months minimum, so you have time to upgrade your applications.
+In September 2025, Pydantic AI reached V1, which means we're committed to API stability: we will not introduce changes that break your code until V2. For more information, review our [Version Policy](version-policy.md).
 
 ## Breaking Changes
 

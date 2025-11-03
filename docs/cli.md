@@ -73,7 +73,7 @@ You can specify a custom agent using the `--agent` flag with a module path and v
 ```python {title="custom_agent.py" test="skip"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4.1', instructions='You always respond in Italian.')
+agent = Agent('openai:gpt-5', instructions='You always respond in Italian.')
 ```
 
 Then run:
@@ -92,7 +92,7 @@ Additionally, you can directly launch CLI mode from an `Agent` instance using `A
 ```python {title="agent_to_cli_sync.py" test="skip" hl_lines=4}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4.1', instructions='You always respond in Italian.')
+agent = Agent('openai:gpt-5', instructions='You always respond in Italian.')
 agent.to_cli_sync()
 ```
 
@@ -101,7 +101,7 @@ You can also use the async interface with `Agent.to_cli()`:
 ```python {title="agent_to_cli.py" test="skip" hl_lines=6}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4.1', instructions='You always respond in Italian.')
+agent = Agent('openai:gpt-5', instructions='You always respond in Italian.')
 
 async def main():
     await agent.to_cli()
@@ -123,7 +123,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 
-agent = Agent('openai:gpt-4.1')
+agent = Agent('openai:gpt-5')
 
 # Create some conversation history
 message_history: list[ModelMessage] = [

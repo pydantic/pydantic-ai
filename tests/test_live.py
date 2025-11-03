@@ -71,7 +71,7 @@ def anthropic(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-    return AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(http_client=http_client))
+    return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(http_client=http_client))
 
 
 def ollama(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:

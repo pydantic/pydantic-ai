@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 
     from ..ag_ui import AGUIApp
     from ..openai_api import OpenAIApp
+    from pydantic_ai.ui.ag_ui.app import AGUIApp
 
 
 T = TypeVar('T')
@@ -1146,49 +1147,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             routes=routes,
             middleware=middleware,
             exception_handlers=exception_handlers,
-            lifespan=lifespan,
-        )
-
-    def to_openai_api(
-        self,
-        *,
-        # Agent.iter parameters
-        output_type: OutputSpec[OutputDataT] | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: UsageLimits | None = None,
-        usage: RunUsage | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        # Starlette
-        debug: bool = False,
-        routes: Sequence[BaseRoute] | None = None,
-        middleware: Sequence[Middleware] | None = None,
-        exception_handlers: Mapping[Any, ExceptionHandler] | None = None,
-        on_startup: Sequence[Callable[[], Any]] | None = None,
-        on_shutdown: Sequence[Callable[[], Any]] | None = None,
-        lifespan: Lifespan[AGUIApp[AgentDepsT, OutputDataT]] | None = None,
-    ) -> OpenAIApp[AgentDepsT, OutputDataT]:
-        from ..openai_api import OpenAIApp
-
-        return OpenAIApp(
-            agent=self,
-            # Agent.iter parameters
-            output_type=output_type,
-            model=model,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            debug=debug,
-            routes=routes,
-            middleware=middleware,
-            exception_handlers=exception_handlers,
-            on_startup=on_startup,
-            on_shutdown=on_shutdown,
             lifespan=lifespan,
         )
 

@@ -28,8 +28,8 @@ def compare_models():
         dataset_path, custom_evaluator_types=CUSTOM_EVALUATOR_TYPES
     )
     with logfire.span('Comparing different models for time_range_agent'):
-        with time_range_agent.override(model='openai:gpt-4o'):
-            dataset.evaluate_sync(infer_time_range, name='openai:gpt-4o')
+        with time_range_agent.override(model='openai:gpt-5'):
+            dataset.evaluate_sync(infer_time_range, name='openai:gpt-5')
         with time_range_agent.override(model='openai:o1'):
             dataset.evaluate_sync(infer_time_range, name='openai:o1')
 

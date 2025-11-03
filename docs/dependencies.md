@@ -27,7 +27,7 @@ class MyDeps:  # (1)!
 
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=MyDeps,  # (2)!
 )
 
@@ -68,7 +68,7 @@ class MyDeps:
 
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=MyDeps,
 )
 
@@ -126,7 +126,7 @@ class MyDeps:
 
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=MyDeps,
 )
 
@@ -174,7 +174,7 @@ class MyDeps:
 
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=MyDeps,
 )
 
@@ -251,7 +251,7 @@ class MyDeps:
         return f'Prompt: {response.text}'
 
 
-joke_agent = Agent('openai:gpt-4o', deps_type=MyDeps)
+joke_agent = Agent('openai:gpt-5', deps_type=MyDeps)
 
 
 @joke_agent.system_prompt
