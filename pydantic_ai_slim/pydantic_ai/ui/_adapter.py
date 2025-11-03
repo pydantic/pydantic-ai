@@ -12,7 +12,7 @@ from typing import (
     Generic,
     Protocol,
     TypeVar,
-    runtime_checkable,
+    runtime_checkable, Iterable,
 )
 
 from pydantic import BaseModel, ValidationError
@@ -138,7 +138,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
     @classmethod
     @abstractmethod
-    def load_messages(cls, messages: Sequence[MessageT]) -> list[ModelMessage]:
+    def load_messages(cls, messages: Iterable[MessageT]) -> list[ModelMessage]:
         """Transform protocol-specific messages into Pydantic AI messages."""
         raise NotImplementedError
 

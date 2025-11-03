@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
-    Any,
+    Any, Iterable,
 )
 
 from ... import ExternalToolset, ToolDefinition
@@ -110,7 +109,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         return self.run_input.state
 
     @classmethod
-    def load_messages(cls, messages: Sequence[Message]) -> list[ModelMessage]:
+    def load_messages(cls, messages: Iterable[Message]) -> list[ModelMessage]:
         """Transform AG-UI messages into Pydantic AI messages."""
         builder = MessagesBuilder()
         tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.

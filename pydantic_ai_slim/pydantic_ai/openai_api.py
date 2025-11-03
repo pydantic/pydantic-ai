@@ -8,22 +8,34 @@ and conversation history.
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from http import HTTPStatus
+from pathlib import Path
 from typing import (
     Any,
     Generic,
     Literal,
     TypeAlias,
+    TypeGuard,
+    get_args, TypeVar,
 )
 
+from openai.types.chat.chat_completion_content_part_param import File
 from pydantic import TypeAdapter, ValidationError
 
 from .agent import AbstractAgent
+from .exceptions import (
+    AgentRunError,
+    ModelHTTPError,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UserError,
+)
 from .messages import (
     BinaryContent,
     ImageUrl,
@@ -42,6 +54,10 @@ from .messages import (
     ToolReturnPart,
     UserContent,
     UserPromptPart,
+    DocumentFormat,
+    AudioFormat,
+    ImageFormat,
+    VideoFormat,
 )
 from .models import KnownModelName, Model
 from .output import OutputDataT, OutputSpec
@@ -49,6 +65,7 @@ from .run import AgentRunResult
 from .settings import ModelSettings
 from .tools import AgentDepsT
 from .toolsets import AbstractToolset
+from .ui.openai._adapter import ChatCompletionsAdapter
 from .usage import RunUsage, UsageLimits
 
 try:
@@ -65,6 +82,10 @@ except ImportError as e:  # pragma: no cover
     ) from e
 
 try:
+    from openai import (
+        APIError,
+        APIStatusError,
+    )
     from openai.types import CompletionUsage
     from openai.types.chat import (
         ChatCompletion,
@@ -72,6 +93,10 @@ try:
         ChatCompletionMessage,
         ChatCompletionMessageParam,
         CompletionCreateParams as CompletionCreateParamsT,
+        ChatCompletionContentPartTextParam,
+        ChatCompletionContentPartParam,
+        ChatCompletionContentPartImageParam,
+        ChatCompletionContentPartInputAudioParam,
     )
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
@@ -130,26 +155,26 @@ class OpenAIApp(Generic[AgentDepsT, OutputDataT], Starlette):
     """
 
     def __init__(
-        self,
-        agent: AbstractAgent[AgentDepsT, OutputDataT],
-        *,
-        # Agent.iter parameters.
-        output_type: OutputSpec[Any] | None = None,
-        model: Model | KnownModelName | str | None = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: UsageLimits | None = None,
-        usage: RunUsage | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        # Starlette parameters.
-        debug: bool = False,
-        routes: Sequence[BaseRoute] | None = None,
-        middleware: Sequence[Middleware] | None = None,
-        exception_handlers: Mapping[Any, ExceptionHandler] | None = None,
-        on_startup: Sequence[Callable[[], Any]] | None = None,
-        on_shutdown: Sequence[Callable[[], Any]] | None = None,
-        lifespan: Lifespan[OpenAIApp[AgentDepsT, OutputDataT]] | None = None,
+            self,
+            agent: AbstractAgent[AgentDepsT, OutputDataT],
+            *,
+            # Agent.iter parameters.
+            output_type: OutputSpec[Any] | None = None,
+            model: Model | KnownModelName | str | None = None,
+            deps: AgentDepsT | None = None,
+            model_settings: ModelSettings | None = None,
+            usage_limits: UsageLimits | None = None,
+            usage: RunUsage | None = None,
+            infer_name: bool = True,
+            toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+            # Starlette parameters.
+            debug: bool = False,
+            routes: Sequence[BaseRoute] | None = None,
+            middleware: Sequence[Middleware] | None = None,
+            exception_handlers: Mapping[Any, ExceptionHandler] | None = None,
+            on_startup: Sequence[Callable[[], Any]] | None = None,
+            on_shutdown: Sequence[Callable[[], Any]] | None = None,
+            lifespan: Lifespan[OpenAIApp[AgentDepsT, OutputDataT]] | None = None,
     ):
         """Initialize the OpenAI API-compatible ASGI application.
 
@@ -229,20 +254,72 @@ class OpenAIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         self.router.add_route('/v1/responses', responses_endpoint, methods=['POST'], name='chat_completions')
 
 
-CompletionCreateParams = TypeAdapter(CompletionCreateParamsT)
-CompletionCreateParamsNonStreaming = TypeAdapter(CompletionCreateParamsNonStreamingT)
-CompletionCreateParamsStreaming = TypeAdapter(CompletionCreateParamsStreamingT)
+CompletionCreateParams: TypeAdapter[CompletionCreateParamsT] = TypeAdapter(CompletionCreateParamsT)
+CompletionCreateParamsNonStreaming: TypeAdapter[CompletionCreateParamsNonStreamingT] = TypeAdapter(
+    CompletionCreateParamsNonStreamingT)
+CompletionCreateParamsStreaming: TypeAdapter[CompletionCreateParamsStreamingT] = TypeAdapter(
+    CompletionCreateParamsStreamingT)
 
-ResponseCreateParams = TypeAdapter(ResponseCreateParamsT)
-ResponseCreateParamsNonStreaming = TypeAdapter(ResponseCreateParamsNonStreamingT)
-ResponseCreateParamsStreaming = TypeAdapter(ResponseCreateParamsStreamingT)
+ResponseCreateParams: TypeAdapter[ResponseCreateParamsT] = TypeAdapter(ResponseCreateParamsT)
+ResponseCreateParamsNonStreaming: TypeAdapter[ResponseCreateParamsNonStreamingT] = TypeAdapter(
+    ResponseCreateParamsNonStreamingT)
+ResponseCreateParamsStreaming: TypeAdapter[ResponseCreateParamsStreamingT] = TypeAdapter(ResponseCreateParamsStreamingT)
 
 OpenAIRole: TypeAlias = Literal['developer', 'system', 'assistant', 'user', 'tool', 'function']
 
 
+def _map_exception_to_openai_error(exc: Exception) -> tuple[int, dict[str, Any]]:
+    """Map internal exceptions to OpenAI-compatible error payload and HTTP status.
+
+    Returns a tuple of (status_code, error_object) where error_object matches OpenAI's
+    error schema: {"error": {"message": str, "type": str, "param": None, "code": None}}.
+    """
+    # Default values
+    status_code = HTTPStatus.INTERNAL_SERVER_ERROR
+    error_type = 'api_error'
+
+    if isinstance(exc, UserError):
+        status_code = HTTPStatus.BAD_REQUEST
+        error_type = 'invalid_request_error'
+    elif isinstance(exc, UsageLimitExceeded):
+        status_code = HTTPStatus.TOO_MANY_REQUESTS
+        error_type = 'rate_limit_exceeded'
+    elif isinstance(exc, ModelHTTPError):
+        status_code = exc.status_code or HTTPStatus.BAD_GATEWAY
+        if 400 <= int(status_code) < 500:
+            error_type = 'invalid_request_error'
+        else:
+            error_type = 'api_error'
+    elif isinstance(exc, UnexpectedModelBehavior):
+        status_code = HTTPStatus.BAD_GATEWAY
+        error_type = 'api_error'
+    elif isinstance(exc, AgentRunError):
+        status_code = HTTPStatus.INTERNAL_SERVER_ERROR
+        error_type = 'api_error'
+
+    error_payload = {
+        'error': {
+            'message': str(exc),
+            'type': error_type,
+            'param': None,
+            'code': None,
+        }
+    }
+    return int(status_code), error_payload
+
+
+def _openai_error_response(exc: Exception) -> Response:
+    status_code, payload = _map_exception_to_openai_error(exc)
+    return Response(
+        content=json.dumps(payload),
+        media_type='application/json',
+        status_code=status_code,
+    )
+
+
 @dataclass
-class _StreamContext:
-    """Internal context for tracking streaming chat completion state.
+class _ChatCompletionStreamContext:
+    """Internal context for tracking streaming Chat Completion state.
 
     This dataclass maintains state information during streaming responses to ensure
     proper OpenAI-compatible chunk generation, particularly for managing role
@@ -262,7 +339,7 @@ class _StreamContext:
 
 
 @dataclass
-class _ResponseStreamContext:
+class _ResponsesStreamContext:
     """Internal context for tracking streaming Responses API state.
 
     This dataclass maintains state information during streaming responses to ensure
@@ -285,35 +362,111 @@ class _ResponseStreamContext:
     content_part_added: bool = False
 
 
-def _parse_user_content_part(part: dict[str, Any]) -> UserContent | None:
+_document_format_inverse_lookup: dict[DocumentFormat | str, str] = {
+    'pdf': 'application/pdf',
+    'txt': 'text/plain',
+    'csv': 'text/csv',
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'html': 'text/html',
+    'md': 'text/markdown',
+    'xls': 'application/vnd.ms-excel',
+}
+_audio_format_inverse_lookup: dict[AudioFormat | str, str] = {
+    'mp3': 'audio/mpeg',
+    'wav': 'audio/wav',
+    'flac': 'audio/flac',
+    'oga': 'audio/ogg',
+    'aiff': 'audio/aiff',
+    'aac': 'audio/aac',
+}
+_image_format_inverse_lookup: dict[ImageFormat | str, str] = {
+    'jpeg': 'image/jpeg',
+    'png': 'image/png',
+    'gif': 'image/gif',
+    'webp': 'image/webp',
+}
+_video_format_inverse_lookup: dict[VideoFormat | str, str] = {
+    'mkv': 'video/x-matroska',
+    'mov': 'video/quicktime',
+    'mp4': 'video/mp4',
+    'webm': 'video/webm',
+    'flv': 'video/x-flv',
+    'mpeg': 'video/mpeg',
+    'wmv': 'video/x-ms-wmv',
+    'three_gp': 'video/3gpp',
+}
+
+
+def _is_text_part(part: ChatCompletionContentPartParam) -> TypeGuard[ChatCompletionContentPartTextParam]:
+    """Check if the part is a text content part."""
+    return isinstance(part, dict) and part.get('type') == 'text'
+
+
+def _is_image_part(part: ChatCompletionContentPartParam) -> TypeGuard[ChatCompletionContentPartImageParam]:
+    """Check if the part is an image content part."""
+    return isinstance(part, dict) and part.get('type') == 'image_url'
+
+
+def _is_audio_part(part: ChatCompletionContentPartParam) -> TypeGuard[ChatCompletionContentPartInputAudioParam]:
+    """Check if the part is an input audio content part."""
+    return isinstance(part, dict) and part.get('type') == 'input_audio'
+
+
+def _is_file_part(part: ChatCompletionContentPartParam) -> TypeGuard[File]:
+    """Check if the part is an input audio content part."""
+    return isinstance(part, dict) and part.get('type') == 'file'
+
+
+def _parse_user_content_part(part: ChatCompletionContentPartParam) -> UserContent:
     """Parse a single user content part from OpenAI format.
 
     Args:
-        part: A dictionary representing a content part.
+        part: A content part which can be text, image, audio, or file.
 
     Returns:
         A UserContent object or None if the part type is not recognized.
     """
-    part_type = part.get('type')
+    if _is_file_part(part):
+        # part is now narrowed to File
+        # Encode base64 string as bytes
+        b_data = base64.b64decode(part['file']['file_data'].encode())
+        filename = part['file']['filename']
+        file_ext = Path(filename).suffix
+        try:
+            media_type = _document_format_inverse_lookup[file_ext]
+        except KeyError as e:
+            raise ValueError(f'Unknown media type: {file_ext}') from e
 
-    if part_type == 'text':
+        return BinaryContent(data=b_data, media_type=media_type)
+
+        raise ValueError(f'Unknown media type: {file_ext}')
+
+    if _is_text_part(part):
+        # part is now narrowed to ChatCompletionContentPartTextParam
         return part.get('text', '')
 
-    elif part_type == 'image_url':
-        image_url = part.get('image_url')
-        url = image_url.get('url', '')
-        return ImageUrl(url=url)
+    elif _is_image_part(part):
+        # part is now narrowed to ChatCompletionContentPartImageParam
+        image_url_data = part.get('image_url')
+        if image_url_data:
+            url = image_url_data.get('url')
+            return ImageUrl(url=url)
 
-    elif part_type == 'input_audio':
-        input_audio = part['input_audio']
-        data = input_audio['data']
-        format = input_audio['format']
-        # Only wav and mp3 are supported currently
-        media_type = 'audio/wav' if format == 'wav' else 'audio/mpeg'
-        return BinaryContent(data=data, media_type=media_type)
+    elif _is_audio_part(part):
+        # part is now narrowed to ChatCompletionContentPartInputAudioParam
+        input_audio = part.get('input_audio')
+        data = input_audio.get('data')
+        format_value = input_audio.get('format')
 
-    # TODO: Handle 'File' type
-    return None
+        try:
+            media_type = _audio_format_inverse_lookup[format_value]
+        except KeyError as e:
+            raise ValueError(f'Unknown media type: {format_value}') from e
+        b_data = base64.b64decode(data.encode())
+        return BinaryContent(data=b_data, media_type=media_type)
+
+    raise ValueError(f'Unknown part type: {part}')
 
 
 def _handle_assistant_message(message: ChatCompletionMessageParam) -> ModelResponse:
@@ -482,6 +635,50 @@ def _from_responses_input(input_data: Any, instructions: str | None = None) -> l
         # Results in system prompt + user message
         ```
     """
+
+    def _parse_response_user_content_part(part: dict[str, Any]) -> UserContent | None:
+        """Parse a single Responses API user content part.
+
+        Supports:
+        - input_text: {"type":"input_text","text":...}
+        - input_image: {"type":"input_image","image_url":...,"detail":...}
+        - input_file: {"type":"input_file","file_data":data_uri,"filename":...}
+        """
+        ptype = part.get('type')
+        if ptype == 'input_text':
+            return part.get('text', '')
+        if ptype == 'input_image':
+            image_url = part.get('image_url')
+            if not image_url:
+                return None
+            # If it's a data URI, convert to BinaryContent; otherwise ImageUrl
+            if isinstance(image_url, str) and image_url.startswith('data:'):
+                try:
+                    bc = BinaryContent.from_data_uri(image_url)
+                    # carry detail if present
+                    detail = part.get('detail')
+                    if detail is not None:
+                        bc.vendor_metadata = {**(bc.vendor_metadata or {}), 'detail': detail}
+                    return bc
+                except Exception:
+                    return ImageUrl(url=str(image_url))
+            else:
+                vendor_metadata = {}
+                if (detail := part.get('detail')) is not None:
+                    vendor_metadata['detail'] = detail
+                return ImageUrl(url=str(image_url), vendor_metadata=vendor_metadata or None)
+        if ptype == 'input_file':
+            data_uri = part.get('file_data')
+            if isinstance(data_uri, str) and data_uri.startswith('data:'):
+                try:
+                    return BinaryContent.from_data_uri(data_uri)
+                except Exception:
+                    return None
+            # If file_data missing or not a data URI, ignore for now
+            return None
+        # Fallback to legacy parser
+        return _parse_user_content_part(part)
+
     history: list[ModelMessage] = []
     request_parts: list[ModelRequestPart] = []
 
@@ -494,33 +691,69 @@ def _from_responses_input(input_data: Any, instructions: str | None = None) -> l
         # Simple string input becomes a user message
         request_parts.append(UserPromptPart(content=input_data))
     elif isinstance(input_data, list):
-        # List of items - need to parse each item by type
-        # For now, we'll do a simplified conversion that handles the most common cases
         for item in input_data:
-            if isinstance(item, dict):
-                item_type = item.get('type')
+            if not isinstance(item, dict):
+                continue
+            item_type = item.get('type')
 
-                # Handle message items (user/system/assistant)
-                if item_type == 'message':
-                    role = item.get('role', 'user')
-                    content = item.get('content', '')
+            # Easy message param may omit type
+            if item_type == 'message' or (item_type is None and 'role' in item and 'content' in item):
+                role = item.get('role', 'user')
+                content = item.get('content')
+                # content can be str or list
+                if role in ('system', 'developer'):
+                    # System/developer both map to system prompt
+                    if isinstance(content, str):
+                        request_parts.append(SystemPromptPart(content=content))
+                    elif isinstance(content, list):
+                        # Concatenate text parts into one system string; ignore non-text
+                        texts: list[str] = []
+                        for c in content:
+                            if isinstance(c, dict) and c.get('type') in ('input_text', 'text'):
+                                txt = c.get('text') or c.get('content') or ''
+                                if isinstance(txt, str):
+                                    texts.append(txt)
+                        if texts:
+                            request_parts.append(SystemPromptPart(content=''.join(texts)))
+                elif role == 'user':
+                    if isinstance(content, str):
+                        request_parts.append(UserPromptPart(content=content))
+                    elif isinstance(content, list):
+                        parts: list[UserContent] = []
+                        for c in content:
+                            if isinstance(c, dict):
+                                parsed = _parse_response_user_content_part(c)
+                                if parsed is not None:
+                                    parts.append(parsed)
+                        if parts:
+                            request_parts.append(UserPromptPart(content=parts))
+                elif role == 'assistant':
+                    # Finish any accumulated request parts first
+                    if request_parts:
+                        history.append(ModelRequest(parts=request_parts))
+                        request_parts = []
+                    # Assistant content to ModelResponse
+                    response_parts: list[TextPart] = []
+                    if isinstance(content, str):
+                        response_parts.append(TextPart(content=content))
+                    elif isinstance(content, list):
+                        txt = ''.join(
+                            str(c.get('text', ''))
+                            for c in content
+                            if isinstance(c, dict) and c.get('type') in ('output_text', 'input_text', 'text')
+                        )
+                        if txt:
+                            response_parts.append(TextPart(content=txt))
+                    if response_parts:
+                        history.append(ModelResponse(parts=response_parts))
 
-                    if role == 'system':
-                        request_parts.append(SystemPromptPart(content=str(content)))
-                    elif role == 'user':
-                        request_parts.append(UserPromptPart(content=str(content)))
-                    elif role == 'assistant':
-                        # Finish current request if any, start response
-                        if request_parts:
-                            history.append(ModelRequest(parts=request_parts))
-                            request_parts = []
-                        history.append(ModelResponse(parts=[TextPart(content=str(content))]))
-
-                # Handle function call outputs (tool returns)
-                elif item_type == 'function_call_output':
-                    call_id = item.get('call_id', '')
-                    output = item.get('output', '')
-                    request_parts.append(ToolReturnPart(tool_call_id=call_id, content=str(output)))
+            elif item_type == 'function_call_output':
+                call_id = item.get('call_id', '')
+                output = item.get('output', '')
+                request_parts.append(ToolReturnPart(tool_call_id=call_id, content=str(output)))
+            else:
+                # Unknown type: ignore
+                pass
 
     # Add any remaining request parts
     if request_parts:
@@ -599,7 +832,7 @@ def _to_openai_chat_completion(run: AgentRunResult[OutputDataT], model: str) -> 
 
 
 def _to_openai_response(
-    run: AgentRunResult[OutputDataT], model: str, input_data: Any, instructions: str | None = None
+        run: AgentRunResult[OutputDataT], model: str, input_data: Any, instructions: str | None = None
 ) -> ResponseObject:
     """Converts a Pydantic AI agent run result to an OpenAI Response object.
 
@@ -693,10 +926,10 @@ def _to_openai_response(
 
 
 def _to_openai_response_stream_event(
-    event: ModelResponseStreamEvent,
-    model: str,
-    response_id: str,
-    context: _ResponseStreamContext,
+        event: ModelResponseStreamEvent,
+        model: str,
+        response_id: str,
+        context: _ResponsesStreamContext,
 ) -> Any | None:
     r"""Converts a Pydantic AI agent stream event to an OpenAI Response API stream event.
 
@@ -800,7 +1033,7 @@ def _to_openai_response_stream_event(
 
 
 def _to_openai_chat_completion_chunk(
-    event: ModelResponseStreamEvent, model: str, run_id: str, context: _StreamContext
+        event: ModelResponseStreamEvent, model: str, run_id: str, context: _ChatCompletionStreamContext
 ) -> ChatCompletionChunk | None:
     r"""Converts a Pydantic AI agent stream event to an OpenAI ChatCompletionChunk object.
 
@@ -878,18 +1111,22 @@ def _to_openai_chat_completion_chunk(
     )
 
 
+def _is_streaming_chat_completions_request(value: CompletionCreateParamsT) -> TypeGuard[CompletionCreateParamsStreamingT]:
+    return value["stream"]
+
+
 async def handle_chat_completions_request(
-    agent: AbstractAgent[AgentDepsT, Any],
-    request: Request,
-    *,
-    output_type: OutputSpec[Any] | None = None,
-    model: Model | KnownModelName | str | None = None,
-    deps: AgentDepsT = None,
-    model_settings: ModelSettings | None = None,
-    usage_limits: UsageLimits | None = None,
-    usage: RunUsage | None = None,
-    infer_name: bool = True,
-    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        agent: AbstractAgent[AgentDepsT, Any],
+        request: Request,
+        *,
+        output_type: OutputSpec[Any] | None = None,
+        model: Model | KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: UsageLimits | None = None,
+        usage: RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
 ) -> Response:
     """Handles OpenAI Chat Completions API requests.
 
@@ -924,15 +1161,15 @@ async def handle_chat_completions_request(
         ```
     """
     try:
-        params: CompletionCreateParamsT = CompletionCreateParams.validate_python(await request.json())
+        params: CompletionCreateParamsT = TypeAdapter(CompletionCreateParamsT).validate_python(await request.json())
     except ValidationError as e:  # pragma: no cover
         return Response(
-            content=json.dumps(e.json()),
+            content=e.json(),
             media_type='application/json',
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         )
 
-    messages = _from_openai_messages(params.get('messages', []))
+    messages = ChatCompletionsAdapter.load_messages(params["messages"])
     agent_kwargs = dict(
         output_type=output_type,
         model=model or params.get('model'),
@@ -944,66 +1181,77 @@ async def handle_chat_completions_request(
         toolsets=toolsets,
     )
 
-    if params.get('stream'):
+    if _is_streaming_chat_completions_request(params):
         run_id = str(uuid.uuid4())
-        context = _StreamContext()
+        context = _ChatCompletionStreamContext()
 
         async def stream_generator() -> AsyncIterator[str]:
             from pydantic_graph import End
 
             from ._agent_graph import ModelRequestNode
 
-            async with agent.iter(message_history=messages, **agent_kwargs) as run:
-                async for node in run:
-                    if isinstance(node, End):
-                        finish_reason: Literal['tool_calls', 'stop'] = (
-                            'tool_calls' if context.got_tool_calls else 'stop'
-                        )
-                        final_chunk = ChatCompletionChunk(
-                            id=run_id,
-                            choices=[
-                                ChunkChoice(delta=ChoiceDelta(), index=0, finish_reason=finish_reason, logprobs=None)
-                            ],
-                            created=int(time.time()),
-                            model=params.get('model'),
-                            object='chat.completion.chunk',
-                        )
-                        yield f'data: {final_chunk.model_dump_json(exclude_unset=True)}\n\n'
-                        yield 'data: [DONE]\n\n'
-                    elif isinstance(node, ModelRequestNode):
-                        async with node.stream(run.ctx) as request_stream:
-                            async for agent_event in request_stream:
-                                chunk = _to_openai_chat_completion_chunk(
-                                    agent_event, params.get('model'), run_id, context
-                                )
-                                if chunk:
-                                    yield f'data: {chunk.model_dump_json(exclude_unset=True)}\n\n'
+            try:
+                async with agent.iter(message_history=messages, **agent_kwargs) as run:
+                    async for node in run:
+                        if isinstance(node, End):
+                            finish_reason: Literal['tool_calls', 'stop'] = (
+                                'tool_calls' if context.got_tool_calls else 'stop'
+                            )
+                            final_chunk = ChatCompletionChunk(
+                                id=run_id,
+                                choices=[
+                                    ChunkChoice(
+                                        delta=ChoiceDelta(), index=0, finish_reason=finish_reason, logprobs=None
+                                    )
+                                ],
+                                created=int(time.time()),
+                                model=params["model"],
+                                object='chat.completion.chunk',
+                            )
+                            yield f'data: {final_chunk.model_dump_json(exclude_unset=True)}\n\n'
+                            yield 'data: [DONE]\n\n'
+                        elif isinstance(node, ModelRequestNode):
+                            async with node.stream(run.ctx) as request_stream:
+                                async for agent_event in request_stream:
+                                    chunk = _to_openai_chat_completion_chunk(
+                                        agent_event, params.get('model'), run_id, context
+                                    )
+                                    if chunk:
+                                        yield f'data: {chunk.model_dump_json(exclude_unset=True)}\n\n'
+            except Exception as exc:  # pragma: no cover
+                status_code, payload = _map_exception_to_openai_error(exc)
+                # Emit error payload in stream as a data line, then DONE
+                yield f'data: {json.dumps(payload)}\n\n'
+                yield 'data: [DONE]\n\n'
 
         return StreamingResponse(
             stream_generator(),
             media_type='text/event-stream',
         )
     else:
-        run_result = await agent.run(message_history=messages, **agent_kwargs)
-        completion = _to_openai_chat_completion(run_result, model=params.get('model'))
-        return Response(
-            content=completion.model_dump_json(exclude_unset=True),
-            media_type='application/json',
-        )
+        try:
+            run_result = await agent.run(message_history=messages, **agent_kwargs)
+            completion = _to_openai_chat_completion(run_result, model=params.get('model'))
+            return Response(
+                content=completion.model_dump_json(exclude_unset=True),
+                media_type='application/json',
+            )
+        except Exception as exc:
+            return _openai_error_response(exc)
 
 
 async def handle_responses_request(
-    agent: AbstractAgent[AgentDepsT, Any],
-    request: Request,
-    *,
-    output_type: OutputSpec[Any] | None = None,
-    model: Model | KnownModelName | str | None = None,
-    deps: AgentDepsT = None,
-    model_settings: ModelSettings | None = None,
-    usage_limits: UsageLimits | None = None,
-    usage: RunUsage | None = None,
-    infer_name: bool = True,
-    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        agent: AbstractAgent[AgentDepsT, Any],
+        request: Request,
+        *,
+        output_type: OutputSpec[Any] | None = None,
+        model: Model | KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: UsageLimits | None = None,
+        usage: RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
 ) -> Response:
     """Handles OpenAI Responses API requests.
 
@@ -1042,7 +1290,7 @@ async def handle_responses_request(
         params: ResponseCreateParamsT = ResponseCreateParams.validate_python(await request.json())
     except ValidationError as e:  # pragma: no cover
         return Response(
-            content=json.dumps(e.json()),
+            content=e.json(),
             media_type='application/json',
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         )
@@ -1075,7 +1323,7 @@ async def handle_responses_request(
         from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails
 
         response_id = str(uuid.uuid4())
-        context = _ResponseStreamContext()
+        context = _ResponsesStreamContext()
 
         async def stream_generator() -> AsyncIterator[str]:
             from pydantic_graph import End
@@ -1111,45 +1359,51 @@ async def handle_responses_request(
             yield f'event: {created_event.type}\ndata: {created_event.model_dump_json(exclude_unset=True)}\n\n'
 
             # Stream the agent's response
-            async with agent.iter(message_history=messages, **agent_kwargs) as run:
-                async for node in run:
-                    if isinstance(node, End):
-                        # Send final response.completed event
-                        run_usage = run.usage()
-                        final_response = ResponseObject(
-                            id=response_id,
-                            object='response',
-                            created_at=initial_response.created_at,
-                            model=params.get('model'),
-                            output=[],
-                            status='completed',
-                            usage=ResponseUsage(
-                                input_tokens=run_usage.input_tokens,
-                                input_tokens_details=InputTokensDetails(cached_tokens=0),
-                                output_tokens=run_usage.output_tokens,
-                                output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
-                                total_tokens=run_usage.total_tokens,
-                            ),
-                            instructions=instructions,
-                            parallel_tool_calls=True,
-                            tool_choice='auto',
-                            tools=[],
-                        )
-                        completed_event = ResponseCompletedEvent(
-                            type='response.completed',
-                            response=final_response,
-                            sequence_number=context.sequence_number,
-                        )
-                        yield f'event: {completed_event.type}\ndata: {completed_event.model_dump_json(exclude_unset=True)}\n\n'
-                        yield 'event: done\ndata: [DONE]\n\n'
-                    elif isinstance(node, ModelRequestNode):
-                        async with node.stream(run.ctx) as request_stream:
-                            async for agent_event in request_stream:
-                                stream_event = _to_openai_response_stream_event(
-                                    agent_event, params.get('model'), response_id, context
-                                )
-                                if stream_event:
-                                    yield f'event: {stream_event.type}\ndata: {stream_event.model_dump_json(exclude_unset=True)}\n\n'
+            try:
+                async with agent.iter(message_history=messages, **agent_kwargs) as run:
+                    async for node in run:
+                        if isinstance(node, End):
+                            # Send final response.completed event
+                            run_usage = run.usage()
+                            final_response = ResponseObject(
+                                id=response_id,
+                                object='response',
+                                created_at=initial_response.created_at,
+                                model=params.get('model'),
+                                output=[],
+                                status='completed',
+                                usage=ResponseUsage(
+                                    input_tokens=run_usage.input_tokens,
+                                    input_tokens_details=InputTokensDetails(cached_tokens=0),
+                                    output_tokens=run_usage.output_tokens,
+                                    output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+                                    total_tokens=run_usage.total_tokens,
+                                ),
+                                instructions=instructions,
+                                parallel_tool_calls=True,
+                                tool_choice='auto',
+                                tools=[],
+                            )
+                            completed_event = ResponseCompletedEvent(
+                                type='response.completed',
+                                response=final_response,
+                                sequence_number=context.sequence_number,
+                            )
+                            yield f'event: {completed_event.type}\ndata: {completed_event.model_dump_json(exclude_unset=True)}\n\n'
+                            yield 'event: done\ndata: [DONE]\n\n'
+                        elif isinstance(node, ModelRequestNode):
+                            async with node.stream(run.ctx) as request_stream:
+                                async for agent_event in request_stream:
+                                    stream_event = _to_openai_response_stream_event(
+                                        agent_event, params.get('model'), response_id, context
+                                    )
+                                    if stream_event:
+                                        yield f'event: {stream_event.type}\ndata: {stream_event.model_dump_json(exclude_unset=True)}\n\n'
+            except Exception as exc:  # pragma: no cover
+                # Emit an error payload as a data line, then done
+                _, payload = _map_exception_to_openai_error(exc)
+                yield f'data: {json.dumps(payload)}\n\n'
+                yield 'event: done\ndata: [DONE]\n\n'
 
         return StreamingResponse(
             stream_generator(),
@@ -1157,12 +1411,15 @@ async def handle_responses_request(
         )
     else:
         # Run the agent and convert to Response format
-        run_result = await agent.run(message_history=messages, **agent_kwargs)
-        response_obj = _to_openai_response(
-            run_result, model=params.get('model'), input_data=input_data, instructions=instructions
-        )
+        try:
+            run_result = await agent.run(message_history=messages, **agent_kwargs)
+            response_obj = _to_openai_response(
+                run_result, model=params.get('model'), input_data=input_data, instructions=instructions
+            )
 
-        return Response(
-            content=response_obj.model_dump_json(exclude_unset=True),
-            media_type='application/json',
-        )
+            return Response(
+                content=response_obj.model_dump_json(exclude_unset=True),
+                media_type='application/json',
+            )
+        except Exception as exc:
+            return _openai_error_response(exc)
