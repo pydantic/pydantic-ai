@@ -23,14 +23,13 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai._mcp import Resource, ServerCapabilities
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import (
     ModelRetry,
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.mcp import MCPError, MCPServerStreamableHTTP, load_mcp_servers
+from pydantic_ai.mcp import MCPError, MCPServerStreamableHTTP, Resource, ServerCapabilities, load_mcp_servers
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext

@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
-from dataclasses import field, replace
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any, overload
@@ -51,6 +51,9 @@ __all__ = (
     'MCPServerStreamableHTTP',
     'load_mcp_servers',
     'MCPError',
+    'Resource',
+    'ResourceTemplate',
+    'ServerCapabilities',
 )
 
 
@@ -94,6 +97,88 @@ class MCPError(RuntimeError):
         if self.data:
             return f'{self.message} (code: {self.code}, data: {self.data})'
         return f'{self.message} (code: {self.code})'
+
+
+@dataclass(repr=False, kw_only=True)
+class ResourceAnnotations:
+    """Additional properties describing MCP entities."""
+
+    audience: list[mcp_types.Role] | None = None
+    """Intended audience for this entity."""
+
+    priority: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
+    """Priority level for this entity, ranging from 0.0 to 1.0."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class BaseResource(ABC):
+    """Base class for MCP resources."""
+
+    name: str
+    """The programmatic name of the resource."""
+
+    title: str | None = None
+    """Human-readable title for UI contexts."""
+
+    description: str | None = None
+    """A description of what this resource represents."""
+
+    mime_type: str | None = None
+    """The MIME type of the resource, if known."""
+
+    annotations: ResourceAnnotations | None = None
+    """Optional annotations for the resource."""
+
+    metadata: dict[str, Any] | None = None
+    """Optional metadata for the resource."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class Resource(BaseResource):
+    """A resource that can be read from an MCP server."""
+
+    uri: str
+    """The URI of the resource."""
+
+    size: int | None = None
+    """The size of the raw resource content in bytes (before base64 encoding), if known."""
+
+
+@dataclass(repr=False, kw_only=True)
+class ResourceTemplate(BaseResource):
+    """A template for parameterized resources on an MCP server."""
+
+    uri_template: str
+    """URI template (RFC 6570) for constructing resource URIs."""
+
+
+@dataclass(repr=False, kw_only=True)
+class ServerCapabilities:
+    """Capabilities that an MCP server supports."""
+
+    experimental: list[str] | None = None
+    """Experimental, non-standard capabilities that the server supports."""
+
+    logging: bool = False
+    """Whether the server supports sending log messages to the client."""
+
+    prompts: bool = False
+    """Whether the server offers any prompt templates."""
+
+    resources: bool = False
+    """Whether the server offers any resources to read."""
+
+    tools: bool = False
+    """Whether the server offers any tools to call."""
+
+    completions: bool = False
+    """Whether the server offers autocompletion suggestions for prompts and resources."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
@@ -164,7 +249,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
     _server_info: mcp_types.Implementation
-    _server_capabilities: _mcp.ServerCapabilities
+    _server_capabilities: ServerCapabilities
 
     def __init__(
         self,
@@ -244,7 +329,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         return self._server_info
 
     @property
-    def capabilities(self) -> _mcp.ServerCapabilities:
+    def capabilities(self) -> ServerCapabilities:
         """Access the capabilities advertised by the MCP server during initialization."""
         if getattr(self, '_server_capabilities', None) is None:
             raise AttributeError(
@@ -364,7 +449,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 
-    async def list_resources(self) -> list[_mcp.Resource]:
+    async def list_resources(self) -> list[Resource]:
         """Retrieve resources that are currently present on the server.
 
         Note:
@@ -383,7 +468,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 raise MCPError.from_mcp_sdk_error(e) from e
         return [_mcp.map_from_mcp_resource(r) for r in result.resources]
 
-    async def list_resource_templates(self) -> list[_mcp.ResourceTemplate]:
+    async def list_resource_templates(self) -> list[ResourceTemplate]:
         """Retrieve resource templates that are currently present on the server.
 
         Raises:
@@ -405,11 +490,11 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     @overload
     async def read_resource(
-        self, uri: _mcp.Resource
+        self, uri: Resource
     ) -> str | messages.BinaryContent | list[str | messages.BinaryContent] | None: ...
 
     async def read_resource(
-        self, uri: str | _mcp.Resource
+        self, uri: str | Resource
     ) -> str | messages.BinaryContent | list[str | messages.BinaryContent] | None:
         """Read the contents of a specific resource by URI.
 
