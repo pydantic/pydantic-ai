@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import itertools
 import json
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
@@ -62,6 +63,7 @@ try:
         ChatCompletionContentPartParam,
         ChatCompletionContentPartTextParam,
     )
+    from openai.types.chat.chat_completion_chunk import Choice
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
@@ -530,9 +532,17 @@ class OpenAIChatModel(Model):
             raise  # pragma: lax no cover
 
     def _validate_completion(self, response: chat.ChatCompletion) -> chat.ChatCompletion:
+        """Hook that validates chat completions before processing.
+
+        This method may be overridden by subclasses of `OpenAIChatModel` to apply custom completion validations.
+        """
         return chat.ChatCompletion.model_validate(response.model_dump())
 
     def _process_reasoning(self, response: chat.ChatCompletion) -> list[ThinkingPart]:
+        """Hook that maps reasoning tokens to thinking parts.
+
+        This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
+        """
         message = response.choices[0].message
         items: list[ThinkingPart] = []
 
@@ -550,6 +560,10 @@ class OpenAIChatModel(Model):
         return items
 
     def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any]:
+        """Hook that response content to provider details.
+
+        This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
+        """
         choice = response.choices[0]
         provider_details: dict[str, Any] = {}
 
@@ -692,7 +706,7 @@ class OpenAIChatModel(Model):
     def _map_model_response(self, message: ModelResponse) -> chat.ChatCompletionMessageParam:
         """Hook that determines how `ModelResponse` is mapped into `ChatCompletionMessageParam` objects before sending.
 
-        Subclasses of `OpenAIChatModel` should override this method to provide their own mapping logic.
+        Subclasses of `OpenAIChatModel` may override this method to provide their own mapping logic.
         """
         texts: list[str] = []
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = []
@@ -1740,7 +1754,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     async def _validate_response(self):
         """Hook that validates incoming chunks.
 
-        This method should be overridden by subclasses of `OpenAIStreamedResponse` to apply custom chunk validations.
+        This method may be overridden by subclasses of `OpenAIStreamedResponse` to apply custom chunk validations.
 
         By default, this is a no-op since `ChatCompletionChunk` is already validated.
         """
@@ -1748,11 +1762,20 @@ class OpenAIStreamedResponse(StreamedResponse):
             yield chunk
 
     def _map_part_delta(self, chunk: ChatCompletionChunk):
-        """Hook that maps delta content to events.
+        """Hook that determines the sequence of mappings that will be called to produce events.
 
-        This method should be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
+        This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
         """
         choice = chunk.choices[0]
+        return itertools.chain(
+            self._map_thinking_delta(choice), self._map_text_delta(choice), self._map_tool_call_delta(choice)
+        )
+
+    def _map_thinking_delta(self, choice: Choice):
+        """Hook that maps thinking delta content to events.
+
+        This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
+        """
         # The `reasoning_content` field is only present in DeepSeek models.
         # https://api-docs.deepseek.com/guides/reasoning_model
         if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
@@ -1774,6 +1797,11 @@ class OpenAIStreamedResponse(StreamedResponse):
                 provider_name=self.provider_name,
             )
 
+    def _map_text_delta(self, choice: Choice):
+        """Hook that maps text delta content to events.
+
+        This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
+        """
         # Handle the text part of the response
         content = choice.delta.content
         if content:
@@ -1789,6 +1817,11 @@ class OpenAIStreamedResponse(StreamedResponse):
                     maybe_event.part.provider_name = self.provider_name
                 yield maybe_event
 
+    def _map_tool_call_delta(self, choice: Choice):
+        """Hook that maps tool call delta content to events.
+
+        This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
+        """
         for dtc in choice.delta.tool_calls or []:
             maybe_event = self._parts_manager.handle_tool_call_delta(
                 vendor_part_id=dtc.index,
@@ -1802,7 +1835,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     def _map_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, str] | None:
         """Hook that generates the provider details from chunk content.
 
-        This method should be overridden by subclasses of `OpenAIStreamResponse` to customize the provider details.
+        This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the provider details.
         """
         choice = chunk.choices[0]
         if raw_finish_reason := choice.finish_reason:

@@ -1,11 +1,8 @@
 from dataclasses import asdict, dataclass
-from typing import Any, Literal, cast, override
+from typing import Any, Literal, cast
 
-from openai import APIError
-from openai.types import chat
-from openai.types.chat import chat_completion, chat_completion_chunk
 from pydantic import AliasChoices, BaseModel, Field, TypeAdapter
-from typing_extensions import TypedDict, assert_never
+from typing_extensions import TypedDict, assert_never, override
 
 from .. import _utils
 from ..exceptions import ModelHTTPError
@@ -15,7 +12,6 @@ from ..messages import (
     FilePart,
     FinishReason,
     ModelResponse,
-    PartStartEvent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -25,7 +21,18 @@ from ..providers.openrouter import OpenRouterProvider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
 from . import ModelRequestParameters
-from .openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIStreamedResponse
+
+try:
+    from openai import APIError
+    from openai.types import chat
+    from openai.types.chat import chat_completion, chat_completion_chunk
+
+    from .openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIStreamedResponse
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `openai` to use the OpenRouter model, '
+        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
+    ) from _import_error
 
 _CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_filter', 'error'], FinishReason] = {
     'stop': 'stop',
@@ -592,10 +599,9 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
             raise ModelHTTPError(status_code=error.code, model_name=self._model_name, body=error.message)
 
     @override
-    def _map_part_delta(self, chunk: chat.ChatCompletionChunk):
+    def _map_thinking_delta(self, choice: chat_completion_chunk.Choice):
         # We can cast with confidence because chunk was validated in `_validate_response`
-        chunk = cast(OpenRouterChatCompletionChunk, chunk)
-        choice = chunk.choices[0]
+        choice = cast(OpenRouterChunkChoice, choice)
 
         if reasoning_details := choice.delta.reasoning_details:
             for detail in reasoning_details:
@@ -606,31 +612,6 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
                     content=thinking_part.content,
                     provider_name=self._provider_name,
                 )
-
-        # Handle the text part of the response
-        content = choice.delta.content
-        if content:
-            maybe_event = self._parts_manager.handle_text_delta(
-                vendor_part_id='content',
-                content=content,
-                thinking_tags=self._model_profile.thinking_tags,
-                ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-            )
-            if maybe_event is not None:  # pragma: no branch
-                if isinstance(maybe_event, PartStartEvent) and isinstance(maybe_event.part, ThinkingPart):
-                    maybe_event.part.id = 'content'
-                    maybe_event.part.provider_name = self.provider_name
-                yield maybe_event
-
-        for dtc in choice.delta.tool_calls or []:
-            maybe_event = self._parts_manager.handle_tool_call_delta(
-                vendor_part_id=dtc.index,
-                tool_name=dtc.function and dtc.function.name,
-                args=dtc.function and dtc.function.arguments,
-                tool_call_id=dtc.id,
-            )
-            if maybe_event is not None:
-                yield maybe_event
 
     @override
     def _map_provider_details(self, chunk: chat.ChatCompletionChunk) -> dict[str, str] | None:
