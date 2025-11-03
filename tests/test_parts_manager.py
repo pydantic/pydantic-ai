@@ -581,6 +581,9 @@ def test_handle_thinking_delta_new_part_with_vendor_id():
     parts = manager.get_parts()
     assert parts == snapshot([ThinkingPart(content='new thought')])
 
+    # Verify vendor_part_id was mapped to the part index
+    assert manager.is_vendor_id_mapped('thinking')
+
 
 def test_handle_thinking_delta_no_content():
     manager = ModelResponsePartsManager()
@@ -601,6 +604,98 @@ def test_handle_thinking_delta_no_content_or_signature():
     with pytest.raises(UnexpectedModelBehavior, match='Cannot update a ThinkingPart with no content or signature'):
         for _ in manager.handle_thinking_delta(vendor_part_id='thinking', content=None, signature=None):
             pass
+
+
+def test_handle_text_delta_append_to_thinking_part_without_vendor_id():
+    """Test appending to ThinkingPart when vendor_part_id is None (lines 202-203)."""
+    manager = ModelResponsePartsManager()
+    thinking_tags = ('<think>', '</think>')
+
+    # Create a ThinkingPart using handle_text_delta with thinking tags and vendor_part_id=None
+    events = list(manager.handle_text_delta(vendor_part_id=None, content='<think>initial', thinking_tags=thinking_tags))
+    assert len(events) == 1
+    assert isinstance(events[0], PartStartEvent)
+    assert isinstance(events[0].part, ThinkingPart)
+    assert events[0].part.content == 'initial'
+
+    # Now append more content with vendor_part_id=None - should append to existing ThinkingPart
+    events = list(manager.handle_text_delta(vendor_part_id=None, content=' reasoning', thinking_tags=thinking_tags))
+    assert len(events) == 1
+    assert isinstance(events[0], PartDeltaEvent)
+    assert events[0].index == 0
+
+    parts = manager.get_parts()
+    assert len(parts) == 1
+    assert isinstance(parts[0], ThinkingPart)
+    assert parts[0].content == 'initial reasoning'
+
+
+def test_simple_path_whitespace_handling():
+    """Test whitespace-only prefix with ignore_leading_whitespace in simple path (S10 → S11).
+
+    This tests the branch where whitespace before a start tag is ignored when
+    vendor_part_id=None (which routes to simple path).
+    """
+    manager = ModelResponsePartsManager()
+    thinking_tags = ('<think>', '</think>')
+
+    events = list(
+        manager.handle_text_delta(
+            vendor_part_id=None,
+            content='  \n<think>reasoning',
+            thinking_tags=thinking_tags,
+            ignore_leading_whitespace=True,
+        )
+    )
+
+    assert len(events) == 1
+    assert isinstance(events[0], PartStartEvent)
+    assert isinstance(events[0].part, ThinkingPart)
+    assert events[0].part.content == 'reasoning'
+
+    parts = manager.get_parts()
+    assert len(parts) == 1
+    assert isinstance(parts[0], ThinkingPart)
+    assert parts[0].content == 'reasoning'
+
+
+def test_simple_path_text_prefix_rejection():
+    """Test that text before start tag disables thinking tag detection in simple path (S12).
+
+    When there's non-whitespace text before the start tag, the entire content should be
+    treated as a TextPart with the tag included as literal text.
+    """
+    manager = ModelResponsePartsManager()
+    thinking_tags = ('<think>', '</think>')
+
+    events = list(
+        manager.handle_text_delta(vendor_part_id=None, content='foo<think>reasoning', thinking_tags=thinking_tags)
+    )
+
+    assert len(events) == 1
+    assert isinstance(events[0], PartStartEvent)
+    assert isinstance(events[0].part, TextPart)
+    assert events[0].part.content == 'foo<think>reasoning'
+
+    parts = manager.get_parts()
+    assert len(parts) == 1
+    assert isinstance(parts[0], TextPart)
+    assert parts[0].content == 'foo<think>reasoning'
+
+
+def test_empty_whitespace_content_with_ignore_leading_whitespace():
+    """Test that empty/whitespace content is ignored when ignore_leading_whitespace=True (line 282)."""
+    manager = ModelResponsePartsManager()
+
+    # Empty content with ignore_leading_whitespace should yield no events
+    events = list(manager.handle_text_delta(vendor_part_id='id1', content='', ignore_leading_whitespace=True))
+    assert len(events) == 0
+    assert manager.get_parts() == []
+
+    # Whitespace-only content with ignore_leading_whitespace should yield no events
+    events = list(manager.handle_text_delta(vendor_part_id='id2', content='  \n\t', ignore_leading_whitespace=True))
+    assert len(events) == 0
+    assert manager.get_parts() == []
 
 
 def test_handle_part():
@@ -632,3 +727,60 @@ def test_handle_part():
     event = manager.handle_part(vendor_part_id=None, part=part3)
     assert event == snapshot(PartStartEvent(index=1, part=part3))
     assert manager.get_parts() == snapshot([part2, part3])
+
+
+def test_handle_tool_call_delta_no_vendor_id_with_non_tool_latest_part():
+    """Test handle_tool_call_delta with vendor_part_id=None when latest part is NOT a tool call (line 515->526)."""
+    manager = ModelResponsePartsManager()
+
+    # Create a TextPart first
+    for _ in manager.handle_text_delta(vendor_part_id=None, content='some text'):
+        pass
+
+    # Try to send a tool call delta with vendor_part_id=None and tool_name=None
+    # Since latest part is NOT a tool call, this should create a new incomplete tool call delta
+    event = manager.handle_tool_call_delta(vendor_part_id=None, tool_name=None, args='{"arg":')
+
+    # Since tool_name is None for a new part, we get a ToolCallPartDelta with no event
+    assert event is None
+
+    # The ToolCallPartDelta is created internally but not returned by get_parts() since it's incomplete
+    assert manager.has_incomplete_parts()
+    assert len(manager.get_parts()) == 1
+    assert isinstance(manager.get_parts()[0], TextPart)
+
+
+def test_handle_thinking_delta_raises_error_when_thinking_after_text():
+    """Test that handle_thinking_delta raises error when trying to create ThinkingPart after TextPart."""
+    manager = ModelResponsePartsManager()
+
+    # Create a TextPart first
+    for _ in manager.handle_text_delta(vendor_part_id=None, content='some text'):
+        pass
+
+    # Now try to create a ThinkingPart with vendor_part_id=None
+    # This should raise an error because thinking must come before text
+    with pytest.raises(
+        UnexpectedModelBehavior, match='Cannot create ThinkingPart after TextPart: thinking must come before text'
+    ):
+        for _ in manager.handle_thinking_delta(vendor_part_id=None, content='thinking'):
+            pass
+
+
+def test_handle_thinking_delta_create_new_part_with_no_vendor_id():
+    """Test creating new ThinkingPart when vendor_part_id is None and no parts exist yet."""
+    manager = ModelResponsePartsManager()
+
+    # Create ThinkingPart with vendor_part_id=None (no parts exist yet, so no constraint violation)
+    events = list(manager.handle_thinking_delta(vendor_part_id=None, content='thinking'))
+
+    assert len(events) == 1
+    assert isinstance(events[0], PartStartEvent)
+    assert events[0].index == 0
+
+    parts = manager.get_parts()
+    assert len(parts) == 1
+    assert parts[0] == snapshot(ThinkingPart(content='thinking'))
+
+    # Verify vendor_part_id was NOT mapped (it's None)
+    assert not manager.is_vendor_id_mapped('thinking')

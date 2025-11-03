@@ -73,6 +73,25 @@ class ModelResponsePartsManager:
         """
         return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
 
+    def has_incomplete_parts(self) -> bool:
+        """Check if there are any incomplete ToolCallPartDeltas being managed.
+
+        Returns:
+            True if there are any ToolCallPartDelta objects in the internal parts list.
+        """
+        return any(isinstance(p, ToolCallPartDelta) for p in self._parts)
+
+    def is_vendor_id_mapped(self, vendor_id: VendorId) -> bool:
+        """Check if a vendor ID is currently mapped to a part index.
+
+        Args:
+            vendor_id: The vendor ID to check.
+
+        Returns:
+            True if the vendor ID is mapped to a part index, False otherwise.
+        """
+        return vendor_id in self._vendor_id_to_part_index
+
     def finalize(self) -> Generator[ModelResponseStreamEvent, None, None]:
         """Flush any buffered content, appending to ThinkingParts or creating TextParts.
 
@@ -106,7 +125,7 @@ class ModelResponsePartsManager:
 
         # flush any remaining buffered content
         for vendor_part_id, buffered_content in list(self._thinking_tag_buffer.items()):
-            if buffered_content:
+            if buffered_content:  # pragma: no branch - buffer should never contain empty string
                 part_index = self._vendor_id_to_part_index.get(vendor_part_id)
 
                 # If buffered content belongs to a ThinkingPart, append it to the ThinkingPart
@@ -208,33 +227,7 @@ class ModelResponsePartsManager:
             if part_index is not None:
                 existing_part = self._parts[part_index]
 
-                if thinking_tags and isinstance(existing_part, ThinkingPart):
-                    end_tag = thinking_tags[1]
-                    if end_tag in content:
-                        before_end, after_end = content.split(end_tag, 1)
-
-                        if before_end:
-                            yield from self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=before_end)
-
-                        self._vendor_id_to_part_index.pop(vendor_part_id)
-
-                        if after_end:
-                            yield from self._handle_text_delta_simple(
-                                vendor_part_id=vendor_part_id,
-                                content=after_end,
-                                id=id,
-                                thinking_tags=thinking_tags,
-                                ignore_leading_whitespace=ignore_leading_whitespace,
-                            )
-                        return
-
-                    if content == end_tag:
-                        self._vendor_id_to_part_index.pop(vendor_part_id)
-                        return
-
-                    yield from self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=content)
-                    return
-                elif isinstance(existing_part, TextPart):
+                if isinstance(existing_part, TextPart):
                     existing_text_part_and_index = existing_part, part_index
                 else:
                     raise UnexpectedModelBehavior(f'Cannot apply a text delta to {existing_part=}')
@@ -267,11 +260,9 @@ class ModelResponsePartsManager:
             # Create ThinkingPart but defer PartStartEvent until there is content
             new_part_index = len(self._parts)
             part = ThinkingPart(content='')
-            if vendor_part_id is not None:
-                self._vendor_id_to_part_index[vendor_part_id] = new_part_index
             self._parts.append(part)
 
-            if after_start:
+            if after_start:  # pragma: no branch
                 yield from self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=after_start)
             return
 
@@ -279,7 +270,7 @@ class ModelResponsePartsManager:
             # This is a workaround for models that emit `<think>\n</think>\n\n` or an empty text part ahead of tool calls (e.g. Ollama + Qwen3),
             # which we don't want to end up treating as a final result when using `run_stream` with `str` as a valid `output_type`.
             if ignore_leading_whitespace and (len(content) == 0 or content.isspace()):
-                return None
+                return
 
             new_part_index = len(self._parts)
             part = TextPart(content=content, id=id)
@@ -294,7 +285,9 @@ class ModelResponsePartsManager:
 
             updated_text_part = part_delta.apply(existing_text_part)
             self._parts[part_index] = updated_text_part
-            if part_index not in self._started_part_indices:
+            if (
+                part_index not in self._started_part_indices
+            ):  # pragma: no cover - defensive: TextPart should always be started
                 self._started_part_indices.add(part_index)
                 yield PartStartEvent(index=part_index, part=updated_text_part)
             else:
@@ -458,6 +451,10 @@ class ModelResponsePartsManager:
                 latest_part = self._parts[part_index]
                 if isinstance(latest_part, ThinkingPart):
                     existing_thinking_part_and_index = latest_part, part_index
+                elif isinstance(latest_part, TextPart):
+                    raise UnexpectedModelBehavior(
+                        'Cannot create ThinkingPart after TextPart: thinking must come before text in response'
+                    )
         else:
             # Otherwise, attempt to look up an existing ThinkingPart by vendor_part_id
             part_index = self._vendor_id_to_part_index.get(vendor_part_id)

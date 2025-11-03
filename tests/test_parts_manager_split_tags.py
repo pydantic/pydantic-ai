@@ -305,3 +305,68 @@ def test_thinking_interrupted_by_incomplete_end_tag_and_vendor_switch():
     assert parts[0].content == 'thinking foo</th'
     assert isinstance(parts[1], TextPart)
     assert parts[1].content == 'new content'
+
+
+def test_split_end_tag_with_content_before():
+    """Test content before split end tag in buffered chunks (line 337)."""
+    events, parts = stream_text_deltas(['<think>', 'reasoning content</th', 'ink>'])
+
+    assert len(parts) == 1
+    assert isinstance(parts[0], ThinkingPart)
+    assert parts[0].content == 'reasoning content'
+
+    # Verify events
+    assert any(isinstance(e, PartStartEvent) and isinstance(e.part, ThinkingPart) for e in events)
+
+
+def test_split_end_tag_with_content_after():
+    """Test content after split end tag in buffered chunks (line 343)."""
+    events, parts = stream_text_deltas(['<think>', 'reasoning', '</thi', 'nk>after text'])
+
+    assert len(parts) == 2
+    assert isinstance(parts[0], ThinkingPart)
+    assert parts[0].content == 'reasoning'
+    assert isinstance(parts[1], TextPart)
+    assert parts[1].content == 'after text'
+
+    # Verify events
+    assert any(isinstance(e, PartStartEvent) and isinstance(e.part, ThinkingPart) for e in events)
+    assert any(isinstance(e, PartStartEvent) and isinstance(e.part, TextPart) for e in events)
+
+
+def test_split_end_tag_with_content_before_and_after():
+    """Test content both before and after split end tag."""
+    _, parts = stream_text_deltas(['<think>', 'reason</th', 'ink>after'])
+
+    assert len(parts) == 2
+    assert isinstance(parts[0], ThinkingPart)
+    assert parts[0].content == 'reason'
+    assert isinstance(parts[1], TextPart)
+    assert parts[1].content == 'after'
+
+
+def test_cross_path_end_tag_handling():
+    """Test end tag handling when buffering fallback delegates to simple path (C2 → S5).
+
+    This tests the scenario where buffering creates a ThinkingPart, then non-matching
+    content triggers the C2 fallback to simple path, which then handles the end tag.
+    """
+    _, parts = stream_text_deltas(['<think>initial', 'x', 'more</think>after'])
+
+    assert len(parts) == 2
+    assert isinstance(parts[0], ThinkingPart)
+    assert parts[0].content == 'initialxmore'
+    assert isinstance(parts[1], TextPart)
+    assert parts[1].content == 'after'
+
+
+def test_cross_path_bare_end_tag():
+    """Test bare end tag when buffering fallback delegates to simple path (C2 → S5).
+
+    This tests the specific branch where content equals exactly the end tag.
+    """
+    _, parts = stream_text_deltas(['<think>done', 'x', '</think>'])
+
+    assert len(parts) == 1
+    assert isinstance(parts[0], ThinkingPart)
+    assert parts[0].content == 'donex'
