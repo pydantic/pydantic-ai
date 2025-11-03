@@ -249,7 +249,7 @@ def load_last_conversation(config_dir: Path | None = None) -> list[ModelMessage]
     if not last_conversation_path.exists():
         return None
 
-    return ModelMessagesTypeAdapter.validate_json(last_conversation_path.read_text())
+    return ModelMessagesTypeAdapter.validate_json(last_conversation_path.read_bytes())
 
 
 async def run_chat(
