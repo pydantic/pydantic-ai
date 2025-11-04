@@ -949,6 +949,10 @@ class OpenAIResponsesModel(Model):
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
+    def base_url(self) -> str:
+        return str(self.client.base_url)
+
+    @property
     def model_name(self) -> OpenAIModelName:
         """The model name."""
         return self._model_name
