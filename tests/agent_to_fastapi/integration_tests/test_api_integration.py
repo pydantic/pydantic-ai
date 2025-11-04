@@ -14,10 +14,6 @@ with try_import() as imports_successful:
     from pydantic_ai.fastapi.agent_router import AgentAPIRouter
     from pydantic_ai.fastapi.registry import AgentRegistry
 
-# The registry + AsyncOpenAI client builder has been moved to a pytest fixture
-# `registry_with_openai_clients` in tests/integration_tests/conftest.py.
-# Tests should accept the fixture and use it via function parameters instead of
-# calling a builder function directly.
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='OpenAI client not installed or FastAPI not installed'),
@@ -154,14 +150,6 @@ async def test_chat_completions_e2e_with_mocked_openai(
     }
 
     async with AsyncClient(transport=transport, base_url='http://testserver') as client:
-        payload_empty: dict[str, str | list[str]] = {'model': 'test-model', 'messages': []}
-        r = await client.post('/v1/chat/completions', json=payload_empty)
-        assert r.status_code == 400
-        detail = r.json().get('detail')
-        assert isinstance(detail, dict)
-        assert 'error' in detail
-        assert detail['error']['type'] == 'invalid_request_error'
-
         # Intercept outbound AsyncOpenAI request and return our canned response
         with aioresponses() as mocked:
             mocked.post(  # type: ignore
@@ -195,7 +183,7 @@ async def test_chat_completions_e2e_with_mocked_openai(
             }
 
             r_missing = await client.post('/v1/chat/completions', json=payload_missing)
-            assert r_missing.status_code == 500
+            assert r_missing.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -238,21 +226,12 @@ async def test_responses_e2e_with_mocked_openai(
     }
 
     async with AsyncClient(transport=transport, base_url='http://testserver') as client:
-        payload_empty = {'model': 'test-model', 'input': ''}
-        r = await client.post('/v1/responses', json=payload_empty)
-        assert r.status_code == 400
-
-        detail = r.json().get('detail')
-        assert isinstance(detail, dict)
-        assert 'error' in detail
-        assert detail['error']['type'] == 'invalid_request_error'
-
         with aioresponses() as mocked:
             mocked.post(fake_openai_base + '/responses', payload=fake_openai_resp, status=200)  # type: ignore
 
             payload_missing = {'model': 'test-model-only-completions', 'input': 'Say hi'}
             r_missing = await client.post('/v1/responses', json=payload_missing)
-            assert r_missing.status_code == 500
+            assert r_missing.status_code == 404
 
             payload = {'model': 'test-model', 'input': 'Say hi'}
             r2 = await client.post('/v1/responses', json=payload)

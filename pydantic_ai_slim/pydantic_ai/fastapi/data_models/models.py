@@ -22,8 +22,8 @@ try:
     )
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
-        'Please install the `openai` package to enable the fastapi openai compatible endpoint, '
-        'you can use the `openai` and `fastapi` optional group — `pip install "pydantic-ai-slim[openai,fastapi]"`'
+        'Please install the `openai` and `fastapi` packages to enable the fastapi openai compatible endpoint, '
+        'you can use the `chat-completion` optional group — `pip install "pydantic-ai-slim[chat-completion]"`'
     ) from _import_error
 from pydantic import BaseModel, ConfigDict, Field
 

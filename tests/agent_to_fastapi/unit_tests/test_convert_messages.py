@@ -1,5 +1,3 @@
-# oragle/agent_libraries/oragle_agent/oragle_agent/tests/unit_tests/test_convert_messages.py
-
 import json
 from types import SimpleNamespace
 from typing import Any

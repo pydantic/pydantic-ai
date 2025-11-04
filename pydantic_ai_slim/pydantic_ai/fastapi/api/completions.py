@@ -1,5 +1,4 @@
 import json
-import logging
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -11,8 +10,8 @@ try:
     from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice as Chunkhoice, ChoiceDelta
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
-        'Please install the `openai` package to enable the fastapi openai compatible endpoint, '
-        'you can use the `openai` and `fastapi` optional group — `pip install "pydantic-ai-slim[openai,fastapi]"`'
+        'Please install the `openai` and `fastapi` packages to enable the fastapi openai compatible endpoint, '
+        'you can use the `chat-completion` optional group — `pip install "pydantic-ai-slim[chat-completion]"`'
     ) from _import_error
 
 from pydantic import TypeAdapter
@@ -25,8 +24,6 @@ from pydantic_ai.fastapi.convert import (
 from pydantic_ai.fastapi.data_models import ChatCompletionRequest, ErrorResponse
 from pydantic_ai.fastapi.registry import AgentRegistry
 from pydantic_ai.settings import ModelSettings
-
-logger = logging.getLogger(__name__)
 
 
 class AgentChatCompletionsAPI:
@@ -60,23 +57,18 @@ class AgentChatCompletionsAPI:
         model_settings_ta = TypeAdapter(ModelSettings)
         messages = openai_chat_completions_2pai(messages=request.messages)
 
-        try:
-            async with agent:
-                result = await agent.run(
-                    message_history=messages,
-                    model_settings=model_settings_ta.validate_python(
-                        {k: v for k, v in request.model_dump().items() if v is not None},
-                    ),
-                )
-
-            return pai_result_to_openai_completions(
-                result=result,
-                model=model_name,
+        async with agent:
+            result = await agent.run(
+                message_history=messages,
+                model_settings=model_settings_ta.validate_python(
+                    {k: v for k, v in request.model_dump().items() if v is not None},
+                ),
             )
 
-        except Exception as e:
-            logger.error(f'Error creating completion: {e}')
-            raise
+        return pai_result_to_openai_completions(
+            result=result,
+            model=model_name,
+        )
 
     async def create_streaming_completion(self, request: ChatCompletionRequest) -> AsyncGenerator[str]:
         """Create a streaming chat completion."""

@@ -1,4 +1,3 @@
-import logging
 from collections.abc import AsyncGenerator
 
 try:
@@ -7,8 +6,8 @@ try:
     from openai.types.responses import Response
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
-        'Please install the `openai` package to enable the fastapi openai compatible endpoint, '
-        'you can use the `openai` and `fastapi` optional group — `pip install "pydantic-ai-slim[openai,fastapi]"`'
+        'Please install the `openai` and `fastapi` packages to enable the fastapi openai compatible endpoint, '
+        'you can use the `chat-completion` optional group — `pip install "pydantic-ai-slim[chat-completion]"`'
     ) from _import_error
 
 from pydantic_ai import Agent
@@ -21,8 +20,6 @@ from pydantic_ai.fastapi.registry import AgentRegistry
 from pydantic_ai.models.openai import (
     OpenAIResponsesModelSettings,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class AgentResponsesAPI:
@@ -56,19 +53,15 @@ class AgentResponsesAPI:
         model_settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
         messages = openai_responses_input_to_pai(items=request.input)
 
-        try:
-            async with agent:
-                result = await agent.run(
-                    message_history=messages,
-                    model_settings=model_settings,
-                )
-            return pai_result_to_openai_responses(
-                result=result,
-                model=model_name,
+        async with agent:
+            result = await agent.run(
+                message_history=messages,
+                model_settings=model_settings,
             )
-        except Exception as e:
-            logger.error(f'Error creating completion: {e}')
-            raise
+        return pai_result_to_openai_responses(
+            result=result,
+            model=model_name,
+        )
 
     async def create_streaming_response(self, request: ResponsesRequest) -> AsyncGenerator[str]:
         """Create a streaming chat completion."""
