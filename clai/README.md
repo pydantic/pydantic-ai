@@ -54,7 +54,7 @@ Either way, running `clai` will start an interactive session where you can chat 
 ## Help
 
 ```
-usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [-c] [--no-stream] [--version] [prompt]
+usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [-c [CONTINUE_]] [--store STORE] [--no-stream] [--version] [prompt]
 
 Pydantic AI CLI v...
 
@@ -76,7 +76,9 @@ options:
   -l, --list-models     List all available models and exit
   -t [CODE_THEME], --code-theme [CODE_THEME]
                         Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.
-  -c, --continue        Continue last conversation, if any, instead of starting a new one.
+  -c [CONTINUE_], --continue [CONTINUE_]
+                        Continue last conversation, if any, instead of starting a new one.
+  --store STORE         Store the last conversation to the specified path instead of the default location.
   --no-stream           Disable streaming from the model
   --version             Show version and exit
 ```
