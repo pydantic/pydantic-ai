@@ -66,6 +66,56 @@ agent = Agent(model, model_settings=settings)
 
 ## Bedrock
 
+Although Bedrock Converse doesn't provide a unified API to enable thinking, you can still use [`BedrockModelSettings.bedrock_additional_model_requests_fields`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_additional_model_requests_fields] [model setting](agents.md#model-run-settings) to pass provider-specific configuration:
+
+=== "Claude"
+
+    ```python {title="bedrock_claude_thinking_part.py"}
+
+    model = BedrockConverseModel("us.anthropic.claude-sonnet-4-5-20250929-v1:0")
+    model_settings = BedrockModelSettings(
+        bedrock_additional_model_requests_fields={
+            "thinking": {"type": "enabled", "budget_tokens": 1024}
+        }
+    )
+    agent = Agent(model=model, model_settings=model_settings)
+
+    ```
+=== "OpenAI"
+
+
+    ```python {title="bedrock_openai_thinking_part.py"}
+
+    model = BedrockConverseModel("openai.gpt-oss-120b-1:0")
+    model_settings = BedrockModelSettings(
+        bedrock_additional_model_requests_fields={"reasoning_effort": "low"}
+    )
+    agent = Agent(model=model, model_settings=model_settings)
+
+    ```
+=== "Qwen"
+
+
+    ```python {title="bedrock_qwen_thinking_part.py"}
+
+    model = BedrockConverseModel("qwen.qwen3-32b-v1:0")
+    model_settings = BedrockModelSettings(
+        bedrock_additional_model_requests_fields={"reasoning_config": "high"}
+    )
+    agent = Agent(model=model, model_settings=model_settings)
+
+    ```
+
+=== "Deepseek"
+    Reasoning is [always enabled](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-reasoning.html) for Deepseek model
+
+    ```python {title="bedrock_deepseek_thinking_part.py"}
+
+    model = BedrockConverseModel("us.deepseek.r1-v1:0")
+    agent = Agent(model=model)
+
+    ```
+
 ## Groq
 
 Groq supports different formats to receive thinking parts:
