@@ -473,6 +473,7 @@ _(This example is complete, it can be run "as is")_
 #### Partial validation {#partial-validation}
 
 You can use the `allow_partial` field on `RunContext` to implement your own partial validation in output validators.
+
 For example, you could choose to skip validation altogether if `allow_partial` is true:
 
 ```python {title="partial_validation_streaming.py" line_length="120"}
