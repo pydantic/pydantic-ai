@@ -42,7 +42,12 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage
@@ -2131,8 +2136,8 @@ async def test_streaming_finalize_with_incomplete_thinking_tag():
     assert len(part_end_events) == 1
     assert isinstance(part_end_events[0].part, TextPart)
     assert part_end_events[0].part.content == '<thi'
-    
-    
+
+
 def test_structured_response_sync_validation():
     async def text_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         assert agent_info.output_tools is not None

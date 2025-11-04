@@ -347,3 +347,101 @@ def test_cross_path_bare_end_tag():
     assert len(parts) == 1
     assert isinstance(parts[0], ThinkingPart)
     assert parts[0].content == 'donex'
+
+
+def test_invalid_partial_tag_prefix():
+    """Test content starting with '<' but not matching tag prefix (branch 109->113)."""
+    events, parts = stream_text_deltas(['<xyz'])
+
+    assert len(parts) == 1
+    assert isinstance(parts[0], TextPart)
+    assert parts[0].content == '<xyz'
+    assert len(events) == 1
+    assert isinstance(events[0], PartStartEvent)
+
+
+def test_bare_start_tag_simple_path():
+    """Test isolated start tag through simple path (branch 319->321)."""
+    manager = ModelResponsePartsManager()
+    thinking_tags = ('<think>', '</think>')
+
+    events = list(manager.handle_text_delta(vendor_part_id=None, content='<think>', thinking_tags=thinking_tags))
+
+    assert len(events) == 0
+
+    final_events = list(manager.finalize())
+    assert len(final_events) == 1
+    assert isinstance(final_events[0], PartStartEvent)
+    assert isinstance(final_events[0].part, TextPart)
+    assert final_events[0].part.content == '<think>'
+
+
+def test_complete_thinking_block_with_trailing_text_single_chunk():
+    """Test complete thinking block and text in one chunk (branch 411->386)."""
+    events, parts = stream_text_deltas(['<think>reasoning</think>final text'])
+
+    assert len(parts) == 2
+    assert isinstance(parts[0], ThinkingPart)
+    assert parts[0].content == 'reasoning'
+    assert isinstance(parts[1], TextPart)
+    assert parts[1].content == 'final text'
+    assert len(events) == 2
+
+
+def test_thinking_delta_after_tool_call():
+    """Test creating ThinkingPart when latest part is a ToolCallPart (branch 515->528)."""
+    manager = ModelResponsePartsManager()
+
+    manager.handle_tool_call_part(
+        vendor_part_id='tool1', tool_name='test_tool', args={'key': 'value'}, tool_call_id='call_123'
+    )
+
+    events = list(manager.handle_thinking_delta(vendor_part_id=None, content='some thinking'))
+
+    assert len(events) == 1
+    assert isinstance(events[0], PartStartEvent)
+    assert isinstance(events[0].part, ThinkingPart)
+
+    parts = manager.get_parts()
+    assert len(parts) == 2
+    assert isinstance(parts[1], ThinkingPart)
+    assert parts[1].content == 'some thinking'
+
+
+def test_text_part_update_via_handle_part_then_emit():
+    """Test updating a TextPart created via handle_part (lines 471-472)."""
+    manager = ModelResponsePartsManager()
+
+    manager.handle_part(vendor_part_id='text1', part=TextPart(content='initial'))
+
+    events = list(manager.handle_text_delta(vendor_part_id='text1', content=' more', thinking_tags=None))
+
+    assert len(events) == 1
+    assert isinstance(events[0], PartStartEvent)
+    assert isinstance(events[0].part, TextPart)
+    assert events[0].part.content == 'initial more'
+
+    parts = manager.get_parts()
+    assert len(parts) == 1
+    assert isinstance(parts[0], TextPart)
+    assert parts[0].content == 'initial more'
+
+
+def test_bare_end_tag_chunk():
+    """Test chunk containing only the closing tag (branch 411->386)."""
+    events, parts = stream_text_deltas(['<think>', 'content', '</think>'])
+
+    assert len(parts) == 1
+    assert isinstance(parts[0], ThinkingPart)
+    assert parts[0].content == 'content'
+    assert len(events) == 1
+
+
+def test_stream_without_finalize():
+    """Test streaming without finalization (branch 49->53)."""
+    events, parts = stream_text_deltas(['<thi'], finalize=False)
+
+    # Incomplete tag should be buffered, not emitted
+    assert len(events) == 0
+    # No parts yet since not finalized
+    assert len(parts) == 0

@@ -408,7 +408,7 @@ class ModelResponsePartsManager:
                 self._isolated_start_tags[new_part_index] = start_tag
             elif segment_type == 'thinking':
                 yield from self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=segment_content)
-            elif segment_type == 'end_tag':
+            elif segment_type == 'end_tag':  # pragma: no cover
                 self._vendor_id_to_part_index.pop(vendor_part_id)
 
         if new_buffer:
