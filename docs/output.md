@@ -470,9 +470,10 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-#### Handling partial output in output validators {#partial-output}
+#### Partial validation {#partial-validation}
 
-You can use the `partial_output` field on `RunContext` to handle validation differently for partial outputs during streaming (e.g. skip validation altogether).
+You can use the `allow_partial` field on `RunContext` to implement your own partial validation in output validators.
+For example, you could choose to skip validation altogether if `allow_partial` is true:
 
 ```python {title="partial_validation_streaming.py" line_length="120"}
 from pydantic_ai import Agent, ModelRetry, RunContext
@@ -481,7 +482,7 @@ agent = Agent('openai:gpt-5')
 
 @agent.output_validator
 def validate_output(ctx: RunContext, output: str) -> str:
-    if ctx.partial_output:
+    if ctx.allow_partial:
         return output
     else:
         if len(output) < 50:

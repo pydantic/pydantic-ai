@@ -339,14 +339,14 @@ def test_output_validator():
 
 
 def test_output_validator_partial_sync():
-    """Test that output validators receive correct value for `partial_output` in sync mode."""
+    """Test that output validators receive correct value for `allow_partial` in sync mode."""
     call_log: list[tuple[str, bool]] = []
 
     agent = Agent[None, str](TestModel(custom_output_text='test output'))
 
     @agent.output_validator
     def validate_output(ctx: RunContext[None], output: str) -> str:
-        call_log.append((output, ctx.partial_output))
+        call_log.append((output, ctx.allow_partial))
         return output
 
     result = agent.run_sync('Hello')
@@ -356,7 +356,7 @@ def test_output_validator_partial_sync():
 
 
 async def test_output_validator_partial_stream_text():
-    """Test that output validators receive correct value for `partial_output` when using stream_text()."""
+    """Test that output validators receive correct value for `allow_partial` when using stream_text()."""
     call_log: list[tuple[str, bool]] = []
 
     async def stream_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
@@ -367,7 +367,7 @@ async def test_output_validator_partial_stream_text():
 
     @agent.output_validator
     def validate_output(ctx: RunContext[None], output: str) -> str:
-        call_log.append((output, ctx.partial_output))
+        call_log.append((output, ctx.allow_partial))
         return output
 
     async with agent.run_stream('Hello') as result:
@@ -388,7 +388,7 @@ async def test_output_validator_partial_stream_text():
 
 
 async def test_output_validator_partial_stream_output():
-    """Test that output validators receive correct value for `partial_output` when using stream_output()."""
+    """Test that output validators receive correct value for `allow_partial` when using stream_output()."""
     call_log: list[tuple[Foo, bool]] = []
 
     async def stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
@@ -401,7 +401,7 @@ async def test_output_validator_partial_stream_output():
 
     @agent.output_validator
     def validate_output(ctx: RunContext[None], output: Foo) -> Foo:
-        call_log.append((output, ctx.partial_output))
+        call_log.append((output, ctx.allow_partial))
         return output
 
     async with agent.run_stream('Hello') as result:

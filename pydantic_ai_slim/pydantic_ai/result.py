@@ -117,7 +117,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         else:
             async for text in self._stream_response_text(delta=False, debounce_by=debounce_by):
                 for validator in self._output_validators:
-                    text = await validator.validate(text, replace(self._run_ctx, partial_output=True))
+                    text = await validator.validate(text, replace(self._run_ctx, allow_partial=True))
                 yield text
 
     # TODO (v2): Drop in favor of `response` property
@@ -195,9 +195,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
             )
             for validator in self._output_validators:
-                result_data = await validator.validate(
-                    result_data, replace(self._run_ctx, partial_output=allow_partial)
-                )
+                result_data = await validator.validate(result_data, replace(self._run_ctx, allow_partial=allow_partial))
             return result_data
         else:
             raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
