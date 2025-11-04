@@ -3897,6 +3897,30 @@ You are a potato.\
     )
 
 
+def test_instructions_during_run():
+    agent = Agent('test', instructions='You are a helpful assistant.')
+    result = agent.run_sync('Hello', instructions='Your task is to greet people.')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+            instructions="""\
+You are a helpful assistant.
+Your task is to greet people.\
+""",
+        )
+    )
+
+    result2 = agent.run_sync('Hello again!')
+    assert result2.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello again!', timestamp=IsDatetime())],
+            instructions="""\
+You are a helpful assistant.\
+""",
+        )
+    )
+
+
 def test_multi_agent_instructions_with_structured_output():
     """Test that Agent2 uses its own instructions when called with Agent1's history.
 
