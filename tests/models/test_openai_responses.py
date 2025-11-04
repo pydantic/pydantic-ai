@@ -5901,7 +5901,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Please include your response in a tool call.',
+                        content='Please return text or include your response in a tool call.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
