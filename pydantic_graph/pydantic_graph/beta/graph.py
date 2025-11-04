@@ -148,6 +148,12 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
     parent_forks: dict[JoinID, ParentFork[NodeID]]
     """Parent fork information for each join node."""
 
+    intermediate_join_nodes: dict[JoinID, set[JoinID]]
+    """For each join, the set of other joins that appear between it and its parent fork.
+
+    Used to determine which joins are "final" (have no other joins as intermediates) and
+    which joins should preserve fork stacks when proceeding downstream."""
+
     def get_parent_fork(self, join_id: JoinID) -> ParentFork[NodeID]:
         """Get the parent fork information for a join node.
 
@@ -164,6 +170,24 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         if result is None:
             raise RuntimeError(f'Node {join_id} is not a join node or did not have a dominating fork (this is a bug)')
         return result
+
+    def is_final_join(self, join_id: JoinID) -> bool:
+        """Check if a join is 'final' (has no downstream joins with the same parent fork).
+
+        A join is non-final if it appears as an intermediate node for another join
+        with the same parent fork.
+
+        Args:
+            join_id: The ID of the join node
+
+        Returns:
+            True if the join is final, False if it's non-final
+        """
+        # Check if this join appears in any other join's intermediate_join_nodes
+        for intermediate_joins in self.intermediate_join_nodes.values():
+            if join_id in intermediate_joins:
+                return False
+        return True
 
     async def run(
         self,
@@ -517,7 +541,14 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                     parent_fork_id = self.graph.get_parent_fork(result.join_id).fork_id
                                     for i, x in enumerate(result.fork_stack[::-1]):
                                         if x.fork_id == parent_fork_id:
-                                            downstream_fork_stack = result.fork_stack[: len(result.fork_stack) - i]
+                                            # For non-final joins (those that are intermediate nodes of other joins),
+                                            # preserve the fork stack so downstream joins can still associate with the same fork run
+                                            if self.graph.is_final_join(result.join_id):
+                                                # Final join: remove the parent fork from the stack
+                                                downstream_fork_stack = result.fork_stack[: len(result.fork_stack) - i]
+                                            else:
+                                                # Non-final join: preserve the fork stack
+                                                downstream_fork_stack = result.fork_stack
                                             fork_run_id = x.node_run_id
                                             break
                                     else:  # pragma: no cover
@@ -535,13 +566,9 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                     join_state.current = join_node.reduce(context, join_state.current, result.inputs)
                                     if join_state.cancelled_sibling_tasks:
                                         await self._cancel_sibling_tasks(parent_fork_id, fork_run_id)
-                                    if task_result.source_is_finished:  # pragma: no branch
-                                        await self._finish_task(task_result.source.task_id)
                                 else:
                                     for new_task in maybe_overridden_result:
                                         self.active_tasks[new_task.task_id] = new_task
-                                    if task_result.source_is_finished:
-                                        await self._finish_task(task_result.source.task_id)
 
                                 tasks_by_id_values = list(self.active_tasks.values())
                                 join_tasks: list[GraphTask] = []
@@ -566,28 +593,61 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                         new_task_ids = {t.task_id for t in maybe_overridden_result}
                                         for t in task_result.result:
                                             if t.task_id not in new_task_ids:
-                                                await self._finish_task(t.task_id)
+                                                await self._finish_task(t.task_id, t.node_id)
                                     self._handle_execution_request(maybe_overridden_result)
+
+                                if task_result.source_is_finished:
+                                    await self._finish_task(task_result.source.task_id, task_result.source.node_id)
 
                                 if not self.active_tasks:
                                     # if there are no active tasks, we'll be waiting forever for the next result..
                                     break
 
                             if self.active_reducers:  # pragma: no branch
-                                # In this case, there are no pending tasks. We can therefore finalize all active reducers whose
-                                # downstream fork stacks are not a strict "prefix" of another active reducer. (If it was, finalizing the
-                                # deeper reducer could produce new tasks in the "prefix" reducer.)
-                                active_fork_stacks = [
-                                    join_state.downstream_fork_stack for join_state in self.active_reducers.values()
-                                ]
+                                # In this case, there are no pending tasks. We can therefore finalize all active reducers
+                                # that don't have intermediate joins which are also active reducers. If a join J2 has an
+                                # intermediate join J1 that shares the same parent fork run, we must finalize J1 first
+                                # because it might produce items that feed into J2.
                                 for (join_id, fork_run_id), join_state in list(self.active_reducers.items()):
-                                    fork_stack = join_state.downstream_fork_stack
-                                    if any(
-                                        len(afs) > len(fork_stack) and fork_stack == afs[: len(fork_stack)]
-                                        for afs in active_fork_stacks
-                                    ):
-                                        # this join_state is a strict prefix for one of the other active join_states
-                                        continue  # pragma: no cover  # It's difficult to cover this
+                                    # Check if this join has any intermediate joins that are also active reducers
+                                    should_skip = False
+                                    intermediate_joins = self.graph.intermediate_join_nodes.get(join_id, set())
+
+                                    # Get the parent fork for this join to use for comparison
+                                    join_parent_fork = self.graph.get_parent_fork(join_id)
+
+                                    for intermediate_join_id in intermediate_joins:
+                                        # Check if the intermediate join is also an active reducer with matching fork run
+                                        for (other_join_id, _), other_join_state in self.active_reducers.items():
+                                            if other_join_id == intermediate_join_id:
+                                                # Check if they share the same fork run for this join's parent fork
+                                                # by finding the parent fork's node_run_id in both fork stacks
+                                                join_parent_fork_run_id = None
+                                                other_parent_fork_run_id = None
+
+                                                for fsi in join_state.downstream_fork_stack:
+                                                    if fsi.fork_id == join_parent_fork.fork_id:
+                                                        join_parent_fork_run_id = fsi.node_run_id
+                                                        break
+
+                                                for fsi in other_join_state.downstream_fork_stack:
+                                                    if fsi.fork_id == join_parent_fork.fork_id:
+                                                        other_parent_fork_run_id = fsi.node_run_id
+                                                        break
+
+                                                if (
+                                                    join_parent_fork_run_id
+                                                    and other_parent_fork_run_id
+                                                    and join_parent_fork_run_id == other_parent_fork_run_id
+                                                ):
+                                                    should_skip = True
+                                                    break
+                                        if should_skip:
+                                            break
+
+                                    if should_skip:
+                                        continue
+
                                     self.active_reducers.pop(
                                         (join_id, fork_run_id)
                                     )  # we're handling it now, so we can pop it
@@ -610,7 +670,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                         # Same note as above about how this is theoretically reachable but we should
                                         # just get coverage by unifying the code paths
                                         if t.task_id not in new_task_ids:  # pragma: no cover
-                                            await self._finish_task(t.task_id)
+                                            await self._finish_task(t.task_id, t.node_id)
                                     self._handle_execution_request(maybe_overridden_result)
                 except GeneratorExit:
                     self._task_group.cancel_scope.cancel()
@@ -620,7 +680,8 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
             'Graph run completed, but no result was produced. This is either a bug in the graph or a bug in the graph runner.'
         )
 
-    async def _finish_task(self, task_id: TaskID) -> None:
+    async def _finish_task(self, task_id: TaskID, node_id: str) -> None:
+        # node_id is just included for debugging right now
         scope = self.cancel_scopes.pop(task_id, None)
         if scope is not None:
             scope.cancel()
@@ -837,7 +898,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 else:
                     pass
         for task_id in task_ids_to_cancel:
-            await self._finish_task(task_id)
+            await self._finish_task(task_id, 'sibling')
 
 
 def _is_any_iterable(x: Any) -> TypeGuard[Iterable[Any]]:
