@@ -1489,3 +1489,14 @@ async def test_server_info(mcp_server: MCPServerStdio) -> None:
     async with mcp_server:
         assert mcp_server.server_info is not None
         assert mcp_server.server_info.name == 'Pydantic AI MCP Server'
+
+
+async def test_agent_run_stream_with_mcp_server_http(allow_model_requests: None):
+    server = MCPServerStreamableHTTP(url='https://mcp.deepwiki.com/mcp')
+    agent = Agent(model='openai:gpt-4o', toolsets=[server], instructions='Be concise.')
+
+    # This should not raise an error.
+    # See https://github.com/pydantic/pydantic-ai/issues/2818#issuecomment-3476480829
+    async with agent.run_stream('Who are the main contributors to the pydantic/pydantic-ai repo.') as result:
+        output = await result.get_output()
+    assert output == snapshot()
