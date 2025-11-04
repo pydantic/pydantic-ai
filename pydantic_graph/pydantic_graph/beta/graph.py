@@ -541,7 +541,12 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                             else:
                                 maybe_overridden_result = yield task_result.result
                             if isinstance(maybe_overridden_result, EndMarker):
-                                self.task_group.cancel_scope.cancel()
+                                # If we got an end marker, this task is definitely done, and we're ready to
+                                # start cleaning everything up
+                                await self._finish_task(task_result.source.task_id)
+                                if self.active_tasks:
+                                    # Cancel the remaining tasks
+                                    self.task_group.cancel_scope.cancel()
                                 return
                             elif isinstance(maybe_overridden_result, JoinItem):
                                 result = maybe_overridden_result
@@ -600,11 +605,11 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                     new_task_ids = {t.task_id for t in maybe_overridden_result}
                                     for t in task_result.result:
                                         if t.task_id not in new_task_ids:
-                                            await self._finish_task(t.task_id, t.node_id)
+                                            await self._finish_task(t.task_id)
                                 self._handle_execution_request(maybe_overridden_result)
 
                             if task_result.source_is_finished:
-                                await self._finish_task(task_result.source.task_id, task_result.source.node_id)
+                                await self._finish_task(task_result.source.task_id)
 
                             if not self.active_tasks:
                                 # if there are no active tasks, we'll be waiting forever for the next result..
@@ -677,7 +682,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                     # Same note as above about how this is theoretically reachable but we should
                                     # just get coverage by unifying the code paths
                                     if t.task_id not in new_task_ids:  # pragma: no cover
-                                        await self._finish_task(t.task_id, t.node_id)
+                                        await self._finish_task(t.task_id)
                                 self._handle_execution_request(maybe_overridden_result)
             except GeneratorExit:
                 self.task_group.cancel_scope.cancel()
@@ -687,7 +692,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
             'Graph run completed, but no result was produced. This is either a bug in the graph or a bug in the graph runner.'
         )
 
-    async def _finish_task(self, task_id: TaskID, node_id: str) -> None:
+    async def _finish_task(self, task_id: TaskID) -> None:
         # node_id is just included for debugging right now
         scope = self.cancel_scopes.pop(task_id, None)
         if scope is not None:
@@ -905,7 +910,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 else:
                     pass
         for task_id in task_ids_to_cancel:
-            await self._finish_task(task_id, 'sibling')
+            await self._finish_task(task_id)
 
 
 def _is_any_iterable(x: Any) -> TypeGuard[Iterable[Any]]:
