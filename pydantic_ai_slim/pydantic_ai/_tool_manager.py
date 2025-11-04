@@ -147,7 +147,7 @@ class ToolManager(Generic[AgentDepsT]):
                 tool_call_id=call.tool_call_id,
                 retry=self.ctx.retries.get(name, 0),
                 max_retries=tool.max_retries,
-                allow_partial=allow_partial,
+                partial_output=allow_partial,
             )
 
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
