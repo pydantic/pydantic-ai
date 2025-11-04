@@ -306,7 +306,7 @@ class ModelRequestParameters:
     function_tools: list[ToolDefinition] = field(default_factory=list)
     builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list)
 
-    output_mode: OutputMode | None = 'text'
+    output_mode: OutputMode | None = 'text'  # TODO (DouweM): None or new `'auto'` value? AutoOutputSchema is not bad.
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list)
     prompted_output_template: str | None = None
