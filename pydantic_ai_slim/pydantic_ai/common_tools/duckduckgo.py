@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import functools
 from dataclasses import KW_ONLY, dataclass
 
