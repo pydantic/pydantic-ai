@@ -6,7 +6,7 @@ from typing import Any, cast
 import pytest
 import pytest_asyncio
 
-from ..conftest import try_import
+from ...conftest import try_import
 
 with try_import() as imports_successful:
     from fastapi import FastAPI

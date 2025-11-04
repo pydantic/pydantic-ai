@@ -4,7 +4,7 @@ import time
 import pytest
 from aioresponses import aioresponses
 
-from ..conftest import try_import
+from ...conftest import try_import
 
 with try_import() as imports_successful:
     from fastapi import FastAPI

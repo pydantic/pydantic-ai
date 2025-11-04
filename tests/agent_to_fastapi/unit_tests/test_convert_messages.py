@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from freezegun import freeze_time
 
-from ..conftest import try_import
+from ...conftest import try_import
 
 with try_import() as imports_successful:
     from openai.types.chat import (
