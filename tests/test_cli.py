@@ -61,9 +61,7 @@ def create_test_module():
 def empty_last_conversation_path(tmp_path: Path, mocker: MockerFixture) -> Path:
     path = tmp_path / LAST_CONVERSATION_FILENAME
     mocker.patch('pydantic_ai._cli.PYDANTIC_AI_HOME', tmp_path)
-
-    if path.exists():
-        path.unlink()
+    path.unlink(missing_ok=True)
 
     return path
 
