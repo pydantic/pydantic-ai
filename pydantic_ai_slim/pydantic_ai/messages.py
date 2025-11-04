@@ -34,6 +34,7 @@ DocumentMediaType: TypeAlias = Literal[
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'text/html',
     'text/markdown',
+    'application/msword',
     'application/vnd.ms-excel',
 ]
 VideoMediaType: TypeAlias = Literal[
@@ -434,8 +435,12 @@ class DocumentUrl(FileUrl):
             return 'application/pdf'
         elif self.url.endswith('.rtf'):
             return 'application/rtf'
+        elif self.url.endswith('.doc'):
+            return 'application/msword'
         elif self.url.endswith('.docx'):
             return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        elif self.url.endswith('.xls'):
+            return 'application/vnd.ms-excel'
         elif self.url.endswith('.xlsx'):
             return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
@@ -646,6 +651,7 @@ _document_format_lookup: dict[str, DocumentFormat] = {
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
     'text/html': 'html',
     'text/markdown': 'md',
+    'application/msword': 'doc',
     'application/vnd.ms-excel': 'xls',
 }
 _audio_format_lookup: dict[str, AudioFormat] = {
