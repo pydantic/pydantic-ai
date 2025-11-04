@@ -200,7 +200,7 @@ def test_result_pydantic_model_retry():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=87, output_tokens=14),
+                usage=RequestUsage(input_tokens=89, output_tokens=14),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -259,7 +259,9 @@ def test_result_pydantic_model_validation_error():
     retry_prompt = user_retry.parts[0]
     assert isinstance(retry_prompt, RetryPromptPart)
     assert retry_prompt.model_response() == snapshot("""\
-1 validation errors: [
+1 validation error:
+```json
+[
   {
     "type": "value_error",
     "loc": [
@@ -269,6 +271,7 @@ def test_result_pydantic_model_validation_error():
     "input": "foo"
   }
 ]
+```
 
 Fix the errors and try again.""")
 
@@ -1822,7 +1825,7 @@ def test_native_output():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=85, output_tokens=12),
+                usage=RequestUsage(input_tokens=87, output_tokens=12),
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
             ),
