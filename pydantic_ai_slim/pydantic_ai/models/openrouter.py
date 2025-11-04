@@ -1,11 +1,11 @@
+import json
 from dataclasses import asdict, dataclass
 from typing import Any, Literal, cast
 
 from pydantic import AliasChoices, BaseModel, Field, TypeAdapter
 from typing_extensions import TypedDict, assert_never, override
 
-from .. import _utils
-from ..exceptions import ModelHTTPError
+from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
 from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -263,7 +263,7 @@ class OpenRouterError(BaseModel):
     message: str
 
 
-class BaseReasoningDetail(BaseModel):
+class _BaseReasoningDetail(BaseModel):
     """Common fields shared across all reasoning detail types."""
 
     id: str | None = None
@@ -271,21 +271,21 @@ class BaseReasoningDetail(BaseModel):
     index: int | None
 
 
-class ReasoningSummary(BaseReasoningDetail):
+class _ReasoningSummary(_BaseReasoningDetail):
     """Represents a high-level summary of the reasoning process."""
 
     type: Literal['reasoning.summary']
     summary: str = Field(validation_alias=AliasChoices('summary', 'content'))
 
 
-class ReasoningEncrypted(BaseReasoningDetail):
+class _ReasoningEncrypted(_BaseReasoningDetail):
     """Represents encrypted reasoning data."""
 
     type: Literal['reasoning.encrypted']
     data: str = Field(validation_alias=AliasChoices('data', 'signature'))
 
 
-class ReasoningText(BaseReasoningDetail):
+class _ReasoningText(_BaseReasoningDetail):
     """Represents raw text reasoning."""
 
     type: Literal['reasoning.text']
@@ -293,55 +293,42 @@ class ReasoningText(BaseReasoningDetail):
     signature: str | None = None
 
 
-OpenRouterReasoningDetail = ReasoningSummary | ReasoningEncrypted | ReasoningText
-_reasoning_detail_adapter: TypeAdapter[OpenRouterReasoningDetail] = TypeAdapter(OpenRouterReasoningDetail)
+_OpenRouterReasoningDetail = _ReasoningSummary | _ReasoningEncrypted | _ReasoningText
+_reasoning_detail_adapter: TypeAdapter[_OpenRouterReasoningDetail] = TypeAdapter(_OpenRouterReasoningDetail)
 
 
-@dataclass(repr=False)
-class OpenRouterThinkingPart(ThinkingPart):
-    """A special ThinkingPart that includes reasoning attributes specific to OpenRouter."""
+def _from_reasoning_detail(reasoning: _OpenRouterReasoningDetail) -> ThinkingPart:
+    provider_name = 'openrouter'
+    reasoning_id = reasoning.model_dump_json(include={'id', 'format', 'index', 'type'})
+    if isinstance(reasoning, _ReasoningText):
+        return ThinkingPart(
+            id=reasoning_id,
+            content=reasoning.text,
+            signature=reasoning.signature,
+            provider_name=provider_name,
+        )
+    elif isinstance(reasoning, _ReasoningSummary):
+        return ThinkingPart(
+            id=reasoning_id,
+            content=reasoning.summary,
+            provider_name=provider_name,
+        )
+    else:
+        return ThinkingPart(
+            id=reasoning_id,
+            content='',
+            signature=reasoning.data,
+            provider_name=provider_name,
+        )
 
-    type: Literal['reasoning.summary', 'reasoning.encrypted', 'reasoning.text']
-    index: int | None
-    format: Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1'] | None
 
-    __repr__ = _utils.dataclasses_no_defaults_repr
+def _into_reasoning_detail(thinking_part: ThinkingPart) -> _OpenRouterReasoningDetail:
+    if thinking_part.id is None:  # pragma: lax no cover
+        raise UnexpectedModelBehavior('OpenRouter thinking part has no ID')
 
-    @classmethod
-    def from_reasoning_detail(cls, reasoning: OpenRouterReasoningDetail):
-        provider_name = 'openrouter'
-        if isinstance(reasoning, ReasoningText):
-            return cls(
-                id=reasoning.id,
-                content=reasoning.text,
-                signature=reasoning.signature,
-                provider_name=provider_name,
-                format=reasoning.format,
-                type=reasoning.type,
-                index=reasoning.index,
-            )
-        elif isinstance(reasoning, ReasoningSummary):
-            return cls(
-                id=reasoning.id,
-                content=reasoning.summary,
-                provider_name=provider_name,
-                format=reasoning.format,
-                type=reasoning.type,
-                index=reasoning.index,
-            )
-        else:
-            return cls(
-                id=reasoning.id,
-                content='',
-                signature=reasoning.data,
-                provider_name=provider_name,
-                format=reasoning.format,
-                type=reasoning.type,
-                index=reasoning.index,
-            )
-
-    def into_reasoning_detail(self):
-        return _reasoning_detail_adapter.validate_python(asdict(self)).model_dump()
+    data = asdict(thinking_part)
+    data.update(json.loads(thinking_part.id))
+    return _reasoning_detail_adapter.validate_python(data)
 
 
 class OpenRouterCompletionMessage(chat.ChatCompletionMessage):
@@ -350,7 +337,7 @@ class OpenRouterCompletionMessage(chat.ChatCompletionMessage):
     reasoning: str | None = None
     """The reasoning text associated with the message, if any."""
 
-    reasoning_details: list[OpenRouterReasoningDetail] | None = None
+    reasoning_details: list[_OpenRouterReasoningDetail] | None = None
     """The reasoning details associated with the message, if any."""
 
 
@@ -481,22 +468,17 @@ class OpenRouterModel(OpenAIChatModel):
         return response
 
     @override
-    def _process_reasoning(self, response: chat.ChatCompletion) -> list[ThinkingPart]:
-        # We can cast with confidence because response was validated in `_validate_completion`
-        response = cast(OpenRouterChatCompletion, response)
-
-        message = response.choices[0].message
-        items: list[ThinkingPart] = []
+    def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:
+        assert isinstance(message, OpenRouterCompletionMessage)
 
         if reasoning_details := message.reasoning_details:
-            for detail in reasoning_details:
-                items.append(OpenRouterThinkingPart.from_reasoning_detail(detail))
-
-        return items
+            return [_from_reasoning_detail(detail) for detail in reasoning_details]
+        else:
+            return super()._process_thinking(message)
 
     @override
     def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any]:
-        response = cast(OpenRouterChatCompletion, response)
+        assert isinstance(response, OpenRouterChatCompletion)
 
         provider_details = super()._process_provider_details(response)
 
@@ -514,8 +496,8 @@ class OpenRouterModel(OpenAIChatModel):
             if isinstance(item, TextPart):
                 texts.append(item.content)
             elif isinstance(item, ThinkingPart):
-                if item.provider_name == self.system and isinstance(item, OpenRouterThinkingPart):
-                    reasoning_details.append(item.into_reasoning_detail())
+                if item.provider_name == self.system:
+                    reasoning_details.append(_into_reasoning_detail(item).model_dump())
                 else:  # pragma: no cover
                     pass
             elif isinstance(item, ToolCallPart):
@@ -555,7 +537,7 @@ class OpenRouterChoiceDelta(chat_completion_chunk.ChoiceDelta):
     reasoning: str | None = None
     """The reasoning text associated with the message, if any."""
 
-    reasoning_details: list[OpenRouterReasoningDetail] | None = None
+    reasoning_details: list[_OpenRouterReasoningDetail] | None = None
     """The reasoning details associated with the message, if any."""
 
 
@@ -605,7 +587,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
 
         if reasoning_details := choice.delta.reasoning_details:
             for detail in reasoning_details:
-                thinking_part = OpenRouterThinkingPart.from_reasoning_detail(detail)
+                thinking_part = _from_reasoning_detail(detail)
                 yield self._parts_manager.handle_thinking_delta(
                     vendor_part_id='reasoning_detail',
                     id=thinking_part.id,

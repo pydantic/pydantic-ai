@@ -538,27 +538,6 @@ class OpenAIChatModel(Model):
         """
         return chat.ChatCompletion.model_validate(response.model_dump())
 
-    def _process_reasoning(self, response: chat.ChatCompletion) -> list[ThinkingPart]:
-        """Hook that maps reasoning tokens to thinking parts.
-
-        This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
-        """
-        message = response.choices[0].message
-        items: list[ThinkingPart] = []
-
-        # The `reasoning_content` field is only present in DeepSeek models.
-        # https://api-docs.deepseek.com/guides/reasoning_model
-        if reasoning_content := getattr(message, 'reasoning_content', None):
-            items.append(ThinkingPart(id='reasoning_content', content=reasoning_content, provider_name=self.system))
-
-        # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
-        # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
-        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
-        if reasoning := getattr(message, 'reasoning', None):
-            items.append(ThinkingPart(id='reasoning', content=reasoning, provider_name=self.system))
-
-        return items
-
     def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any]:
         """Hook that response content to provider details.
 
@@ -616,7 +595,7 @@ class OpenAIChatModel(Model):
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
 
-        if thinking_parts := self._process_reasoning(response):
+        if thinking_parts := self._process_thinking(choice.message):
             items.extend(thinking_parts)
 
         if choice.message.content:
@@ -648,6 +627,26 @@ class OpenAIChatModel(Model):
             finish_reason=self._map_finish_reason(choice.finish_reason),
         )
 
+    def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:
+        """Hook that maps reasoning tokens to thinking parts.
+
+        This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
+        """
+        items: list[ThinkingPart] = []
+
+        # The `reasoning_content` field is only present in DeepSeek models.
+        # https://api-docs.deepseek.com/guides/reasoning_model
+        if reasoning_content := getattr(message, 'reasoning_content', None):
+            items.append(ThinkingPart(id='reasoning_content', content=reasoning_content, provider_name=self.system))
+
+        # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
+        # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
+        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
+        if reasoning := getattr(message, 'reasoning', None):
+            items.append(ThinkingPart(id='reasoning', content=reasoning, provider_name=self.system))
+
+        return items
+
     async def _process_streamed_response(
         self, response: AsyncStream[ChatCompletionChunk], model_request_parameters: ModelRequestParameters
     ) -> OpenAIStreamedResponse:
@@ -674,7 +673,11 @@ class OpenAIChatModel(Model):
         )
 
     @property
-    def _streamed_response_cls(self):
+    def _streamed_response_cls(self) -> type[OpenAIStreamedResponse]:
+        """Returns the `StreamedResponse` type that will be used for streamed responses.
+
+        This method may be overridden by subclasses of `OpenAIChatModel` to provide their own `StreamedResponse` type.
+        """
         return OpenAIStreamedResponse
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -743,6 +746,10 @@ class OpenAIChatModel(Model):
     def _map_finish_reason(
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
     ) -> FinishReason | None:
+        """Hooks that maps a finish reason key to a [FinishReason](pydantic_ai.messages.FinishReason).
+
+        This method may be overridden by subclasses of `OpenAIChatModel` to accommodate custom keys.
+        """
         return _CHAT_FINISH_REASON_MAP.get(key)
 
     async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
@@ -1752,7 +1759,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             if provider_details := self._map_provider_details(chunk):
                 self.provider_details = provider_details
 
-            for event in self._map_part_delta(chunk):
+            for event in self._map_part_delta(choice):
                 yield event
 
     async def _validate_response(self):
@@ -1765,12 +1772,11 @@ class OpenAIStreamedResponse(StreamedResponse):
         async for chunk in self._response:
             yield chunk
 
-    def _map_part_delta(self, chunk: ChatCompletionChunk):
+    def _map_part_delta(self, choice: Choice):
         """Hook that determines the sequence of mappings that will be called to produce events.
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
         """
-        choice = chunk.choices[0]
         return itertools.chain(
             self._map_thinking_delta(choice), self._map_text_delta(choice), self._map_tool_call_delta(choice)
         )
@@ -1851,6 +1857,10 @@ class OpenAIStreamedResponse(StreamedResponse):
     def _map_finish_reason(
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
     ) -> FinishReason | None:
+        """Hooks that maps a finish reason key to a [FinishReason](pydantic_ai.messages.FinishReason).
+
+        This method may be overridden by subclasses of `OpenAIChatModel` to accommodate custom keys.
+        """
         return _CHAT_FINISH_REASON_MAP.get(key)
 
     @property
