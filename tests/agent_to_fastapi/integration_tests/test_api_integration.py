@@ -8,6 +8,7 @@ from ...conftest import try_import
 
 with try_import() as imports_successful:
     from fastapi import FastAPI
+    from fastapi.routing import APIRoute
     from httpx import ASGITransport, AsyncClient
 
     from pydantic_ai.fastapi.agent_router import AgentAPIRouter
@@ -64,6 +65,38 @@ async def test_models_list_and_get(
         assert isinstance(detail, dict)
         assert 'error' in detail
         assert detail['error']['type'] == 'not_found_error'
+
+
+@pytest.mark.asyncio
+async def test_routers_disabled(
+    registry_with_openai_clients: AgentRegistry,
+) -> None:
+    """Verify whether disabling apis actually effectively not adds APIRoutes to the app."""
+    registry = registry_with_openai_clients
+
+    router = AgentAPIRouter(agent_registry=registry, disable_completions_api=True, disable_response_api=True)
+
+    app = FastAPI()
+    app.include_router(router)
+
+    transport = ASGITransport(app=app)
+
+    api_routes: list[APIRoute] = list(filter(lambda x: isinstance(x, APIRoute), app.routes))  # type: ignore
+    assert {item.path for item in api_routes} == {'/v1/models', '/v1/models/{model_id}'}
+
+    async with AsyncClient(transport=transport, base_url='http://testserver') as client:
+        payload = {
+            'model': 'test-model',
+            'messages': [{'role': 'user', 'content': 'hello'}],
+        }
+
+        response = await client.post('/v1/chat/completions', json=payload)
+        assert response.is_error
+        assert response.status_code == 404
+
+        response = await client.post('/v1/responses', json=payload)
+        assert response.is_error
+        assert response.status_code == 404
 
 
 @pytest.mark.asyncio
