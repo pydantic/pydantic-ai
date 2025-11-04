@@ -21,7 +21,7 @@ interactions:
         - text: What day is today?
           type: text
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
       tool_choice:
         type: auto
@@ -143,7 +143,7 @@ interactions:
           - Social Security Day
         type: text
       id: msg_015yJEtDXJUq55EfSpwxam1f
-      model: claude-3-5-sonnet-20241022
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
       stop_sequence: null

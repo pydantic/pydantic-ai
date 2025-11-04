@@ -7,6 +7,7 @@ the graph-based workflow system.
 
 from __future__ import annotations as _annotations
 
+import sys
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Iterable, Sequence
 from contextlib import AbstractContextManager, ExitStack, asynccontextmanager, contextmanager
@@ -18,7 +19,6 @@ from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from typing_extensions import TypeVar, assert_never
 
-from pydantic_ai.exceptions import ExceptionGroup
 from pydantic_graph import exceptions
 from pydantic_graph._utils import AbstractSpan, get_traceparent, infer_obj_name, logfire_span
 from pydantic_graph.beta.decision import Decision
@@ -42,6 +42,11 @@ from pydantic_graph.beta.paths import (
 from pydantic_graph.beta.step import NodeStep, Step, StepContext, StepNode
 from pydantic_graph.beta.util import unpack_type_expression
 from pydantic_graph.nodes import BaseNode, End
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
+else:
+    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 if TYPE_CHECKING:
     from pydantic_graph.beta.mermaid import StateDiagramDirection

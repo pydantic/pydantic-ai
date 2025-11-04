@@ -613,7 +613,7 @@ You can set the `HEROKU_INFERENCE_KEY` and (optionally )`HEROKU_INFERENCE_URL` e
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('heroku:claude-3-7-sonnet')
+agent = Agent('heroku:claude-sonnet-4-5')
 ...
 ```
 
@@ -625,7 +625,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.heroku import HerokuProvider
 
 model = OpenAIChatModel(
-    'claude-3-7-sonnet',
+    'claude-sonnet-4-5',
     provider=HerokuProvider(api_key='your-heroku-inference-key'),
 )
 agent = Agent(model)
@@ -679,7 +679,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.litellm import LiteLLMProvider
 
 model = OpenAIChatModel(
-    'openai/gpt-3.5-turbo',
+    'openai/gpt-5',
     provider=LiteLLMProvider(
         api_base='<api-base-url>',
         api_key='<api-key>'

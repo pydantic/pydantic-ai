@@ -267,6 +267,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         next_message.instructions = await ctx.deps.get_instructions(run_context)
 
+        if not messages and not next_message.parts and not next_message.instructions:
+            raise exceptions.UserError('No message history, user prompt, or instructions provided')
+
         return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
 
     async def _handle_deferred_tool_results(  # noqa: C901

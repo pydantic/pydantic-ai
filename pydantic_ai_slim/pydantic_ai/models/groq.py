@@ -524,6 +524,8 @@ class GroqStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         try:
             executed_tool_call_id: str | None = None
+            reasoning_index = 0
+            reasoning = False
             async for chunk in self._response:
                 self._usage += _map_usage(chunk)
 
@@ -540,10 +542,16 @@ class GroqStreamedResponse(StreamedResponse):
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
                 if choice.delta.reasoning is not None:
+                    if not reasoning:
+                        reasoning_index += 1
+                        reasoning = True
+
                     # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
                     yield self._parts_manager.handle_thinking_delta(
-                        vendor_part_id='reasoning', content=choice.delta.reasoning
+                        vendor_part_id=f'reasoning-{reasoning_index}', content=choice.delta.reasoning
                     )
+                else:
+                    reasoning = False
 
                 if choice.delta.executed_tools:
                     for tool in choice.delta.executed_tools:

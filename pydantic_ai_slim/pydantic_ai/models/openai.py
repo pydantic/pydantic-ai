@@ -949,6 +949,10 @@ class OpenAIResponsesModel(Model):
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
+    def base_url(self) -> str:
+        return str(self.client.base_url)
+
+    @property
     def model_name(self) -> OpenAIModelName:
         """The model name."""
         return self._model_name
@@ -1148,10 +1152,10 @@ class OpenAIResponsesModel(Model):
             + list(model_settings.get('openai_builtin_tools', []))
             + self._get_tools(model_request_parameters)
         )
-
+        profile = OpenAIModelProfile.from_profile(self.profile)
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output:
+        elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -1184,7 +1188,6 @@ class OpenAIResponsesModel(Model):
             text = text or {}
             text['verbosity'] = verbosity
 
-        profile = OpenAIModelProfile.from_profile(self.profile)
         unsupported_model_settings = profile.openai_unsupported_model_settings
         for setting in unsupported_model_settings:
             model_settings.pop(setting, None)
@@ -1431,6 +1434,8 @@ class OpenAIResponsesModel(Model):
                             call_id=call_id,
                             type='function_call',
                         )
+                        if profile.openai_responses_requires_function_call_status_none:
+                            param['status'] = None  # type: ignore[reportGeneralTypeIssues]
                         if id and send_item_ids:  # pragma: no branch
                             param['id'] = id
                         openai_messages.append(param)

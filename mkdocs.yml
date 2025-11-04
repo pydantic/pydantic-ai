@@ -14,7 +14,6 @@ nav:
   - install.md
   - help.md
   - troubleshooting.md
-  - changelog.md
 
   - Documentation:
       - Core Concepts:
@@ -34,6 +33,7 @@ nav:
           - models/groq.md
           - models/mistral.md
           - models/huggingface.md
+          - models/outlines.md
       - Tools & Toolsets:
           - tools.md
           - tools-advanced.md
@@ -49,6 +49,7 @@ nav:
       - MCP:
           - Overview: mcp/overview.md
           - mcp/client.md
+          - mcp/fastmcp-client.md
           - mcp/server.md
       - Multi-Agent Patterns: multi-agent-applications.md
       - Testing: testing.md
@@ -90,7 +91,10 @@ nav:
         - Temporal: durable_execution/temporal.md
         - DBOS: durable_execution/dbos.md
         - Prefect: durable_execution/prefect.md
-      - Agent-User Interaction (AG-UI): ag-ui.md
+      - UI Event Streams:
+        - Overview: ui/overview.md
+        - AG-UI: ui/ag-ui.md
+        - Vercel AI: ui/vercel-ai.md
       - Agent2Agent (A2A): a2a.md
 
   - Related Packages:
@@ -121,7 +125,6 @@ nav:
 
   - API Reference:
       - pydantic_ai:
-          - api/ag_ui.md
           - api/agent.md
           - api/tools.md
           - api/toolsets.md
@@ -148,6 +151,7 @@ nav:
           - api/models/huggingface.md
           - api/models/instrumented.md
           - api/models/mistral.md
+          - api/models/outlines.md
           - api/models/test.md
           - api/models/function.md
           - api/models/fallback.md
@@ -157,6 +161,10 @@ nav:
           - api/providers.md
           - api/retries.md
           - api/run.md
+          - api/ag_ui.md
+          - api/ui/base.md
+          - api/ui/ag_ui.md
+          - api/ui/vercel_ai.md
       - pydantic_evals:
           - api/pydantic_evals/dataset.md
           - api/pydantic_evals/evaluators.md
@@ -182,6 +190,8 @@ nav:
 
   - Project:
       - contributing.md
+      - changelog.md
+      - version-policy.md
 
 extra:
   # hide the "Made with Material for MkDocs" message
@@ -324,7 +334,6 @@ plugins:
           - install.md
           - help.md
           - troubleshooting.md
-          - changelog.md
         Concepts documentation:
           - a2a.md
           - ag-ui.md
@@ -356,11 +365,15 @@ plugins:
           - durable_execution/*.md
         MCP:
           - mcp/*.md
+        UI Event Streams:
+          - ui/*.md
         Optional:
           - testing.md
           - cli.md
           - logfire.md
           - contributing.md
+          - changelog.md
+          - version-policy.md
         Examples:
           - examples/*.md
 

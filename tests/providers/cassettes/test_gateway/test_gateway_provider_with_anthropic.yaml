@@ -21,7 +21,7 @@ interactions:
         - text: What is the capital of France?
           type: text
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
     uri: http://localhost:8787/anthropic/v1/messages?beta=true
   response:
@@ -41,7 +41,7 @@ interactions:
       - text: The capital of France is Paris.
         type: text
       id: msg_0116L5r52AZ42YhvvdUuHEsk
-      model: claude-3-5-sonnet-20241022
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
       stop_sequence: null
