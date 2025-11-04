@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import KW_ONLY, dataclass
+from typing import TYPE_CHECKING
 
 import anyio
 import anyio.to_thread
@@ -10,16 +11,19 @@ from typing_extensions import Any, TypedDict
 
 from pydantic_ai.tools import Tool
 
-try:
+if TYPE_CHECKING:
+    from ddgs import DDGS
+else:
     try:
-        from ddgs import DDGS
-    except ImportError:  # Fallback for older versions of ddgs
-        from duckduckgo_search import DDGS
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install `ddgs` to use the DuckDuckGo search tool, '
-        'you can use the `duckduckgo` optional group — `pip install "pydantic-ai-slim[duckduckgo]"`'
-    ) from _import_error
+        try:
+            from ddgs import DDGS
+        except ImportError:  # Fallback for older versions of ddgs
+            from duckduckgo_search import DDGS
+    except ImportError as _import_error:
+        raise ImportError(
+            'Please install `ddgs` to use the DuckDuckGo search tool, '
+            'you can use the `duckduckgo` optional group — `pip install "pydantic-ai-slim[duckduckgo]"`'
+        ) from _import_error
 
 __all__ = ('duckduckgo_search_tool',)
 
