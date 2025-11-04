@@ -62,7 +62,10 @@ class OpenAIModelProfile(ModelProfile):
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
-    is_reasoning_model = model_name.startswith('o') or model_name.startswith('gpt-5')
+    is_reasoning_model = (
+        model_name.startswith('o')
+        or (model_name.startswith('gpt-5') and 'chat' not in model_name)
+    )
     # Check if the model supports web search (only specific search-preview models)
     supports_web_search = '-search-preview' in model_name
 
