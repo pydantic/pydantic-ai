@@ -260,7 +260,7 @@ else:
 Tool(foobar_ctx, takes_ctx=True)
 Tool(foobar_ctx)
 Tool(foobar_plain, takes_ctx=False)
-assert_type(Tool(foobar_plain), Tool[None])
+assert_type(Tool(foobar_plain), Tool[object])
 assert_type(Tool(foobar_plain), Tool)
 
 # unfortunately we can't type check these cases, since from a typing perspect `foobar_ctx` is valid as a plain tool

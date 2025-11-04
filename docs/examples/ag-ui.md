@@ -45,7 +45,7 @@ Next run the AG-UI Dojo example frontend.
 2. Change into to the `ag-ui/typescript-sdk` directory
 
     ```shell
-    cd ag-ui/typescript-sdk
+    cd ag-ui/sdks/typescript
     ```
 
 3. Run the Dojo app following the [official instructions](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo#development-setup)
