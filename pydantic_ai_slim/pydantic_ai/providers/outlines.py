@@ -36,5 +36,5 @@ class OutlinesProvider(Provider[Any]):
             supports_tools=False,
             supports_json_schema_output=True,
             supports_json_object_output=True,
-            default_structured_output_mode='prompted',
+            default_structured_output_mode='native',
         )
