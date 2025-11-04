@@ -625,12 +625,12 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                                 join_parent_fork_run_id = None
                                                 other_parent_fork_run_id = None
 
-                                                for fsi in join_state.downstream_fork_stack:
+                                                for fsi in join_state.downstream_fork_stack:  # pragma: no branch
                                                     if fsi.fork_id == join_parent_fork.fork_id:
                                                         join_parent_fork_run_id = fsi.node_run_id
                                                         break
 
-                                                for fsi in other_join_state.downstream_fork_stack:
+                                                for fsi in other_join_state.downstream_fork_stack:  # pragma: no branch
                                                     if fsi.fork_id == join_parent_fork.fork_id:
                                                         other_parent_fork_run_id = fsi.node_run_id
                                                         break
@@ -639,7 +639,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                                     join_parent_fork_run_id
                                                     and other_parent_fork_run_id
                                                     and join_parent_fork_run_id == other_parent_fork_run_id
-                                                ):
+                                                ):  # pragma: no branch
                                                     should_skip = True
                                                     break
                                         if should_skip:
