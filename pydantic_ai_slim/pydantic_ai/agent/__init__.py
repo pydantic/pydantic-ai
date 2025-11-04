@@ -238,7 +238,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_type: The type of the output data, used to validate the data returned by the model,
                 defaults to `str`.
             instructions: Instructions to use for this agent, you can also register instructions via a function with
-                [`instructions`][pydantic_ai.Agent.instructions].
+                [`instructions`][pydantic_ai.Agent.instructions] or pass additional, temporary, instructions when executing a run.
             system_prompt: Static system prompts to use for this agent, you can also register system
                 prompts via a function with [`system_prompt`][pydantic_ai.Agent.system_prompt].
             deps_type: The type used for dependency injection, this parameter exists solely to allow you to fully
@@ -418,6 +418,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -436,6 +437,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -454,6 +456,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -527,6 +530,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
@@ -580,7 +584,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings = merge_model_settings(merged_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
 
-        instructions_literal, instructions_functions = self._get_instructions()
+        instructions_literal, instructions_functions = self._get_instructions(additional_instructions=instructions)
 
         async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
             parts = [
@@ -1330,9 +1334,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     def _get_instructions(
         self,
+        additional_instructions: Instructions[AgentDepsT] = None,
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
         override_instructions = self._override_instructions.get()
-        instructions = override_instructions.value if override_instructions else self._instructions
+        if override_instructions:
+            instructions = override_instructions.value
+        else:
+            instructions = self._instructions.copy()
+            if additional_instructions is not None:
+                instructions.extend(self._normalize_instructions(additional_instructions))
 
         literal_parts: list[str] = []
         functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
