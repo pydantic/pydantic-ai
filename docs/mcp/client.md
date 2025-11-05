@@ -313,7 +313,7 @@ MCP tools can include metadata that provides additional information about the to
 
 ## Resources
 
-MCP servers can provide [resources](https://modelcontextprotocol.io/docs/concepts/resources) - files, data, or content that can be accessed by the client. Resources in MCP are application-driven, with host applications determining how to incorporate context manually, based on their needs. This means they will _not_ be exposed to the LLM automatically (unless a tool returns a ResourceLink).
+MCP servers can provide [resources](https://modelcontextprotocol.io/docs/concepts/resources) - files, data, or content that can be accessed by the client. Resources in MCP are application-driven, with host applications determining how to incorporate context manually, based on their needs. This means they will _not_ be exposed to the LLM automatically (unless a tool returns a `ResourceLink` or `EmbeddedResource`).
 
 Pydantic AI provides methods to discover and read resources from MCP servers:
 
