@@ -231,7 +231,7 @@ class HuggingFaceModel(Model):
         if model_request_parameters.builtin_tools:
             raise UserError('HuggingFace does not support built-in tools')
 
-        hf_messages = await self._map_messages(messages)
+        hf_messages = await self._map_messages(messages, model_request_parameters)
 
         try:
             return await self.client.chat.completions.create(  # type: ignore
@@ -322,7 +322,7 @@ class HuggingFaceModel(Model):
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     async def _map_messages(
-        self, messages: list[ModelMessage]
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[ChatCompletionInputMessage | ChatCompletionOutputMessage]:
         """Just maps a `pydantic_ai.Message` to a `huggingface_hub.ChatCompletionInputMessage`."""
         hf_messages: list[ChatCompletionInputMessage | ChatCompletionOutputMessage] = []
@@ -359,7 +359,7 @@ class HuggingFaceModel(Model):
                 hf_messages.append(message_param)
             else:
                 assert_never(message)
-        if instructions := self._get_instructions(messages):
+        if instructions := self._get_instructions(messages, model_request_parameters):
             hf_messages.insert(0, ChatCompletionInputMessage(content=instructions, role='system'))  # type: ignore
         return hf_messages
 

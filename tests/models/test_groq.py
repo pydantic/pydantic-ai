@@ -5528,14 +5528,7 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
                         content='What is the largest city in Mexico?',
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[
