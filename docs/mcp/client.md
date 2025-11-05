@@ -346,22 +346,7 @@ Then we can create the client:
 ```python {title="mcp_resources.py", requires="mcp_resource_server.py"}
 import asyncio
 
-from pydantic_ai import Agent
-from pydantic_ai._run_context import RunContext
 from pydantic_ai.mcp import MCPServerStdio
-from pydantic_ai.models.test import TestModel
-
-agent = Agent(
-    model=TestModel(),
-    deps_type=str,
-    instructions="Use the customer's name while replying to them.",
-)
-
-
-@agent.instructions
-def add_the_users_name(ctx: RunContext[str]) -> str:
-    return f"The user's name is {ctx.deps}."
-
 
 async def main():
     server = MCPServerStdio('python', args=['-m', 'mcp_resource_server'])
@@ -377,10 +362,6 @@ async def main():
         user_name = await server.read_resource('resource://user_name.txt')
         print(f'Text content: {user_name}')
         #> Text content: Alice
-
-    # Use resources in dependencies
-    async with agent:
-        _ = await agent.run('Can you help me with my product?', deps=user_name)
 
 
 if __name__ == '__main__':
