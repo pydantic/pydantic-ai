@@ -677,7 +677,7 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
-def infer_model(
+def infer_model(  # noqa: C901
     model: Model | KnownModelName | str, provider_generator: Callable[[str], Provider[Any]] | None = None
 ) -> Model:
     """Infer the model from the name. May optionally pass a callable that setup a custom provider for the model."""
