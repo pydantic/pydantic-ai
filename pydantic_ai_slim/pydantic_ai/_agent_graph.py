@@ -567,63 +567,67 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_schema = ctx.deps.output_schema
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
-                try:
-                    if not self.model_response.parts:
-                        # we got an empty response.
-                        # this sometimes happens with anthropic (and perhaps other models)
-                        # when the model has already returned text along side tool calls
-                        if text_processor := output_schema.text_processor:
-                            # in this scenario, if text responses are allowed, we return text from the most recent model
-                            # response, if any
-                            for message in reversed(ctx.state.message_history):
-                                if isinstance(message, _messages.ModelResponse):
-                                    text = ''
-                                    for part in message.parts:
-                                        if isinstance(part, _messages.TextPart):
-                                            text += part.content
-                                        elif isinstance(part, _messages.BuiltinToolCallPart):
-                                            # Text parts before a built-in tool call are essentially thoughts,
-                                            # not part of the final result output, so we reset the accumulated text
-                                            text = ''  # pragma: no cover
-                                    if text:
+                if not self.model_response.parts:
+                    # we got an empty response.
+                    # this sometimes happens with anthropic (and perhaps other models)
+                    # when the model has already returned text along side tool calls
+                    if text_processor := output_schema.text_processor:  # pragma: no branch
+                        # in this scenario, if text responses are allowed, we return text from the most recent model
+                        # response, if any
+                        for message in reversed(ctx.state.message_history):
+                            if isinstance(message, _messages.ModelResponse):
+                                text = ''
+                                for part in message.parts:
+                                    if isinstance(part, _messages.TextPart):
+                                        text += part.content
+                                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                                        # Text parts before a built-in tool call are essentially thoughts,
+                                        # not part of the final result output, so we reset the accumulated text
+                                        text = ''  # pragma: no cover
+                                if text:
+                                    try:
                                         self._next_node = await self._handle_text_response(ctx, text, text_processor)
                                         return
+                                    except ToolRetryError:
+                                        # If the text from the preview response was invalid, ignore it.
+                                        pass
 
-                        # Go back to the model request node with an empty request, which means we'll essentially
-                        # resubmit the most recent request that resulted in an empty response,
-                        # as the empty response and request will not create any items in the API payload,
-                        # in the hope the model will return a non-empty response this time.
-                        ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
-                        run_context = build_run_context(ctx)
-                        instructions = await ctx.deps.get_instructions(run_context)
-                        self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
-                            _messages.ModelRequest(parts=[], instructions=instructions)
-                        )
-                        return
+                    # Go back to the model request node with an empty request, which means we'll essentially
+                    # resubmit the most recent request that resulted in an empty response,
+                    # as the empty response and request will not create any items in the API payload,
+                    # in the hope the model will return a non-empty response this time.
+                    ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
+                    run_context = build_run_context(ctx)
+                    instructions = await ctx.deps.get_instructions(run_context)
+                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                        _messages.ModelRequest(parts=[], instructions=instructions)
+                    )
+                    return
 
-                    text = ''
-                    tool_calls: list[_messages.ToolCallPart] = []
-                    files: list[_messages.BinaryContent] = []
+                text = ''
+                tool_calls: list[_messages.ToolCallPart] = []
+                files: list[_messages.BinaryContent] = []
 
-                    for part in self.model_response.parts:
-                        if isinstance(part, _messages.TextPart):
-                            text += part.content
-                        elif isinstance(part, _messages.ToolCallPart):
-                            tool_calls.append(part)
-                        elif isinstance(part, _messages.FilePart):
-                            files.append(part.content)
-                        elif isinstance(part, _messages.BuiltinToolCallPart):
-                            # Text parts before a built-in tool call are essentially thoughts,
-                            # not part of the final result output, so we reset the accumulated text
-                            text = ''
-                            yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
-                        elif isinstance(part, _messages.BuiltinToolReturnPart):
-                            yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
-                        elif isinstance(part, _messages.ThinkingPart):
-                            pass
-                        else:
-                            assert_never(part)
+                for part in self.model_response.parts:
+                    if isinstance(part, _messages.TextPart):
+                        text += part.content
+                    elif isinstance(part, _messages.ToolCallPart):
+                        tool_calls.append(part)
+                    elif isinstance(part, _messages.FilePart):
+                        files.append(part.content)
+                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                        # Text parts before a built-in tool call are essentially thoughts,
+                        # not part of the final result output, so we reset the accumulated text
+                        text = ''
+                        yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
+                    elif isinstance(part, _messages.BuiltinToolReturnPart):
+                        yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
+                    elif isinstance(part, _messages.ThinkingPart):
+                        pass
+                    else:
+                        assert_never(part)
 
+                try:
                     # At the moment, we prioritize at least executing tool calls if they are present.
                     # In the future, we'd consider making this configurable at the agent or run level.
                     # This accounts for cases like anthropic returns that might contain a text response

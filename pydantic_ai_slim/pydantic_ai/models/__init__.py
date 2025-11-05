@@ -437,10 +437,11 @@ class Model(ABC):
 
         if model_request_parameters.output_mode in ('native', 'prompted'):
             if not model_request_parameters.output_object:
-                raise UserError('An `output_object` is required when using `NativeOutput` or `PromptedOutput`.')
+                raise UserError(  # pragma: no cover
+                    'An `output_object` is required when using `NativeOutput` or `PromptedOutput`.'
+                )
 
             if model_request_parameters.output_mode == 'native' and not self.profile.supports_json_schema_output:
-                # TODO (DouweM): Call `NativeOutputSchema.raise_if_unsupported(self.profile)`?
                 raise UserError('Native structured output is not supported by this model.')
 
             if model_request_parameters.output_tools:
@@ -453,7 +454,7 @@ class Model(ABC):
         else:
             if model_request_parameters.output_mode == 'tool':
                 if not model_request_parameters.output_tools and not model_request_parameters.function_tools:
-                    raise UserError('An `output_tools` list is required when using `ToolOutput`.')
+                    raise UserError('An `output_tools` list is required when using `ToolOutput`.')  # pragma: no cover
 
                 if not self.profile.supports_tools:
                     raise UserError('Tool output is not supported by this model.')
@@ -556,7 +557,7 @@ class Model(ABC):
             output_instructions = PromptedOutputSchema.build_instructions(
                 model_request_parameters.prompted_output_template, model_request_parameters.output_object
             )
-            if instructions is not None:
+            if instructions:
                 instructions = '\n\n'.join([instructions, output_instructions])
             else:
                 instructions = output_instructions

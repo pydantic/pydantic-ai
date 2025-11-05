@@ -2349,7 +2349,9 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
     )
 
     _, openai_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
-        result.all_messages(), model_settings=model.settings or {}, model_request_parameters=ModelRequestParameters()
+        result.all_messages(),
+        model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+        model_request_parameters=ModelRequestParameters(),
     )
     assert openai_messages == snapshot(
         [
@@ -2421,7 +2423,9 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
     )
 
     _, openai_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
-        result.all_messages(), model_settings=model.settings or {}, model_request_parameters=ModelRequestParameters()
+        result.all_messages(),
+        model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+        model_request_parameters=ModelRequestParameters(),
     )
     assert openai_messages == snapshot(
         [
@@ -3551,7 +3555,9 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
     )
 
     _, openai_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
-        messages, model_settings=model.settings or {}, model_request_parameters=ModelRequestParameters()
+        messages,
+        model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+        model_request_parameters=ModelRequestParameters(),
     )
     assert openai_messages == snapshot(
         [
@@ -7265,7 +7271,9 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
     messages = result.all_messages()
 
     _, openai_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
-        messages, model_settings=model.settings or {}, model_request_parameters=ModelRequestParameters()
+        messages,
+        model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+        model_request_parameters=ModelRequestParameters(),
     )
     assert openai_messages == snapshot(
         [

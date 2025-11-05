@@ -35,7 +35,7 @@ from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
-    from .profiles import ModelProfile
+    pass
 
 T = TypeVar('T')
 """An invariant TypeVar."""
@@ -384,12 +384,6 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
 
         return UnionOutputProcessor(outputs=outputs, strict=strict, name=name, description=description)
 
-    def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by this model."""
-        # TODO (DouweM): Remove method?
-        if self.allows_image and not profile.supports_image_output:
-            raise UserError('Image output is not supported by this model.')
-
 
 @dataclass(init=False)
 class OutputSchemaWithoutMode(BaseOutputSchema[OutputDataT]):
@@ -439,10 +433,6 @@ class TextOutputSchema(OutputSchema[OutputDataT]):
     def mode(self) -> OutputMode | None:
         return 'text'
 
-    def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by this model."""
-        super().raise_if_unsupported(profile)
-
 
 class ImageOutputSchema(OutputSchema[OutputDataT]):
     def __init__(self, *, allows_deferred_tools: bool):
@@ -451,11 +441,6 @@ class ImageOutputSchema(OutputSchema[OutputDataT]):
     @property
     def mode(self) -> OutputMode | None:
         return 'image'
-
-    def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by this model."""
-        # This already raises if image output is not supported by this model.
-        super().raise_if_unsupported(profile)
 
 
 @dataclass(init=False)
@@ -478,11 +463,6 @@ class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
     @property
     def mode(self) -> OutputMode | None:
         return 'native'
-
-    def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by this model."""
-        if not profile.supports_json_schema_output:
-            raise UserError('Native structured output is not supported by this model.')
 
 
 @dataclass(init=False)
@@ -522,11 +502,7 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
 
         return template.format(schema=json.dumps(schema))
 
-    def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by this model."""
-        super().raise_if_unsupported(profile)
-
-    def instructions(self, default_template: str) -> str:
+    def instructions(self, default_template: str) -> str:  # pragma: no cover
         """Get instructions to tell model to output JSON matching the schema."""
         template = self.template or default_template
         object_def = self.object_def
@@ -554,12 +530,6 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
     @property
     def mode(self) -> OutputMode | None:
         return 'tool'
-
-    def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by this model."""
-        super().raise_if_unsupported(profile)
-        if not profile.supports_tools:
-            raise UserError('Tool output is not supported by this model.')
 
 
 class BaseOutputProcessor(ABC, Generic[OutputDataT]):

@@ -333,7 +333,7 @@ class GoogleModel(Model):
 
         if model_request_parameters.builtin_tools:
             if model_request_parameters.function_tools:
-                raise UserError('Google does not support user tools and built-in tools at the same time.')
+                raise UserError('Google does not support function tools and built-in tools at the same time.')
 
             for tool in model_request_parameters.builtin_tools:
                 if isinstance(tool, WebSearchTool):

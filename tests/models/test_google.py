@@ -2685,7 +2685,7 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
 
     with pytest.raises(
         UserError,
-        match=re.escape('Google does not support user tools and built-in tools at the same time.'),
+        match=re.escape('Google does not support function tools and built-in tools at the same time.'),
     ):
         await agent.run('What is the largest city in the user country?')
 
@@ -2703,7 +2703,9 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
     ):
         await agent.run('What is the largest city in Mexico?')
 
-    agent = Agent(m, output_type=PromptedOutput(CityLocation), builtin_tools=[UrlContextTool()])
+    # Will default to prompted output
+    agent = Agent(m, output_type=CityLocation, builtin_tools=[UrlContextTool()])
+
     result = await agent.run('What is the largest city in Mexico?')
     assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
 
