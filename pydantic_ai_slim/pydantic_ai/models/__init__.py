@@ -27,6 +27,7 @@ from .._run_context import RunContext
 from ..builtin_tools import AbstractBuiltinTool
 from ..exceptions import UserError
 from ..messages import (
+    BaseToolCallPart,
     BinaryImage,
     FilePart,
     FileUrl,
@@ -35,14 +36,18 @@ from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     ModelResponseStreamEvent,
+    PartEndEvent,
     PartStartEvent,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     VideoUrl,
 )
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
+from ..providers import infer_provider
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -55,6 +60,8 @@ KnownModelName = TypeAliasType(
         'anthropic:claude-3-5-sonnet-20240620',
         'anthropic:claude-3-5-sonnet-20241022',
         'anthropic:claude-3-5-sonnet-latest',
+        'anthropic:claude-haiku-4-5',
+        'anthropic:claude-haiku-4-5-20251001',
         'anthropic:claude-3-7-sonnet-20250219',
         'anthropic:claude-3-7-sonnet-latest',
         'anthropic:claude-3-haiku-20240307',
@@ -127,15 +134,8 @@ KnownModelName = TypeAliasType(
         'cerebras:qwen-3-235b-a22b-thinking-2507',
         'cohere:c4ai-aya-expanse-32b',
         'cohere:c4ai-aya-expanse-8b',
-        'cohere:command',
-        'cohere:command-light',
-        'cohere:command-light-nightly',
         'cohere:command-nightly',
-        'cohere:command-r',
-        'cohere:command-r-03-2024',
         'cohere:command-r-08-2024',
-        'cohere:command-r-plus',
-        'cohere:command-r-plus-04-2024',
         'cohere:command-r-plus-08-2024',
         'cohere:command-r7b-12-2024',
         'deepseek:deepseek-chat',
@@ -414,9 +414,17 @@ class Model(ABC):
         they need to customize the preparation flow further, but most implementations should simply call
         ``self.prepare_request(...)`` at the start of their ``request`` (and related) methods.
         """
-        merged_settings = merge_model_settings(self.settings, model_settings)
-        customized_parameters = self.customize_request_parameters(model_request_parameters)
-        return merged_settings, customized_parameters
+        model_settings = merge_model_settings(self.settings, model_settings)
+
+        if builtin_tools := model_request_parameters.builtin_tools:
+            # Deduplicate builtin tools
+            model_request_parameters = replace(
+                model_request_parameters,
+                builtin_tools=list({tool.unique_id: tool for tool in builtin_tools}.values()),
+            )
+
+        model_request_parameters = self.customize_request_parameters(model_request_parameters)
+        return model_settings, model_request_parameters
 
     @property
     @abstractmethod
@@ -539,7 +547,44 @@ class StreamedResponse(ABC):
                 async for event in iterator:
                     yield event
 
-            self._event_iterator = iterator_with_final_event(self._get_event_iterator())
+            async def iterator_with_part_end(
+                iterator: AsyncIterator[ModelResponseStreamEvent],
+            ) -> AsyncIterator[ModelResponseStreamEvent]:
+                last_start_event: PartStartEvent | None = None
+
+                def part_end_event(next_part: ModelResponsePart | None = None) -> PartEndEvent | None:
+                    if not last_start_event:
+                        return None
+
+                    index = last_start_event.index
+                    part = self._parts_manager.get_parts()[index]
+                    if not isinstance(part, TextPart | ThinkingPart | BaseToolCallPart):
+                        # Parts other than these 3 don't have deltas, so don't need an end part.
+                        return None
+
+                    return PartEndEvent(
+                        index=index,
+                        part=part,
+                        next_part_kind=next_part.part_kind if next_part else None,
+                    )
+
+                async for event in iterator:
+                    if isinstance(event, PartStartEvent):
+                        if last_start_event:
+                            end_event = part_end_event(event.part)
+                            if end_event:
+                                yield end_event
+
+                            event.previous_part_kind = last_start_event.part.part_kind
+                        last_start_event = event
+
+                    yield event
+
+                end_event = part_end_event()
+                if end_event:
+                    yield end_event
+
+            self._event_iterator = iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
         return self._event_iterator
 
     @abstractmethod
@@ -642,41 +687,39 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         return TestModel()
 
     try:
-        provider, model_name = model.split(':', maxsplit=1)
+        provider_name, model_name = model.split(':', maxsplit=1)
     except ValueError:
-        provider = None
+        provider_name = None
         model_name = model
         if model_name.startswith(('gpt', 'o1', 'o3')):
-            provider = 'openai'
+            provider_name = 'openai'
         elif model_name.startswith('claude'):
-            provider = 'anthropic'
+            provider_name = 'anthropic'
         elif model_name.startswith('gemini'):
-            provider = 'google-gla'
+            provider_name = 'google-gla'
 
-        if provider is not None:
+        if provider_name is not None:
             warnings.warn(
-                f"Specifying a model name without a provider prefix is deprecated. Instead of {model_name!r}, use '{provider}:{model_name}'.",
+                f"Specifying a model name without a provider prefix is deprecated. Instead of {model_name!r}, use '{provider_name}:{model_name}'.",
                 DeprecationWarning,
             )
         else:
             raise UserError(f'Unknown model: {model}')
 
-    if provider == 'vertexai':  # pragma: no cover
+    if provider_name == 'vertexai':  # pragma: no cover
         warnings.warn(
             "The 'vertexai' provider name is deprecated. Use 'google-vertex' instead.",
             DeprecationWarning,
         )
-        provider = 'google-vertex'
+        provider_name = 'google-vertex'
 
-    if provider == 'gateway':
-        from ..providers.gateway import infer_model as infer_model_from_gateway
+    provider = infer_provider(provider_name)
 
-        return infer_model_from_gateway(model_name)
-    elif provider == 'cohere':
-        from .cohere import CohereModel
-
-        return CohereModel(model_name, provider=provider)
-    elif provider in (
+    model_kind = provider_name
+    if model_kind.startswith('gateway/'):
+        model_kind = provider_name.removeprefix('gateway/')
+    if model_kind in (
+        'openai',
         'azure',
         'deepseek',
         'cerebras',
@@ -685,41 +728,51 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         'grok',
         'heroku',
         'moonshotai',
-        'openai',
-        'openai-chat',
+        'ollama',
         'openrouter',
         'together',
         'vercel',
         'litellm',
+        'nebius',
+        'ovhcloud',
     ):
+        model_kind = 'openai-chat'
+    elif model_kind in ('google-gla', 'google-vertex'):
+        model_kind = 'google'
+
+    if model_kind == 'openai-chat':
         from .openai import OpenAIChatModel
 
         return OpenAIChatModel(model_name, provider=provider)
-    elif provider == 'openai-responses':
+    elif model_kind == 'openai-responses':
         from .openai import OpenAIResponsesModel
 
-        return OpenAIResponsesModel(model_name, provider='openai')
-    elif provider in ('google-gla', 'google-vertex'):
+        return OpenAIResponsesModel(model_name, provider=provider)
+    elif model_kind == 'google':
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)
-    elif provider == 'groq':
+    elif model_kind == 'groq':
         from .groq import GroqModel
 
         return GroqModel(model_name, provider=provider)
-    elif provider == 'mistral':
+    elif model_kind == 'cohere':
+        from .cohere import CohereModel
+
+        return CohereModel(model_name, provider=provider)
+    elif model_kind == 'mistral':
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
-    elif provider == 'anthropic':
+    elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 
         return AnthropicModel(model_name, provider=provider)
-    elif provider == 'bedrock':
+    elif model_kind == 'bedrock':
         from .bedrock import BedrockConverseModel
 
         return BedrockConverseModel(model_name, provider=provider)
-    elif provider == 'huggingface':
+    elif model_kind == 'huggingface':
         from .huggingface import HuggingFaceModel
 
         return HuggingFaceModel(model_name, provider=provider)

@@ -13,7 +13,7 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
-from typing_extensions import Self, TypeVar, deprecated
+from typing_extensions import TypeVar, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -36,6 +36,7 @@ DocumentMediaType: TypeAlias = Literal[
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'text/html',
     'text/markdown',
+    'application/msword',
     'application/vnd.ms-excel',
 ]
 VideoMediaType: TypeAlias = Literal[
@@ -436,8 +437,12 @@ class DocumentUrl(FileUrl):
             return 'application/pdf'
         elif self.url.endswith('.rtf'):
             return 'application/rtf'
+        elif self.url.endswith('.doc'):
+            return 'application/msword'
         elif self.url.endswith('.docx'):
             return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        elif self.url.endswith('.xls'):
+            return 'application/vnd.ms-excel'
         elif self.url.endswith('.xlsx'):
             return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
@@ -482,7 +487,7 @@ class BinaryContent:
     """
 
     _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
-        compare=False, default=None
+        compare=False, default=None, repr=False
     )
 
     kind: Literal['binary'] = 'binary'
@@ -516,16 +521,16 @@ class BinaryContent:
                 vendor_metadata=bc.vendor_metadata,
             )
         else:
-            return bc  # pragma: no cover
+            return bc
 
     @classmethod
-    def from_data_uri(cls, data_uri: str) -> Self:
+    def from_data_uri(cls, data_uri: str) -> BinaryContent:
         """Create a `BinaryContent` from a data URI."""
         prefix = 'data:'
         if not data_uri.startswith(prefix):
-            raise ValueError('Data URI must start with "data:"')  # pragma: no cover
+            raise ValueError('Data URI must start with "data:"')
         media_type, data = data_uri[len(prefix) :].split(';base64,', 1)
-        return cls(data=base64.b64decode(data), media_type=media_type)
+        return cls.narrow_type(cls(data=base64.b64decode(data), media_type=media_type))
 
     @pydantic.computed_field
     @property
@@ -597,9 +602,13 @@ class BinaryImage(BinaryContent):
         media_type: str,
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         kind: Literal['binary'] = 'binary',
+        _identifier: str | None = None,
     ):
-        super().__init__(data=data, media_type=media_type, identifier=identifier, vendor_metadata=vendor_metadata)
+        super().__init__(
+            data=data, media_type=media_type, identifier=identifier or _identifier, vendor_metadata=vendor_metadata
+        )
 
         if not self.is_image:
             raise ValueError('`BinaryImage` must be have a media type that starts with "image/"')  # pragma: no cover
@@ -643,6 +652,7 @@ _document_format_lookup: dict[str, DocumentFormat] = {
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
     'text/html': 'html',
     'text/markdown': 'md',
+    'application/msword': 'doc',
     'application/vnd.ms-excel': 'xls',
 }
 _audio_format_lookup: dict[str, AudioFormat] = {
@@ -880,7 +890,10 @@ class RetryPromptPart:
                 description = self.content
         else:
             json_errors = error_details_ta.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
-            description = f'{len(self.content)} validation errors: {json_errors.decode()}'
+            plural = isinstance(self.content, list) and len(self.content) != 1
+            description = (
+                f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
+            )
         return f'{description}\n\nFix the errors and try again.'
 
     def otel_event(self, settings: InstrumentationSettings) -> Event:
@@ -1049,6 +1062,13 @@ class BaseToolCallPart:
 
     In case the tool call id is not provided by the model, Pydantic AI will generate a random one.
     """
+
+    _: KW_ONLY
+
+    id: str | None = None
+    """An optional identifier of the tool call part, separate from the tool call ID.
+
+    This is used by some APIs like OpenAI Responses."""
 
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
@@ -1603,6 +1623,14 @@ class PartStartEvent:
     part: ModelResponsePart
     """The newly started `ModelResponsePart`."""
 
+    previous_part_kind: (
+        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+    ) = None
+    """The kind of the previous part, if any.
+
+    This is useful for UI event streams to know whether to group parts of the same kind together when emitting events.
+    """
+
     event_kind: Literal['part_start'] = 'part_start'
     """Event type identifier, used as a discriminator."""
 
@@ -1626,6 +1654,30 @@ class PartDeltaEvent:
 
 
 @dataclass(repr=False, kw_only=True)
+class PartEndEvent:
+    """An event indicating that a part is complete."""
+
+    index: int
+    """The index of the part within the overall response parts list."""
+
+    part: ModelResponsePart
+    """The complete `ModelResponsePart`."""
+
+    next_part_kind: (
+        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+    ) = None
+    """The kind of the next part, if any.
+
+    This is useful for UI event streams to know whether to group parts of the same kind together when emitting events.
+    """
+
+    event_kind: Literal['part_end'] = 'part_end'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
 class FinalResultEvent:
     """An event indicating the response to the current model request matches the output schema and will produce a result."""
 
@@ -1640,9 +1692,9 @@ class FinalResultEvent:
 
 
 ModelResponseStreamEvent = Annotated[
-    PartStartEvent | PartDeltaEvent | FinalResultEvent, pydantic.Discriminator('event_kind')
+    PartStartEvent | PartDeltaEvent | PartEndEvent | FinalResultEvent, pydantic.Discriminator('event_kind')
 ]
-"""An event in the model response stream, starting a new part, applying a delta to an existing one, or indicating the final result."""
+"""An event in the model response stream, starting a new part, applying a delta to an existing one, indicating a part is complete, or indicating the final result."""
 
 
 @dataclass(repr=False)

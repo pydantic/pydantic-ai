@@ -66,6 +66,64 @@ agent = Agent(model, model_settings=settings)
 
 ## Bedrock
 
+Although Bedrock Converse doesn't provide a unified API to enable thinking, you can still use [`BedrockModelSettings.bedrock_additional_model_requests_fields`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_additional_model_requests_fields] [model setting](agents.md#model-run-settings) to pass provider-specific configuration:
+
+=== "Claude"
+
+    ```python {title="bedrock_claude_thinking_part.py"}
+    from pydantic_ai import Agent
+    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
+    model_settings = BedrockModelSettings(
+        bedrock_additional_model_requests_fields={
+            'thinking': {'type': 'enabled', 'budget_tokens': 1024}
+        }
+    )
+    agent = Agent(model=model, model_settings=model_settings)
+
+    ```
+=== "OpenAI"
+
+
+    ```python {title="bedrock_openai_thinking_part.py"}
+    from pydantic_ai import Agent
+    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+
+    model = BedrockConverseModel('openai.gpt-oss-120b-1:0')
+    model_settings = BedrockModelSettings(
+        bedrock_additional_model_requests_fields={'reasoning_effort': 'low'}
+    )
+    agent = Agent(model=model, model_settings=model_settings)
+
+    ```
+=== "Qwen"
+
+
+    ```python {title="bedrock_qwen_thinking_part.py"}
+    from pydantic_ai import Agent
+    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+
+    model = BedrockConverseModel('qwen.qwen3-32b-v1:0')
+    model_settings = BedrockModelSettings(
+        bedrock_additional_model_requests_fields={'reasoning_config': 'high'}
+    )
+    agent = Agent(model=model, model_settings=model_settings)
+
+    ```
+
+=== "Deepseek"
+    Reasoning is [always enabled](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-reasoning.html) for Deepseek model
+
+    ```python {title="bedrock_deepseek_thinking_part.py"}
+    from pydantic_ai import Agent
+    from pydantic_ai.models.bedrock import BedrockConverseModel
+
+    model = BedrockConverseModel('us.deepseek.r1-v1:0')
+    agent = Agent(model=model)
+
+    ```
+
 ## Groq
 
 Groq supports different formats to receive thinking parts:
@@ -98,3 +156,9 @@ Thinking is supported by the `command-a-reasoning-08-2025` model. It does not ne
 
 Text output inside `<think>` tags is automatically converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
 You can customize the tags using the [`thinking_tags`][pydantic_ai.profiles.ModelProfile.thinking_tags] field on the [model profile](models/openai.md#model-profile).
+
+## Outlines
+
+Some local models run through Outlines include in their text output a thinking part delimited by tags. In that case, it will be handled by Pydantic AI that will separate the thinking part from the final answer without the need to specifically enable it. The thinking tags used by default are `"<think>"` and `"</think>"`. If your model uses different tags, you can specify them in the [model profile](models/openai.md#model-profile) using the [`thinking_tags`][pydantic_ai.profiles.ModelProfile.thinking_tags] field.
+
+Outlines currently does not support thinking along with structured output. If you provide an `output_type`, the model text output will not contain a thinking part with the associated tags, and you may experience degraded performance.

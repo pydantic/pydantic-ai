@@ -3,10 +3,10 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Callable
 from dataclasses import dataclass, replace
 from datetime import timezone
-from typing import Any, Literal, Union
+from typing import Any, Generic, Literal, TypeVar, Union
 
 import httpx
 import pytest
@@ -27,6 +27,7 @@ from pydantic_ai import (
     DocumentUrl,
     FunctionToolset,
     ImageUrl,
+    IncompleteToolCall,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelProfile,
@@ -57,10 +58,12 @@ from pydantic_ai._output import (
     ToolOutputSchema,
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import StructuredDict, ToolOutput
 from pydantic_ai.result import RunUsage
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
@@ -91,6 +94,21 @@ def test_result_tuple():
 
 class Person(BaseModel):
     name: str
+
+
+# Generic classes for testing tool name sanitization with generic types
+T = TypeVar('T')
+
+
+class ResultGeneric(BaseModel, Generic[T]):
+    """A generic result class."""
+
+    value: T
+    success: bool
+
+
+class StringData(BaseModel):
+    text: str
 
 
 def test_result_list_of_models_with_stringified_response():
@@ -183,7 +201,7 @@ def test_result_pydantic_model_retry():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=87, output_tokens=14),
+                usage=RequestUsage(input_tokens=89, output_tokens=14),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -242,7 +260,9 @@ def test_result_pydantic_model_validation_error():
     retry_prompt = user_retry.parts[0]
     assert isinstance(retry_prompt, RetryPromptPart)
     assert retry_prompt.model_response() == snapshot("""\
-1 validation errors: [
+1 validation error:
+```json
+[
   {
     "type": "value_error",
     "loc": [
@@ -252,6 +272,7 @@ def test_result_pydantic_model_validation_error():
     "input": "foo"
   }
 ]
+```
 
 Fix the errors and try again.""")
 
@@ -313,6 +334,85 @@ def test_output_validator():
                     )
                 ]
             ),
+        ]
+    )
+
+
+def test_output_validator_partial_sync():
+    """Test that output validators receive correct value for `partial_output` in sync mode."""
+    call_log: list[tuple[str, bool]] = []
+
+    agent = Agent[None, str](TestModel(custom_output_text='test output'))
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: str) -> str:
+        call_log.append((output, ctx.partial_output))
+        return output
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'test output'
+
+    assert call_log == snapshot([('test output', False)])
+
+
+async def test_output_validator_partial_stream_text():
+    """Test that output validators receive correct value for `partial_output` when using stream_text()."""
+    call_log: list[tuple[str, bool]] = []
+
+    async def stream_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        for chunk in ['Hello', ' ', 'world', '!']:
+            yield chunk
+
+    agent = Agent(FunctionModel(stream_function=stream_text))
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: str) -> str:
+        call_log.append((output, ctx.partial_output))
+        return output
+
+    async with agent.run_stream('Hello') as result:
+        text_parts = []
+        async for chunk in result.stream_text(debounce_by=None):
+            text_parts.append(chunk)
+
+    assert text_parts[-1] == 'Hello world!'
+    assert call_log == snapshot(
+        [
+            ('Hello', True),
+            ('Hello ', True),
+            ('Hello world', True),
+            ('Hello world!', True),
+            ('Hello world!', False),
+        ]
+    )
+
+
+async def test_output_validator_partial_stream_output():
+    """Test that output validators receive correct value for `partial_output` when using stream_output()."""
+    call_log: list[tuple[Foo, bool]] = []
+
+    async def stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools is not None
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 42')}
+        yield {0: DeltaToolCall(json_args=', "b": "f')}
+        yield {0: DeltaToolCall(json_args='oo"}')}
+
+    agent = Agent(FunctionModel(stream_function=stream_model), output_type=Foo)
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: Foo) -> Foo:
+        call_log.append((output, ctx.partial_output))
+        return output
+
+    async with agent.run_stream('Hello') as result:
+        outputs = [output async for output in result.stream_output(debounce_by=None)]
+
+    assert outputs[-1] == Foo(a=42, b='foo')
+    assert call_log == snapshot(
+        [
+            (Foo(a=42, b='f'), True),
+            (Foo(a=42, b='foo'), True),
+            (Foo(a=42, b='foo'), False),
         ]
     )
 
@@ -630,6 +730,24 @@ class Bar(BaseModel):
     result = agent.run_sync('Hello', model=TestModel(seed=1))
     assert result.output == mod.Bar(b='b')
     assert got_tool_call_name == snapshot('final_result_Bar')
+
+
+def test_output_type_generic_class_name_sanitization():
+    """Test that generic class names with brackets are properly sanitized."""
+    # This will have a name like "ResultGeneric[StringData]" which needs sanitization
+    output_type = [ResultGeneric[StringData], ResultGeneric[int]]
+
+    m = TestModel()
+    agent = Agent(m, output_type=output_type)
+    agent.run_sync('Hello')
+
+    # The sanitizer should remove brackets from the generic type name
+    assert m.last_model_request_parameters is not None
+    assert m.last_model_request_parameters.output_tools is not None
+    assert len(m.last_model_request_parameters.output_tools) == 2
+
+    tool_names = [tool.name for tool in m.last_model_request_parameters.output_tools]
+    assert tool_names == snapshot(['final_result_ResultGenericStringData', 'final_result_ResultGenericint'])
 
 
 def test_output_type_with_two_descriptions():
@@ -1760,7 +1878,7 @@ def test_native_output():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=85, output_tokens=12),
+                usage=RequestUsage(input_tokens=87, output_tokens=12),
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
             ),
@@ -1832,7 +1950,14 @@ Don't include any text or Markdown fencing before or after.\
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"additionalProperties": false, "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object", "title": "get_weather"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
@@ -2444,6 +2569,45 @@ def test_unknown_tool_fix():
             ),
         ]
     )
+
+
+def test_tool_exceeds_token_limit_error():
+    def return_incomplete_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        resp = ModelResponse(parts=[ToolCallPart('dummy_tool', args='{"foo": "bar",')])
+        resp.finish_reason = 'length'
+        return resp
+
+    agent = Agent(FunctionModel(return_incomplete_tool), output_type=str)
+
+    with pytest.raises(
+        IncompleteToolCall,
+        match=r'Model token limit \(10\) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.',
+    ):
+        agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+
+    with pytest.raises(
+        IncompleteToolCall,
+        match=r'Model token limit \(provider default\) exceeded while emitting a tool call, resulting in incomplete arguments. Increase max tokens or simplify tool call arguments to fit within limit.',
+    ):
+        agent.run_sync('Hello')
+
+
+def test_tool_exceeds_token_limit_but_complete_args():
+    def return_complete_tool_but_hit_limit(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            resp = ModelResponse(parts=[ToolCallPart('dummy_tool', args='{"foo": "bar"}')])
+            resp.finish_reason = 'length'
+            return resp
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(return_complete_tool_but_hit_limit), output_type=str)
+
+    @agent.tool_plain
+    def dummy_tool(foo: str) -> str:
+        return 'tool-ok'
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'done'
 
 
 def test_model_requests_blocked(env: TestEnv):
@@ -3614,6 +3778,7 @@ def test_tool_returning_binary_content_with_identifier():
                         BinaryContent(
                             data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82',
                             media_type='image/png',
+                            _identifier='image_id_1',
                             identifier='image_id_1',
                         ),
                     ],
@@ -3658,13 +3823,15 @@ def test_tool_returning_file_url_with_identifier():
                 UserPromptPart(
                     content=[
                         'This is file img_001:',
-                        ImageUrl(url='https://example.com/image.jpg', identifier='img_001'),
+                        ImageUrl(url='https://example.com/image.jpg', _identifier='img_001', identifier='img_001'),
                         'This is file vid_002:',
-                        VideoUrl(url='https://example.com/video.mp4', identifier='vid_002'),
+                        VideoUrl(url='https://example.com/video.mp4', _identifier='vid_002', identifier='vid_002'),
                         'This is file aud_003:',
-                        AudioUrl(url='https://example.com/audio.mp3', identifier='aud_003'),
+                        AudioUrl(url='https://example.com/audio.mp3', _identifier='aud_003', identifier='aud_003'),
                         'This is file doc_004:',
-                        DocumentUrl(url='https://example.com/document.pdf', identifier='doc_004'),
+                        DocumentUrl(
+                            url='https://example.com/document.pdf', _identifier='doc_004', identifier='doc_004'
+                        ),
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -3807,6 +3974,56 @@ You are a potato.\
 """,
         )
     )
+
+
+def test_instructions_during_run():
+    agent = Agent('test', instructions='You are a helpful assistant.')
+    result = agent.run_sync('Hello', instructions='Your task is to greet people.')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+            instructions="""\
+You are a helpful assistant.
+Your task is to greet people.\
+""",
+        )
+    )
+
+    result2 = agent.run_sync('Hello again!')
+    assert result2.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello again!', timestamp=IsDatetime())],
+            instructions="""\
+You are a helpful assistant.\
+""",
+        )
+    )
+
+
+def test_multi_agent_instructions_with_structured_output():
+    """Test that Agent2 uses its own instructions when called with Agent1's history.
+
+    Reproduces issue #3207: when running agents sequentially with no user_prompt
+    and structured output, Agent2's instructions were ignored.
+    """
+
+    class Output(BaseModel):
+        text: str
+
+    agent1 = Agent('test', instructions='Agent 1 instructions')
+    agent2 = Agent('test', instructions='Agent 2 instructions', output_type=Output)
+
+    result1 = agent1.run_sync('Hello')
+
+    # TestModel doesn't support structured output, so this will fail with retries
+    # But we can still verify that Agent2's instructions are used in retry requests
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior):
+            agent2.run_sync(message_history=result1.new_messages())
+
+    # Verify Agent2's retry requests used Agent2's instructions (not Agent1's)
+    requests = [m for m in messages if isinstance(m, ModelRequest)]
+    assert any(r.instructions == 'Agent 2 instructions' for r in requests)
 
 
 def test_empty_final_response():
@@ -4562,7 +4779,7 @@ def test_parallel_mcp_calls():
 
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     agent = Agent(FunctionModel(call_tools_parallel), toolsets=[server])
-    result = agent.run_sync()
+    result = agent.run_sync('call tools in parallel')
     assert result.output == snapshot('finished')
 
 
@@ -4620,11 +4837,13 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
         FunctionModel(call_tools_sequential), toolsets=[sequential_toolset], output_type=[str, DeferredToolRequests]
     )
 
+    user_prompt = 'call a lot of tools'
+
     if mode == 'contextmanager':
         with agent.sequential_tool_calls():
-            result = agent.run_sync()
+            result = agent.run_sync(user_prompt)
     else:
-        result = agent.run_sync()
+        result = agent.run_sync(user_prompt)
 
     assert result.output == snapshot(
         DeferredToolRequests(approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())])
@@ -5539,3 +5758,40 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
     )
 
     assert not any(isinstance(p, ToolReturnPart) and p.tool_name == 'final_result' for p in new_messages[0].parts)
+
+
+def test_agent_builtin_tools_runtime_vs_agent_level():
+    """Test that runtime builtin_tools parameter is merged with agent-level builtin_tools."""
+    model = TestModel()
+
+    agent = Agent(
+        model=model,
+        builtin_tools=[
+            WebSearchTool(),
+            CodeExecutionTool(),
+            MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'),
+            MCPServerTool(id='github', url='https://api.githubcopilot.com/mcp'),
+        ],
+    )
+
+    # Runtime tool with same unique ID should override agent-level tool
+    with pytest.raises(Exception, match='TestModel does not support built-in tools'):
+        agent.run_sync(
+            'Hello',
+            builtin_tools=[
+                WebSearchTool(search_context_size='high'),
+                MCPServerTool(id='example', url='https://mcp.example.com/mcp'),
+                MCPServerTool(id='github', url='https://mcp.githubcopilot.com/mcp', authorization_token='token'),
+            ],
+        )
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.builtin_tools == snapshot(
+        [
+            WebSearchTool(search_context_size='high'),
+            CodeExecutionTool(),
+            MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'),
+            MCPServerTool(id='github', url='https://mcp.githubcopilot.com/mcp', authorization_token='token'),
+            MCPServerTool(id='example', url='https://mcp.example.com/mcp'),
+        ]
+    )

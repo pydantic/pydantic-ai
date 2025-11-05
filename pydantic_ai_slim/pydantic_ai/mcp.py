@@ -441,14 +441,9 @@ class MCPServerStdio(MCPServer):
         'uv', args=['run', 'mcp-run-python', 'stdio'], timeout=10
     )
     agent = Agent('openai:gpt-4o', toolsets=[server])
-
-    async def main():
-        async with agent:  # (2)!
-            ...
     ```
 
     1. See [MCP Run Python](https://github.com/pydantic/mcp-run-python) for more information.
-    2. This will start the server as a subprocess and connect to it.
     """
 
     command: str
@@ -731,9 +726,9 @@ class _MCPServerHTTP(MCPServer):
             MemoryObjectReceiveStream[SessionMessage | Exception],
             MemoryObjectSendStream[SessionMessage],
         ]
-    ]:  # pragma: no cover
+    ]:
         if self.http_client and self.headers:
-            raise ValueError('`http_client` is mutually exclusive with `headers`.')
+            raise ValueError('`http_client` is mutually exclusive with `headers`.')  # pragma: no cover
 
         transport_client_partial = functools.partial(
             self._transport_client,
@@ -742,7 +737,7 @@ class _MCPServerHTTP(MCPServer):
             sse_read_timeout=self.read_timeout,
         )
 
-        if self.http_client is not None:
+        if self.http_client is not None:  # pragma: no cover
 
             def httpx_client_factory(
                 headers: dict[str, str] | None = None,
@@ -788,13 +783,7 @@ class MCPServerSSE(_MCPServerHTTP):
 
     server = MCPServerSSE('http://localhost:3001/sse')
     agent = Agent('openai:gpt-4o', toolsets=[server])
-
-    async def main():
-        async with agent:  # (1)!
-            ...
     ```
-
-    1. This will connect to a server running on `localhost:3001`.
     """
 
     @classmethod
@@ -837,13 +826,7 @@ class MCPServerHTTP(MCPServerSSE):
 
     server = MCPServerHTTP('http://localhost:3001/sse')
     agent = Agent('openai:gpt-4o', toolsets=[server])
-
-    async def main():
-        async with agent:  # (2)!
-            ...
     ```
-
-    1. This will connect to a server running on `localhost:3001`.
     """
 
 
@@ -862,12 +845,8 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     from pydantic_ai import Agent
     from pydantic_ai.mcp import MCPServerStreamableHTTP
 
-    server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
+    server = MCPServerStreamableHTTP('http://localhost:8000/mcp')
     agent = Agent('openai:gpt-4o', toolsets=[server])
-
-    async def main():
-        async with agent:  # (2)!
-            ...
     ```
     """
 
@@ -887,7 +866,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
 
     @property
     def _transport_client(self):
-        return streamablehttp_client  # pragma: no cover
+        return streamablehttp_client
 
     def __eq__(self, value: object, /) -> bool:
         return super().__eq__(value) and isinstance(value, MCPServerStreamableHTTP) and self.url == value.url

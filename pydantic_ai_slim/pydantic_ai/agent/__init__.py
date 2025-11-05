@@ -15,7 +15,6 @@ from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
-from pydantic_graph import Graph
 
 from .. import (
     _agent_graph,
@@ -41,7 +40,6 @@ from ..builtin_tools import AbstractBuiltinTool
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec
 from ..profiles import ModelProfile
-from ..result import FinalResult
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import (
@@ -240,7 +238,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_type: The type of the output data, used to validate the data returned by the model,
                 defaults to `str`.
             instructions: Instructions to use for this agent, you can also register instructions via a function with
-                [`instructions`][pydantic_ai.Agent.instructions].
+                [`instructions`][pydantic_ai.Agent.instructions] or pass additional, temporary, instructions when executing a run.
             system_prompt: Static system prompts to use for this agent, you can also register system
                 prompts via a function with [`system_prompt`][pydantic_ai.Agent.system_prompt].
             deps_type: The type used for dependency injection, this parameter exists solely to allow you to fully
@@ -420,12 +418,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -437,12 +437,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -454,12 +456,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -526,18 +530,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
+            builtin_tools: Optional additional builtin tools for this run.
 
         Returns:
             The result of the run.
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
+
         model_used = self._get_model(model)
         del model
 
@@ -561,9 +568,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_manager = ToolManager[AgentDepsT](toolset)
 
         # Build the graph
-        graph: Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[Any]] = (
-            _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
-        )
+        graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
 
         # Build the initial state
         usage = usage or _usage.RunUsage()
@@ -579,7 +584,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings = merge_model_settings(merged_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
 
-        instructions_literal, instructions_functions = self._get_instructions()
+        instructions_literal, instructions_functions = self._get_instructions(additional_instructions=instructions)
 
         async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
             parts = [
@@ -616,14 +621,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_schema=output_schema,
             output_validators=output_validators,
             history_processors=self.history_processors,
-            builtin_tools=list(self._builtin_tools),
+            builtin_tools=[*self._builtin_tools, *(builtin_tools or [])],
             tool_manager=tool_manager,
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
         )
 
-        start_node = _agent_graph.UserPromptNode[AgentDepsT](
+        user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
             deferred_tool_results=deferred_tool_results,
             instructions=instructions_literal,
@@ -649,14 +654,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         try:
-            async with toolset:
-                async with graph.iter(
-                    start_node,
-                    state=state,
-                    deps=graph_deps,
-                    span=use_span(run_span) if run_span.is_recording() else None,
-                    infer_name=False,
-                ) as graph_run:
+            async with graph.iter(
+                inputs=user_prompt_node,
+                state=state,
+                deps=graph_deps,
+                span=use_span(run_span) if run_span.is_recording() else None,
+                infer_name=False,
+            ) as graph_run:
+                async with toolset:
                     agent_run = AgentRun(graph_run)
                     yield agent_run
                     if (final_result := agent_run.result) is not None and run_span.is_recording():
@@ -672,29 +677,52 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         finally:
             try:
                 if instrumentation_settings and run_span.is_recording():
-                    run_span.set_attributes(self._run_span_end_attributes(state, usage, instrumentation_settings))
+                    run_span.set_attributes(
+                        self._run_span_end_attributes(
+                            instrumentation_settings, usage, state.message_history, graph_deps.new_message_index
+                        )
+                    )
             finally:
                 run_span.end()
 
     def _run_span_end_attributes(
-        self, state: _agent_graph.GraphAgentState, usage: _usage.RunUsage, settings: InstrumentationSettings
+        self,
+        settings: InstrumentationSettings,
+        usage: _usage.RunUsage,
+        message_history: list[_messages.ModelMessage],
+        new_message_index: int,
     ):
-        literal_instructions, _ = self._get_instructions()
-
         if settings.version == 1:
             attrs = {
                 'all_messages_events': json.dumps(
-                    [
-                        InstrumentedModel.event_to_dict(e)
-                        for e in settings.messages_to_otel_events(state.message_history)
-                    ]
+                    [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(message_history)]
                 )
             }
         else:
-            attrs = {
-                'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(list(state.message_history))),
-                **settings.system_instructions_attributes(literal_instructions),
+            # Store the last instructions here for convenience
+            last_instructions = InstrumentedModel._get_instructions(message_history)  # pyright: ignore[reportPrivateUsage]
+            attrs: dict[str, Any] = {
+                'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(list(message_history))),
+                **settings.system_instructions_attributes(last_instructions),
             }
+
+            # If this agent run was provided with existing history, store an attribute indicating the point at which the
+            # new messages begin.
+            if new_message_index > 0:
+                attrs['pydantic_ai.new_message_index'] = new_message_index
+
+            # If the instructions for this agent run were not always the same, store an attribute that indicates that.
+            # This can signal to an observability UI that different steps in the agent run had different instructions.
+            # Note: We purposely only look at "new" messages because they are the only ones produced by this agent run.
+            if any(
+                (
+                    isinstance(m, _messages.ModelRequest)
+                    and m.instructions is not None
+                    and m.instructions != last_instructions
+                )
+                for m in message_history[new_message_index:]
+            ):
+                attrs['pydantic_ai.variable_instructions'] = True
 
         return {
             **usage.opentelemetry_attributes(),
@@ -703,7 +731,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 {
                     'type': 'object',
                     'properties': {
-                        **{attr: {'type': 'array'} for attr in attrs.keys()},
+                        **{k: {'type': 'array'} if isinstance(v, str) else {} for k, v in attrs.items()},
                         'final_result': {'type': 'object'},
                     },
                 }
@@ -993,6 +1021,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         name: str | None = None,
+        description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
@@ -1010,6 +1039,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         name: str | None = None,
+        description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
@@ -1052,6 +1082,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             func: The tool function to register.
             name: The name of the tool, defaults to the function name.
+            description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
@@ -1077,6 +1108,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 func_,
                 takes_ctx=True,
                 name=name,
+                description=description,
                 retries=retries,
                 prepare=prepare,
                 docstring_format=docstring_format,
@@ -1100,6 +1132,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         name: str | None = None,
+        description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
@@ -1117,6 +1150,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         name: str | None = None,
+        description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
@@ -1159,6 +1193,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             func: The tool function to register.
             name: The name of the tool, defaults to the function name.
+            description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the agent's default retries,
                 which defaults to 1.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
@@ -1182,6 +1217,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 func_,
                 takes_ctx=False,
                 name=name,
+                description=description,
                 retries=retries,
                 prepare=prepare,
                 docstring_format=docstring_format,
@@ -1298,9 +1334,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     def _get_instructions(
         self,
+        additional_instructions: Instructions[AgentDepsT] = None,
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
         override_instructions = self._override_instructions.get()
-        instructions = override_instructions.value if override_instructions else self._instructions
+        if override_instructions:
+            instructions = override_instructions.value
+        else:
+            instructions = self._instructions.copy()
+            if additional_instructions is not None:
+                instructions.extend(self._normalize_instructions(additional_instructions))
 
         literal_parts: list[str] = []
         functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []

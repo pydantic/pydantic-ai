@@ -240,16 +240,20 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
         return s
 
 
+ToolAgentDepsT = TypeVar('ToolAgentDepsT', default=object, contravariant=True)
+"""Type variable for agent dependencies for a tool."""
+
+
 @dataclass(init=False)
-class Tool(Generic[AgentDepsT]):
+class Tool(Generic[ToolAgentDepsT]):
     """A tool function for an agent."""
 
-    function: ToolFuncEither[AgentDepsT]
+    function: ToolFuncEither[ToolAgentDepsT]
     takes_ctx: bool
     max_retries: int | None
     name: str
     description: str | None
-    prepare: ToolPrepareFunc[AgentDepsT] | None
+    prepare: ToolPrepareFunc[ToolAgentDepsT] | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     strict: bool | None
@@ -265,13 +269,13 @@ class Tool(Generic[AgentDepsT]):
 
     def __init__(
         self,
-        function: ToolFuncEither[AgentDepsT],
+        function: ToolFuncEither[ToolAgentDepsT],
         *,
         takes_ctx: bool | None = None,
         max_retries: int | None = None,
         name: str | None = None,
         description: str | None = None,
-        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        prepare: ToolPrepareFunc[ToolAgentDepsT] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -414,7 +418,7 @@ class Tool(Generic[AgentDepsT]):
             metadata=self.metadata,
         )
 
-    async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
+    async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
 
         By default, this method creates a tool definition, then either returns it, or calls `self.prepare`
