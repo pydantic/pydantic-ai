@@ -132,7 +132,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _instrument_default: ClassVar[InstrumentationSettings | bool] = False
 
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
-    _output_schema: _output.BaseOutputSchema[OutputDataT] = dataclasses.field(repr=False)
+    _output_schema: _output.OutputSchema[OutputDataT] = dataclasses.field(repr=False)
     _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = dataclasses.field(repr=False)
     _instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompts: tuple[str, ...] = dataclasses.field(repr=False)
@@ -1409,14 +1409,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return toolsets
 
     @overload
-    def _prepare_output_schema(self, output_type: None) -> _output.BaseOutputSchema[OutputDataT]: ...
+    def _prepare_output_schema(self, output_type: None) -> _output.OutputSchema[OutputDataT]: ...
 
     @overload
     def _prepare_output_schema(
         self, output_type: OutputSpec[RunOutputDataT]
-    ) -> _output.BaseOutputSchema[RunOutputDataT]: ...
+    ) -> _output.OutputSchema[RunOutputDataT]: ...
 
-    def _prepare_output_schema(self, output_type: OutputSpec[Any] | None) -> _output.BaseOutputSchema[Any]:
+    def _prepare_output_schema(self, output_type: OutputSpec[Any] | None) -> _output.OutputSchema[Any]:
         if output_type is not None:
             if self._output_validators:
                 raise exceptions.UserError('Cannot set a custom run `output_type` when the agent has output validators')
@@ -1494,7 +1494,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
 @dataclasses.dataclass(init=False)
 class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
-    output_schema: _output.BaseOutputSchema[Any]
+    output_schema: _output.OutputSchema[Any]
 
     def __init__(
         self,
@@ -1502,7 +1502,7 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
         *,
         max_retries: int = 1,
         id: str | None = None,
-        output_schema: _output.BaseOutputSchema[Any],
+        output_schema: _output.OutputSchema[Any],
     ):
         self.output_schema = output_schema
         super().__init__(tools, max_retries=max_retries, id=id)

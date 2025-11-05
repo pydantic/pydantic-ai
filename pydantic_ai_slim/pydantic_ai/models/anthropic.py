@@ -243,7 +243,6 @@ class AnthropicModel(Model):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        # TODO (DouweM): Dedupe with super
         settings = merge_model_settings(self.settings, model_settings)
         if (
             model_request_parameters.output_tools
@@ -251,7 +250,7 @@ class AnthropicModel(Model):
             and (thinking := settings.get('anthropic_thinking'))
             and thinking.get('type') == 'enabled'
         ):
-            if model_request_parameters.output_mode is None:
+            if model_request_parameters.output_mode == 'auto':
                 model_request_parameters = replace(model_request_parameters, output_mode='prompted')
             elif model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output:
                 # This would result in `tool_choice=required`, which Anthropic does not support with thinking.

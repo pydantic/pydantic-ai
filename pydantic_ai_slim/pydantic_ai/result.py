@@ -11,8 +11,8 @@ from typing_extensions import TypeVar, deprecated
 
 from . import _utils, exceptions, messages as _messages, models
 from ._output import (
-    BaseOutputSchema,
     OutputDataT_inv,
+    OutputSchema,
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
@@ -46,7 +46,7 @@ T = TypeVar('T')
 @dataclass(kw_only=True)
 class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _raw_stream_response: models.StreamedResponse
-    _output_schema: BaseOutputSchema[OutputDataT]
+    _output_schema: OutputSchema[OutputDataT]
     _model_request_parameters: models.ModelRequestParameters
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _run_ctx: RunContext[AgentDepsT]

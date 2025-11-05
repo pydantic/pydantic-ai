@@ -306,7 +306,7 @@ class ModelRequestParameters:
     function_tools: list[ToolDefinition] = field(default_factory=list)
     builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list)
 
-    output_mode: OutputMode | None = 'text'  # TODO (DouweM): None or new `'auto'` value? AutoOutputSchema is not bad.
+    output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list)
     prompted_output_template: str | None = None
@@ -426,8 +426,7 @@ class Model(ABC):
                 builtin_tools=list({tool.unique_id: tool for tool in builtin_tools}.values()),
             )
 
-        if not model_request_parameters.output_mode:
-            assert model_request_parameters.output_tools or model_request_parameters.output_object
+        if model_request_parameters.output_mode == 'auto':
             output_mode = self.profile.default_structured_output_mode
             model_request_parameters = replace(
                 model_request_parameters,
@@ -436,31 +435,33 @@ class Model(ABC):
             )
 
         if model_request_parameters.output_mode in ('native', 'prompted'):
-            if not model_request_parameters.output_object:
-                raise UserError(  # pragma: no cover
-                    'An `output_object` is required when using `NativeOutput` or `PromptedOutput`.'
-                )
-
-            if model_request_parameters.output_mode == 'native' and not self.profile.supports_json_schema_output:
-                raise UserError('Native structured output is not supported by this model.')
+            assert model_request_parameters.output_object
 
             if model_request_parameters.output_tools:
                 model_request_parameters = replace(model_request_parameters, output_tools=[])
-
-            if not model_request_parameters.prompted_output_template:
-                model_request_parameters = replace(
-                    model_request_parameters, prompted_output_template=self.profile.prompted_output_template
-                )
         else:
-            if model_request_parameters.output_mode == 'tool':
-                if not model_request_parameters.output_tools and not model_request_parameters.function_tools:
-                    raise UserError('An `output_tools` list is required when using `ToolOutput`.')  # pragma: no cover
+            if model_request_parameters.output_object:
+                model_request_parameters = replace(model_request_parameters, output_object=None)
+
+        match model_request_parameters.output_mode:
+            case 'native':
+                if not self.profile.supports_json_schema_output:
+                    raise UserError('Native structured output is not supported by this model.')
+
+                if model_request_parameters.prompted_output_template:
+                    model_request_parameters = replace(model_request_parameters, prompted_output_template=None)
+            case 'prompted':
+                if not model_request_parameters.prompted_output_template:
+                    model_request_parameters = replace(
+                        model_request_parameters, prompted_output_template=self.profile.prompted_output_template
+                    )
+            case 'tool':
+                assert model_request_parameters.output_tools or model_request_parameters.function_tools
 
                 if not self.profile.supports_tools:
                     raise UserError('Tool output is not supported by this model.')
-
-            if model_request_parameters.output_object:
-                model_request_parameters = replace(model_request_parameters, output_object=None)
+            case _:
+                pass
 
         if model_request_parameters.allow_image_output and not self.profile.supports_image_output:
             raise UserError('Image output is not supported by this model.')

@@ -211,7 +211,7 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
 
 
 @dataclass(kw_only=True)
-class BaseOutputSchema(ABC, Generic[OutputDataT]):
+class OutputSchema(ABC, Generic[OutputDataT]):
     text_processor: BaseOutputProcessor[OutputDataT] | None = None
     toolset: OutputToolset[Any] | None = None
     object_def: OutputObjectDefinition | None = None
@@ -219,19 +219,12 @@ class BaseOutputSchema(ABC, Generic[OutputDataT]):
     allows_image: bool = False
 
     @property
-    def mode(self) -> OutputMode | None:
+    def mode(self) -> OutputMode:
         raise NotImplementedError()
 
     @property
     def allows_text(self) -> bool:
         return self.text_processor is not None
-
-
-@dataclass(init=False)
-class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
-    """Model the final output from an agent run."""
-
-    # TODO (DouweM): Rename/merge this, BaseOutputSchema, and OutputSchemaWithoutMode
 
     @classmethod
     def build(  # noqa: C901
@@ -241,7 +234,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
-    ) -> BaseOutputSchema[OutputDataT]:
+    ) -> OutputSchema[OutputDataT]:
         """Build an OutputSchema dataclass from an output type."""
         outputs = _flatten_output_spec(output_spec)
 
@@ -359,7 +352,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
             )
 
         if len(other_outputs) > 0:
-            return OutputSchemaWithoutMode(
+            return AutoOutputSchema(
                 processor=cls._build_processor(other_outputs, name=name, description=description, strict=strict),
                 toolset=toolset,
                 allows_deferred_tools=allows_deferred_tools,
@@ -386,7 +379,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
 
 
 @dataclass(init=False)
-class OutputSchemaWithoutMode(BaseOutputSchema[OutputDataT]):
+class AutoOutputSchema(OutputSchema[OutputDataT]):
     processor: BaseObjectOutputProcessor[OutputDataT]
 
     def __init__(
@@ -400,18 +393,17 @@ class OutputSchemaWithoutMode(BaseOutputSchema[OutputDataT]):
         # At that point we may not know yet what output mode we're going to use if no model was provided or it was deferred until agent.run time,
         # but we cover ourselves just in case we end up using the tool output mode.
         super().__init__(
-            allows_deferred_tools=allows_deferred_tools,
             toolset=toolset,
             object_def=processor.object_def,
             text_processor=processor,
+            allows_deferred_tools=allows_deferred_tools,
             allows_image=allows_image,
         )
         self.processor = processor
 
     @property
-    def mode(self) -> OutputMode | None:
-        # TODO (DouweM): Could this be a field?
-        return None
+    def mode(self) -> OutputMode:
+        return 'auto'
 
 
 @dataclass(init=False)
@@ -430,7 +422,7 @@ class TextOutputSchema(OutputSchema[OutputDataT]):
         )
 
     @property
-    def mode(self) -> OutputMode | None:
+    def mode(self) -> OutputMode:
         return 'text'
 
 
@@ -439,7 +431,7 @@ class ImageOutputSchema(OutputSchema[OutputDataT]):
         super().__init__(allows_deferred_tools=allows_deferred_tools, allows_image=True)
 
     @property
-    def mode(self) -> OutputMode | None:
+    def mode(self) -> OutputMode:
         return 'image'
 
 
@@ -461,7 +453,7 @@ class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
 
 class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
     @property
-    def mode(self) -> OutputMode | None:
+    def mode(self) -> OutputMode:
         return 'native'
 
 
@@ -485,7 +477,7 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
         self.template = template
 
     @property
-    def mode(self) -> OutputMode | None:
+    def mode(self) -> OutputMode:
         return 'prompted'
 
     @classmethod
@@ -528,7 +520,7 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
         )
 
     @property
-    def mode(self) -> OutputMode | None:
+    def mode(self) -> OutputMode:
         return 'tool'
 
 

@@ -228,7 +228,7 @@ class GoogleModel(Model):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         if model_request_parameters.builtin_tools and model_request_parameters.output_tools:
-            if model_request_parameters.output_mode is None:
+            if model_request_parameters.output_mode == 'auto':
                 model_request_parameters = replace(model_request_parameters, output_mode='prompted')
             else:
                 raise UserError(
