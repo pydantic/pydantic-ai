@@ -1030,6 +1030,19 @@ async def _call_tools(
     output_parts.extend([tool_parts_by_index[k] for k in sorted(tool_parts_by_index)])
     output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
+    _populate_deferred_calls(
+        tool_calls, deferred_calls_by_index, deferred_metadata_by_index, output_deferred_calls, output_deferred_metadata
+    )
+
+
+def _populate_deferred_calls(
+    tool_calls: list[_messages.ToolCallPart],
+    deferred_calls_by_index: dict[int, Literal['external', 'unapproved']],
+    deferred_metadata_by_index: dict[int, dict[str, Any]],
+    output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
+    output_deferred_metadata: dict[str, dict[str, Any]],
+) -> None:
+    """Populate deferred calls and metadata from indexed mappings."""
     for k in sorted(deferred_calls_by_index):
         call = tool_calls[k]
         output_deferred_calls[deferred_calls_by_index[k]].append(call)
