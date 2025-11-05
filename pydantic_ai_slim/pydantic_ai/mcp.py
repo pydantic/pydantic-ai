@@ -627,8 +627,11 @@ class MCPServer(AbstractToolset[Any], ABC):
             return self._get_content(resource)
         elif isinstance(part, mcp_types.ResourceLink):
             result = await self.read_resource(str(part.uri))
-            # If resource not found, return an empty string as it's impossible to fetch anyway
-            return result if result is not None else ''
+            # Rather than hide an invalid resource link, we raise an error so it's consistent with any
+            # other error that could happen during resource reading.
+            if result is None:
+                raise MCPError(message=f'Invalid ResourceLink {part.uri} returned by tool', code=-32002)
+            return result
         else:
             assert_never(part)
 
