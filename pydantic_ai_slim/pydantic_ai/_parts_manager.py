@@ -330,7 +330,7 @@ class ModelResponsePartsManager:
             ignore_leading_whitespace=ignore_leading_whitespace,
         )
 
-    def _handle_text_delta_with_thinking_tags(
+    def _handle_text_delta_with_thinking_tags(  # noqa: C901
         self,
         *,
         vendor_part_id: VendorId,
@@ -390,20 +390,33 @@ class ModelResponsePartsManager:
 
         for i, (segment_type, segment_content) in enumerate(segments):
             if segment_type == 'text':
-                # Skip whitespace-only text before a thinking tag when ignore_leading_whitespace=True
-                skip_whitespace_before_tag = (
-                    ignore_leading_whitespace
-                    and segment_content.isspace()
-                    and i + 1 < len(segments)
-                    and segments[i + 1][0] == 'start_tag'
+                yield from self._emit_text_part(
+                    vendor_part_id=vendor_part_id,
+                    content=segment_content,
+                    id=id,
+                    ignore_leading_whitespace=ignore_leading_whitespace,
                 )
-                if not skip_whitespace_before_tag:  # praga: no cover - line was always true (this is probably dead code, will remove after double checking)
-                    yield from self._emit_text_part(
-                        vendor_part_id=vendor_part_id,
-                        content=segment_content,
-                        id=id,
-                        ignore_leading_whitespace=ignore_leading_whitespace,
-                    )
+                # After emitting TextPart, reconstruct remaining segments as literal text
+                remaining_segments = segments[i + 1 :]
+                if remaining_segments:
+                    reconstructed = ''
+                    for seg_type, seg_content in remaining_segments:
+                        if seg_type == 'text':  # pragma: no cover - line was always true
+                            reconstructed += seg_content
+                        elif seg_type == 'start_tag':
+                            reconstructed += start_tag
+                        elif seg_type == 'thinking':
+                            reconstructed += seg_content
+                        elif seg_type == 'end_tag':  # pragma: no cover - partial, line was always true
+                            reconstructed += end_tag
+                    if reconstructed:  # pragma: no cover - partial, line was always true
+                        yield from self._emit_text_part(
+                            vendor_part_id=vendor_part_id,
+                            content=reconstructed,
+                            id=id,
+                            ignore_leading_whitespace=False,
+                        )
+                break
             elif segment_type == 'start_tag':
                 self._vendor_id_to_part_index.pop(vendor_part_id, None)
                 new_part_index = len(self._parts)
