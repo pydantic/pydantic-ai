@@ -1550,20 +1550,12 @@ async def test_read_resource_template(run_context: RunContext[int]):
 
 
 async def test_read_resource_not_found(mcp_server: MCPServerStdio) -> None:
-    """Test that read_resource raises MCPError for non-existent resources with non-standard error codes."""
-    async with mcp_server:
-        # FastMCP uses error code 0 instead of -32002, so it should raise
-        with pytest.raises(MCPError, match='Unknown resource: resource://does_not_exist') as exc_info:
-            await mcp_server.read_resource('resource://does_not_exist')
+    """Test that read_resource returns None for MCP spec error code -32002 (resource not found).
 
-        # Verify the exception has the expected attributes
-        assert exc_info.value.code == 0
-        assert exc_info.value.message == 'Unknown resource: resource://does_not_exist'
+    As per https://modelcontextprotocol.io/specification/2025-06-18/server/resources#error-handling
 
-
-async def test_read_resource_not_found_mcp_spec(mcp_server: MCPServerStdio) -> None:
-    """Test that read_resource returns None for MCP spec error code -32002 (resource not found)."""
-    # As per https://modelcontextprotocol.io/specification/2025-06-18/server/resources#error-handling
+    Note: We mock this because FastMCP uses error code 0 instead of -32002, which is non-standard.
+    """
     mcp_error = McpError(error=ErrorData(code=-32002, message='Resource not found'))
 
     async with mcp_server:
@@ -1574,6 +1566,27 @@ async def test_read_resource_not_found_mcp_spec(mcp_server: MCPServerStdio) -> N
         ):
             result = await mcp_server.read_resource('resource://missing')
             assert result is None
+
+
+async def test_read_resource_error(mcp_server: MCPServerStdio) -> None:
+    """Test that read_resource converts McpError to MCPError for generic errors."""
+    mcp_error = McpError(
+        error=ErrorData(code=-32603, message='Failed to read resource', data={'details': 'disk error'})
+    )
+
+    async with mcp_server:
+        with patch.object(
+            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            'read_resource',
+            new=AsyncMock(side_effect=mcp_error),
+        ):
+            with pytest.raises(MCPError, match='Failed to read resource') as exc_info:
+                await mcp_server.read_resource('resource://error')
+
+            # Verify the exception has the expected attributes
+            assert exc_info.value.code == -32603
+            assert exc_info.value.message == 'Failed to read resource'
+            assert exc_info.value.data == {'details': 'disk error'}
 
 
 async def test_read_resource_empty_contents(mcp_server: MCPServerStdio) -> None:
