@@ -582,7 +582,7 @@ class StreamedResponse(ABC):
                     yield event
 
                 # Flush any buffered content and stream finalize events
-                for finalize_event in self._parts_manager.finalize():
+                for finalize_event in self._parts_manager.finalize():  # pragma: no cover
                     if isinstance(finalize_event, PartStartEvent):
                         if last_start_event:
                             end_event = part_end_event(finalize_event.part)

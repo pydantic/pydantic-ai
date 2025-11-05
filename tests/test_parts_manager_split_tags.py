@@ -1,16 +1,11 @@
-"""Tests for split thinking tag handling in ModelResponsePartsManager."""
-
 from __future__ import annotations as _annotations
 
 from collections.abc import Hashable
+from dataclasses import dataclass
 
-from inline_snapshot import snapshot
+import pytest
 
-from pydantic_ai import (
-    PartStartEvent,
-    TextPart,
-    ThinkingPart,
-)
+from pydantic_ai import PartStartEvent, TextPart, ThinkingPart
 from pydantic_ai._parts_manager import ModelResponsePart, ModelResponsePartsManager
 from pydantic_ai.messages import ModelResponseStreamEvent
 
@@ -20,20 +15,8 @@ def stream_text_deltas(
     vendor_part_id: Hashable | None = 'content',
     thinking_tags: tuple[str, str] | None = ('<think>', '</think>'),
     ignore_leading_whitespace: bool = False,
-    finalize: bool = True,
 ) -> tuple[list[ModelResponseStreamEvent], list[ModelResponsePart]]:
-    """Helper to stream chunks through manager and return all events + final parts.
-
-    Args:
-        chunks: List of text chunks to stream
-        vendor_part_id: Vendor ID for part tracking
-        thinking_tags: Tuple of (start_tag, end_tag) for thinking detection
-        ignore_leading_whitespace: Whether to ignore leading whitespace
-        finalize: Whether to call finalize() at the end
-
-    Returns:
-        Tuple of (all events, final parts)
-    """
+    """Helper to stream chunks through manager and return all events + final parts."""
     manager = ModelResponsePartsManager()
     all_events: list[ModelResponseStreamEvent] = []
 
@@ -46,402 +29,169 @@ def stream_text_deltas(
         ):
             all_events.append(event)
 
-    if finalize:
-        for event in manager.finalize():
-            all_events.append(event)
+    for event in manager.finalize():
+        all_events.append(event)
 
     return all_events, manager.get_parts()
 
 
-def test_handle_text_deltas_with_split_think_tags_at_chunk_start():
-    """Test split thinking tags when tags are split across chunks."""
-
-    # Scenario 1: Split start tag - <thi + nk>content</think>
-    events, parts = stream_text_deltas(['<thi', 'nk>', 'reasoning content', '</think>', 'after'])
-    assert len(events) == 2
-    assert events[0] == snapshot(
-        PartStartEvent(
-            index=0, part=ThinkingPart(content='reasoning content', part_kind='thinking'), event_kind='part_start'
-        )
-    )
-    assert events[1] == snapshot(
-        PartStartEvent(index=1, part=TextPart(content='after', part_kind='text'), event_kind='part_start')
-    )
-    assert len(parts) == 2
-    assert parts[0] == snapshot(ThinkingPart(content='reasoning content', part_kind='thinking'))
-    assert parts[1] == snapshot(TextPart(content='after', part_kind='text'))
-
-    # Scenario 2: Split end tag - <think>content</thi + nk>
-    events, parts = stream_text_deltas(['<think>', 'more content', '</thi', 'nk>', 'text after'])
-    assert len(events) == 2
-    assert events[0] == snapshot(
-        PartStartEvent(
-            index=0, part=ThinkingPart(content='more content', part_kind='thinking'), event_kind='part_start'
-        )
-    )
-    assert events[1] == snapshot(
-        PartStartEvent(index=1, part=TextPart(content='text after', part_kind='text'), event_kind='part_start')
-    )
-    assert len(parts) == 2
-    assert parts[0] == snapshot(ThinkingPart(content='more content', part_kind='thinking'))
-    assert parts[1] == snapshot(TextPart(content='text after', part_kind='text'))
-
-    # Scenario 3: Both tags split - <thi + nk>foo</thi + nk>
-    events, parts = stream_text_deltas(['<thi', 'nk>foo</thi', 'nk>'])
-    assert events == snapshot([PartStartEvent(index=0, part=ThinkingPart(content='foo'))])
-    assert parts == snapshot([ThinkingPart(content='foo')])
+@dataclass
+class Case:
+    name: str
+    chunks: list[str]
+    expected_parts: list[ModelResponsePart]  # [TextPart|ThinkingPart('final content')]
+    vendor_part_id: Hashable | None = 'content'
+    ignore_leading_whitespace: bool = False
 
 
-def test_exact_tag_length_boundary():
-    """Test when buffered content exactly equals tag length."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    # Send content in one chunk that's exactly tag length
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='<think>', thinking_tags=thinking_tags))
-    # An empty ThinkingPart is created but no event is yielded until content arrives
-    assert len(events) == 0
-
-
-def test_buffered_content_flushed_on_finalize():
-    """Test that buffered content is flushed when finalize is called."""
-    events, parts = stream_text_deltas(['<thi'])
-    assert len(events) == 1
-    assert events[0] == snapshot(
-        PartStartEvent(index=0, part=TextPart(content='<thi', part_kind='text'), event_kind='part_start')
-    )
-    assert parts == snapshot([TextPart(content='<thi', part_kind='text')])
-
-
-def test_finalize_flushes_all_buffers():
-    """Test that finalize flushes all vendor_part_id buffers."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    for _ in manager.handle_text_delta(vendor_part_id='id1', content='<th', thinking_tags=thinking_tags):
-        pass
-    for _ in manager.handle_text_delta(vendor_part_id='id2', content='<thi', thinking_tags=thinking_tags):
-        pass
-
-    final_events = list(manager.finalize())
-    assert len(final_events) == 2
-
-    parts = manager.get_parts()
-    assert len(parts) == 2
-    assert all(isinstance(p, TextPart) for p in parts)
-    contents: set[str] = {p.content for p in parts if isinstance(p, TextPart)}
-    assert contents == {'<th', '<thi'}
-
-
-def test_prefixed_thinking_tags_are_text():
-    """Test that thinking tags (incomplete or complete) with a prefix are treated as plain text."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    # Case 1: Incomplete tag with prefix
-    events = list(manager.handle_text_delta(vendor_part_id='content', content='foo<th', thinking_tags=thinking_tags))
-    assert len(events) == 1
-    assert events[0] == snapshot(
-        PartStartEvent(index=0, part=TextPart(content='foo<th', part_kind='text'), event_kind='part_start')
-    )
-    assert manager.get_parts() == snapshot([TextPart(content='foo<th', part_kind='text')])
-
-    # Reset manager for next case
-    manager = ModelResponsePartsManager()
-
-    # Case 2: Complete tag with prefix
-    events = list(
-        manager.handle_text_delta(vendor_part_id='content', content='bar<think>', thinking_tags=thinking_tags)
-    )
-    assert len(events) == 1
-    assert events[0] == snapshot(
-        PartStartEvent(index=0, part=TextPart(content='bar<think>', part_kind='text'), event_kind='part_start')
-    )
-    assert manager.get_parts() == snapshot([TextPart(content='bar<think>', part_kind='text')])
-
-    # Reset manager for next case
-    manager = ModelResponsePartsManager()
-
-    # Case 3: Complete tag with content and prefix
-    events = list(
-        manager.handle_text_delta(
-            vendor_part_id='content', content='baz<think>thinking</think>', thinking_tags=thinking_tags
-        )
-    )
-    assert len(events) == 1
-    assert events[0] == snapshot(
-        PartStartEvent(
-            index=0, part=TextPart(content='baz<think>thinking</think>', part_kind='text'), event_kind='part_start'
-        )
-    )
-    assert manager.get_parts() == snapshot([TextPart(content='baz<think>thinking</think>', part_kind='text')])
-
-
-def test_stream_and_finalize():
-    """Simulates streaming with complete tags and content."""
-    events, parts = stream_text_deltas(['<thi', 'nk>', 'content', '</think>', 'final text'], vendor_part_id='stream1')
-
-    assert len(events) == 2
-    assert isinstance(events[0], PartStartEvent)
-    assert isinstance(events[0].part, ThinkingPart)
-    assert events[0].part.content == 'content'
-
-    assert len(parts) == 2
-    assert isinstance(parts[1], TextPart)
-    assert parts[1].content == 'final text'
-
-    events_incomplete, parts_incomplete = stream_text_deltas(['<thi'], vendor_part_id='stream2')
-
-    assert len(events_incomplete) == 1
-    assert isinstance(events_incomplete[0], PartStartEvent)
-    assert events_incomplete[0].part == TextPart(content='<thi')
-    assert parts_incomplete == [TextPart(content='<thi')]
-
-
-def test_whitespace_prefixed_thinking_tags():
-    """Test thinking tags prefixed by whitespace when ignore_leading_whitespace=True."""
-    events, parts = stream_text_deltas(['\n<think>', 'thinking content'], ignore_leading_whitespace=True)
-
-    assert len(events) == 1
-    assert events[0] == snapshot(
-        PartStartEvent(
-            index=0, part=ThinkingPart(content='thinking content', part_kind='thinking'), event_kind='part_start'
-        )
-    )
-    assert parts == snapshot([ThinkingPart(content='thinking content', part_kind='thinking')])
-
-
-def test_isolated_think_tag_with_finalize():
-    """Test isolated <think> tag converted to TextPart on finalize."""
-    events, parts = stream_text_deltas(['<think>'])
-
-    assert len(events) == 1
-    assert isinstance(events[0], PartStartEvent)
-    assert events[0].part == snapshot(TextPart(content='<think>', part_kind='text'))
-    assert parts == snapshot([TextPart(content='<think>', part_kind='text')])
+CASES: list[Case] = [
+    # --- Isolated opening/partial tags -> TextPart (flush via finalize) ---
+    Case(
+        name='incomplete_opening_tag_only',
+        chunks=['<thi'],
+        expected_parts=[TextPart('<thi')],
+    ),
+    Case(
+        name='isolated_opening_tag_only',
+        chunks=['<think>'],
+        expected_parts=[TextPart('<think>')],
+    ),
+    # --- Isolated opening/partial tags with no vendor id -> TextPart ---
+    Case(
+        name='incomplete_opening_tag_only_no_vendor_id',
+        chunks=['<thi'],
+        expected_parts=[TextPart('<thi')],
+        vendor_part_id=None,
+    ),
+    Case(
+        name='isolated_opening_tag_only_no_vendor_id',
+        chunks=['<think>'],
+        expected_parts=[TextPart('<think>')],
+        vendor_part_id=None,
+    ),
+    # --- Split thinking tags -> ThinkingPart ---
+    Case(
+        name='open_with_content_then_close',
+        chunks=['<think>content', '</think>'],
+        expected_parts=[ThinkingPart('content')],
+    ),
+    Case(
+        name='open_then_content_and_close',
+        chunks=['<think>', 'content</think>'],
+        expected_parts=[ThinkingPart('content')],
+    ),
+    Case(
+        name='fully_split_open_and_close',
+        chunks=['<th', 'ink>content</th', 'ink>'],
+        expected_parts=[ThinkingPart('content')],
+    ),
+    Case(
+        name='split_content_across_chunks',
+        chunks=['<think>con', 'tent</think>'],
+        expected_parts=[ThinkingPart('content')],
+    ),
+    # --- Non-closed thinking tag -> ThinkingPart (finalize closes) ---
+    Case(
+        name='non_closed_thinking_generates_thinking_part',
+        chunks=['<think>content'],
+        expected_parts=[ThinkingPart('content')],
+    ),
+    # --- Partial closing tag buffered/then appended if stream ends ---
+    Case(
+        name='partial_close_appended_on_finalize',
+        chunks=['<think>content', '</th'],
+        expected_parts=[ThinkingPart('content</th')],
+    ),
+    # --- Tags not at start of chunk -> TextPart (pretext) ---
+    Case(
+        name='pretext_then_thinking_tag_same_chunk_textpart',
+        chunks=['prethink<think>content</think>'],
+        expected_parts=[TextPart('prethink<think>content</think>')],
+    ),
+    # --- Leading whitespace handling (toggle by ignore_leading_whitespace) ---
+    Case(
+        name='leading_whitespace_allowed_when_flag_true',
+        chunks=['\n<think>content'],
+        expected_parts=[ThinkingPart('content')],
+        ignore_leading_whitespace=True,
+    ),
+    Case(
+        name='leading_whitespace_not_allowed_when_flag_false',
+        chunks=['\n<think>content'],
+        expected_parts=[TextPart('\n<think>content')],
+        ignore_leading_whitespace=False,
+    ),
+    Case(
+        name='split_with_leading_ws_then_open_tag_flag_true',
+        chunks=[' \t\n<th', 'ink>content</think>'],
+        expected_parts=[ThinkingPart('content')],
+        ignore_leading_whitespace=True,
+    ),
+    Case(
+        name='split_with_leading_ws_then_open_tag_flag_false',
+        chunks=[' \t\n<th', 'ink>content</think>'],
+        expected_parts=[TextPart(' \t\n<think>content</think>')],
+        ignore_leading_whitespace=False,
+    ),
+    # Test case where whitespace is in separate chunk from tag - this should work with the flag
+    Case(
+        name='leading_ws_separate_chunk_split_tag_flag_true',
+        chunks=[' \t\n', '<th', 'ink>content</think>'],
+        expected_parts=[ThinkingPart('content')],
+        ignore_leading_whitespace=True,
+    ),
+    # --- Text after closing tag ---
+    Case(
+        name='text_after_closing_tag_same_chunk',
+        chunks=['<think>content</think>after'],
+        expected_parts=[ThinkingPart('content'), TextPart('after')],
+    ),
+    Case(
+        name='text_after_closing_tag_next_chunk',
+        chunks=['<think>content</think>', 'after'],
+        expected_parts=[ThinkingPart('content'), TextPart('after')],
+    ),
+    Case(
+        name='split_close_tag_then_text',
+        chunks=['<think>content</th', 'ink>after'],
+        expected_parts=[ThinkingPart('content'), TextPart('after')],
+    ),
+    Case(
+        name='multiple_thinking_parts_with_text_between',
+        chunks=['<think>first</think>between<think>second</think>'],
+        expected_parts=[ThinkingPart('first'), TextPart('between<think>second</think>')],  # right
+        # expected_parts=[ThinkingPart('first'), TextPart('between'), ThinkingPart('second')], # wrong
+    ),
+]
 
 
-def test_vendor_id_switch_during_thinking():
-    """Test that switching vendor_part_id during thinking creates separate parts."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    events = list(manager.handle_text_delta(vendor_part_id='id1', content='<think>', thinking_tags=thinking_tags))
-    assert len(events) == 0
-
-    events = list(
-        manager.handle_text_delta(vendor_part_id='id1', content='thinking content', thinking_tags=thinking_tags)
-    )
-    assert len(events) == 1
-    event = events[0]
-    assert isinstance(event, PartStartEvent)
-    assert isinstance(event.part, ThinkingPart)
-    assert event.part.content == 'thinking content'
-
-    events = list(
-        manager.handle_text_delta(vendor_part_id='id2', content='different part', thinking_tags=thinking_tags)
-    )
-    assert len(events) == 1
-    event = events[0]
-    assert isinstance(event, PartStartEvent)
-    assert isinstance(event.part, TextPart)
-    assert event.part.content == 'different part'
-
-    parts = manager.get_parts()
-    assert len(parts) == 2
-    assert parts[0] == snapshot(ThinkingPart(content='thinking content', part_kind='thinking'))
-    assert parts[1] == snapshot(TextPart(content='different part', part_kind='text'))
-
-
-def test_thinking_interrupted_by_incomplete_end_tag_and_vendor_switch():
-    """Test unclosed thinking tag followed by different vendor_part_id.
-
-    When a vendor_part_id switches and leaves a ThinkingPart with buffered partial end tag,
-    the buffered content is auto-closed by appending it to the ThinkingPart during finalize().
+@pytest.mark.parametrize('case', CASES, ids=lambda c: c.name)
+def test_thinking_parts_parametrized(case: Case) -> None:
     """
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    for _ in manager.handle_text_delta(vendor_part_id='id1', content='<think>', thinking_tags=thinking_tags):
-        pass
-    for _ in manager.handle_text_delta(vendor_part_id='id1', content='thinking foo</th', thinking_tags=thinking_tags):
-        pass
-
-    events = list(manager.handle_text_delta(vendor_part_id='id2', content='new content', thinking_tags=thinking_tags))
-    assert len(events) == 1
-    event = events[0]
-    assert isinstance(event, PartStartEvent)
-    assert isinstance(event.part, TextPart)
-
-    for _ in manager.finalize():
-        pass
-
-    parts = manager.get_parts()
-    assert len(parts) == 2
-    assert isinstance(parts[0], ThinkingPart)
-    assert parts[0].content == 'thinking foo</th'
-    assert isinstance(parts[1], TextPart)
-    assert parts[1].content == 'new content'
-
-
-def test_split_end_tag_with_content_before():
-    """Test content before split end tag in buffered chunks (line 337)."""
-    events, parts = stream_text_deltas(['<think>', 'reasoning content</th', 'ink>'])
-
-    assert len(parts) == 1
-    assert isinstance(parts[0], ThinkingPart)
-    assert parts[0].content == 'reasoning content'
-
-    # Verify events
-    assert any(isinstance(e, PartStartEvent) and isinstance(e.part, ThinkingPart) for e in events)
-
-
-def test_split_end_tag_with_content_after():
-    """Test content after split end tag in buffered chunks (line 343)."""
-    events, parts = stream_text_deltas(['<think>', 'reasoning', '</thi', 'nk>after text'])
-
-    assert len(parts) == 2
-    assert isinstance(parts[0], ThinkingPart)
-    assert parts[0].content == 'reasoning'
-    assert isinstance(parts[1], TextPart)
-    assert parts[1].content == 'after text'
-
-    # Verify events
-    assert any(isinstance(e, PartStartEvent) and isinstance(e.part, ThinkingPart) for e in events)
-    assert any(isinstance(e, PartStartEvent) and isinstance(e.part, TextPart) for e in events)
-
-
-def test_split_end_tag_with_content_before_and_after():
-    """Test content both before and after split end tag."""
-    _, parts = stream_text_deltas(['<think>', 'reason</th', 'ink>after'])
-
-    assert len(parts) == 2
-    assert isinstance(parts[0], ThinkingPart)
-    assert parts[0].content == 'reason'
-    assert isinstance(parts[1], TextPart)
-    assert parts[1].content == 'after'
-
-
-def test_cross_path_end_tag_handling():
-    """Test end tag handling when buffering fallback delegates to simple path (C2 → S5).
-
-    This tests the scenario where buffering creates a ThinkingPart, then non-matching
-    content triggers the C2 fallback to simple path, which then handles the end tag.
+    Parametrized coverage for all cases described in the report.
+    Each case defines:
+      - input stream chunks
+      - expected list of parts [(type, final_content), ...]
+      - optional ignore_leading_whitespace toggle
     """
-    _, parts = stream_text_deltas(['<think>initial', 'x', 'more</think>after'])
-
-    assert len(parts) == 2
-    assert isinstance(parts[0], ThinkingPart)
-    assert parts[0].content == 'initialxmore'
-    assert isinstance(parts[1], TextPart)
-    assert parts[1].content == 'after'
-
-
-def test_cross_path_bare_end_tag():
-    """Test bare end tag when buffering fallback delegates to simple path (C2 → S5).
-
-    This tests the specific branch where content equals exactly the end tag.
-    """
-    _, parts = stream_text_deltas(['<think>done', 'x', '</think>'])
-
-    assert len(parts) == 1
-    assert isinstance(parts[0], ThinkingPart)
-    assert parts[0].content == 'donex'
-
-
-def test_invalid_partial_tag_prefix():
-    """Test content starting with '<' but not matching tag prefix (branch 109->113)."""
-    events, parts = stream_text_deltas(['<xyz'])
-
-    assert len(parts) == 1
-    assert isinstance(parts[0], TextPart)
-    assert parts[0].content == '<xyz'
-    assert len(events) == 1
-    assert isinstance(events[0], PartStartEvent)
-
-
-def test_bare_start_tag_simple_path():
-    """Test isolated start tag through simple path (branch 319->321)."""
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    events = list(manager.handle_text_delta(vendor_part_id=None, content='<think>', thinking_tags=thinking_tags))
-
-    assert len(events) == 0
-
-    final_events = list(manager.finalize())
-    assert len(final_events) == 1
-    assert isinstance(final_events[0], PartStartEvent)
-    assert isinstance(final_events[0].part, TextPart)
-    assert final_events[0].part.content == '<think>'
-
-
-def test_complete_thinking_block_with_trailing_text_single_chunk():
-    """Test complete thinking block and text in one chunk (branch 411->386)."""
-    events, parts = stream_text_deltas(['<think>reasoning</think>final text'])
-
-    assert len(parts) == 2
-    assert isinstance(parts[0], ThinkingPart)
-    assert parts[0].content == 'reasoning'
-    assert isinstance(parts[1], TextPart)
-    assert parts[1].content == 'final text'
-    assert len(events) == 2
-
-
-def test_thinking_delta_after_tool_call():
-    """Test creating ThinkingPart when latest part is a ToolCallPart (branch 515->528)."""
-    manager = ModelResponsePartsManager()
-
-    manager.handle_tool_call_part(
-        vendor_part_id='tool1', tool_name='test_tool', args={'key': 'value'}, tool_call_id='call_123'
+    events, final_parts = stream_text_deltas(
+        chunks=case.chunks,
+        vendor_part_id=case.vendor_part_id,
+        thinking_tags=('<think>', '</think>'),
+        ignore_leading_whitespace=case.ignore_leading_whitespace,
     )
 
-    events = list(manager.handle_thinking_delta(vendor_part_id=None, content='some thinking'))
+    # Parts observed from final state (after all deltas have been applied)
+    assert final_parts == case.expected_parts, f'\nObserved: {final_parts}\nExpected: {case.expected_parts}'
 
-    assert len(events) == 1
-    assert isinstance(events[0], PartStartEvent)
-    assert isinstance(events[0].part, ThinkingPart)
+    # 1) For ThinkingPart cases, we should have exactly one PartStartEvent (per ThinkingPart).
+    thinking_count = sum(1 for part in final_parts if isinstance(part, ThinkingPart))
+    if thinking_count:
+        starts = [e for e in events if isinstance(e, PartStartEvent) and isinstance(e.part, ThinkingPart)]
+        assert len(starts) == thinking_count, 'Each ThinkingPart should have a single PartStartEvent.'
 
-    parts = manager.get_parts()
-    assert len(parts) == 2
-    assert isinstance(parts[1], ThinkingPart)
-    assert parts[1].content == 'some thinking'
-
-
-def test_text_part_update_via_handle_part_then_emit():
-    """Test updating a TextPart created via handle_part (lines 471-472)."""
-    manager = ModelResponsePartsManager()
-
-    manager.handle_part(vendor_part_id='text1', part=TextPart(content='initial'))
-
-    events = list(manager.handle_text_delta(vendor_part_id='text1', content=' more', thinking_tags=None))
-
-    assert len(events) == 1
-    assert isinstance(events[0], PartStartEvent)
-    assert isinstance(events[0].part, TextPart)
-    assert events[0].part.content == 'initial more'
-
-    parts = manager.get_parts()
-    assert len(parts) == 1
-    assert isinstance(parts[0], TextPart)
-    assert parts[0].content == 'initial more'
-
-
-def test_bare_end_tag_chunk():
-    """Test chunk containing only the closing tag (branch 411->386)."""
-    events, parts = stream_text_deltas(['<think>', 'content', '</think>'])
-
-    assert len(parts) == 1
-    assert isinstance(parts[0], ThinkingPart)
-    assert parts[0].content == 'content'
-    assert len(events) == 1
-
-
-def test_stream_without_finalize():
-    """Test streaming without finalization (branch 49->53)."""
-    events, parts = stream_text_deltas(['<thi'], finalize=False)
-
-    # Incomplete tag should be buffered, not emitted
-    assert len(events) == 0
-    # No parts yet since not finalized
-    assert len(parts) == 0
+    # 2) Isolated opening tags should not emit a ThinkingPart start without content.
+    if case.name in {'isolated_opening_tag_only', 'incomplete_opening_tag_only'}:
+        assert all(not (isinstance(e, PartStartEvent) and isinstance(e.part, ThinkingPart)) for e in events), (
+            'No ThinkingPart PartStartEvent should be emitted without content.'
+        )

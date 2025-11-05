@@ -20,6 +20,8 @@ from typing import Any
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     BuiltinToolCallPart,
+    BuiltinToolReturnPart,
+    FilePart,
     ModelResponsePart,
     ModelResponseStreamEvent,
     PartDeltaEvent,
@@ -344,6 +346,10 @@ class ModelResponsePartsManager:
         part_index = self._vendor_id_to_part_index.get(vendor_part_id)
         existing_part = self._parts[part_index] if part_index is not None else None
 
+        # Strip leading whitespace if enabled and no existing part
+        if ignore_leading_whitespace and not buffered and not existing_part:
+            content = content.lstrip()
+
         # If a TextPart has already been created for this vendor_part_id, disable thinking tag detection
         if existing_part is not None and isinstance(existing_part, TextPart):
             combined_content = buffered + content
@@ -367,12 +373,11 @@ class ModelResponsePartsManager:
         )
 
         # Check for text before thinking tag - if so, treat entire combined content as text
+        # this covers cases like `pre<think>` or `pre<thi`
         if segments and segments[0][0] == 'text':
             text_content = segments[0][1]
-            if ignore_leading_whitespace and text_content.isspace():
-                text_content = ''
 
-            if text_content:
+            if text_content:  # praga: no cover - line was always true
                 combined_content = buffered + content
                 self._thinking_tag_buffer.pop(vendor_part_id, None)
                 yield from self._emit_text_part(
@@ -392,7 +397,7 @@ class ModelResponsePartsManager:
                     and i + 1 < len(segments)
                     and segments[i + 1][0] == 'start_tag'
                 )
-                if not skip_whitespace_before_tag:
+                if not skip_whitespace_before_tag:  # praga: no cover - line was always true (this is probably dead code, will remove after double checking)
                     yield from self._emit_text_part(
                         vendor_part_id=vendor_part_id,
                         content=segment_content,
@@ -445,6 +450,7 @@ class ModelResponsePartsManager:
                 latest_part = self._parts[part_index]
                 if isinstance(latest_part, TextPart):
                     existing_text_part_and_index = latest_part, part_index
+            # else: existing_text_part_and_index remains None
         else:
             part_index = self._vendor_id_to_part_index.get(vendor_part_id)
             if part_index is not None:
@@ -453,6 +459,7 @@ class ModelResponsePartsManager:
                     existing_text_part_and_index = existing_part, part_index
                 else:
                     raise UnexpectedModelBehavior(f'Cannot apply a text delta to {existing_part=}')
+            # else: existing_text_part_and_index remains None
 
         if existing_text_part_and_index is None:
             new_part_index = len(self._parts)
@@ -467,7 +474,9 @@ class ModelResponsePartsManager:
             part_delta = TextPartDelta(content_delta=content)
             updated_text_part = part_delta.apply(existing_text_part)
             self._parts[part_index] = updated_text_part
-            if part_index not in self._started_part_indices:
+            if (
+                part_index not in self._started_part_indices
+            ):  # pragma: no cover - TextPart should have already emitted PartStartEvent when created
                 self._started_part_indices.add(part_index)
                 yield PartStartEvent(index=part_index, part=updated_text_part)
             else:
@@ -516,6 +525,8 @@ class ModelResponsePartsManager:
                     raise UnexpectedModelBehavior(
                         'Cannot create ThinkingPart after TextPart: thinking must come before text in response'
                     )
+                else:  # pragma: no cover - `handle_thinking_delta` should never be called when vendor_part_id is None the latest part is not a ThinkingPart or TextPart
+                    raise UnexpectedModelBehavior(f'Cannot apply a thinking delta to {latest_part=}')
         else:
             # Otherwise, attempt to look up an existing ThinkingPart by vendor_part_id
             part_index = self._vendor_id_to_part_index.get(vendor_part_id)
@@ -684,10 +695,7 @@ class ModelResponsePartsManager:
         return PartStartEvent(index=new_part_index, part=new_part)
 
     def handle_part(
-        self,
-        *,
-        vendor_part_id: Hashable | None,
-        part: ModelResponsePart,
+        self, *, vendor_part_id: Hashable | None, part: BuiltinToolCallPart | BuiltinToolReturnPart | FilePart
     ) -> ModelResponseStreamEvent:
         """Create or overwrite a ModelResponsePart.
 

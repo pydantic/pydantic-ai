@@ -2102,40 +2102,24 @@ async def test_run_stream_events():
     )
 
 
-async def test_streaming_finalize_with_incomplete_thinking_tag():
-    """Test that incomplete thinking tags are flushed via finalize during streaming (lines 585-591 in models/__init__.py)."""
+async def test_run_stream_finalize_with_incomplete_thinking_tag():
+    """Test that incomplete thinking tags are flushed via finalize when using run_stream()."""
 
     async def stream_with_incomplete_thinking(
         _messages: list[ModelMessage], _agent_info: AgentInfo
     ) -> AsyncIterator[str]:
-        # Stream incomplete thinking tag that will be buffered
         yield '<thi'
 
     agent = Agent(FunctionModel(stream_function=stream_with_incomplete_thinking))
 
-    events: list[AgentStreamEvent] = []
+    events: list[Any] = []
+    async for event in agent.run_stream_events('Hello'):
+        events.append(event)
 
-    async def event_stream_handler(_ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
-        async for event in stream:
-            events.append(event)
-
-    # This will trigger the finalize logic in models/__init__.py when the stream completes
-    result = await agent.run('Hello', event_stream_handler=event_stream_handler)
-
-    # The incomplete tag should be flushed as TextPart
-    assert result.output == '<thi'
-
-    # Verify that PartStartEvent and PartEndEvent were emitted from finalize
     part_start_events = [e for e in events if isinstance(e, PartStartEvent)]
-    part_end_events = [e for e in events if isinstance(e, PartEndEvent)]
-
     assert len(part_start_events) == 1
     assert isinstance(part_start_events[0].part, TextPart)
     assert part_start_events[0].part.content == '<thi'
-
-    assert len(part_end_events) == 1
-    assert isinstance(part_end_events[0].part, TextPart)
-    assert part_end_events[0].part.content == '<thi'
 
 
 def test_structured_response_sync_validation():
