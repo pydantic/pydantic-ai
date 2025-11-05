@@ -80,6 +80,7 @@ class FallbackModel(Model):
 
         for model in self.models:
             try:
+                _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 response = await model.request(messages, model_settings, model_request_parameters)
             except Exception as exc:
                 if self._fallback_on(exc):
@@ -87,7 +88,7 @@ class FallbackModel(Model):
                     continue
                 raise exc
 
-            self._set_span_attributes(model)
+            self._set_span_attributes(model, prepared_parameters)
             return response
 
         raise FallbackExceptionGroup('All models from FallbackModel failed', exceptions)
@@ -106,6 +107,7 @@ class FallbackModel(Model):
         for model in self.models:
             async with AsyncExitStack() as stack:
                 try:
+                    _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                     response = await stack.enter_async_context(
                         model.request_stream(messages, model_settings, model_request_parameters, run_context)
                     )
@@ -115,7 +117,7 @@ class FallbackModel(Model):
                         continue
                     raise exc  # pragma: no cover
 
-                self._set_span_attributes(model)
+                self._set_span_attributes(model, prepared_parameters)
                 yield response
                 return
 
@@ -128,13 +130,23 @@ class FallbackModel(Model):
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         return model_request_parameters
 
-    def _set_span_attributes(self, model: Model):
+    def prepare_request(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        return model_settings, model_request_parameters
+
+    def _set_span_attributes(self, model: Model, model_request_parameters: ModelRequestParameters):
         with suppress(Exception):
             span = get_current_span()
             if span.is_recording():
                 attributes = getattr(span, 'attributes', {})
                 if attributes.get('gen_ai.request.model') == self.model_name:  # pragma: no branch
-                    span.set_attributes(InstrumentedModel.model_attributes(model))
+                    span.set_attributes(
+                        {
+                            **InstrumentedModel.model_attributes(model),
+                            **InstrumentedModel.model_request_parameters_attributes(model_request_parameters),
+                        }
+                    )
 
 
 def _default_fallback_condition_factory(exceptions: tuple[type[Exception], ...]) -> Callable[[Exception], bool]:

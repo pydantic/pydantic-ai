@@ -135,6 +135,7 @@ class FunctionModel(Model):
             allow_text_output=model_request_parameters.allow_text_output,
             output_tools=model_request_parameters.output_tools,
             model_settings=model_settings,
+            model_request_parameters=model_request_parameters,
             instructions=self._get_instructions(messages, model_request_parameters),
         )
 
@@ -169,6 +170,7 @@ class FunctionModel(Model):
             allow_text_output=model_request_parameters.allow_text_output,
             output_tools=model_request_parameters.output_tools,
             model_settings=model_settings,
+            model_request_parameters=model_request_parameters,
             instructions=self._get_instructions(messages, model_request_parameters),
         )
 
@@ -218,6 +220,8 @@ class AgentInfo:
     """The tools that can called to produce the final output of the run."""
     model_settings: ModelSettings | None
     """The model settings passed to the run call."""
+    model_request_parameters: ModelRequestParameters
+    """The model request parameters passed to the run call."""
     instructions: str | None
     """The instructions passed to model."""
 

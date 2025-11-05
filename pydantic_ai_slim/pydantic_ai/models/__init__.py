@@ -317,6 +317,12 @@ class ModelRequestParameters:
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
 
+    @cached_property
+    def prompted_output_instructions(self) -> str | None:
+        if self.output_mode == 'prompted' and self.prompted_output_template and self.output_object:
+            return PromptedOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
+        return None
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -417,56 +423,44 @@ class Model(ABC):
         """
         model_settings = merge_model_settings(self.settings, model_settings)
 
-        model_request_parameters = self.customize_request_parameters(model_request_parameters)
+        params = self.customize_request_parameters(model_request_parameters)
 
-        if builtin_tools := model_request_parameters.builtin_tools:
+        if builtin_tools := params.builtin_tools:
             # Deduplicate builtin tools
-            model_request_parameters = replace(
-                model_request_parameters,
+            params = replace(
+                params,
                 builtin_tools=list({tool.unique_id: tool for tool in builtin_tools}.values()),
             )
 
-        if model_request_parameters.output_mode == 'auto':
+        if params.output_mode == 'auto':
             output_mode = self.profile.default_structured_output_mode
-            model_request_parameters = replace(
-                model_request_parameters,
+            params = replace(
+                params,
                 output_mode=output_mode,
                 allow_text_output=output_mode in ('native', 'prompted'),
             )
 
-        if model_request_parameters.output_mode in ('native', 'prompted'):
-            assert model_request_parameters.output_object
+        # Reset irrelevant fields
+        if params.output_tools and params.output_mode != 'tool':
+            params = replace(params, output_tools=[])
+        if params.output_object and params.output_mode not in ('native', 'prompted'):
+            params = replace(params, output_object=None)
+        if params.prompted_output_template and params.output_mode != 'prompted':
+            params = replace(params, prompted_output_template=None)
 
-            if model_request_parameters.output_tools:
-                model_request_parameters = replace(model_request_parameters, output_tools=[])
-        else:
-            if model_request_parameters.output_object:
-                model_request_parameters = replace(model_request_parameters, output_object=None)
+        # Set default prompted output template
+        if params.output_mode == 'prompted' and not params.prompted_output_template:
+            params = replace(params, prompted_output_template=self.profile.prompted_output_template)
 
-        match model_request_parameters.output_mode:
-            case 'native':
-                if not self.profile.supports_json_schema_output:
-                    raise UserError('Native structured output is not supported by this model.')
-
-                if model_request_parameters.prompted_output_template:
-                    model_request_parameters = replace(model_request_parameters, prompted_output_template=None)
-            case 'prompted':
-                if not model_request_parameters.prompted_output_template:
-                    model_request_parameters = replace(
-                        model_request_parameters, prompted_output_template=self.profile.prompted_output_template
-                    )
-            case 'tool':
-                assert model_request_parameters.output_tools or model_request_parameters.function_tools
-
-                if not self.profile.supports_tools:
-                    raise UserError('Tool output is not supported by this model.')
-            case _:
-                pass
-
-        if model_request_parameters.allow_image_output and not self.profile.supports_image_output:
+        # Check if output mode is supported
+        if params.output_mode == 'native' and not self.profile.supports_json_schema_output:
+            raise UserError('Native structured output is not supported by this model.')
+        if params.output_mode == 'tool' and not self.profile.supports_tools:
+            raise UserError('Tool output is not supported by this model.')
+        if params.allow_image_output and not self.profile.supports_image_output:
             raise UserError('Image output is not supported by this model.')
 
-        return model_settings, model_request_parameters
+        return model_settings, params
 
     @property
     @abstractmethod
@@ -547,17 +541,7 @@ class Model(ABC):
             if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
                 instructions = second_most_recent_request.instructions
 
-        # TODO (DouweM): This will now not be included in ModelRequest.instructions anymore, nor in OTel. -- especially the latter may be a problem?
-        # Unless full model_request_parameters (after processing by model) are already sent
-        if (
-            model_request_parameters
-            and model_request_parameters.output_mode == 'prompted'
-            and model_request_parameters.prompted_output_template
-            and model_request_parameters.output_object
-        ):
-            output_instructions = PromptedOutputSchema.build_instructions(
-                model_request_parameters.prompted_output_template, model_request_parameters.output_object
-            )
+        if model_request_parameters and (output_instructions := model_request_parameters.prompted_output_instructions):
             if instructions:
                 instructions = '\n\n'.join([instructions, output_instructions])
             else:

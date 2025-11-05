@@ -36,7 +36,11 @@ async def model_function(
     print(info)
     """
     AgentInfo(
-        function_tools=[], allow_text_output=True, output_tools=[], model_settings=None
+        function_tools=[],
+        allow_text_output=True,
+        output_tools=[],
+        model_settings=None,
+        instructions=None,
     )
     """
     return ModelResponse(parts=[TextPart('hello world')])
