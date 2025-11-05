@@ -679,7 +679,7 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
 
 def infer_model(
     model: Model | KnownModelName | str, provider_generator: Callable[[str], Provider[Any]] | None = None
-) -> Model:  # noqa: C901
+) -> Model:
     """Infer the model from the name. May optionally pass a callable that setup a custom provider for the model."""
     if isinstance(model, Model):
         return model
