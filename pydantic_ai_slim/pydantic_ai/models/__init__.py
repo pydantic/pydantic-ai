@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import Any, Generic, Literal, TypeVar, overload
+from typing import Any, Generic, Literal, TypeVar, Callable, overload
 
 import httpx
 from typing_extensions import TypeAliasType, TypedDict
@@ -47,7 +47,7 @@ from ..messages import (
 )
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-from ..providers import infer_provider
+from ..providers import infer_provider, Provider
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -677,8 +677,8 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
-def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
-    """Infer the model from the name."""
+def infer_model(model: Model | KnownModelName | str, provider_generator: Callable[[str], Provider[Any]] | None = None) -> Model:  # noqa: C901
+    """Infer the model from the name. May optionally pass a callable that setup a custom provider for the model."""
     if isinstance(model, Model):
         return model
     elif model == 'test':
@@ -713,7 +713,9 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         )
         provider_name = 'google-vertex'
 
-    provider = infer_provider(provider_name)
+    if provider_generator is None:
+         provider_generator = infer_provider
+    provider = provider_generator(provider_name)
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
