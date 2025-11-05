@@ -11,7 +11,7 @@ with try_import() as imports_successful:
     from fastapi.routing import APIRoute
     from httpx import ASGITransport, AsyncClient
 
-    from pydantic_ai.fastapi.agent_router import AgentAPIRouter
+    from pydantic_ai.fastapi.agent_router import create_agent_router
     from pydantic_ai.fastapi.registry import AgentRegistry
 
 
@@ -28,7 +28,7 @@ async def test_models_list_and_get(
     """Verify model listing and retrieval endpoints behave as expected when real Agents are registered."""
     registry = registry_with_openai_clients
 
-    router = AgentAPIRouter(agent_registry=registry)
+    router = create_agent_router(agent_registry=registry)
 
     app = FastAPI()
     app.include_router(router)
@@ -70,7 +70,7 @@ async def test_routers_disabled(
     """Verify whether disabling apis actually effectively not adds APIRoutes to the app."""
     registry = registry_with_openai_clients
 
-    router = AgentAPIRouter(agent_registry=registry, disable_completions_api=True, disable_response_api=True)
+    router = create_agent_router(agent_registry=registry, disable_completions_api=True, disable_responses_api=True)
 
     app = FastAPI()
     app.include_router(router)
@@ -128,7 +128,7 @@ async def test_chat_completions_e2e_with_mocked_openai(
     fake_openai_base = 'https://api.openai.test/v1'
     registry = registry_with_openai_clients
 
-    router = AgentAPIRouter(agent_registry=registry)
+    router = create_agent_router(agent_registry=registry)
 
     app = FastAPI()
     app.include_router(router)
@@ -199,7 +199,7 @@ async def test_responses_e2e_with_mocked_openai(
     fake_openai_base = 'https://api.openai.test/v1'
     registry = registry_with_openai_clients
 
-    router = AgentAPIRouter(agent_registry=registry)
+    router = create_agent_router(agent_registry=registry)
 
     # Disable response_model on the /v1/responses route so tests can return simple dicts if needed
     for route in list(getattr(router, 'routes', [])):

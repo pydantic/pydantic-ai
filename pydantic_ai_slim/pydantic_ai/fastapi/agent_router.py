@@ -1,5 +1,3 @@
-from typing import Any
-
 try:
     from fastapi import APIRouter, HTTPException
     from fastapi.responses import StreamingResponse
@@ -21,64 +19,58 @@ from pydantic_ai.fastapi.data_models import (
 from pydantic_ai.fastapi.registry import AgentRegistry
 
 
-class AgentAPIRouter(APIRouter):
-    """FastAPI Router for Pydantic Agent."""
+def create_agent_router(
+    agent_registry: AgentRegistry,
+    disable_responses_api: bool = False,
+    disable_completions_api: bool = False,
+    api_router: APIRouter | None = None,
+) -> APIRouter:
+    """FastAPI Router factory for Pydantic Agent exposure as OpenAI endpoint."""
+    if api_router is None:
+        api_router = APIRouter()
+    responses_api = AgentResponsesAPI(agent_registry)
+    completions_api = AgentChatCompletionsAPI(agent_registry)
+    models_api = AgentModelsAPI(agent_registry)
+    enable_responses_api = not disable_responses_api
+    enable_completions_api = not disable_completions_api
 
-    def __init__(
-        self,
-        agent_registry: AgentRegistry,
-        disable_response_api: bool = False,
-        disable_completions_api: bool = False,
-        *args: Any,
-        **kwargs: Any,
-    ):
-        super().__init__(*args, **kwargs)
-        self.registry = agent_registry
-        self.responses_api = AgentResponsesAPI(self.registry)
-        self.completions_api = AgentChatCompletionsAPI(self.registry)
-        self.models_api = AgentModelsAPI(self.registry)
-        self.enable_responses_api = not disable_response_api
-        self.enable_completions_api = not disable_completions_api
+    if enable_completions_api:
 
-        # Registers OpenAI/v1 API routes
-        self._register_routes()
+        @api_router.post('/v1/chat/completions', response_model=ChatCompletion)
+        async def chat_completions(  # type: ignore[reportUnusedFunction]
+            request: ChatCompletionRequest,
+        ) -> ChatCompletion | StreamingResponse:
+            if getattr(request, 'stream', False):
+                return StreamingResponse(
+                    completions_api.create_streaming_completion(request),
+                    media_type='text/event-stream',
+                    headers={
+                        'Cache-Control': 'no-cache',
+                        'Connection': 'keep-alive',
+                        'Content-Type': 'text/plain; charset=utf-8',
+                    },
+                )
+            else:
+                return await completions_api.create_completion(request)
 
-    def _register_routes(self) -> None:
-        if self.enable_completions_api:
+    if enable_responses_api:
 
-            @self.post('/v1/chat/completions', response_model=ChatCompletion)
-            async def chat_completions(
-                request: ChatCompletionRequest,
-            ) -> ChatCompletion | StreamingResponse:
-                if getattr(request, 'stream', False):
-                    return StreamingResponse(
-                        self.completions_api.create_streaming_completion(request),
-                        media_type='text/event-stream',
-                        headers={
-                            'Cache-Control': 'no-cache',
-                            'Connection': 'keep-alive',
-                            'Content-Type': 'text/plain; charset=utf-8',
-                        },
-                    )
-                else:
-                    return await self.completions_api.create_completion(request)
+        @api_router.post('/v1/responses', response_model=OpenAIResponse)
+        async def responses(  # type: ignore[reportUnusedFunction]
+            request: ResponsesRequest,
+        ) -> OpenAIResponse:
+            if getattr(request, 'stream', False):
+                # TODO: add streaming support for responses api
+                raise HTTPException(status_code=501)
+            else:
+                return await responses_api.create_response(request)
 
-        if self.enable_responses_api:
+    @api_router.get('/v1/models', response_model=ModelsResponse)
+    async def get_models() -> ModelsResponse:  # type: ignore[reportUnusedFunction]
+        return await models_api.list_models()
 
-            @self.post('/v1/responses', response_model=OpenAIResponse)
-            async def responses(
-                request: ResponsesRequest,
-            ) -> OpenAIResponse:
-                if getattr(request, 'stream', False):
-                    # TODO: add streaming support for responses api
-                    raise HTTPException(status_code=501)
-                else:
-                    return await self.responses_api.create_response(request)
+    @api_router.get('/v1/models' + '/{model_id}', response_model=Model)
+    async def get_model(model_id: str) -> Model:  # type: ignore[reportUnusedFunction]
+        return await models_api.get_model(model_id)
 
-        @self.get('/v1/models', response_model=ModelsResponse)
-        async def get_models() -> ModelsResponse:
-            return await self.models_api.list_models()
-
-        @self.get('/v1/models' + '/{model_id}', response_model=Model)
-        async def get_model(model_id: str) -> Model:
-            return await self.models_api.get_model(model_id)
+    return api_router

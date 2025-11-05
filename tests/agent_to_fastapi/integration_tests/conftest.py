@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import pytest
 import pytest_asyncio
+from fastapi import APIRouter
 
 from ...conftest import try_import
 
@@ -14,7 +15,7 @@ with try_import() as imports_successful:
     from openai import AsyncOpenAI, DefaultAioHttpClient
 
     from pydantic_ai import Agent
-    from pydantic_ai.fastapi.agent_router import AgentAPIRouter
+    from pydantic_ai.fastapi.agent_router import create_agent_router
     from pydantic_ai.fastapi.registry import AgentRegistry
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -45,7 +46,7 @@ def app() -> FastAPI:
     registry.chat_completions_agents['test-model'] = cast(Any, object())
     registry.responses_agents['test-model'] = cast(Any, object())
 
-    router = AgentAPIRouter(agent_registry=registry)
+    router = create_agent_router(agent_registry=registry)
 
     for route in list(getattr(router, 'routes', [])):
         if getattr(route, 'path', None) == '/v1/responses':
@@ -61,7 +62,7 @@ def app() -> FastAPI:
 
 
 @pytest.fixture
-def agent_router(app: FastAPI) -> AgentAPIRouter:
+def agent_router(app: FastAPI) -> APIRouter:
     """Return the AgentAPIRouter instance attached to the app by the `app` fixture.
     Tests can use this to stub `completions_api` and `responses_api` coroutine methods.
     """
