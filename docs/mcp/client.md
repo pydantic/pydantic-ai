@@ -348,6 +348,7 @@ import asyncio
 
 from pydantic_ai.mcp import MCPServerStdio
 
+
 async def main():
     server = MCPServerStdio('python', args=['-m', 'mcp_resource_server'])
 
