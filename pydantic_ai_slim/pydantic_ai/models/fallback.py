@@ -125,6 +125,9 @@ class FallbackModel(Model):
     def profile(self) -> ModelProfile:
         raise NotImplementedError('FallbackModel does not have its own model profile.')
 
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        return model_request_parameters
+
     def _set_span_attributes(self, model: Model):
         with suppress(Exception):
             span = get_current_span()
