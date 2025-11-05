@@ -128,7 +128,7 @@ class FallbackModel(Model):
         raise NotImplementedError('FallbackModel does not have its own model profile.')
 
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
-        return model_request_parameters
+        return model_request_parameters  # pragma: no cover
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters

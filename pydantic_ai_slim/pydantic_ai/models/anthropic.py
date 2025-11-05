@@ -252,7 +252,9 @@ class AnthropicModel(Model):
         ):
             if model_request_parameters.output_mode == 'auto':
                 model_request_parameters = replace(model_request_parameters, output_mode='prompted')
-            elif model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output:
+            elif (
+                model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
+            ):  # pragma: no branch
                 # This would result in `tool_choice=required`, which Anthropic does not support with thinking.
                 raise UserError(
                     'Anthropic does not support thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'

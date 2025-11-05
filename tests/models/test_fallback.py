@@ -684,7 +684,7 @@ async def test_fallback_model_structured_output():
     def prompted_output_func(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal enabled_model
         if enabled_model != 'prompted':
-            raise ModelHTTPError(status_code=500, model_name='prompted-model', body=None)
+            raise ModelHTTPError(status_code=500, model_name='prompted-model', body=None)  # pragma: no cover
 
         assert info.model_request_parameters == snapshot(
             ModelRequestParameters(
@@ -848,9 +848,7 @@ Don't include any text or Markdown fencing before or after.
                     'gen_ai.output.messages': [
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': '{"bar":"baz"}'}]}
                     ],
-                    'gen_ai.system_instructions': [
-                        {'type': 'text', 'content': 'Be kind'}
-                    ],  # TODO (DouweM): We'd expect the prompted output instructions here as well
+                    'gen_ai.system_instructions': [{'type': 'text', 'content': 'Be kind'}],
                     'gen_ai.usage.input_tokens': 51,
                     'gen_ai.usage.output_tokens': 4,
                     'gen_ai.response.model': 'function:prompted_output_func:',

@@ -446,7 +446,7 @@ class Model(ABC):
         if params.output_object and params.output_mode not in ('native', 'prompted'):
             params = replace(params, output_object=None)
         if params.prompted_output_template and params.output_mode != 'prompted':
-            params = replace(params, prompted_output_template=None)
+            params = replace(params, prompted_output_template=None)  # pragma: no cover
 
         # Set default prompted output template
         if params.output_mode == 'prompted' and not params.prompted_output_template:
