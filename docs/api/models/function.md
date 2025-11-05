@@ -40,6 +40,9 @@ async def model_function(
         allow_text_output=True,
         output_tools=[],
         model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[], builtin_tools=[], output_tools=[]
+        ),
         instructions=None,
     )
     """
