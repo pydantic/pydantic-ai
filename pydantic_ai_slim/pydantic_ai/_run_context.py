@@ -58,6 +58,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The current step in the run."""
     tool_call_approved: bool = False
     """Whether a tool call that required approval has now been approved."""
+    partial_output: bool = False
+    """Whether the output passed to an output validator is partial."""
 
     @property
     def last_attempt(self) -> bool:
