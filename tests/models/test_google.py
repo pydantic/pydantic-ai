@@ -2323,7 +2323,7 @@ async def test_google_native_output_with_tools(allow_model_requests: None, googl
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+            'Google does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
         ),
     ):
         await agent.run('What is the largest city in the user country?')
@@ -2685,7 +2685,7 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
 
     with pytest.raises(
         UserError,
-        match=re.escape('Gemini does not support user tools and built-in tools at the same time.'),
+        match=re.escape('Google does not support user tools and built-in tools at the same time.'),
     ):
         await agent.run('What is the largest city in the user country?')
 
@@ -2698,7 +2698,7 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Gemini does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+            'Google does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
         ),
     ):
         await agent.run('What is the largest city in Mexico?')

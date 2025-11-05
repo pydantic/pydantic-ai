@@ -5001,7 +5001,7 @@ async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, a
         settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000}),
     )
 
-    agent = Agent(m, output_type=int)
+    agent = Agent(m, output_type=ToolOutput(int))
 
     with pytest.raises(
         UserError,
@@ -5011,7 +5011,8 @@ async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, a
     ):
         await agent.run('What is 3 + 3?')
 
-    agent = Agent(m, output_type=PromptedOutput(int))
+    # Will default to prompted output
+    agent = Agent(m, output_type=int)
 
     result = await agent.run('What is 3 + 3?')
     assert result.output == snapshot(6)

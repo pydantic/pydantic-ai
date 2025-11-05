@@ -247,7 +247,10 @@ class AnthropicModel(Model):
         settings = merge_model_settings(self.settings, model_settings)
         if (
             model_request_parameters.output_tools
-            and not model_request_parameters.allow_text_output
+            and (
+                model_request_parameters.output_mode is None
+                or (model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output)
+            )
             and settings
             and (thinking := settings.get('anthropic_thinking'))
             and thinking.get('type') == 'enabled'

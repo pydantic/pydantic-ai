@@ -333,7 +333,7 @@ class GoogleModel(Model):
 
         if model_request_parameters.builtin_tools:
             if model_request_parameters.function_tools:
-                raise UserError('Gemini does not support user tools and built-in tools at the same time.')
+                raise UserError('Google does not support user tools and built-in tools at the same time.')
 
             for tool in model_request_parameters.builtin_tools:
                 if isinstance(tool, WebSearchTool):
@@ -409,10 +409,8 @@ class GoogleModel(Model):
         response_schema = None
         if model_request_parameters.output_mode == 'native':
             if tools:
-                # TODO (DouweM): Use tool output automatically in this case. In prepare_request, if model_request_parameters.output_mode is None and default_structured_output_mode is 'native', set to `tool`.
-                # Still raise this error if NativeOutput used explicitly?
                 raise UserError(
-                    'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+                    'Google does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
                 )
             response_mime_type = 'application/json'
             output_object = model_request_parameters.output_object
