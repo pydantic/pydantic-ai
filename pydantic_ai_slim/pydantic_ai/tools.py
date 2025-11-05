@@ -147,6 +147,12 @@ class DeferredToolRequests:
     """Tool calls that require external execution."""
     approvals: list[ToolCallPart] = field(default_factory=list)
     """Tool calls that require human-in-the-loop approval."""
+    metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Metadata for deferred tool calls, keyed by tool_call_id.
+
+    This contains any metadata that was provided when raising [`CallDeferred`][pydantic_ai.exceptions.CallDeferred]
+    or [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] exceptions.
+    """
 
 
 @dataclass(kw_only=True)

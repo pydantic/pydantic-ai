@@ -4857,9 +4857,13 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
     else:
         result = agent.run_sync(user_prompt)
 
-    assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())])
-    )
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+    assert result.output.approvals[0].tool_name == 'requires_approval'
+    # Check metadata exists for this tool_call_id
+    tool_call_id = result.output.approvals[0].tool_call_id
+    assert tool_call_id in result.output.metadata
+    assert result.output.metadata[tool_call_id] == {}
     assert integer_holder == 2
 
 

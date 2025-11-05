@@ -320,6 +320,111 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
+## Attaching Metadata to Deferred Tools
+
+Both [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] and [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] exceptions accept an optional `metadata` parameter that allows you to attach arbitrary context information to deferred tool calls. This metadata is then available in the [`DeferredToolRequests.metadata`][pydantic_ai.tools.DeferredToolRequests.metadata] dictionary, keyed by the tool call ID.
+
+Common use cases for metadata include:
+
+- Providing cost estimates or time estimates for approval decisions
+- Including task IDs or tracking information for external execution
+- Storing context about why approval is required
+- Attaching priority or urgency information
+
+Here's an example showing how to use metadata with both approval-required and external tools:
+
+```python {title="deferred_tools_with_metadata.py"}
+from pydantic_ai import (
+    Agent,
+    ApprovalRequired,
+    CallDeferred,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolApproved,
+    ToolDenied,
+)
+
+agent = Agent('openai:gpt-5', output_type=[str, DeferredToolRequests])
+
+
+@agent.tool
+def expensive_compute(ctx: RunContext, task_id: str) -> str:
+    if not ctx.tool_call_approved:
+        raise ApprovalRequired(
+            metadata={
+                'task_id': task_id,
+                'estimated_cost_usd': 25.50,
+                'estimated_time_minutes': 15,
+                'reason': 'High compute cost',
+            }
+        )
+    return f'Task {task_id} completed'
+
+
+@agent.tool
+async def external_api_call(ctx: RunContext, endpoint: str) -> str:
+    # Schedule the external API call and defer execution
+    task_id = f'api_call_{ctx.tool_call_id}'
+
+    raise CallDeferred(
+        metadata={
+            'task_id': task_id,
+            'endpoint': endpoint,
+            'priority': 'high',
+        }
+    )
+
+
+result = agent.run_sync('Run expensive task-123 and call the /data endpoint')
+messages = result.all_messages()
+
+assert isinstance(result.output, DeferredToolRequests)
+requests = result.output
+
+# Handle approvals with metadata
+for call in requests.approvals:
+    metadata = requests.metadata.get(call.tool_call_id, {})
+    print(f"Approval needed for {call.tool_name}")
+    print(f"  Cost: ${metadata.get('estimated_cost_usd')}")
+    print(f"  Time: {metadata.get('estimated_time_minutes')} minutes")
+    print(f"  Reason: {metadata.get('reason')}")
+
+# Handle external calls with metadata
+for call in requests.calls:
+    metadata = requests.metadata.get(call.tool_call_id, {})
+    print(f"External call to {call.tool_name}")
+    print(f"  Task ID: {metadata.get('task_id')}")
+    print(f"  Priority: {metadata.get('priority')}")
+
+# Build results with approvals and external results
+results = DeferredToolResults()
+for call in requests.approvals:
+    metadata = requests.metadata.get(call.tool_call_id, {})
+    cost = metadata.get('estimated_cost_usd', 0)
+
+    if cost < 50:  # Approve if cost is under $50
+        results.approvals[call.tool_call_id] = ToolApproved()
+    else:
+        results.approvals[call.tool_call_id] = ToolDenied('Cost too high')
+
+for call in requests.calls:
+    metadata = requests.metadata.get(call.tool_call_id, {})
+    # Simulate getting result from external task
+    task_id = metadata.get('task_id')
+    results.calls[call.tool_call_id] = f'Result from {task_id}: success'
+
+result = agent.run_sync(message_history=messages, deferred_tool_results=results)
+print(result.output)
+"""
+I completed task-123 and retrieved data from the /data endpoint.
+"""
+```
+
+_(This example is complete, it can be run "as is")_
+
+The metadata dictionary can contain any JSON-serializable values and is entirely application-defined. If no metadata is provided when raising the exception, the tool call ID will still be present in the `metadata` dictionary with an empty dict as the value for backward compatibility.
+
 ## See Also
 
 - [Function Tools](tools.md) - Basic tool concepts and registration
