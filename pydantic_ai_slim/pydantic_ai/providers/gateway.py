@@ -111,6 +111,8 @@ def gateway_provider(
     /,
     *,
     # Every provider
+    routing_group: str | None = None,
+    profile: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
     # OpenAI, Groq, Anthropic & Gemini - Only Bedrock doesn't have an HTTPX client.
@@ -120,6 +122,10 @@ def gateway_provider(
 
     Args:
         upstream_provider: The upstream provider to use.
+        routing_group: The group of APIs that support the same models - the idea is that you can route the requests to
+            any provider in a routing group. The `pydantic-ai-gateway-routing-group` header will be added.
+        profile: A provider may have a profile, which is a unique identifier for the provider.
+            The `pydantic-ai-gateway-profile` header will be added.
         api_key: The API key to use for authentication. If not provided, the `PYDANTIC_AI_GATEWAY_API_KEY`
             environment variable will be used if available.
         base_url: The base URL to use for the Gateway. If not provided, the `PYDANTIC_AI_GATEWAY_BASE_URL`
@@ -136,6 +142,12 @@ def gateway_provider(
     base_url = base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', GATEWAY_BASE_URL)
     http_client = http_client or cached_async_http_client(provider=f'gateway/{upstream_provider}')
     http_client.event_hooks = {'request': [_request_hook(api_key)]}
+
+    if profile is not None:
+        http_client.headers.setdefault('pydantic-ai-gateway-profile', profile)
+
+    if routing_group is not None:
+        http_client.headers.setdefault('pydantic-ai-gateway-routing-group', routing_group)
 
     if upstream_provider in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
