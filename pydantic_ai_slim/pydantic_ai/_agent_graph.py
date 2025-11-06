@@ -567,10 +567,15 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_schema = ctx.deps.output_schema
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
-                if not self.model_response.parts:
-                    # we got an empty response.
+                is_empty_response = not self.model_response.parts or (
+                    len(self.model_response.parts) == 1 
+                    and isinstance(self.model_response.parts[0], _messages.TextPart) 
+                    and not self.model_response.parts[0].content
+                )
+                if is_empty_response:
                     # this sometimes happens with anthropic (and perhaps other models)
                     # when the model has already returned text along side tool calls
+                    # gemini-2.5 also sometimes returns an empty text part, rather than no parts at all.
                     if text_processor := output_schema.text_processor:  # pragma: no branch
                         # in this scenario, if text responses are allowed, we return text from the most recent model
                         # response, if any
