@@ -568,8 +568,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
                 is_empty_response = not self.model_response.parts or (
-                    len(self.model_response.parts) == 1 
-                    and isinstance(self.model_response.parts[0], _messages.TextPart) 
+                    len(self.model_response.parts) == 1
+                    and isinstance(self.model_response.parts[0], _messages.TextPart)
                     and not self.model_response.parts[0].content
                 )
                 if is_empty_response:
