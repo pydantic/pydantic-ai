@@ -988,9 +988,9 @@ async def test_evaluation_renderer_with_experiment_metadata(sample_report_case: 
 │ temperature: 0.7                  │
 │ prompt_version: v2                │
 ╰───────────────────────────────────╯
-┏━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
-┃          ┃          ┃           ┃          ┃           ┃ Assertio ┃          ┃
-┃ Case ID  ┃ Inputs   ┃ Scores    ┃ Labels   ┃ Metrics   ┃ ns       ┃ Duration ┃
+┏━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃          ┃          ┃           ┃          ┃           ┃ Assertions ┃          ┃
+┃ Case ID  ┃ Inputs   ┃ Scores    ┃ Labels   ┃ Metrics   ┃            ┃ Duration ┃
 ┡━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
 │ test_ca… │ {'query' │ score1:   │ label1:  │ accuracy: │ ✔        │  100.0ms │
 │          │ : 'What  │ 2.50      │ hello    │ 0.950     │          │          │
