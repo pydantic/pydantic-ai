@@ -4378,7 +4378,7 @@ def test_many_multimodal_tool_response():
 
     with pytest.raises(
         UserError,
-        match="The return value of tool 'analyze_data' contains invalid nested `ToolReturn` objects. `ToolReturn` should be used directly.",
+        match="The return value of tool 'analyze_data' contains invalid nested `Return` objects. `Return` should be used directly.",
     ):
         agent.run_sync('Please analyze the data')
 

@@ -57,10 +57,6 @@ class FunctionSchema:
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
         if self.is_async_iterator:
-            assert ctx.event_stream is not None, (
-                'RunContext.event_stream needs to be set to use FunctionSchema.call with async iterators'
-            )
-
             return_value: Return | None = None
             async for event_data in self.function(*args, **kwargs):
                 if return_value is not None:
