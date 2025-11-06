@@ -69,6 +69,18 @@ CASES: list[Case] = [
         expected_parts=[TextPart('<think>')],
         vendor_part_id=None,
     ),
+    Case(
+        name='unclosed_opening_tag_with_content_no_vendor_id',
+        chunks=['<think>', 'content'],
+        expected_parts=[ThinkingPart('content')],
+        vendor_part_id=None,
+    ),
+    Case(
+        name='partial_closing_tag_no_vendor_id',
+        chunks=['<think>', 'content', '</thi'],
+        expected_parts=[ThinkingPart('content</thi')],
+        vendor_part_id=None,
+    ),
     # --- Split thinking tags -> ThinkingPart ---
     Case(
         name='open_with_content_then_close',
@@ -79,6 +91,12 @@ CASES: list[Case] = [
         name='open_then_content_and_close',
         chunks=['<think>', 'content</think>'],
         expected_parts=[ThinkingPart('content')],
+    ),
+    Case(
+        name='open_then_content_and_close_no_vendor_id',
+        chunks=['<think>', 'content</think>'],
+        expected_parts=[ThinkingPart('content')],
+        vendor_part_id=None,
     ),
     Case(
         name='fully_split_open_and_close',

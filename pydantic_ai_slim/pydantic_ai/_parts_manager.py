@@ -377,7 +377,7 @@ class ModelResponsePartsManager:
         if segments and segments[0][0] == 'text':
             text_content = segments[0][1]
 
-            if text_content:  # praga: no cover - line was always true
+            if text_content:  # pragma: no cover - line was always true
                 combined_content = buffered + content
                 self._thinking_tag_buffer.pop(vendor_part_id, None)
                 yield from self._emit_text_part(
