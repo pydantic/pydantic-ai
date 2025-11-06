@@ -445,6 +445,8 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
 
 
 async def test_json_def_recursive(allow_model_requests: None):
+    """Test that recursive schemas with $ref are now supported (as of November 2025)."""
+
     class Location(BaseModel):
         lat: float
         lng: float
@@ -479,15 +481,18 @@ async def test_json_def_recursive(allow_model_requests: None):
         description='This is the tool for the final Result',
         parameters_json_schema=json_schema,
     )
-    with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
-        mrp = ModelRequestParameters(
-            function_tools=[],
-            allow_text_output=True,
-            output_tools=[output_tool],
-            output_mode='text',
-            output_object=None,
-        )
-        mrp = m.customize_request_parameters(mrp)
+    # As of November 2025, Gemini 2.5+ models support recursive $ref in JSON Schema
+    # This should no longer raise an error
+    mrp = ModelRequestParameters(
+        function_tools=[],
+        allow_text_output=True,
+        output_tools=[output_tool],
+        output_mode='text',
+        output_object=None,
+    )
+    mrp = m.customize_request_parameters(mrp)
+    # Verify the schema still contains $ref after customization
+    assert '$ref' in mrp.output_tools[0].parameters_json_schema
 
 
 async def test_json_def_date(allow_model_requests: None):

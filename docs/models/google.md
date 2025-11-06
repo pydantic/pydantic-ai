@@ -201,6 +201,70 @@ agent = Agent(model)
 
 `GoogleModel` supports multi-modal input, including documents, images, audio, and video. See the [input documentation](../input.md) for details and examples.
 
+## Enhanced JSON Schema Support
+
+As of November 2025, Google Gemini models (2.5+) provide enhanced support for JSON Schema features when using [`NativeOutput`](../output.md#native-output), enabling more sophisticated structured outputs:
+
+### Supported Features
+
+- **Property Ordering**: The order of properties in your Pydantic model definition is now preserved in the output
+- **Title Fields**: The `title` field is supported for providing short property descriptions
+- **Union Types (`anyOf` and `oneOf`)**: Full support for conditional structures using Python's `Union` or `|` type syntax
+- **Recursive Schemas (`$ref` and `$defs`)**: Full support for self-referential models and reusable schema definitions, enabling tree structures and recursive data
+- **Numeric Constraints**: `minimum` and `maximum` constraints are respected (note: `exclusiveMinimum` and `exclusiveMaximum` are not yet supported)
+- **Optional Fields (`type: 'null'`)**: Proper handling of optional fields with `None` values
+- **Additional Properties**: Dictionary fields with `dict[str, T]` are fully supported
+- **Tuple Types (`prefixItems`)**: Support for tuple-like array structures
+
+### Example: Recursive Schema
+
+```python
+from pydantic import BaseModel
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.output import NativeOutput
+
+class TreeNode(BaseModel):
+    """A tree node that can contain child nodes."""
+    value: int
+    children: list['TreeNode'] | None = None
+
+model = GoogleModel('gemini-2.5-pro')
+agent = Agent(model, output_type=NativeOutput(TreeNode))
+
+result = await agent.run('Create a tree with root value 1 and two children with values 2 and 3')
+# result.output will be a TreeNode with proper structure
+```
+
+### Example: Union Types
+
+```python
+from typing import Union, Literal
+from pydantic import BaseModel
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.output import NativeOutput
+
+class Success(BaseModel):
+    status: Literal['success']
+    data: str
+
+class Error(BaseModel):
+    status: Literal['error']
+    error_message: str
+
+class Response(BaseModel):
+    result: Union[Success, Error]
+
+model = GoogleModel('gemini-2.5-pro')
+agent = Agent(model, output_type=NativeOutput(Response))
+
+result = await agent.run('Process this request successfully')
+# result.output.result will be either Success or Error
+```
+
+See the [structured output documentation](../output.md) for more details on using `NativeOutput` with Pydantic models.
+
 ## Model settings
 
 You can customize model behavior using [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings]:
