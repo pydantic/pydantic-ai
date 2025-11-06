@@ -6,13 +6,7 @@ oneOf schemas with discriminator mappings) cause validation errors with Google's
 
 from typing import Literal
 
-import pytest
 from pydantic import BaseModel, Field
-
-from pydantic_ai import Agent
-from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.output import NativeOutput
-from pydantic_ai.providers.google import GoogleProvider
 
 
 class Cat(BaseModel):
@@ -36,23 +30,40 @@ class Owner(BaseModel):
     pet: Cat | Dog = Field(..., discriminator='pet_type')
 
 
-@pytest.mark.skip(
-    reason='Discriminated unions (oneOf with discriminator) are not supported by Google Gemini API'
-)
-async def test_discriminated_union_not_supported():
-    """Verify that discriminated unions cause validation errors.
+async def test_discriminated_union_schema_stripping():
+    """Verify that discriminator field is stripped from schemas.
 
     This test documents that while oneOf is supported, the discriminator field
-    used by Pydantic discriminated unions is not supported and causes validation errors.
+    used by Pydantic discriminated unions must be stripped because it causes
+    validation errors with Google's SDK.
 
-    Expected error:
+    Without stripping, we would get:
         properties.pet.oneOf: Extra inputs are not permitted
     """
-    provider = GoogleProvider(vertexai=True, project='ck-nest-dev', location='europe-west1')
-    model = GoogleModel('gemini-2.5-flash', provider=provider)
-    agent = Agent(model, output_type=NativeOutput(Owner))
+    from typing import Any
 
-    # This would fail with validation error if discriminator was included
-    result = await agent.run('Create an owner named John with a cat that meows 5 times')
-    assert result.output.name == 'John'
-    assert result.output.pet.pet_type == 'cat'
+    from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+
+    # Generate schema for discriminated union
+    schema = Owner.model_json_schema()
+
+    # The schema should have discriminator before transformation
+    assert 'discriminator' in schema['$defs']['Owner']['properties']['pet']
+
+    # Transform the schema
+    transformer = GoogleJsonSchemaTransformer(schema)
+    transformed = transformer.walk()
+
+    # Verify discriminator is stripped from all nested schemas
+    def check_no_discriminator(obj: dict[str, Any]) -> None:
+        if isinstance(obj, dict):
+            assert 'discriminator' not in obj, 'discriminator should be stripped'
+            for value in obj.values():
+                if isinstance(value, dict):
+                    check_no_discriminator(value)  # type: ignore[arg-type]
+                elif isinstance(value, list):
+                    for item in value:  # type: ignore[reportUnknownVariableType]
+                        if isinstance(item, dict):
+                            check_no_discriminator(item)  # type: ignore[arg-type]
+
+    check_no_discriminator(transformed)
