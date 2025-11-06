@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator, to_json
-from typing_extensions import Self, TypedDict, TypeVar, assert_never
+from typing_extensions import Self, TypedDict, TypeVar
 
 from pydantic_ai._instrumentation import InstrumentationNames
 
@@ -26,7 +26,6 @@ from .output import (
     OutputSpec,
     OutputTypeOrFunction,
     PromptedOutput,
-    StructuredOutputMode,
     TextOutput,
     TextOutputFunc,
     ToolOutput,
@@ -36,7 +35,7 @@ from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
-    from .profiles import ModelProfile
+    pass
 
 T = TypeVar('T')
 """An invariant TypeVar."""
@@ -214,59 +213,30 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
 
 
 @dataclass(kw_only=True)
-class BaseOutputSchema(ABC, Generic[OutputDataT]):
+class OutputSchema(ABC, Generic[OutputDataT]):
     text_processor: BaseOutputProcessor[OutputDataT] | None = None
     toolset: OutputToolset[Any] | None = None
+    object_def: OutputObjectDefinition | None = None
     allows_deferred_tools: bool = False
     allows_image: bool = False
 
-    @abstractmethod
-    def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
+    @property
+    def mode(self) -> OutputMode:
         raise NotImplementedError()
 
     @property
     def allows_text(self) -> bool:
         return self.text_processor is not None
 
-
-@dataclass(init=False)
-class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
-    """Model the final output from an agent run."""
-
-    @classmethod
-    @overload
-    def build(
-        cls,
-        output_spec: OutputSpec[OutputDataT],
-        *,
-        default_mode: StructuredOutputMode,
-        name: str | None = None,
-        description: str | None = None,
-        strict: bool | None = None,
-    ) -> OutputSchema[OutputDataT]: ...
-
-    @classmethod
-    @overload
-    def build(
-        cls,
-        output_spec: OutputSpec[OutputDataT],
-        *,
-        default_mode: None = None,
-        name: str | None = None,
-        description: str | None = None,
-        strict: bool | None = None,
-    ) -> BaseOutputSchema[OutputDataT]: ...
-
     @classmethod
     def build(  # noqa: C901
         cls,
         output_spec: OutputSpec[OutputDataT],
         *,
-        default_mode: StructuredOutputMode | None = None,
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
-    ) -> BaseOutputSchema[OutputDataT]:
+    ) -> OutputSchema[OutputDataT]:
         """Build an OutputSchema dataclass from an output type."""
         outputs = _flatten_output_spec(output_spec)
 
@@ -384,15 +354,12 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
             )
 
         if len(other_outputs) > 0:
-            schema = OutputSchemaWithoutMode(
+            return AutoOutputSchema(
                 processor=cls._build_processor(other_outputs, name=name, description=description, strict=strict),
                 toolset=toolset,
                 allows_deferred_tools=allows_deferred_tools,
                 allows_image=allows_image,
             )
-            if default_mode:
-                schema = schema.with_default_mode(default_mode)
-            return schema
 
         if allows_image:
             return ImageOutputSchema(allows_deferred_tools=allows_deferred_tools)
@@ -412,22 +379,9 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
 
         return UnionOutputProcessor(outputs=outputs, strict=strict, name=name, description=description)
 
-    @property
-    @abstractmethod
-    def mode(self) -> OutputMode:
-        raise NotImplementedError()
-
-    def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by this model."""
-        if self.allows_image and not profile.supports_image_output:
-            raise UserError('Image output is not supported by this model.')
-
-    def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
-        return self
-
 
 @dataclass(init=False)
-class OutputSchemaWithoutMode(BaseOutputSchema[OutputDataT]):
+class AutoOutputSchema(OutputSchema[OutputDataT]):
     processor: BaseObjectOutputProcessor[OutputDataT]
 
     def __init__(
@@ -441,32 +395,17 @@ class OutputSchemaWithoutMode(BaseOutputSchema[OutputDataT]):
         # At that point we may not know yet what output mode we're going to use if no model was provided or it was deferred until agent.run time,
         # but we cover ourselves just in case we end up using the tool output mode.
         super().__init__(
-            allows_deferred_tools=allows_deferred_tools,
             toolset=toolset,
+            object_def=processor.object_def,
             text_processor=processor,
+            allows_deferred_tools=allows_deferred_tools,
             allows_image=allows_image,
         )
         self.processor = processor
 
-    def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
-        if mode == 'native':
-            return NativeOutputSchema(
-                processor=self.processor,
-                allows_deferred_tools=self.allows_deferred_tools,
-                allows_image=self.allows_image,
-            )
-        elif mode == 'prompted':
-            return PromptedOutputSchema(
-                processor=self.processor,
-                allows_deferred_tools=self.allows_deferred_tools,
-                allows_image=self.allows_image,
-            )
-        elif mode == 'tool':
-            return ToolOutputSchema(
-                toolset=self.toolset, allows_deferred_tools=self.allows_deferred_tools, allows_image=self.allows_image
-            )
-        else:
-            assert_never(mode)
+    @property
+    def mode(self) -> OutputMode:
+        return 'auto'
 
 
 @dataclass(init=False)
@@ -488,10 +427,6 @@ class TextOutputSchema(OutputSchema[OutputDataT]):
     def mode(self) -> OutputMode:
         return 'text'
 
-    def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by this model."""
-        super().raise_if_unsupported(profile)
-
 
 class ImageOutputSchema(OutputSchema[OutputDataT]):
     def __init__(self, *, allows_deferred_tools: bool):
@@ -500,11 +435,6 @@ class ImageOutputSchema(OutputSchema[OutputDataT]):
     @property
     def mode(self) -> OutputMode:
         return 'image'
-
-    def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by this model."""
-        # This already raises if image output is not supported by this model.
-        super().raise_if_unsupported(profile)
 
 
 @dataclass(init=False)
@@ -515,24 +445,18 @@ class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
         self, *, processor: BaseObjectOutputProcessor[OutputDataT], allows_deferred_tools: bool, allows_image: bool
     ):
         super().__init__(
-            text_processor=processor, allows_deferred_tools=allows_deferred_tools, allows_image=allows_image
+            text_processor=processor,
+            object_def=processor.object_def,
+            allows_deferred_tools=allows_deferred_tools,
+            allows_image=allows_image,
         )
         self.processor = processor
-
-    @property
-    def object_def(self) -> OutputObjectDefinition:
-        return self.processor.object_def
 
 
 class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
     @property
     def mode(self) -> OutputMode:
         return 'native'
-
-    def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by this model."""
-        if not profile.supports_json_schema_output:
-            raise UserError('Native structured output is not supported by this model.')
 
 
 @dataclass(init=False)
@@ -572,14 +496,11 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
 
         return template.format(schema=json.dumps(schema))
 
-    def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by this model."""
-        super().raise_if_unsupported(profile)
-
-    def instructions(self, default_template: str) -> str:
+    def instructions(self, default_template: str) -> str:  # pragma: no cover
         """Get instructions to tell model to output JSON matching the schema."""
         template = self.template or default_template
         object_def = self.object_def
+        assert object_def is not None
         return self.build_instructions(template, object_def)
 
 
@@ -603,12 +524,6 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
     @property
     def mode(self) -> OutputMode:
         return 'tool'
-
-    def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by this model."""
-        super().raise_if_unsupported(profile)
-        if not profile.supports_tools:
-            raise UserError('Tool output is not supported by this model.')
 
 
 class BaseOutputProcessor(ABC, Generic[OutputDataT]):
