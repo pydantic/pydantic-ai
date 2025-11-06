@@ -134,6 +134,8 @@ async def execute_traced_output_function(
     ) as span:
         try:
             output = await function_schema.call(args, run_context)
+            if isinstance(output, _messages.Return):
+                output = cast(_messages.Return[Any], output).return_value
         except ModelRetry as r:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(

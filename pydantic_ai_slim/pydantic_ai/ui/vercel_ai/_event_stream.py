@@ -11,6 +11,7 @@ from pydantic_core import to_json
 from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CustomEvent,
     FilePart,
     FunctionToolResultEvent,
     RetryPromptPart,
@@ -185,3 +186,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             yield ToolOutputAvailableChunk(tool_call_id=result.tool_call_id, output=result.content)
 
         # ToolCallResultEvent.content may hold user parts (e.g. text, images) that Vercel AI does not currently have events for
+
+    async def handle_custom_event(self, event: CustomEvent) -> AsyncIterator[BaseChunk]:
+        if isinstance(event.data, BaseChunk):
+            yield event.data

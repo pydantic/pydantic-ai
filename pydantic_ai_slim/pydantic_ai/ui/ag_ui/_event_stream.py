@@ -14,6 +14,7 @@ from typing import Final
 from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CustomEvent,
     FunctionToolResultEvent,
     RetryPromptPart,
     TextPart,
@@ -234,3 +235,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                 for item in possible_event:  # type: ignore[reportUnknownMemberType]
                     if isinstance(item, BaseEvent):  # pragma: no branch
                         yield item
+
+    async def handle_custom_event(self, event: CustomEvent) -> AsyncIterator[BaseEvent]:
+        if isinstance(event.data, BaseEvent):
+            yield event.data

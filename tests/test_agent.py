@@ -19,12 +19,17 @@ from typing_extensions import Self
 from pydantic_ai import (
     AbstractToolset,
     Agent,
+    AgentRunResultEvent,
     AgentStreamEvent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
     CombinedToolset,
+    CustomEvent,
     DocumentUrl,
+    FinalResultEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
     FunctionToolset,
     ImageUrl,
     IncompleteToolCall,
@@ -35,11 +40,16 @@ from pydantic_ai import (
     ModelResponse,
     ModelResponsePart,
     ModelRetry,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
     PrefixedToolset,
     RetryPromptPart,
+    Return,
     RunContext,
     SystemPromptPart,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -3778,8 +3788,6 @@ def test_tool_returning_binary_content_with_identifier():
                         BinaryContent(
                             data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82',
                             media_type='image/png',
-                            _identifier='image_id_1',
-                            identifier='image_id_1',
                         ),
                     ],
                     timestamp=IsNow(tz=timezone.utc),
@@ -5795,3 +5803,150 @@ def test_agent_builtin_tools_runtime_vs_agent_level():
             MCPServerTool(id='example', url='https://mcp.example.com/mcp'),
         ]
     )
+
+
+async def test_agent_custom_events():
+    agent = Agent('test')
+
+    @agent.tool_plain
+    async def roll_dice() -> AsyncIterator[Any | ToolReturn[int]]:
+        yield 'Considering 1...'
+        yield 'Considering 2...'
+        yield 'Considering 3...'
+        yield 'Considering 4...'
+        yield 'Considering 5...'
+        yield 'Considering 6...'
+        yield 'Choosing 4...'
+        yield ToolReturn(return_value=4)
+
+    events = [event async for event in agent.run_stream_events('Roll me a dice.')]
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice'),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice'),
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')
+            ),
+            CustomEvent(data='Considering 1...', tool_call_id='pyd_ai_tool_call_id__roll_dice'),
+            CustomEvent(data='Considering 2...', tool_call_id='pyd_ai_tool_call_id__roll_dice'),
+            CustomEvent(data='Considering 3...', tool_call_id='pyd_ai_tool_call_id__roll_dice'),
+            CustomEvent(data='Considering 4...', tool_call_id='pyd_ai_tool_call_id__roll_dice'),
+            CustomEvent(data='Considering 5...', tool_call_id='pyd_ai_tool_call_id__roll_dice'),
+            CustomEvent(data='Considering 6...', tool_call_id='pyd_ai_tool_call_id__roll_dice'),
+            CustomEvent(data='Choosing 4...', tool_call_id='pyd_ai_tool_call_id__roll_dice'),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='roll_dice',
+                    content=4,
+                    tool_call_id='pyd_ai_tool_call_id__roll_dice',
+                    timestamp=IsDatetime(),
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"roll_')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='dice":4}')),
+            PartEndEvent(index=0, part=TextPart(content='{"roll_dice":4}')),
+            AgentRunResultEvent(result=AgentRunResult(output='{"roll_dice":4}')),
+        ]
+    )
+
+
+async def test_agent_custom_events_model_retry():
+    agent = Agent('test')
+
+    @agent.tool
+    async def roll_dice(ctx: RunContext) -> AsyncIterator[Any | ToolReturn[int]]:
+        yield 'Considering 1...'
+        yield 'Considering 2...'
+        yield 'Considering 3...'
+        if ctx.retry == 0:
+            raise ModelRetry(message='Roll again.')
+        else:
+            yield ToolReturn(return_value=4)
+
+    events = [event async for event in agent.run_stream_events('Roll me a dice.')]
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice'),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice'),
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')
+            ),
+            CustomEvent(data='Considering 1...', tool_call_id='pyd_ai_tool_call_id__roll_dice'),
+            CustomEvent(data='Considering 2...', tool_call_id='pyd_ai_tool_call_id__roll_dice'),
+            CustomEvent(data='Considering 3...', tool_call_id='pyd_ai_tool_call_id__roll_dice'),
+            FunctionToolResultEvent(
+                result=RetryPromptPart(
+                    content='Roll again.',
+                    tool_name='roll_dice',
+                    tool_call_id='pyd_ai_tool_call_id__roll_dice',
+                    timestamp=IsDatetime(),
+                )
+            ),
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='roll_dice', args={}, tool_call_id=IsStr()),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='roll_dice', args={}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='roll_dice', args={}, tool_call_id=IsStr())),
+            CustomEvent(data='Considering 1...', tool_call_id=IsStr()),
+            CustomEvent(data='Considering 2...', tool_call_id=IsStr()),
+            CustomEvent(data='Considering 3...', tool_call_id=IsStr()),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='roll_dice',
+                    content=4,
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"roll_')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='dice":4}')),
+            PartEndEvent(index=0, part=TextPart(content='{"roll_dice":4}')),
+            AgentRunResultEvent(result=AgentRunResult(output='{"roll_dice":4}')),
+        ]
+    )
+
+
+async def test_agent_custom_events_output_function():
+    # TODO (DouweM): Test with NativeOutput, PromptedOutput, TextOutput.
+    # TODO (DouweM): With run_stream where we don't pass through CallToolNode
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+    async def get_weather(city: str) -> AsyncIterator[str | Return[Weather]]:
+        yield 'Getting weather...'
+        yield Return(Weather(temperature=28.7, description='sunny'))
+
+    agent = Agent('test', output_type=get_weather)
+
+    events: list[AgentStreamEvent] = []
+    result: AgentRunResult[Weather] | None = None
+    async for event in agent.run_stream_events('What is the weather in Mexico City?'):
+        if isinstance(event, AgentRunResultEvent):
+            result = event.result
+        else:
+            events.append(event)
+
+    assert result is not None
+    assert result.output == snapshot()
+    assert events == snapshot()

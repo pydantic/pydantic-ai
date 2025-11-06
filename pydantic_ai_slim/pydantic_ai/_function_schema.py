@@ -6,7 +6,7 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from inspect import Parameter, signature
 from typing import TYPE_CHECKING, Any, Concatenate, cast, get_origin
 
@@ -19,7 +19,7 @@ from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, TypeIs, TypeVar
 
-from pydantic_ai.messages import CustomEvent, ToolReturn
+from pydantic_ai.messages import CustomEvent, Return
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
@@ -61,18 +61,26 @@ class FunctionSchema:
                 'RunContext.event_stream needs to be set to use FunctionSchema.call with async iterators'
             )
 
-            async for event_payload in self.function(*args, **kwargs):
-                if isinstance(event_payload, ToolReturn):
-                    return event_payload
+            return_value: Return | None = None
+            async for event_data in self.function(*args, **kwargs):
+                if return_value is not None:
+                    from .exceptions import UserError
 
-                event = (
-                    cast(CustomEvent, event_payload)
-                    if isinstance(event_payload, CustomEvent)
-                    else CustomEvent(payload=event_payload)
-                )
+                    raise UserError('Return value must be the last value yielded by the function')
+
+                if isinstance(event_data, Return):
+                    return_value = cast(Return, event_data)
+                    continue
+
+                if isinstance(event_data, CustomEvent):
+                    event = cast(CustomEvent, event_data)
+                    if ctx.tool_call_id:
+                        event = replace(event, tool_call_id=ctx.tool_call_id)
+                else:
+                    event = CustomEvent(data=event_data, tool_call_id=ctx.tool_call_id)
                 await ctx.event_stream.send(event)
-            # TODO (DouweM): Raise if events are yielded after ToolReturn
-            return None
+
+            return return_value
         elif self.is_async:
             function = cast(Callable[[Any], Awaitable[str]], self.function)
             return await function(*args, **kwargs)

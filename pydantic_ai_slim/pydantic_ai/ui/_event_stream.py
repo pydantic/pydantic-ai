@@ -15,6 +15,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
+    CustomEvent,
     FilePart,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -229,7 +230,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             async for e in self.before_response():
                 yield e
 
-    async def handle_event(self, event: NativeEvent) -> AsyncIterator[EventT]:
+    async def handle_event(self, event: NativeEvent) -> AsyncIterator[EventT]:  # noqa: C901
         """Transform a Pydantic AI event into one or more protocol-specific events.
 
         This method dispatches to specific `handle_*` methods based on event type:
@@ -240,6 +241,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent] -> `handle_final_result`
         - [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] -> `handle_function_tool_call`
         - [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] -> `handle_function_tool_result`
+        - [`CustomEvent`][pydantic_ai.messages.CustomEvent] -> `handle_custom_event`
         - [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] -> `handle_run_result`
 
         Subclasses are encouraged to override the individual `handle_*` methods rather than this one.
@@ -263,6 +265,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
             case FunctionToolResultEvent():
                 async for e in self.handle_function_tool_result(event):
+                    yield e
+            case CustomEvent():
+                async for e in self.handle_custom_event(event):
                     yield e
             case AgentRunResultEvent():
                 async for e in self.handle_run_result(event):
@@ -579,6 +584,15 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             event: The function tool result event.
         """
         return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_custom_event(self, event: CustomEvent) -> AsyncIterator[EventT]:
+        """Handle a `CustomEvent`.
+
+        Args:
+            event: The custom event.
+        """
+        return
         yield  # Make this an async generator
 
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[EventT]:

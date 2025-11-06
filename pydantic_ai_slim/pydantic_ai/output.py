@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Generic, Literal
 
@@ -11,7 +11,7 @@ from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
-from .messages import ToolCallPart
+from .messages import Return, ToolCallPart
 from .tools import DeferredToolRequests, ObjectJsonSchema, RunContext, ToolDefinition
 
 __all__ = (
@@ -45,10 +45,19 @@ OutputMode = Literal['text', 'tool', 'native', 'prompted', 'tool_or_text', 'imag
 StructuredOutputMode = Literal['tool', 'native', 'prompted']
 """Output modes that can be used for structured output. Used by ModelProfile.default_structured_output_mode"""
 
-
-OutputTypeOrFunction = TypeAliasType(
-    'OutputTypeOrFunction', type[T_co] | Callable[..., Awaitable[T_co] | T_co], type_params=(T_co,)
+OutputFunction = TypeAliasType(
+    'OutputFunction',
+    Callable[..., AsyncIterator[Return[T_co] | Any]] | Callable[..., Awaitable[T_co]] | Callable[..., T_co],
+    type_params=(T_co,),
 )
+"""Definition of an output function.
+
+You should not need to import or use this type directly.
+
+See [output docs](../output.md) for more information.
+"""
+
+OutputTypeOrFunction = TypeAliasType('OutputTypeOrFunction', OutputFunction[T_co] | type[T_co], type_params=(T_co,))
 """Definition of an output type or function.
 
 You should not need to import or use this type directly.

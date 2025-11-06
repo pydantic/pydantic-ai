@@ -23,7 +23,7 @@ from .usage import RequestUsage
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
 
-EventPayloadT = TypeVar('EventPayloadT', default=Any)
+EventDataT = TypeVar('EventPayloadT', default=Any)
 
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
@@ -617,9 +617,23 @@ class BinaryImage(BinaryContent):
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
 UserContent: TypeAlias = str | MultiModalContent
 
+# TODO (DouweM): thinking about variance
+ReturnValueT = TypeVar('ReturnValueT', default=Any, covariant=True)
+
 
 @dataclass(repr=False)
-class ToolReturn:
+class Return(Generic[ReturnValueT]):
+    """TODO (DouweM): Docstring."""
+
+    # TODO (DouweM): Find a better name, or get rid of this entirely?
+
+    return_value: ReturnValueT
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class ToolReturn(Return[ReturnValueT]):
     """A structured return value for tools that need to provide both a return value and custom content to the model.
 
     This class allows tools to return complex responses that include:
@@ -627,9 +641,6 @@ class ToolReturn:
     - Custom content (including multi-modal content) to be sent to the model as a UserPromptPart
     - Optional metadata for application use
     """
-
-    return_value: Any
-    """The return value to be used in the tool response."""
 
     _: KW_ONLY
 
@@ -1779,19 +1790,16 @@ class BuiltinToolResultEvent:
 
 
 @dataclass(repr=False)
-class CustomEvent(Generic[EventPayloadT]):
+class CustomEvent(Generic[EventDataT]):
     """An event indicating the result of a function tool call."""
 
-    payload: EventPayloadT
-    """The payload of the custom event."""
+    data: EventDataT
+    """The data of the custom event."""
 
     _: KW_ONLY
 
-    name: str | None = None
-    """The optional name of the custom event."""
-
-    id: str | None = None
-    """The optional ID of the custom event."""
+    tool_call_id: str | None = None
+    """The tool call ID, if any, that this event is associated with."""
 
     event_kind: Literal['custom'] = 'custom'
     """Event type identifier, used as a discriminator."""

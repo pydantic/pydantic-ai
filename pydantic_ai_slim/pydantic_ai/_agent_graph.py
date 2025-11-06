@@ -438,7 +438,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 _output_schema=ctx.deps.output_schema,
                 _model_request_parameters=model_request_parameters,
                 _output_validators=ctx.deps.output_validators,
-                _run_ctx=build_run_context(ctx),
+                _run_ctx=run_context,
                 _usage_limits=ctx.deps.usage_limits,
                 _tool_manager=ctx.deps.tool_manager,
             )
@@ -646,6 +646,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                     if text_processor := output_schema.text_processor:
                         if text:
+                            # TODO (DouweM): This could call an output function that yields custom events, but we're not in an event stream here?
                             self._next_node = await self._handle_text_response(ctx, text, text_processor)
                             return
                         alternatives.insert(0, 'return text')
@@ -1072,7 +1073,8 @@ async def _call_tool(
     except ToolRetryError as e:
         return e.tool_retry, None
 
-    if isinstance(tool_result, _messages.ToolReturn):
+    tool_return: _messages.Return | None = None
+    if isinstance(tool_result, _messages.Return):
         tool_return = tool_result
     else:
         result_is_list = isinstance(tool_result, list)
@@ -1083,8 +1085,8 @@ async def _call_tool(
         for content in contents:
             if isinstance(content, _messages.ToolReturn):
                 raise exceptions.UserError(
-                    f'The return value of tool {tool_call.tool_name!r} contains invalid nested `ToolReturn` objects. '
-                    f'`ToolReturn` should be used directly.'
+                    f'The return value of tool {tool_call.tool_name!r} contains invalid nested `Return` objects. '
+                    f'`Return` should be used directly.'
                 )
             elif isinstance(content, _messages.MultiModalContent):
                 identifier = content.identifier
@@ -1116,10 +1118,13 @@ async def _call_tool(
         tool_name=tool_call.tool_name,
         tool_call_id=tool_call.tool_call_id,
         content=tool_return.return_value,  # type: ignore
-        metadata=tool_return.metadata,
     )
 
-    return return_part, tool_return.content or None
+    if isinstance(tool_return, _messages.ToolReturn):
+        return_part.metadata = tool_return.metadata
+        return return_part, tool_return.content or None
+    else:
+        return return_part, None
 
 
 @dataclasses.dataclass
