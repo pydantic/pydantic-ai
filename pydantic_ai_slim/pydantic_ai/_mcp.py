@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Literal
@@ -126,7 +128,7 @@ def map_from_sampling_content(
         raise NotImplementedError('Image and Audio responses in sampling are not yet supported')
 
 
-def map_from_mcp_resource(mcp_resource: mcp_types.Resource) -> 'Resource':
+def map_from_mcp_resource(mcp_resource: mcp_types.Resource) -> Resource:
     """Convert from MCP Resource to native Pydantic AI Resource."""
     from .mcp import Resource, ResourceAnnotations
 
@@ -146,7 +148,7 @@ def map_from_mcp_resource(mcp_resource: mcp_types.Resource) -> 'Resource':
     )
 
 
-def map_from_mcp_resource_template(mcp_template: mcp_types.ResourceTemplate) -> 'ResourceTemplate':
+def map_from_mcp_resource_template(mcp_template: mcp_types.ResourceTemplate) -> ResourceTemplate:
     """Convert from MCP ResourceTemplate to native Pydantic AI ResourceTemplate."""
     from .mcp import ResourceAnnotations, ResourceTemplate
 
@@ -165,7 +167,7 @@ def map_from_mcp_resource_template(mcp_template: mcp_types.ResourceTemplate) -> 
     )
 
 
-def map_from_mcp_server_capabilities(mcp_capabilities: mcp_types.ServerCapabilities) -> 'ServerCapabilities':
+def map_from_mcp_server_capabilities(mcp_capabilities: mcp_types.ServerCapabilities) -> ServerCapabilities:
     """Convert from MCP ServerCapabilities to native Pydantic AI ServerCapabilities."""
     from .mcp import ServerCapabilities
 
