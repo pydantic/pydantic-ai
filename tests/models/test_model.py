@@ -251,6 +251,17 @@ def test_infer_model(
         assert m2 is m
 
 
+def test_infer_model_with_provider():
+    from pydantic_ai.providers import openai
+
+    provider_class = openai.OpenAIProvider(api_key='1234', base_url='http://test')
+    m = infer_model('openai:gpt-5', lambda x: provider_class)
+
+    assert isinstance(m, OpenAIChatModel)
+    assert m._provider is provider_class  # type: ignore
+    assert m._provider.base_url == 'http://test'  # type: ignore
+
+
 def test_infer_str_unknown():
     with pytest.raises(UserError, match='Unknown model: foobar'):
         infer_model('foobar')
