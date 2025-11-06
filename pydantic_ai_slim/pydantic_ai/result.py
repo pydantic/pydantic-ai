@@ -116,6 +116,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield text
         else:
             async for text in self._stream_response_text(delta=False, debounce_by=debounce_by):
+                # TODO (DouweM): What if there's an output function?
                 for validator in self._output_validators:
                     text = await validator.validate(text, replace(self._run_ctx, partial_output=True))
                 yield text

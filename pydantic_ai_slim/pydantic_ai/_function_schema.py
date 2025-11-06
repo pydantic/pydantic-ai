@@ -72,13 +72,17 @@ class FunctionSchema:
                     return_value = cast(Return, event_data)
                     continue
 
-                if isinstance(event_data, CustomEvent):
-                    event = cast(CustomEvent, event_data)
-                    if ctx.tool_call_id:
-                        event = replace(event, tool_call_id=ctx.tool_call_id)
-                else:
-                    event = CustomEvent(data=event_data, tool_call_id=ctx.tool_call_id)
-                await ctx.event_stream.send(event)
+                # If there's no event stream, we're being called inside `agent.run_stream`, after event streaming has completed
+                # and final result streaming has begun, so there's no need to yield custom events.
+                # TODO (DouweM): Should we store events on the ToolReturnPart/RetryPromptPart or something, like we allow `metadata`?
+                if ctx.event_stream is not None:
+                    if isinstance(event_data, CustomEvent):
+                        event = cast(CustomEvent, event_data)
+                        if ctx.tool_call_id:
+                            event = replace(event, tool_call_id=ctx.tool_call_id)
+                    else:
+                        event = CustomEvent(data=event_data, tool_call_id=ctx.tool_call_id)
+                    await ctx.event_stream.send(event)
 
             return return_value
         elif self.is_async:

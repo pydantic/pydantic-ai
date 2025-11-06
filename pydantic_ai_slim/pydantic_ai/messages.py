@@ -23,7 +23,7 @@ from .usage import RequestUsage
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
 
-EventDataT = TypeVar('EventPayloadT', default=Any)
+EventDataT = TypeVar('EventDataT', default=Any)
 
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']

@@ -5961,5 +5961,23 @@ async def test_agent_custom_events_output_function():
             events.append(event)
 
     assert result is not None
-    assert result.output == snapshot()
-    assert events == snapshot()
+    assert result.output == snapshot(Weather(temperature=28.7, description='sunny'))
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='final_result', args={'city': 'a'}, tool_call_id='pyd_ai_tool_call_id__final_result'
+                ),
+            ),
+            FinalResultEvent(tool_name='final_result', tool_call_id='pyd_ai_tool_call_id__final_result'),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='final_result', args={'city': 'a'}, tool_call_id='pyd_ai_tool_call_id__final_result'
+                ),
+            ),
+            CustomEvent(data='Getting weather...', tool_call_id='pyd_ai_tool_call_id__final_result'),
+            # TODO (DouweM): Verify that with AG-UI/Vercel AI, there are tool call start and result events around this custom event
+        ]
+    )
