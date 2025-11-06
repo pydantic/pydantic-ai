@@ -47,8 +47,8 @@ async def test_discriminated_union_schema_stripping():
     # Generate schema for discriminated union
     schema = Owner.model_json_schema()
 
-    # The schema should have discriminator before transformation
-    assert 'discriminator' in schema['$defs']['Owner']['properties']['pet']
+    # The schema should have discriminator in the pet property before transformation
+    assert 'discriminator' in schema['properties']['pet']
 
     # Transform the schema
     transformer = GoogleJsonSchemaTransformer(schema)

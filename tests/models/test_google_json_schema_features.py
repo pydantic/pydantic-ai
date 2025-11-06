@@ -1,227 +1,208 @@
-"""Tests for Google's enhanced JSON Schema support.
+"""Test Google's enhanced JSON Schema features (November 2025).
 
-Google Gemini API now supports (announced November 2025):
-- anyOf for conditional structures (Unions)
-- $ref for recursive schemas
-- minimum and maximum for numeric constraints
-- additionalProperties and type: 'null'
-- prefixItems for tuple-like arrays
-- Implicit property ordering (preserves definition order)
+These tests verify that the GoogleJsonSchemaTransformer correctly handles the new
+JSON Schema features announced by Google for Gemini 2.5+ models.
 
-These tests verify that GoogleModel with NativeOutput properly leverages these capabilities.
+Note: The enhanced features (additionalProperties, $ref, etc.) are only supported
+in Vertex AI, not in the Generative Language API (google-gla).
 """
 
-from __future__ import annotations
+from typing import Any
 
-from typing import Literal
-
-import pytest
 from pydantic import BaseModel, Field
 
-from pydantic_ai import Agent
-from pydantic_ai.output import NativeOutput
+from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+
 
-from ..conftest import try_import
+class TestSchemaTransformation:
+    """Test that schemas are transformed correctly without stripping supported features."""
+
+    def test_title_field_preserved(self):
+        """Verify that title fields are preserved in transformed schemas."""
 
-with try_import() as imports_successful:
-    from pydantic_ai.models.google import GoogleModel
-    from pydantic_ai.providers.google import GoogleProvider
+        class Model(BaseModel):
+            name: str = Field(title='User Name')
+            age: int = Field(title='Age in Years')
 
-pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
-    pytest.mark.vcr,
-]
+        schema = Model.model_json_schema()
+        transformer = GoogleJsonSchemaTransformer(schema)
+        transformed = transformer.walk()
 
+        # Title should be preserved
+        assert transformed['properties']['name']['title'] == 'User Name'
+        assert transformed['properties']['age']['title'] == 'Age in Years'
 
-@pytest.fixture()
-def google_provider(gemini_api_key: str) -> GoogleProvider:
-    return GoogleProvider(api_key=gemini_api_key)
+    def test_additional_properties_preserved(self):
+        """Verify that additionalProperties is preserved for dict types."""
 
+        class Model(BaseModel):
+            metadata: dict[str, str] | None = None
 
-async def test_google_property_ordering(allow_model_requests: None, google_provider: GoogleProvider):
-    """Test that property order is preserved in Google responses.
+        schema = Model.model_json_schema()
+        transformer = GoogleJsonSchemaTransformer(schema)
+        transformed = transformer.walk()
 
-    Google now preserves the order of properties as defined in the schema.
-    This is important for predictable output and downstream processing.
-    """
-    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
+        # Find the metadata property definition (could be in a oneOf due to nullable)
+        metadata_schema = transformed['properties']['metadata']
+        if 'oneOf' in metadata_schema:
+            # Find the object type in the oneOf
+            for option in metadata_schema['oneOf']:
+                if option.get('type') == 'object':
+                    metadata_schema = option
+                    break
 
-    class OrderedResponse(BaseModel):
-        """Response with properties in specific order: zebra, apple, mango, banana."""
+        # additionalProperties should be preserved
+        assert 'additionalProperties' in metadata_schema
 
-        zebra: str = Field(description='Last alphabetically, first in definition')
-        apple: str = Field(description='First alphabetically, second in definition')
-        mango: str = Field(description='Middle alphabetically, third in definition')
-        banana: str = Field(description='Second alphabetically, last in definition')
+    def test_ref_and_defs_preserved(self):
+        """Verify that $ref and $defs are preserved for recursive schemas."""
 
-    agent = Agent(model, output_type=NativeOutput(OrderedResponse))
+        class TreeNode(BaseModel):
+            value: int
+            children: list['TreeNode'] | None = None
 
-    result = await agent.run('Return a response with: zebra="Z", apple="A", mango="M", banana="B"')
+        schema = TreeNode.model_json_schema()
+        transformer = GoogleJsonSchemaTransformer(schema)
+        transformed = transformer.walk()
 
-    # Verify the output is correct
-    assert result.output.zebra == 'Z'
-    assert result.output.apple == 'A'
-    assert result.output.mango == 'M'
-    assert result.output.banana == 'B'
+        # Should have $defs with TreeNode definition
+        assert '$defs' in transformed
+        assert 'TreeNode' in transformed['$defs']
 
-
-async def test_google_numeric_constraints(allow_model_requests: None, google_provider: GoogleProvider):
-    """Test that minimum/maximum constraints work with Google's JSON Schema support.
-
-    Google now supports minimum, maximum, exclusiveMinimum, and exclusiveMaximum.
-    """
-    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
-
-    class AgeResponse(BaseModel):
-        """Response with age constraints."""
-
-        age: int = Field(ge=0, le=150, description='Age between 0 and 150')
-        score: float = Field(ge=0.0, le=100.0, description='Score between 0 and 100')
-
-    agent = Agent(model, output_type=NativeOutput(AgeResponse))
-
-    result = await agent.run('Give me age=25 and score=95.5')
-
-    assert result.output.age == 25
-    assert result.output.score == 95.5
-
-
-async def test_google_anyof_unions(allow_model_requests: None, google_provider: GoogleProvider):
-    """Test that anyOf (union types) work with Google's JSON Schema support.
-
-    Google now supports anyOf for conditional structures, enabling union types.
-    """
-    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
-
-    class SuccessResponse(BaseModel):
-        """Success response."""
-
-        status: Literal['success']
-        data: str
-
-    class ErrorResponse(BaseModel):
-        """Error response."""
-
-        status: Literal['error']
-        error_message: str
-
-    class UnionResponse(BaseModel):
-        """Response that can be either success or error."""
-
-        result: SuccessResponse | ErrorResponse
-
-    agent = Agent(model, output_type=NativeOutput(UnionResponse))
-
-    # Test success case
-    result = await agent.run('Return a success response with data="all good"')
-    assert result.output.result.status == 'success'
-    assert isinstance(result.output.result, SuccessResponse)
-    assert result.output.result.data == 'all good'
-
-
-async def test_google_recursive_schema(allow_model_requests: None, google_provider: GoogleProvider):
-    """Test that $ref (recursive schemas) work with Google's JSON Schema support.
-
-    Google now supports $ref for recursive schemas, enabling tree structures.
-    """
-    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
-
-    class TreeNode(BaseModel):
-        """A tree node with optional children."""
-
-        value: int
-        children: list[TreeNode] | None = None
-
-    agent = Agent(model, output_type=NativeOutput(TreeNode))
-
-    result = await agent.run('Return a tree: root value=1 with two children (value=2 and value=3)')
-
-    assert result.output.value == 1
-    assert result.output.children is not None
-    assert len(result.output.children) == 2
-    assert result.output.children[0].value == 2
-    assert result.output.children[1].value == 3
-
-
-async def test_google_optional_fields_type_null(allow_model_requests: None, google_provider: GoogleProvider):
-    """Test that type: 'null' (optional fields) work with Google's JSON Schema support.
-
-    Google now properly supports type: 'null' in anyOf for optional fields.
-    """
-    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
-
-    class OptionalFieldsResponse(BaseModel):
-        """Response with optional fields."""
-
-        required_field: str
-        optional_field: str | None = None
-
-    agent = Agent(model, output_type=NativeOutput(OptionalFieldsResponse))
-
-    # Test with optional field present
-    result = await agent.run('Return required_field="hello" and optional_field="world"')
-    assert result.output.required_field == 'hello'
-    assert result.output.optional_field == 'world'
-
-    # Test with optional field absent
-    result2 = await agent.run('Return only required_field="hello"')
-    assert result2.output.required_field == 'hello'
-    assert result2.output.optional_field is None
-
-
-async def test_google_additional_properties(allow_model_requests: None, google_provider: GoogleProvider):
-    """Test that additionalProperties work with Google's JSON Schema support.
-
-    Google now supports additionalProperties for dict types.
-    """
-    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
-
-    class DictResponse(BaseModel):
-        """Response with a dictionary field."""
-
-        metadata: dict[str, str]
-
-    agent = Agent(model, output_type=NativeOutput(DictResponse))
-
-    result = await agent.run('Return metadata with keys "author"="Alice" and "version"="1.0"')
-
-    assert result.output.metadata['author'] == 'Alice'
-    assert result.output.metadata['version'] == '1.0'
-
-
-async def test_google_complex_nested_schema(allow_model_requests: None, google_provider: GoogleProvider):
-    """Test complex nested schemas combining multiple JSON Schema features.
-
-    This test combines: anyOf, $ref, minimum/maximum, additionalProperties, and type: null.
-    """
-    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
-
-    class Address(BaseModel):
-        """Address with optional apartment."""
-
-        street: str
-        city: str
-        apartment: str | None = None
-
-    class Person(BaseModel):
-        """Person with age constraints and optional address."""
-
-        name: str
-        age: int = Field(ge=0, le=150)
-        address: Address | None = None
-        metadata: dict[str, str] | None = None
-
-    agent = Agent(model, output_type=NativeOutput(Person))
-
-    result = await agent.run(
-        'Return person: name="Alice", age=30, address with street="Main St", city="NYC", and metadata with key "role"="engineer"'
-    )
-
-    assert result.output.name == 'Alice'
-    assert result.output.age == 30
-    assert result.output.address is not None
-    assert result.output.address.street == 'Main St'
-    assert result.output.address.city == 'NYC'
-    assert result.output.metadata is not None
-    assert result.output.metadata['role'] == 'engineer'
+        # Should have $ref in the children property
+        children_prop = transformed['$defs']['TreeNode']['properties']['children']
+        # Could be in oneOf due to nullable
+        if 'oneOf' in children_prop:
+            # Find the array type
+            for option in children_prop['oneOf']:
+                if option.get('type') == 'array':
+                    assert '$ref' in option['items']
+                    break
+        else:
+            assert '$ref' in children_prop['items']
+
+    def test_anyof_preserved(self):
+        """Verify that anyOf is preserved in union types."""
+
+        class Model(BaseModel):
+            value: int | str
+
+        schema = Model.model_json_schema()
+        transformer = GoogleJsonSchemaTransformer(schema)
+        transformed = transformer.walk()
+
+        # Should have anyOf for the union
+        assert 'anyOf' in transformed['properties']['value']
+
+    def test_oneof_not_converted_to_anyof(self):
+        """Verify that oneOf is preserved when generated by Pydantic (discriminated unions).
+
+        Note: Simple unions generate anyOf, but discriminated unions generate oneOf.
+        This test verifies we don't convert oneOf to anyOf.
+        """
+        from typing import Literal
+
+        class Cat(BaseModel):
+            type: Literal['cat']
+            meows: int
+
+        class Dog(BaseModel):
+            type: Literal['dog']
+            barks: int
+
+        class Pet(BaseModel):
+            pet: Cat | Dog = Field(discriminator='type')
+
+        schema = Pet.model_json_schema()
+        # Pydantic generates oneOf for discriminated unions
+        assert 'oneOf' in schema['properties']['pet']
+
+        transformer = GoogleJsonSchemaTransformer(schema)
+        transformed = transformer.walk()
+
+        # oneOf should be preserved (not converted to anyOf)
+        # Note: discriminator field will be stripped, but oneOf structure remains
+        assert 'oneOf' in transformed['properties']['pet']
+
+    def test_min_max_preserved(self):
+        """Verify that minimum and maximum constraints are preserved."""
+
+        class Model(BaseModel):
+            temperature: float = Field(ge=0, le=100)
+            count: int = Field(ge=1, le=1000)
+
+        schema = Model.model_json_schema()
+        transformer = GoogleJsonSchemaTransformer(schema)
+        transformed = transformer.walk()
+
+        # minimum and maximum should be preserved
+        assert transformed['properties']['temperature']['minimum'] == 0
+        assert transformed['properties']['temperature']['maximum'] == 100
+        assert transformed['properties']['count']['minimum'] == 1
+        assert transformed['properties']['count']['maximum'] == 1000
+
+    def test_exclusive_min_max_stripped(self):
+        """Verify that exclusiveMinimum and exclusiveMaximum are stripped."""
+
+        class Model(BaseModel):
+            value: float = Field(gt=0, lt=100)
+
+        schema = Model.model_json_schema()
+        transformer = GoogleJsonSchemaTransformer(schema)
+        transformed = transformer.walk()
+
+        # exclusiveMinimum and exclusiveMaximum should be stripped
+        value_schema = transformed['properties']['value']
+        assert 'exclusiveMinimum' not in value_schema
+        assert 'exclusiveMaximum' not in value_schema
+
+    def test_discriminator_stripped(self):
+        """Verify that discriminator field is stripped."""
+        from typing import Literal
+
+        class Cat(BaseModel):
+            pet_type: Literal['cat']
+            meows: int
+
+        class Dog(BaseModel):
+            pet_type: Literal['dog']
+            barks: int
+
+        class Owner(BaseModel):
+            pet: Cat | Dog = Field(discriminator='pet_type')
+
+        schema = Owner.model_json_schema()
+        transformer = GoogleJsonSchemaTransformer(schema)
+        transformed = transformer.walk()
+
+        # Verify discriminator is stripped from all nested schemas
+        def check_no_discriminator(obj: dict[str, Any]) -> None:
+            if isinstance(obj, dict):
+                assert 'discriminator' not in obj, 'discriminator should be stripped'
+                for value in obj.values():
+                    if isinstance(value, dict):
+                        check_no_discriminator(value)  # type: ignore[arg-type]
+                    elif isinstance(value, list):
+                        for item in value:  # type: ignore[reportUnknownVariableType]
+                            if isinstance(item, dict):
+                                check_no_discriminator(item)  # type: ignore[arg-type]
+
+        check_no_discriminator(transformed)
+
+    def test_nullable_preserved(self):
+        """Verify that nullable fields are handled correctly.
+
+        Pydantic uses 'nullable': True for optional fields with simplify_nullable_unions.
+        """
+
+        class Model(BaseModel):
+            optional_field: str | None = None
+
+        schema = Model.model_json_schema()
+        transformer = GoogleJsonSchemaTransformer(schema)
+        transformed = transformer.walk()
+
+        # GoogleJsonSchemaTransformer uses simplify_nullable_unions=True
+        # which converts Union[str, None] to {"type": "string", "nullable": True}
+        field_schema = transformed['properties']['optional_field']
+        assert field_schema.get('nullable') is True or 'oneOf' in field_schema

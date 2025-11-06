@@ -203,7 +203,10 @@ agent = Agent(model)
 
 ## Enhanced JSON Schema Support
 
-As of November 2025, Google Gemini models (2.5+) provide enhanced support for JSON Schema features when using [`NativeOutput`](../output.md#native-output), enabling more sophisticated structured outputs:
+!!! note "Vertex AI Only"
+    The enhanced JSON Schema features listed below are **only available when using Vertex AI** (`google-vertex:` prefix or `GoogleProvider(vertexai=True)`). They are **not supported** in the Generative Language API (`google-gla:` prefix).
+
+As of November 2025, Google Gemini models (2.5+) accessed via **Vertex AI** provide enhanced support for JSON Schema features when using [`NativeOutput`](../output.md#native-output), enabling more sophisticated structured outputs:
 
 ### Supported Features
 
@@ -218,10 +221,9 @@ As of November 2025, Google Gemini models (2.5+) provide enhanced support for JS
 
 ### Example: Recursive Schema
 
-```python
+```python {test="skip"}
 from pydantic import BaseModel
 from pydantic_ai import Agent
-from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.output import NativeOutput
 
 class TreeNode(BaseModel):
@@ -229,8 +231,8 @@ class TreeNode(BaseModel):
     value: int
     children: list['TreeNode'] | None = None
 
-model = GoogleModel('gemini-2.5-pro')
-agent = Agent(model, output_type=NativeOutput(TreeNode))
+# Use Vertex AI (not GLA) for enhanced schema support
+agent = Agent('google-vertex:gemini-2.5-pro', output_type=NativeOutput(TreeNode))
 
 result = await agent.run('Create a tree with root value 1 and two children with values 2 and 3')
 # result.output will be a TreeNode with proper structure
@@ -238,11 +240,10 @@ result = await agent.run('Create a tree with root value 1 and two children with 
 
 ### Example: Union Types
 
-```python
+```python {test="skip"}
 from typing import Union, Literal
 from pydantic import BaseModel
 from pydantic_ai import Agent
-from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.output import NativeOutput
 
 class Success(BaseModel):
@@ -256,8 +257,8 @@ class Error(BaseModel):
 class Response(BaseModel):
     result: Union[Success, Error]
 
-model = GoogleModel('gemini-2.5-pro')
-agent = Agent(model, output_type=NativeOutput(Response))
+# Use Vertex AI (not GLA) for enhanced schema support
+agent = Agent('google-vertex:gemini-2.5-pro', output_type=NativeOutput(Response))
 
 result = await agent.run('Process this request successfully')
 # result.output.result will be either Success or Error
