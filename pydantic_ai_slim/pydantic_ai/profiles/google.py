@@ -21,7 +21,8 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
 
     Gemini supports [a subset of OpenAPI v3.0.3](https://ai.google.dev/gemini-api/docs/function-calling#function_declarations).
 
-    As of November 2025, Gemini 2.5+ models support enhanced JSON Schema features including:
+    As of November 2025, Gemini 2.5+ models support enhanced JSON Schema features
+    (see [announcement](https://blog.google/technology/developers/gemini-api-structured-outputs/)) including:
     * `title` for short property descriptions
     * `anyOf` and `oneOf` for conditional structures (unions)
     * `$ref` and `$defs` for recursive schemas and reusable definitions
@@ -30,7 +31,9 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
     * `type: 'null'` for optional fields
     * `prefixItems` for tuple-like arrays
 
-    Note: `exclusiveMinimum` and `exclusiveMaximum` are not yet supported by the Google SDK.
+    Not supported (empirically tested as of November 2025):
+    * `exclusiveMinimum` and `exclusiveMaximum` are not yet supported by the Google SDK
+    * `discriminator` field causes validation errors with nested oneOf schemas
     """
 
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
