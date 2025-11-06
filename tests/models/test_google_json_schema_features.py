@@ -1,6 +1,6 @@
 """Test Google's enhanced JSON Schema features (November 2025).
 
-These tests verify that the GoogleJsonSchemaTransformer correctly handles the new
+These tests verify that the GoogleVertexJsonSchemaTransformer correctly handles the new
 JSON Schema features announced by Google for Gemini 2.5+ models.
 
 Note: The enhanced features (additionalProperties, $ref, etc.) are only supported
@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+from pydantic_ai.profiles.google import GoogleVertexJsonSchemaTransformer
 
 
 class TestSchemaTransformation:
@@ -25,7 +25,7 @@ class TestSchemaTransformation:
             age: int = Field(title='Age in Years')
 
         schema = Model.model_json_schema()
-        transformer = GoogleJsonSchemaTransformer(schema)
+        transformer = GoogleVertexJsonSchemaTransformer(schema)
         transformed = transformer.walk()
 
         # Title should be preserved
@@ -39,7 +39,7 @@ class TestSchemaTransformation:
             metadata: dict[str, str] | None = None
 
         schema = Model.model_json_schema()
-        transformer = GoogleJsonSchemaTransformer(schema)
+        transformer = GoogleVertexJsonSchemaTransformer(schema)
         transformed = transformer.walk()
 
         # Find the metadata property definition (could be in a oneOf due to nullable)
@@ -62,7 +62,7 @@ class TestSchemaTransformation:
             children: list['TreeNode'] | None = None
 
         schema = TreeNode.model_json_schema()
-        transformer = GoogleJsonSchemaTransformer(schema)
+        transformer = GoogleVertexJsonSchemaTransformer(schema)
         transformed = transformer.walk()
 
         # Should have $defs with TreeNode definition
@@ -88,7 +88,7 @@ class TestSchemaTransformation:
             value: int | str
 
         schema = Model.model_json_schema()
-        transformer = GoogleJsonSchemaTransformer(schema)
+        transformer = GoogleVertexJsonSchemaTransformer(schema)
         transformed = transformer.walk()
 
         # Should have anyOf for the union
@@ -117,7 +117,7 @@ class TestSchemaTransformation:
         # Pydantic generates oneOf for discriminated unions
         assert 'oneOf' in schema['properties']['pet']
 
-        transformer = GoogleJsonSchemaTransformer(schema)
+        transformer = GoogleVertexJsonSchemaTransformer(schema)
         transformed = transformer.walk()
 
         # oneOf should be preserved (not converted to anyOf)
@@ -132,7 +132,7 @@ class TestSchemaTransformation:
             count: int = Field(ge=1, le=1000)
 
         schema = Model.model_json_schema()
-        transformer = GoogleJsonSchemaTransformer(schema)
+        transformer = GoogleVertexJsonSchemaTransformer(schema)
         transformed = transformer.walk()
 
         # minimum and maximum should be preserved
@@ -148,7 +148,7 @@ class TestSchemaTransformation:
             value: float = Field(gt=0, lt=100)
 
         schema = Model.model_json_schema()
-        transformer = GoogleJsonSchemaTransformer(schema)
+        transformer = GoogleVertexJsonSchemaTransformer(schema)
         transformed = transformer.walk()
 
         # exclusiveMinimum and exclusiveMaximum should be stripped
@@ -172,7 +172,7 @@ class TestSchemaTransformation:
             pet: Cat | Dog = Field(discriminator='pet_type')
 
         schema = Owner.model_json_schema()
-        transformer = GoogleJsonSchemaTransformer(schema)
+        transformer = GoogleVertexJsonSchemaTransformer(schema)
         transformed = transformer.walk()
 
         # Verify discriminator is stripped from all nested schemas
@@ -199,10 +199,10 @@ class TestSchemaTransformation:
             optional_field: str | None = None
 
         schema = Model.model_json_schema()
-        transformer = GoogleJsonSchemaTransformer(schema)
+        transformer = GoogleVertexJsonSchemaTransformer(schema)
         transformed = transformer.walk()
 
-        # GoogleJsonSchemaTransformer uses simplify_nullable_unions=True
+        # GoogleVertexJsonSchemaTransformer uses simplify_nullable_unions=True
         # which converts Union[str, None] to {"type": "string", "nullable": True}
         field_schema = transformed['properties']['optional_field']
         assert field_schema.get('nullable') is True or 'oneOf' in field_schema

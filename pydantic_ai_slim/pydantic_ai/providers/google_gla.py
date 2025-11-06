@@ -8,7 +8,7 @@ from typing_extensions import deprecated
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai.profiles.google import google_gla_model_profile
 from pydantic_ai.providers import Provider
 
 
@@ -29,7 +29,7 @@ class GoogleGLAProvider(Provider[httpx.AsyncClient]):
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
-        return google_model_profile(model_name)
+        return google_gla_model_profile(model_name)
 
     def __init__(self, api_key: str | None = None, http_client: httpx.AsyncClient | None = None) -> None:
         """Create a new Google GLA provider.

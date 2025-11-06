@@ -42,7 +42,7 @@ async def test_discriminated_union_schema_stripping():
     """
     from typing import Any
 
-    from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+    from pydantic_ai.profiles.google import GoogleVertexJsonSchemaTransformer
 
     # Generate schema for discriminated union
     schema = Owner.model_json_schema()
@@ -51,7 +51,7 @@ async def test_discriminated_union_schema_stripping():
     assert 'discriminator' in schema['properties']['pet']
 
     # Transform the schema
-    transformer = GoogleJsonSchemaTransformer(schema)
+    transformer = GoogleVertexJsonSchemaTransformer(schema)
     transformed = transformer.walk()
 
     # Verify discriminator is stripped from all nested schemas
