@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx
+from typing_extensions import deprecated
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
@@ -24,8 +25,10 @@ GATEWAY_BASE_URL = 'https://gateway.pydantic.dev/proxy'
 
 
 @overload
+@deprecated('Use `chat` or `responses` API type instead of `openai` provider type.')
 def gateway_provider(
     upstream_provider: Literal['openai', 'openai-chat', 'openai-responses'],
+    /,
     *,
     api_key: str | None = None,
     base_url: str | None = None,
@@ -36,6 +39,7 @@ def gateway_provider(
 @overload
 def gateway_provider(
     upstream_provider: Literal['groq'],
+    /,
     *,
     api_key: str | None = None,
     base_url: str | None = None,
@@ -44,8 +48,10 @@ def gateway_provider(
 
 
 @overload
+@deprecated('Use `gemini` or `anthropic` API type instead of `google-vertex` provider type.')
 def gateway_provider(
     upstream_provider: Literal['google-vertex'],
+    /,
     *,
     api_key: str | None = None,
     base_url: str | None = None,
@@ -55,6 +61,7 @@ def gateway_provider(
 @overload
 def gateway_provider(
     upstream_provider: Literal['anthropic'],
+    /,
     *,
     api_key: str | None = None,
     base_url: str | None = None,
@@ -62,8 +69,10 @@ def gateway_provider(
 
 
 @overload
+@deprecated('Use `converse` or `anthropic` API type instead of `bedrock` provider type.')
 def gateway_provider(
     upstream_provider: Literal['bedrock'],
+    /,
     *,
     api_key: str | None = None,
     base_url: str | None = None,
@@ -73,22 +82,38 @@ def gateway_provider(
 @overload
 def gateway_provider(
     upstream_provider: str,
+    /,
     *,
     api_key: str | None = None,
     base_url: str | None = None,
 ) -> Provider[Any]: ...
 
 
-UpstreamProvider = Literal['openai', 'openai-chat', 'openai-responses', 'groq', 'google-vertex', 'anthropic', 'bedrock']
+UpstreamProvider = Literal[
+    'chat',
+    'responses',
+    'gemini',
+    'converse',
+    # Deprecated
+    'openai',
+    'openai-chat',
+    'openai-responses',
+    'google-vertex',
+    'bedrock',
+    # Those two are actually the same on both.
+    'anthropic',
+    'groq',
+]
 
 
 def gateway_provider(
     upstream_provider: UpstreamProvider | str,
+    /,
     *,
     # Every provider
     api_key: str | None = None,
     base_url: str | None = None,
-    # OpenAI, Groq & Anthropic
+    # OpenAI, Groq, Anthropic & Gemini - Only Bedrock doesn't have an HTTPX client.
     http_client: httpx.AsyncClient | None = None,
 ) -> Provider[Any]:
     """Create a new Gateway provider.
@@ -116,6 +141,11 @@ def gateway_provider(
         from .openai import OpenAIProvider
 
         return OpenAIProvider(api_key=api_key, base_url=_merge_url_path(base_url, 'openai'), http_client=http_client)
+    elif upstream_provider in ('chat', 'responses'):
+        from .openai import OpenAIProvider
+
+        base_url = _merge_url_path(base_url, upstream_provider)
+        return OpenAIProvider(api_key=api_key, base_url=base_url, http_client=http_client)
     elif upstream_provider == 'groq':
         from .groq import GroqProvider
 
@@ -132,15 +162,15 @@ def gateway_provider(
                 http_client=http_client,
             )
         )
-    elif upstream_provider == 'bedrock':
+    elif upstream_provider in ('bedrock', 'converse'):
         from .bedrock import BedrockProvider
 
         return BedrockProvider(
             api_key=api_key,
-            base_url=_merge_url_path(base_url, 'bedrock'),
+            base_url=_merge_url_path(base_url, upstream_provider),
             region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
-    elif upstream_provider == 'google-vertex':
+    elif upstream_provider in ('google-vertex', 'gemini'):
         from .google import GoogleProvider
 
         return GoogleProvider(
