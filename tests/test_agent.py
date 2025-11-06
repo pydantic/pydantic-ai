@@ -5807,3 +5807,29 @@ def test_agent_builtin_tools_runtime_vs_agent_level():
             MCPServerTool(id='example', url='https://mcp.example.com/mcp'),
         ]
     )
+
+
+async def test_run_with_unapproved_tool_call_in_history():
+    def should_not_call_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        raise ValueError('The agent should not call the model.')  # pragma: no cover
+
+    agent = Agent(
+        model=FunctionModel(function=should_not_call_model),
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file() -> None:
+        print('File deleted.')  # pragma: no cover
+
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='delete_file')]),
+    ]
+
+    result = await agent.run(message_history=messages)
+
+    assert result.all_messages() == messages
+    assert result.output == snapshot(
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='delete_file', tool_call_id=IsStr())])
+    )
