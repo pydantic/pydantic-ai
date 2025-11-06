@@ -678,7 +678,7 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
 
 
 def infer_model(  # noqa: C901
-    model: Model | KnownModelName | str, provider_generator: Callable[[str], Provider[Any]] | None = None
+    model: Model | KnownModelName | str, provider_factory: Callable[[str], Provider[Any]] = infer_provider
 ) -> Model:
     """Infer the model from the name. May optionally pass a callable that setup a custom provider for the model."""
     if isinstance(model, Model):
@@ -715,9 +715,7 @@ def infer_model(  # noqa: C901
         )
         provider_name = 'google-vertex'
 
-    if provider_generator is None:
-        provider_generator = infer_provider
-    provider = provider_generator(provider_name)
+    provider = provider_factory(provider_name)
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
