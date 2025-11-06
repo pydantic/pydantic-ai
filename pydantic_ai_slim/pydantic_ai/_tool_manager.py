@@ -97,6 +97,8 @@ class ToolManager(Generic[AgentDepsT]):
         call: ToolCallPart,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
+        *,
+        approved: bool = False,
     ) -> Any:
         """Handle a tool call by validating the arguments, calling the tool, and handling retries.
 
@@ -104,30 +106,38 @@ class ToolManager(Generic[AgentDepsT]):
             call: The tool call part to handle.
             allow_partial: Whether to allow partial validation of the tool arguments.
             wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
-            usage_limits: Optional usage limits to check before executing tools.
+            approved: Whether the tool call has been approved.
         """
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         if (tool := self.tools.get(call.tool_name)) and tool.tool_def.kind == 'output':
             # Output tool calls are not traced and not counted
-            return await self._call_tool(call, allow_partial, wrap_validation_errors)
+            return await self._call_tool(
+                call,
+                allow_partial=allow_partial,
+                wrap_validation_errors=wrap_validation_errors,
+                approved=approved,
+            )
         else:
             return await self._call_function_tool(
                 call,
-                allow_partial,
-                wrap_validation_errors,
-                self.ctx.tracer,
-                self.ctx.trace_include_content,
-                self.ctx.instrumentation_version,
-                self.ctx.usage,
+                allow_partial=allow_partial,
+                wrap_validation_errors=wrap_validation_errors,
+                approved=approved,
+                tracer=self.ctx.tracer,
+                include_content=self.ctx.trace_include_content,
+                instrumentation_version=self.ctx.instrumentation_version,
+                usage=self.ctx.usage,
             )
 
     async def _call_tool(
         self,
         call: ToolCallPart,
+        *,
         allow_partial: bool,
         wrap_validation_errors: bool,
+        approved: bool,
     ) -> Any:
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
@@ -142,8 +152,8 @@ class ToolManager(Generic[AgentDepsT]):
                     msg = 'No tools available.'
                 raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
 
-            if tool.tool_def.defer:
-                raise RuntimeError('Deferred tools cannot be called')
+            if tool.tool_def.kind == 'external':
+                raise RuntimeError('External tools cannot be called')
 
             ctx = replace(
                 self.ctx,
@@ -151,6 +161,7 @@ class ToolManager(Generic[AgentDepsT]):
                 tool_call_id=call.tool_call_id,
                 retry=self.ctx.retries.get(name, 0),
                 max_retries=tool.max_retries,
+                tool_call_approved=approved,
                 partial_output=allow_partial,
             )
 
@@ -198,8 +209,10 @@ class ToolManager(Generic[AgentDepsT]):
     async def _call_function_tool(
         self,
         call: ToolCallPart,
+        *,
         allow_partial: bool,
         wrap_validation_errors: bool,
+        approved: bool,
         tracer: Tracer,
         include_content: bool,
         instrumentation_version: int,
@@ -238,7 +251,12 @@ class ToolManager(Generic[AgentDepsT]):
             attributes=span_attributes,
         ) as span:
             try:
-                tool_result = await self._call_tool(call, allow_partial, wrap_validation_errors)
+                tool_result = await self._call_tool(
+                    call,
+                    allow_partial=allow_partial,
+                    wrap_validation_errors=wrap_validation_errors,
+                    approved=approved,
+                )
                 usage.tool_calls += 1
 
             except ToolRetryError as e:
