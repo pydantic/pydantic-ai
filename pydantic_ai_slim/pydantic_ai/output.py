@@ -69,7 +69,12 @@ See [output docs](../output.md) for more information.
 
 TextOutputFunc = TypeAliasType(
     'TextOutputFunc',
-    Callable[[RunContext, str], Awaitable[T_co] | T_co] | Callable[[str], Awaitable[T_co] | T_co],
+    Callable[[RunContext, str], AsyncIterator[Return[T_co] | Any]]
+    | Callable[[RunContext, str], Awaitable[T_co]]
+    | Callable[[RunContext, str], T_co]
+    | Callable[[str], AsyncIterator[Return[T_co] | Any]]
+    | Callable[[str], Awaitable[T_co]]
+    | Callable[[str], T_co],
     type_params=(T_co,),
 )
 """Definition of a function that will be called to process the model's plain text output. The function must take a single string argument.

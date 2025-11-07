@@ -5965,9 +5965,7 @@ async def test_agent_custom_events_model_retry():
     )
 
 
-async def test_agent_custom_events_output_function():
-    # TODO (DouweM): Test with NativeOutput, PromptedOutput, TextOutput.
-    # TODO (DouweM): With run_stream where we don't pass through CallToolNode
+async def test_agent_custom_events_tool_output_function():
     class Weather(BaseModel):
         temperature: float
         description: str
@@ -5976,7 +5974,7 @@ async def test_agent_custom_events_output_function():
         yield 'Getting weather...'
         yield Return(Weather(temperature=28.7, description='sunny'))
 
-    agent = Agent('test', output_type=get_weather)
+    agent = Agent('test', output_type=ToolOutput(get_weather))
 
     events: list[AgentStreamEvent] = []
     result: AgentRunResult[Weather] | None = None
@@ -6004,6 +6002,171 @@ async def test_agent_custom_events_output_function():
                 ),
             ),
             CustomEvent(data='Getting weather...', tool_call_id='pyd_ai_tool_call_id__final_result'),
-            # TODO (DouweM): Verify that with AG-UI/Vercel AI, there are tool call start and result events around this custom event
+        ]
+    )
+
+
+async def test_agent_custom_events_native_output_function():
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+    async def get_weather(city: str) -> AsyncIterator[str | Return[Weather]]:
+        yield 'Getting weather...'
+        yield Return(Weather(temperature=28.7, description='sunny'))
+
+    async def return_city(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield '{"city":'
+        yield ' "Mexico City"}'
+
+    model = FunctionModel(stream_function=return_city)
+
+    agent = Agent(model, output_type=NativeOutput(get_weather))
+
+    events: list[AgentStreamEvent] = []
+    result: AgentRunResult[Weather] | None = None
+    async for event in agent.run_stream_events('What is the weather in Mexico City?'):
+        if isinstance(event, AgentRunResultEvent):
+            result = event.result
+        else:
+            events.append(event)
+
+    assert result is not None
+    assert result.output == snapshot(Weather(temperature=28.7, description='sunny'))
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=TextPart(content='{"city":'),
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' "Mexico City"}')),
+            PartEndEvent(index=0, part=TextPart(content='{"city": "Mexico City"}')),
+            CustomEvent(data='Getting weather...'),
+        ]
+    )
+
+
+async def test_agent_custom_events_prompted_output_function():
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+    async def get_weather(city: str) -> AsyncIterator[str | Return[Weather]]:
+        yield 'Getting weather...'
+        yield Return(Weather(temperature=28.7, description='sunny'))
+
+    async def return_city(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield '{"city":'
+        yield ' "Mexico City"}'
+
+    model = FunctionModel(stream_function=return_city)
+
+    agent = Agent(model, output_type=PromptedOutput(get_weather))
+
+    events: list[AgentStreamEvent] = []
+    result: AgentRunResult[Weather] | None = None
+    async for event in agent.run_stream_events('What is the weather in Mexico City?'):
+        if isinstance(event, AgentRunResultEvent):
+            result = event.result
+        else:
+            events.append(event)
+
+    assert result is not None
+    assert result.output == snapshot(Weather(temperature=28.7, description='sunny'))
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=TextPart(content='{"city":'),
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' "Mexico City"}')),
+            PartEndEvent(index=0, part=TextPart(content='{"city": "Mexico City"}')),
+            CustomEvent(data='Getting weather...'),
+        ]
+    )
+
+
+async def test_agent_custom_events_text_output_function():
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+    async def get_weather(city: str) -> AsyncIterator[str | Return[Weather]]:
+        yield 'Getting weather...'
+        yield Return(Weather(temperature=28.7, description='sunny'))
+
+    async def return_city(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'Mexico'
+        yield ' City'
+
+    model = FunctionModel(stream_function=return_city)
+
+    agent = Agent(model, output_type=TextOutput(get_weather))
+
+    events: list[AgentStreamEvent] = []
+    result: AgentRunResult[Weather] | None = None
+    async for event in agent.run_stream_events('What is the weather in Mexico City?'):
+        if isinstance(event, AgentRunResultEvent):
+            result = event.result
+        else:
+            events.append(event)
+
+    assert result is not None
+    assert result.output == snapshot(Weather(temperature=28.7, description='sunny'))
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=TextPart(content='Mexico'),
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' City')),
+            PartEndEvent(index=0, part=TextPart(content='Mexico City')),
+            CustomEvent(data='Getting weather...'),
+        ]
+    )
+
+
+async def test_agent_custom_events_run_stream():
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+    async def get_weather(city: str) -> AsyncIterator[str | Return[Weather]]:
+        yield 'Getting weather...'
+        yield Return(Weather(temperature=28.7, description='sunny'))
+
+    async def return_city(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield '{"city":'
+        yield ' "Mexico City"}'
+
+    model = FunctionModel(stream_function=return_city)
+
+    agent = Agent(model, output_type=NativeOutput(get_weather))
+
+    events: list[AgentStreamEvent] = []
+
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
+        async for event in stream:
+            events.append(event)
+
+    outputs: list[Weather] = []
+    async with agent.run_stream(
+        'What is the weather in Mexico City?', event_stream_handler=event_stream_handler
+    ) as run:
+        async for output in run.stream_output():
+            outputs.append(output)
+
+    assert await run.get_output() == snapshot(Weather(temperature=28.7, description='sunny'))
+    assert outputs == snapshot([Weather(temperature=28.7, description='sunny')])
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=TextPart(content='{"city":'),
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
         ]
     )

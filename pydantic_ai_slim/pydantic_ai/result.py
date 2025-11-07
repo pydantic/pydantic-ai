@@ -116,7 +116,6 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield text
         else:
             async for text in self._stream_response_text(delta=False, debounce_by=debounce_by):
-                # TODO (DouweM): What if there's an output function?
                 for validator in self._output_validators:
                     text = await validator.validate(text, replace(self._run_ctx, partial_output=True))
                 yield text
@@ -171,7 +170,6 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     f'Invalid response, unable to find tool call for {output_tool_name!r}'
                 )
-            # TODO (DouweM): This could call an output function that yields custom events, but we're not in an event stream here?
             return await self._tool_manager.handle_call(
                 tool_call, allow_partial=allow_partial, wrap_validation_errors=False
             )
@@ -193,7 +191,6 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     # not part of the final result output, so we reset the accumulated text
                     text = ''
 
-            # TODO (DouweM): This could call an output function that yields custom events, but we're not in an event stream here?
             result_data = await text_processor.process(
                 text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
             )

@@ -13,6 +13,7 @@ from dataclasses import field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
 import anyio
+from anyio.streams.memory import MemoryObjectSendStream
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
@@ -599,7 +600,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                                         if text:
                                             try:
                                                 self._next_node = await self._handle_text_response(
-                                                    ctx, text, text_processor
+                                                    ctx, text, text_processor, send_stream
                                                 )
                                                 return
                                             except ToolRetryError:
@@ -668,8 +669,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                             if text_processor := output_schema.text_processor:
                                 if text:
-                                    # TODO (DouweM): This could call an output function that yields custom events, but we're not in an event stream here?
-                                    self._next_node = await self._handle_text_response(ctx, text, text_processor)
+                                    self._next_node = await self._handle_text_response(
+                                        ctx, text, text_processor, send_stream
+                                    )
                                     return
                                 alternatives.insert(0, 'return text')
 
@@ -737,8 +739,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         text: str,
         text_processor: _output.BaseOutputProcessor[NodeRunEndT],
+        event_stream: MemoryObjectSendStream[_messages.CustomEvent],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         run_context = build_run_context(ctx)
+        run_context = replace(run_context, event_stream=event_stream)
 
         result_data = await text_processor.process(text, run_context)
 

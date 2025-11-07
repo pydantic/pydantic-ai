@@ -617,15 +617,12 @@ class BinaryImage(BinaryContent):
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
 UserContent: TypeAlias = str | MultiModalContent
 
-# TODO (DouweM): thinking about variance
 ReturnValueT = TypeVar('ReturnValueT', default=Any, covariant=True)
 
 
 @dataclass(repr=False)
 class Return(Generic[ReturnValueT]):
     """TODO (DouweM): Docstring."""
-
-    # TODO (DouweM): Find a better name, or get rid of this entirely?
 
     return_value: ReturnValueT
 
@@ -1793,10 +1790,13 @@ class BuiltinToolResultEvent:
 class CustomEvent(Generic[EventDataT]):
     """An event indicating the result of a function tool call."""
 
-    data: EventDataT
+    data: EventDataT = None
     """The data of the custom event."""
 
     _: KW_ONLY
+
+    name: str | None = None
+    """The name of the custom event."""
 
     tool_call_id: str | None = None
     """The tool call ID, if any, that this event is associated with."""

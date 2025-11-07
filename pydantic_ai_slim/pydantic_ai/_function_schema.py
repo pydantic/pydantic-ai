@@ -68,9 +68,9 @@ class FunctionSchema:
                     return_value = cast(Return, event_data)
                     continue
 
-                # If there's no event stream, we're being called inside `agent.run_stream`, after event streaming has completed
-                # and final result streaming has begun, so there's no need to yield custom events.
-                # TODO (DouweM): Should we store events on the ToolReturnPart/RetryPromptPart or something, like we allow `metadata`?
+                # If there's no event stream, we're being called from inside `agent.run_stream()` or `AgentStream.get_output()`,
+                # after event streaming has completed and final result streaming has begun, so there's nowhere to yield custom events to.
+                # We could consider storing the yielded events somewhere and letting them be accessed after the fact as a list.
                 if ctx.event_stream is not None:
                     if isinstance(event_data, CustomEvent):
                         event = cast(CustomEvent, event_data)

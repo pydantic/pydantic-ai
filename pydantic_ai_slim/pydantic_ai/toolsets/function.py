@@ -339,7 +339,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 max_retries=max_retries,
                 args_validator=tool.function_schema.validator,
                 call_func=tool.function_schema.call,
-                is_async=tool.function_schema.is_async,
+                is_async=tool.function_schema.is_async or tool.function_schema.is_async_iterator,
             )
         return tools
 

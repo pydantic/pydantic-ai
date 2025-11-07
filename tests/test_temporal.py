@@ -17,6 +17,7 @@ from pydantic_ai import (
     AgentRunResultEvent,
     AgentStreamEvent,
     BinaryImage,
+    CustomEvent,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -30,11 +31,13 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
+    Return,
     RunContext,
     TextPart,
     TextPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
     WebSearchTool,
@@ -230,11 +233,12 @@ class WeatherArgs(BaseModel):
     city: str
 
 
-def get_weather(args: WeatherArgs) -> str:
+async def get_weather(args: WeatherArgs) -> AsyncIterator[str | Return[str]]:
+    yield 'Getting weather...'
     if args.city == 'Mexico City':
-        return 'sunny'
+        yield ToolReturn('sunny', metadata={'temperature': 28.7})
     else:
-        return 'unknown'  # pragma: no cover
+        yield Return('unknown')  # pragma: no cover
 
 
 @dataclass
@@ -248,10 +252,15 @@ class Response:
     answers: list[Answer]
 
 
+async def process_output(output: Response) -> AsyncIterator[str | Return[Response]]:
+    yield 'Processing output...'
+    yield Return(output)
+
+
 complex_agent = Agent(
     model,
     deps_type=Deps,
-    output_type=Response,
+    output_type=process_output,
     toolsets=[
         FunctionToolset[Deps](tools=[get_country], id='country'),
         MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
@@ -423,25 +432,25 @@ async def test_complex_agent_run_in_workflow(
                             ],
                         ),
                         BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content=IsStr(
+                                                regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                            )
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
                             content='running 2 tools',
                             children=[
                                 BasicSpan(content='running tool: get_country'),
-                                BasicSpan(
-                                    content='StartActivity:agent__complex_agent__event_stream_handler',
-                                    children=[
-                                        BasicSpan(
-                                            content='RunActivity:agent__complex_agent__event_stream_handler',
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=1'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
-                                            ],
-                                        )
-                                    ],
-                                ),
                                 BasicSpan(
                                     content='running tool: get_product_name',
                                     children=[
@@ -455,22 +464,22 @@ async def test_complex_agent_run_in_workflow(
                                         )
                                     ],
                                 ),
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
                                 BasicSpan(
-                                    content='StartActivity:agent__complex_agent__event_stream_handler',
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
                                     children=[
+                                        BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='RunActivity:agent__complex_agent__event_stream_handler',
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=1'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
-                                            ],
-                                        )
+                                            content=IsStr(
+                                                regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                            )
+                                        ),
                                     ],
-                                ),
+                                )
                             ],
                         ),
                         BasicSpan(
@@ -534,6 +543,22 @@ async def test_complex_agent_run_in_workflow(
                             ],
                         ),
                         BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=2'),
+                                        BasicSpan(
+                                            content=IsStr(
+                                                regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":{"temperature":28.7},"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                            )
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
                             content='running 1 tool',
                             children=[
                                 BasicSpan(
@@ -548,23 +573,7 @@ async def test_complex_agent_run_in_workflow(
                                             ],
                                         )
                                     ],
-                                ),
-                                BasicSpan(
-                                    content='StartActivity:agent__complex_agent__event_stream_handler',
-                                    children=[
-                                        BasicSpan(
-                                            content='RunActivity:agent__complex_agent__event_stream_handler',
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=2'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
-                                            ],
-                                        )
-                                    ],
-                                ),
+                                )
                             ],
                         ),
                         BasicSpan(
@@ -718,6 +727,21 @@ async def test_complex_agent_run_in_workflow(
                                 )
                             ],
                         ),
+                        BasicSpan(content='running output function: final_result'),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=3'),
+                                        BasicSpan(
+                                            content='{"data":"Processing output...","name":null,"tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","event_kind":"custom"}'
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
                     ],
                 ),
                 BasicSpan(content='CompleteWorkflow:ComplexAgentWorkflow'),
@@ -834,11 +858,13 @@ async def test_complex_agent_run(allow_model_requests: None):
                     tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'
                 )
             ),
+            CustomEvent(data='Getting weather...', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='get_weather',
                     content='sunny',
                     tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv',
+                    metadata={'temperature': 28.7},
                     timestamp=IsDatetime(),
                 )
             ),
@@ -1014,6 +1040,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                     tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
                 ),
             ),
+            CustomEvent(data='Processing output...', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn'),
         ]
     )
 
@@ -1530,49 +1557,6 @@ async def test_temporal_agent_override_deps_in_workflow(allow_model_requests: No
         assert output == snapshot('The capital of Mexico is Mexico City.')
 
 
-agent_with_sync_tool = Agent(model, name='agent_with_sync_tool', tools=[get_weather])
-
-# This needs to be done before the `TemporalAgent` is bound to the workflow.
-temporal_agent_with_sync_tool_activity_disabled = TemporalAgent(
-    agent_with_sync_tool,
-    activity_config=BASE_ACTIVITY_CONFIG,
-    tool_activity_config={
-        '<agent>': {
-            'get_weather': False,
-        },
-    },
-)
-
-
-@workflow.defn
-class AgentWorkflowWithSyncToolActivityDisabled:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = await temporal_agent_with_sync_tool_activity_disabled.run(prompt)
-        return result.output  # pragma: no cover
-
-
-async def test_temporal_agent_sync_tool_activity_disabled(allow_model_requests: None, client: Client):
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[AgentWorkflowWithSyncToolActivityDisabled],
-        plugins=[AgentPlugin(temporal_agent_with_sync_tool_activity_disabled)],
-    ):
-        with workflow_raises(
-            UserError,
-            snapshot(
-                "Temporal activity config for tool 'get_weather' has been explicitly set to `False` (activity disabled), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead."
-            ),
-        ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
-                AgentWorkflowWithSyncToolActivityDisabled.run,
-                args=['What is the weather in Mexico City?'],
-                id=AgentWorkflowWithSyncToolActivityDisabled.__name__,
-                task_queue=TASK_QUEUE,
-            )
-
-
 async def test_temporal_agent_mcp_server_activity_disabled(client: Client):
     with pytest.raises(
         UserError,
@@ -2026,6 +2010,49 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                 ),
             ]
         )
+
+
+agent_with_sync_tool = Agent(model, name='agent_with_sync_tool', tools=[get_weather_in_city])
+
+# This needs to be done before the `TemporalAgent` is bound to the workflow.
+temporal_agent_with_sync_tool_activity_disabled = TemporalAgent(
+    agent_with_sync_tool,
+    activity_config=BASE_ACTIVITY_CONFIG,
+    tool_activity_config={
+        '<agent>': {
+            'get_weather_in_city': False,
+        },
+    },
+)
+
+
+@workflow.defn
+class AgentWorkflowWithSyncToolActivityDisabled:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await temporal_agent_with_sync_tool_activity_disabled.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_temporal_agent_sync_tool_activity_disabled(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AgentWorkflowWithSyncToolActivityDisabled],
+        plugins=[AgentPlugin(temporal_agent_with_sync_tool_activity_disabled)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                "Temporal activity config for tool 'get_weather_in_city' has been explicitly set to `False` (activity disabled), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead."
+            ),
+        ):
+            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+                AgentWorkflowWithSyncToolActivityDisabled.run,
+                args=['What is the weather in Mexico City?'],
+                id=AgentWorkflowWithSyncToolActivityDisabled.__name__,
+                task_queue=TASK_QUEUE,
+            )
 
 
 class CustomModelSettings(ModelSettings, total=False):

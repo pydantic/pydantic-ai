@@ -32,6 +32,7 @@ from .. import SSE_CONTENT_TYPE, UIEventStream
 try:
     from ag_ui.core import (
         BaseEvent,
+        CustomEvent as AGUICustomEvent,
         EventType,
         RunAgentInput,
         RunErrorEvent,
@@ -239,3 +240,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_custom_event(self, event: CustomEvent) -> AsyncIterator[BaseEvent]:
         if isinstance(event.data, BaseEvent):
             yield event.data
+        elif event.name:
+            data = event.data
+            if event.tool_call_id:
+                data = {'tool_call_id': event.tool_call_id, 'data': data}
+            yield AGUICustomEvent(name=event.name, value=data)

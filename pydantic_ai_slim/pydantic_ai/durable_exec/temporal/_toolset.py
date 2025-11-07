@@ -11,6 +11,7 @@ from typing_extensions import assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
+from pydantic_ai.messages import Return, ToolReturn
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
 from ._run_context import TemporalRunContext
@@ -43,7 +44,7 @@ class _ModelRetry:
 
 @dataclass
 class _ToolReturn:
-    result: Any
+    result: ToolReturn[Any] | Any
     kind: Literal['tool_return'] = 'tool_return'
 
 
@@ -74,6 +75,9 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
     async def _wrap_call_tool_result(self, coro: Awaitable[Any]) -> CallToolResult:
         try:
             result = await coro
+            if type(result) is Return:
+                # We don't use `isinstance` because `ToolReturn` is a subclass of `Return` with additional fields, which should be returned in full.
+                result = result.return_value
             return _ToolReturn(result=result)
         except ApprovalRequired:
             return _ApprovalRequired()
