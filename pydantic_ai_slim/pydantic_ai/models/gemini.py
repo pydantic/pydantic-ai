@@ -218,7 +218,7 @@ class GeminiModel(Model):
     ) -> AsyncIterator[HTTPResponse]:
         tools = self._get_tools(model_request_parameters)
         tool_config = self._get_tool_config(model_request_parameters, tools)
-        sys_prompt_parts, contents = await self._message_to_gemini_content(messages)
+        sys_prompt_parts, contents = await self._message_to_gemini_content(messages, model_request_parameters)
 
         request_data = _GeminiRequest(contents=contents)
         if sys_prompt_parts:
@@ -331,7 +331,7 @@ class GeminiModel(Model):
         )
 
     async def _message_to_gemini_content(
-        self, messages: list[ModelMessage]
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> tuple[list[_GeminiTextPart], list[_GeminiContent]]:
         sys_prompt_parts: list[_GeminiTextPart] = []
         contents: list[_GeminiContent] = []
@@ -361,7 +361,7 @@ class GeminiModel(Model):
                 contents.append(_content_model_response(m))
             else:
                 assert_never(m)
-        if instructions := self._get_instructions(messages):
+        if instructions := self._get_instructions(messages, model_request_parameters):
             sys_prompt_parts.insert(0, _GeminiTextPart(text=instructions))
         return sys_prompt_parts, contents
 

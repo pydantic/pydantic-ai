@@ -178,17 +178,20 @@ class InstrumentationSettings:
             description='Monetary cost',
         )
 
-    def messages_to_otel_events(self, messages: list[ModelMessage]) -> list[Event]:
+    def messages_to_otel_events(
+        self, messages: list[ModelMessage], parameters: ModelRequestParameters | None = None
+    ) -> list[Event]:
         """Convert a list of model messages to OpenTelemetry events.
 
         Args:
             messages: The messages to convert.
+            parameters: The model request parameters.
 
         Returns:
             A list of OpenTelemetry events.
         """
         events: list[Event] = []
-        instructions = InstrumentedModel._get_instructions(messages)  # pyright: ignore [reportPrivateUsage]
+        instructions = InstrumentedModel._get_instructions(messages, parameters)  # pyright: ignore [reportPrivateUsage]
         if instructions is not None:
             events.append(
                 Event(
@@ -235,10 +238,17 @@ class InstrumentationSettings:
                 result.append(otel_message)
         return result
 
-    def handle_messages(self, input_messages: list[ModelMessage], response: ModelResponse, system: str, span: Span):
+    def handle_messages(
+        self,
+        input_messages: list[ModelMessage],
+        response: ModelResponse,
+        system: str,
+        span: Span,
+        parameters: ModelRequestParameters | None = None,
+    ):
         if self.version == 1:
-            events = self.messages_to_otel_events(input_messages)
-            for event in self.messages_to_otel_events([response]):
+            events = self.messages_to_otel_events(input_messages, parameters)
+            for event in self.messages_to_otel_events([response], parameters):
                 events.append(
                     Event(
                         'gen_ai.choice',
@@ -258,7 +268,7 @@ class InstrumentationSettings:
             output_messages = self.messages_to_otel_messages([response])
             assert len(output_messages) == 1
             output_message = output_messages[0]
-            instructions = InstrumentedModel._get_instructions(input_messages)  # pyright: ignore [reportPrivateUsage]
+            instructions = InstrumentedModel._get_instructions(input_messages, parameters)  # pyright: ignore [reportPrivateUsage]
             system_instructions_attributes = self.system_instructions_attributes(instructions)
             attributes: dict[str, AttributeValue] = {
                 'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
@@ -360,7 +370,7 @@ class InstrumentedModel(WrapperModel):
         )
         with self._instrument(messages, prepared_settings, prepared_parameters) as finish:
             response = await self.wrapped.request(messages, model_settings, model_request_parameters)
-            finish(response)
+            finish(response, prepared_parameters)
             return response
 
     @asynccontextmanager
@@ -384,7 +394,7 @@ class InstrumentedModel(WrapperModel):
                     yield response_stream
             finally:
                 if response_stream:  # pragma: no branch
-                    finish(response_stream.get())
+                    finish(response_stream.get(), prepared_parameters)
 
     @contextmanager
     def _instrument(
@@ -392,7 +402,7 @@ class InstrumentedModel(WrapperModel):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> Iterator[Callable[[ModelResponse], None]]:
+    ) -> Iterator[Callable[[ModelResponse, ModelRequestParameters], None]]:
         operation = 'chat'
         span_name = f'{operation} {self.model_name}'
         # TODO Missing attributes:
@@ -401,7 +411,7 @@ class InstrumentedModel(WrapperModel):
         attributes: dict[str, AttributeValue] = {
             'gen_ai.operation.name': operation,
             **self.model_attributes(self.wrapped),
-            'model_request_parameters': json.dumps(InstrumentedModel.serialize_any(model_request_parameters)),
+            **self.model_request_parameters_attributes(model_request_parameters),
             'logfire.json_schema': json.dumps(
                 {
                     'type': 'object',
@@ -419,7 +429,7 @@ class InstrumentedModel(WrapperModel):
         try:
             with self.instrumentation_settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
 
-                def finish(response: ModelResponse):
+                def finish(response: ModelResponse, parameters: ModelRequestParameters):
                     # FallbackModel updates these span attributes.
                     attributes.update(getattr(span, 'attributes', {}))
                     request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
@@ -443,7 +453,7 @@ class InstrumentedModel(WrapperModel):
                     if not span.is_recording():
                         return
 
-                    self.instrumentation_settings.handle_messages(messages, response, system, span)
+                    self.instrumentation_settings.handle_messages(messages, response, system, span, parameters)
 
                     attributes_to_set = {
                         **response.usage.opentelemetry_attributes(),
@@ -476,7 +486,7 @@ class InstrumentedModel(WrapperModel):
                 record_metrics()
 
     @staticmethod
-    def model_attributes(model: Model):
+    def model_attributes(model: Model) -> dict[str, AttributeValue]:
         attributes: dict[str, AttributeValue] = {
             GEN_AI_SYSTEM_ATTRIBUTE: model.system,
             GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
@@ -493,6 +503,12 @@ class InstrumentedModel(WrapperModel):
                     attributes['server.port'] = parsed.port
 
         return attributes
+
+    @staticmethod
+    def model_request_parameters_attributes(
+        model_request_parameters: ModelRequestParameters,
+    ) -> dict[str, AttributeValue]:
+        return {'model_request_parameters': json.dumps(InstrumentedModel.serialize_any(model_request_parameters))}
 
     @staticmethod
     def event_to_dict(event: Event) -> dict[str, Any]:
