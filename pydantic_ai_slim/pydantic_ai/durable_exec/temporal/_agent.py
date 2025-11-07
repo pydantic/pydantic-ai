@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Literal, overload
+from typing import Any, Generic, Literal, TypeAlias, overload
 
 from pydantic import ConfigDict, with_config
 from pydantic.errors import PydanticUserError
@@ -44,6 +45,50 @@ from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset, temporalize_toolset
 
 
+@dataclass(kw_only=True)
+class TemporalizeToolsetContext(Generic[AgentDepsT]):
+    """Context object for `temporalize_toolset_func` functions."""
+
+    activity_name_prefix: str
+    """Prefix for Temporal activity names."""
+    activity_config: ActivityConfig
+    """The Temporal activity config to use."""
+    tool_activity_config: dict[str, ActivityConfig | Literal[False]]
+    """The Temporal activity config to use for specific tools identified by tool name."""
+    deps_type: type[AgentDepsT]
+    """The type of agent's dependencies object. It needs to be serializable using Pydantic's `TypeAdapter`."""
+    run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT]
+    """The `TemporalRunContext` (sub)class that's used to serialize and deserialize the run context."""
+    event_stream_handler: EventStreamHandler[AgentDepsT] | None = None
+    """The event stream handler to use for custom events yielded by tools in the toolset."""
+
+
+TemporalizeToolsetFunc: TypeAlias = (
+    Callable[
+        [
+            AbstractToolset[AgentDepsT],
+            str,
+            ActivityConfig,
+            dict[str, ActivityConfig | Literal[False]],
+            type[AgentDepsT],
+            type[TemporalRunContext[AgentDepsT]],
+        ],
+        AbstractToolset[AgentDepsT],
+    ]
+    | Callable[
+        [
+            AbstractToolset[AgentDepsT],
+            TemporalizeToolsetContext[AgentDepsT],
+        ],
+        AbstractToolset[AgentDepsT],
+    ]
+)
+"""Type of function to use to prepare "leaf" toolsets (i.e. those that implement their own tool listing and calling) for Temporal
+by wrapping them in a `TemporalWrapperToolset` that moves methods that require IO to Temporal activities.
+
+The function takes the toolset and context and returns the temporalized toolset."""
+
+
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _EventStreamHandlerParams:
@@ -63,17 +108,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
         tool_activity_config: dict[str, dict[str, ActivityConfig | Literal[False]]] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
-        temporalize_toolset_func: Callable[
-            [
-                AbstractToolset[AgentDepsT],
-                str,
-                ActivityConfig,
-                dict[str, ActivityConfig | Literal[False]],
-                type[AgentDepsT],
-                type[TemporalRunContext[AgentDepsT]],
-            ],
-            AbstractToolset[AgentDepsT],
-        ] = temporalize_toolset,
+        temporalize_toolset_func: TemporalizeToolsetFunc[AgentDepsT] = temporalize_toolset,
     ):
         """Wrap an agent to enable it to be used inside a Temporal workflow, by automatically offloading model requests, tool calls, and MCP server communication to Temporal activities.
 
@@ -93,9 +128,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             run_context_type: The `TemporalRunContext` subclass to use to serialize and deserialize the run context for use inside a Temporal activity.
                 By default, only the `deps`, `retries`, `tool_call_id`, `tool_name`, `retry` and `run_step` attributes will be available.
                 To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute.
-            temporalize_toolset_func: Optional function to use to prepare "leaf" toolsets (i.e. those that implement their own tool listing and calling) for Temporal by wrapping them in a `TemporalWrapperToolset` that moves methods that require IO to Temporal activities.
+            temporalize_toolset_func: Optional function to use to prepare "leaf" toolsets (i.e. those that implement their own tool listing and calling) for Temporal
+                by wrapping them in a `TemporalWrapperToolset` that moves methods that require IO to Temporal activities.
                 If not provided, only `FunctionToolset` and `MCPServer` will be prepared for Temporal.
-                The function takes the toolset, the activity name prefix, the toolset-specific activity config, the tool-specific activity configs and the run context type.
+                The function takes the toolset and context and returns the temporalized toolset.
         """
         super().__init__(wrapped)
 
@@ -170,14 +206,26 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow."
                 )
 
-            toolset = temporalize_toolset_func(
-                toolset,
-                activity_name_prefix,
-                activity_config | toolset_activity_config.get(id, {}),
-                tool_activity_config.get(id, {}),
-                self.deps_type,
-                self.run_context_type,
+            context = TemporalizeToolsetContext(
+                activity_name_prefix=activity_name_prefix,
+                activity_config=activity_config | toolset_activity_config.get(id, {}),
+                tool_activity_config=tool_activity_config.get(id, {}),
+                deps_type=self.deps_type,
+                run_context_type=self.run_context_type,
+                event_stream_handler=self.event_stream_handler,
             )
+            if len(inspect.signature(temporalize_toolset_func).parameters) == 2:
+                toolset = temporalize_toolset_func(toolset, context)
+            else:
+                # Backward compatibility with the original `temporalize_toolset` function signature.
+                toolset = temporalize_toolset_func(
+                    toolset,
+                    context.activity_name_prefix,
+                    context.activity_config,
+                    context.tool_activity_config,
+                    context.deps_type,
+                    context.run_context_type,
+                )
             if isinstance(toolset, TemporalWrapperToolset):
                 activities.extend(toolset.temporal_activities)
             return toolset

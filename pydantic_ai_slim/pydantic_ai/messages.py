@@ -1790,7 +1790,7 @@ class BuiltinToolResultEvent:
 class CustomEvent(Generic[EventDataT]):
     """An event indicating the result of a function tool call."""
 
-    data: EventDataT = None
+    data: EventDataT = None  # pyright: ignore[reportAssignmentType]
     """The data of the custom event."""
 
     _: KW_ONLY

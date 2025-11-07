@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import AsyncIterator, Callable
+from dataclasses import replace
 from typing import Any, Literal
 
+import anyio
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import FunctionToolset, ToolsetTool
+from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import HandleResponseEvent
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
@@ -29,11 +34,13 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
         tool_activity_config: dict[str, ActivityConfig | Literal[False]],
         deps_type: type[AgentDepsT],
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ):
         super().__init__(toolset)
         self.activity_config = activity_config
         self.tool_activity_config = tool_activity_config
         self.run_context_type = run_context_type
+        self.event_stream_handler = event_stream_handler
 
         async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
             name = params.name
@@ -50,7 +57,30 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
             # The tool args will already have been validated into their proper types in the `ToolManager`,
             # but `execute_activity` would have turned them into simple Python types again, so we need to re-validate them.
             args_dict = tool.args_validator.validate_python(params.tool_args)
-            return await self._wrap_call_tool_result(self.wrapped.call_tool(name, args_dict, ctx, tool))
+
+            async def _call_tool(ctx: RunContext[AgentDepsT]) -> CallToolResult:
+                return await self._wrap_call_tool_result(self.wrapped.call_tool(name, args_dict, ctx, tool))
+
+            if self.event_stream_handler is not None:
+                send_stream, receive_stream = anyio.create_memory_object_stream[HandleResponseEvent]()
+
+                async def _call_tool_with_stream() -> CallToolResult:
+                    async with send_stream:
+                        ctx_with_stream = replace(ctx, event_stream=send_stream)
+                        return await _call_tool(ctx_with_stream)
+
+                task = asyncio.create_task(_call_tool_with_stream())
+
+                async def _receive_events() -> AsyncIterator[HandleResponseEvent]:
+                    async with receive_stream:
+                        async for event in receive_stream:
+                            yield event
+
+                await self.event_stream_handler(ctx, _receive_events())
+
+                return await task
+            else:
+                return await _call_tool(ctx)
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         call_tool_activity.__annotations__['deps'] = deps_type

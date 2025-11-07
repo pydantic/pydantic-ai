@@ -543,6 +543,30 @@ async def test_complex_agent_run_in_workflow(
                             ],
                         ),
                         BasicSpan(
+                            content='running 1 tool',
+                            children=[
+                                BasicSpan(
+                                    content='running tool: get_weather',
+                                    children=[
+                                        BasicSpan(
+                                            content='StartActivity:agent__complex_agent__toolset__<agent>__call_tool',
+                                            children=[
+                                                BasicSpan(
+                                                    content='RunActivity:agent__complex_agent__toolset__<agent>__call_tool',
+                                                    children=[
+                                                        BasicSpan(content='ctx.run_step=2'),
+                                                        BasicSpan(
+                                                            content='{"data":"Getting weather...","name":null,"tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","event_kind":"custom"}'
+                                                        ),
+                                                    ],
+                                                )
+                                            ],
+                                        )
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
                             content='StartActivity:agent__complex_agent__event_stream_handler',
                             children=[
                                 BasicSpan(
@@ -554,24 +578,6 @@ async def test_complex_agent_run_in_workflow(
                                                 regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":{"temperature":28.7},"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
                                             )
                                         ),
-                                    ],
-                                )
-                            ],
-                        ),
-                        BasicSpan(
-                            content='running 1 tool',
-                            children=[
-                                BasicSpan(
-                                    content='running tool: get_weather',
-                                    children=[
-                                        BasicSpan(
-                                            content='StartActivity:agent__complex_agent__toolset__<agent>__call_tool',
-                                            children=[
-                                                BasicSpan(
-                                                    content='RunActivity:agent__complex_agent__toolset__<agent>__call_tool'
-                                                )
-                                            ],
-                                        )
                                     ],
                                 )
                             ],
