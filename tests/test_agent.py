@@ -2506,6 +2506,17 @@ def test_empty_response_without_recovery():
     )
 
 
+def test_agent_message_history_includes_run_id() -> None:
+    agent = Agent(TestModel(custom_output_text='testing run_id'))
+
+    result = agent.run_sync('Hello')
+    history = result.all_messages()
+
+    run_ids = [message.run_id for message in history]
+    assert run_ids == snapshot([IsStr(), IsStr()])
+    assert len({*run_ids}) == snapshot(1)
+
+
 def test_unknown_tool():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])

@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import dataclasses
 import inspect
 import json
+import uuid
 import warnings
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
@@ -572,6 +573,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             retries=0,
             run_step=0,
+            run_id=str(uuid.uuid4()),
         )
 
         # Merge model settings in order of precedence: run > agent > model
