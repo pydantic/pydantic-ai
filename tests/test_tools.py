@@ -1509,6 +1509,14 @@ def test_approval_required_without_metadata():
     # Should have an empty metadata dict for this tool
     assert result.output.metadata.get('my_tool', {}) == {}
 
+    # Continue with approval
+    messages = result.all_messages()
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': ToolApproved()}),
+    )
+    assert result.output == 'Done!'
+
 
 def test_mixed_deferred_tools_with_metadata():
     """Test multiple deferred tools with different metadata."""
@@ -1552,6 +1560,17 @@ def test_mixed_deferred_tools_with_metadata():
     assert result.output.metadata['call_a'] == {'type': 'external', 'priority': 'high'}
     assert result.output.metadata['call_b'] == {'reason': 'Needs approval', 'level': 'manager'}
     assert result.output.metadata.get('call_c', {}) == {}
+
+    # Continue with results for all three tools
+    messages = result.all_messages()
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            calls={'call_a': 10, 'call_c': 30},
+            approvals={'call_b': ToolApproved()},
+        ),
+    )
+    assert result.output == 'Done!'
 
 
 def test_deferred_tool_with_output_type():

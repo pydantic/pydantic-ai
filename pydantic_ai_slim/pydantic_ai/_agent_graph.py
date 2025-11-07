@@ -1046,10 +1046,9 @@ def _populate_deferred_calls(
     for k in sorted(deferred_calls_by_index):
         call = tool_calls[k]
         output_deferred_calls[deferred_calls_by_index[k]].append(call)
-        if k in deferred_metadata_by_index:
-            metadata = deferred_metadata_by_index[k]
-            if metadata is not None:
-                output_deferred_metadata[call.tool_call_id] = metadata
+        metadata = deferred_metadata_by_index[k]
+        if metadata is not None:
+            output_deferred_metadata[call.tool_call_id] = metadata
 
 
 async def _call_tool(
