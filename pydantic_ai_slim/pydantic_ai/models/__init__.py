@@ -680,7 +680,14 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
 def infer_model(  # noqa: C901
     model: Model | KnownModelName | str, provider_factory: Callable[[str], Provider[Any]] = infer_provider
 ) -> Model:
-    """Infer the model from the name. May optionally pass a callable that setup a custom provider for the model."""
+    """Infer the model from the name.
+
+    Args:
+        model: 
+            Model name to instantiate, in the format of `provider:model`. Use the string "test" to instantiate TestModel.
+        provider_factory: 
+            Function that instantiates a provider object. The provider name is passed into the function parameter. Defaults to `provider.infer_provider`.
+    """
     if isinstance(model, Model):
         return model
     elif model == 'test':
@@ -715,7 +722,7 @@ def infer_model(  # noqa: C901
         )
         provider_name = 'google-vertex'
 
-    provider = provider_factory(provider_name)
+    provider: Provider[Any] = provider_factory(provider_name)
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
