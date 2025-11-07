@@ -34,6 +34,7 @@ DocumentMediaType: TypeAlias = Literal[
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'text/html',
     'text/markdown',
+    'application/msword',
     'application/vnd.ms-excel',
 ]
 VideoMediaType: TypeAlias = Literal[
@@ -434,8 +435,12 @@ class DocumentUrl(FileUrl):
             return 'application/pdf'
         elif self.url.endswith('.rtf'):
             return 'application/rtf'
+        elif self.url.endswith('.doc'):
+            return 'application/msword'
         elif self.url.endswith('.docx'):
             return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        elif self.url.endswith('.xls'):
+            return 'application/vnd.ms-excel'
         elif self.url.endswith('.xlsx'):
             return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
@@ -480,7 +485,7 @@ class BinaryContent:
     """
 
     _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
-        compare=False, default=None, repr=False
+        compare=False, default=None
     )
 
     kind: Literal['binary'] = 'binary'
@@ -645,6 +650,7 @@ _document_format_lookup: dict[str, DocumentFormat] = {
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
     'text/html': 'html',
     'text/markdown': 'md',
+    'application/msword': 'doc',
     'application/vnd.ms-excel': 'xls',
 }
 _audio_format_lookup: dict[str, AudioFormat] = {
@@ -882,7 +888,10 @@ class RetryPromptPart:
                 description = self.content
         else:
             json_errors = error_details_ta.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
-            description = f'{len(self.content)} validation errors: {json_errors.decode()}'
+            plural = isinstance(self.content, list) and len(self.content) != 1
+            description = (
+                f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
+            )
         return f'{description}\n\nFix the errors and try again.'
 
     def otel_event(self, settings: InstrumentationSettings) -> Event:

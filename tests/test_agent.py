@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Callable
 from dataclasses import dataclass, replace
 from datetime import timezone
 from typing import Any, Generic, Literal, TypeVar, Union
@@ -55,13 +55,12 @@ from pydantic_ai._output import (
     OutputSpec,
     PromptedOutput,
     TextOutput,
-    ToolOutputSchema,
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import StructuredDict, ToolOutput
+from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
@@ -201,7 +200,7 @@ def test_result_pydantic_model_retry():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=87, output_tokens=14),
+                usage=RequestUsage(input_tokens=89, output_tokens=14),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -260,7 +259,9 @@ def test_result_pydantic_model_validation_error():
     retry_prompt = user_retry.parts[0]
     assert isinstance(retry_prompt, RetryPromptPart)
     assert retry_prompt.model_response() == snapshot("""\
-1 validation errors: [
+1 validation error:
+```json
+[
   {
     "type": "value_error",
     "loc": [
@@ -270,6 +271,7 @@ def test_result_pydantic_model_validation_error():
     "input": "foo"
   }
 ]
+```
 
 Fix the errors and try again.""")
 
@@ -331,6 +333,85 @@ def test_output_validator():
                     )
                 ]
             ),
+        ]
+    )
+
+
+def test_output_validator_partial_sync():
+    """Test that output validators receive correct value for `partial_output` in sync mode."""
+    call_log: list[tuple[str, bool]] = []
+
+    agent = Agent[None, str](TestModel(custom_output_text='test output'))
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: str) -> str:
+        call_log.append((output, ctx.partial_output))
+        return output
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'test output'
+
+    assert call_log == snapshot([('test output', False)])
+
+
+async def test_output_validator_partial_stream_text():
+    """Test that output validators receive correct value for `partial_output` when using stream_text()."""
+    call_log: list[tuple[str, bool]] = []
+
+    async def stream_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        for chunk in ['Hello', ' ', 'world', '!']:
+            yield chunk
+
+    agent = Agent(FunctionModel(stream_function=stream_text))
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: str) -> str:
+        call_log.append((output, ctx.partial_output))
+        return output
+
+    async with agent.run_stream('Hello') as result:
+        text_parts = []
+        async for chunk in result.stream_text(debounce_by=None):
+            text_parts.append(chunk)
+
+    assert text_parts[-1] == 'Hello world!'
+    assert call_log == snapshot(
+        [
+            ('Hello', True),
+            ('Hello ', True),
+            ('Hello world', True),
+            ('Hello world!', True),
+            ('Hello world!', False),
+        ]
+    )
+
+
+async def test_output_validator_partial_stream_output():
+    """Test that output validators receive correct value for `partial_output` when using stream_output()."""
+    call_log: list[tuple[Foo, bool]] = []
+
+    async def stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools is not None
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 42')}
+        yield {0: DeltaToolCall(json_args=', "b": "f')}
+        yield {0: DeltaToolCall(json_args='oo"}')}
+
+    agent = Agent(FunctionModel(stream_function=stream_model), output_type=Foo)
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: Foo) -> Foo:
+        call_log.append((output, ctx.partial_output))
+        return output
+
+    async with agent.run_stream('Hello') as result:
+        outputs = [output async for output in result.stream_output(debounce_by=None)]
+
+    assert outputs[-1] == Foo(a=42, b='foo')
+    assert call_log == snapshot(
+        [
+            (Foo(a=42, b='f'), True),
+            (Foo(a=42, b='foo'), True),
+            (Foo(a=42, b='foo'), False),
         ]
     )
 
@@ -449,12 +530,12 @@ def test_response_tuple():
     m = TestModel()
 
     agent = Agent(m, output_type=tuple[str, str])
-    assert isinstance(agent._output_schema, ToolOutputSchema)  # pyright: ignore[reportPrivateUsage]
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(('a', 'a'))
 
     assert m.last_model_request_parameters is not None
+    assert m.last_model_request_parameters.output_mode == 'tool'
     assert m.last_model_request_parameters.function_tools == snapshot([])
     assert m.last_model_request_parameters.allow_text_output is False
 
@@ -1555,30 +1636,76 @@ def test_structured_dict_recursive_refs():
 
 
 def test_default_structured_output_mode():
-    def hello(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart(content='hello')])  # pragma: no cover
-
-    tool_model = FunctionModel(hello, profile=ModelProfile(default_structured_output_mode='tool'))
-    native_model = FunctionModel(
-        hello,
-        profile=ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native'),
-    )
-    prompted_model = FunctionModel(
-        hello,
-        profile=ModelProfile(default_structured_output_mode='prompted'),
-    )
-
     class Foo(BaseModel):
         bar: str
 
+    tool_model = TestModel(profile=ModelProfile(default_structured_output_mode='tool'))
+    native_model = TestModel(
+        profile=ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native'),
+        custom_output_text=Foo(bar='baz').model_dump_json(),
+    )
+    prompted_model = TestModel(
+        profile=ModelProfile(default_structured_output_mode='prompted'),
+        custom_output_text=Foo(bar='baz').model_dump_json(),
+    )
+
     tool_agent = Agent(tool_model, output_type=Foo)
-    assert tool_agent._output_schema.mode == 'tool'  # type: ignore[reportPrivateUsage]
+    tool_agent.run_sync('Hello')
+    assert tool_model.last_model_request_parameters is not None
+    assert tool_model.last_model_request_parameters.output_mode == 'tool'
+    assert tool_model.last_model_request_parameters.allow_text_output is False
+    assert tool_model.last_model_request_parameters.output_object is None
+    assert tool_model.last_model_request_parameters.output_tools == snapshot(
+        [
+            ToolDefinition(
+                name='final_result',
+                parameters_json_schema={
+                    'properties': {'bar': {'type': 'string'}},
+                    'required': ['bar'],
+                    'title': 'Foo',
+                    'type': 'object',
+                },
+                description='The final response which ends this conversation',
+                kind='output',
+            )
+        ]
+    )
 
     native_agent = Agent(native_model, output_type=Foo)
-    assert native_agent._output_schema.mode == 'native'  # type: ignore[reportPrivateUsage]
+    native_agent.run_sync('Hello')
+    assert native_model.last_model_request_parameters is not None
+    assert native_model.last_model_request_parameters.output_mode == 'native'
+    assert native_model.last_model_request_parameters.allow_text_output is True
+    assert len(native_model.last_model_request_parameters.output_tools) == 0
+    assert native_model.last_model_request_parameters.output_object == snapshot(
+        OutputObjectDefinition(
+            json_schema={
+                'properties': {'bar': {'type': 'string'}},
+                'required': ['bar'],
+                'title': 'Foo',
+                'type': 'object',
+            },
+            name='Foo',
+        )
+    )
 
     prompted_agent = Agent(prompted_model, output_type=Foo)
-    assert prompted_agent._output_schema.mode == 'prompted'  # type: ignore[reportPrivateUsage]
+    prompted_agent.run_sync('Hello')
+    assert prompted_model.last_model_request_parameters is not None
+    assert prompted_model.last_model_request_parameters.output_mode == 'prompted'
+    assert prompted_model.last_model_request_parameters.allow_text_output is True
+    assert len(prompted_model.last_model_request_parameters.output_tools) == 0
+    assert prompted_model.last_model_request_parameters.output_object == snapshot(
+        OutputObjectDefinition(
+            json_schema={
+                'properties': {'bar': {'type': 'string'}},
+                'required': ['bar'],
+                'title': 'Foo',
+                'type': 'object',
+            },
+            name='Foo',
+        )
+    )
 
 
 def test_prompted_output():
@@ -1609,14 +1736,7 @@ def test_prompted_output():
                         content='What is the capital of Mexico?',
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "City & Country", "type": "object", "description": "Description from PromptedOutput. Description from docstring."}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
@@ -1650,12 +1770,7 @@ def test_prompted_output_with_template():
                         content='What is the capital of Mexico?',
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Gimme some JSON:
-
-{"properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Foo", "type": "object"}\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[TextPart(content='{"bar":"baz"}')],
@@ -1718,14 +1833,7 @@ def test_prompted_output_with_defs():
                         content='What is foo?',
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "FooBar"}, "data": {"properties": {"foo": {"$ref": "#/$defs/Foo"}, "bar": {"$ref": "#/$defs/Bar"}}, "required": ["foo", "bar"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "FooBar", "description": "FooBar description"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "FooBaz"}, "data": {"properties": {"foo": {"$ref": "#/$defs/Foo"}, "baz": {"$ref": "#/$defs/Baz"}}, "required": ["foo", "baz"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "FooBaz", "description": "FooBaz description"}]}}, "required": ["result"], "additionalProperties": false, "$defs": {"Bar": {"description": "Bar description", "properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Bar", "type": "object"}, "Foo": {"description": "Foo description", "properties": {"foo": {"type": "string"}}, "required": ["foo"], "title": "Foo", "type": "object"}, "Baz": {"description": "Baz description", "properties": {"baz": {"type": "string"}}, "required": ["baz"], "title": "Baz", "type": "object"}}, "title": "FooBar or FooBaz", "description": "FooBaz description"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[
@@ -1796,7 +1904,7 @@ def test_native_output():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=85, output_tokens=12),
+                usage=RequestUsage(input_tokens=87, output_tokens=12),
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
             ),
@@ -1812,6 +1920,7 @@ def test_native_output_strict_mode():
     agent = Agent(output_type=NativeOutput(CityLocation, strict=True))
     output_schema = agent._output_schema  # pyright: ignore[reportPrivateUsage]
     assert isinstance(output_schema, NativeOutputSchema)
+    assert output_schema.object_def is not None
     assert output_schema.object_def.strict
 
 
@@ -1846,14 +1955,7 @@ def test_prompted_output_function_with_retry():
                         content='New York City',
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"additionalProperties": false, "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object", "title": "get_weather"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "New York City"}')],
@@ -1868,14 +1970,7 @@ Don't include any text or Markdown fencing before or after.\
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"additionalProperties": false, "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object", "title": "get_weather"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
@@ -3697,7 +3792,6 @@ def test_tool_returning_binary_content_with_identifier():
                             data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82',
                             media_type='image/png',
                             _identifier='image_id_1',
-                            identifier='image_id_1',
                         ),
                     ],
                     timestamp=IsNow(tz=timezone.utc),
@@ -3889,6 +3983,30 @@ def test_instructions_parameter_with_sequence():
 You are a helpful assistant.
 
 You are a potato.\
+""",
+        )
+    )
+
+
+def test_instructions_during_run():
+    agent = Agent('test', instructions='You are a helpful assistant.')
+    result = agent.run_sync('Hello', instructions='Your task is to greet people.')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+            instructions="""\
+You are a helpful assistant.
+Your task is to greet people.\
+""",
+        )
+    )
+
+    result2 = agent.run_sync('Hello again!')
+    assert result2.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello again!', timestamp=IsDatetime())],
+            instructions="""\
+You are a helpful assistant.\
 """,
         )
     )
@@ -5688,4 +5806,30 @@ def test_agent_builtin_tools_runtime_vs_agent_level():
             MCPServerTool(id='github', url='https://mcp.githubcopilot.com/mcp', authorization_token='token'),
             MCPServerTool(id='example', url='https://mcp.example.com/mcp'),
         ]
+    )
+
+
+async def test_run_with_unapproved_tool_call_in_history():
+    def should_not_call_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        raise ValueError('The agent should not call the model.')  # pragma: no cover
+
+    agent = Agent(
+        model=FunctionModel(function=should_not_call_model),
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file() -> None:
+        print('File deleted.')  # pragma: no cover
+
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='delete_file')]),
+    ]
+
+    result = await agent.run(message_history=messages)
+
+    assert result.all_messages() == messages
+    assert result.output == snapshot(
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='delete_file', tool_call_id=IsStr())])
     )
