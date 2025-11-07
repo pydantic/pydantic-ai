@@ -59,6 +59,7 @@ if TYPE_CHECKING:
         ConverseStreamMetadataEventTypeDef,
         ConverseStreamOutputTypeDef,
         ConverseStreamResponseTypeDef,
+        CountTokensRequestTypeDef,
         DocumentBlockTypeDef,
         GuardrailConfigurationTypeDef,
         ImageBlockTypeDef,
@@ -74,7 +75,6 @@ if TYPE_CHECKING:
         ToolTypeDef,
         VideoBlockTypeDef,
     )
-
 
 LatestBedrockModelNames = Literal[
     'amazon.titan-tg1-large',
@@ -104,6 +104,13 @@ LatestBedrockModelNames = Literal[
     'us.anthropic.claude-opus-4-20250514-v1:0',
     'anthropic.claude-sonnet-4-20250514-v1:0',
     'us.anthropic.claude-sonnet-4-20250514-v1:0',
+    'eu.anthropic.claude-sonnet-4-20250514-v1:0',
+    'anthropic.claude-sonnet-4-5-20250929-v1:0',
+    'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    'eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    'anthropic.claude-haiku-4-5-20251001-v1:0',
+    'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+    'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
     'cohere.command-text-v14',
     'cohere.command-r-v1:0',
     'cohere.command-r-plus-v1:0',
@@ -134,7 +141,6 @@ Since Bedrock supports a variety of date-stamped models, we explicitly list the 
 See [the Bedrock docs](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for a full list.
 """
 
-
 P = ParamSpec('P')
 T = typing.TypeVar('T')
 
@@ -146,6 +152,13 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
 }
+
+_AWS_BEDROCK_INFERENCE_GEO_PREFIXES: tuple[str, ...] = ('us.', 'eu.', 'apac.', 'jp.', 'au.', 'ca.')
+"""Geo prefixes for Bedrock inference profile IDs (e.g., 'eu.', 'us.').
+
+Used to strip the geo prefix so we can pass a pure foundation model ID/ARN to CountTokens,
+which does not accept profile IDs. Extend if new geos appear (e.g., 'global.', 'us-gov.').
+"""
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -272,6 +285,30 @@ class BedrockConverseModel(Model):
         response = await self._messages_create(messages, False, settings, model_request_parameters)
         model_response = await self._process_response(response)
         return model_response
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> usage.RequestUsage:
+        """Count the number of tokens, works with limited models.
+
+        Check the actual supported models on <https://docs.aws.amazon.com/bedrock/latest/userguide/count-tokens.html>
+        """
+        model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
+        system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters)
+        params: CountTokensRequestTypeDef = {
+            'modelId': self._remove_inference_geo_prefix(self.model_name),
+            'input': {
+                'converse': {
+                    'messages': bedrock_messages,
+                    'system': system_prompt,
+                },
+            },
+        }
+        response = await anyio.to_thread.run_sync(functools.partial(self.client.count_tokens, **params))
+        return usage.RequestUsage(input_tokens=response['inputTokens'])
 
     @asynccontextmanager
     async def request_stream(
@@ -633,6 +670,14 @@ class BedrockConverseModel(Model):
         return {
             'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
         }
+
+    @staticmethod
+    def _remove_inference_geo_prefix(model_name: BedrockModelName) -> BedrockModelName:
+        """Remove inference geographic prefix from model ID if present."""
+        for prefix in _AWS_BEDROCK_INFERENCE_GEO_PREFIXES:
+            if model_name.startswith(prefix):
+                return model_name.removeprefix(prefix)
+        return model_name
 
 
 @dataclass
