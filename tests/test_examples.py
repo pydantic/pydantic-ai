@@ -523,9 +523,17 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Tell me about the pydantic/pydantic-ai repo.': 'The pydantic/pydantic-ai repo is a Python agent framework for building Generative AI applications.',
     'What do I have on my calendar today?': "You're going to spend all day playing with Pydantic AI.",
     'Write a long story about a cat': 'Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...',
-    'Run expensive task-123 and call the /data endpoint': [
-        ToolCallPart(tool_name='expensive_compute', args={'task_id': 'task-123'}, tool_call_id='expensive_compute'),
-        ToolCallPart(tool_name='external_api_call', args={'endpoint': '/data'}, tool_call_id='external_api_call'),
+    'Train gpt-4 on large_dataset and process large_dataset with transform': [
+        ToolCallPart(
+            tool_name='train_model',
+            args={'dataset': 'large_dataset', 'model_type': 'gpt-4'},
+            tool_call_id='train_model',
+        ),
+        ToolCallPart(
+            tool_name='process_dataset',
+            args={'dataset': 'large_dataset', 'operation': 'transform'},
+            tool_call_id='process_dataset',
+        ),
     ],
 }
 
@@ -875,11 +883,17 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name in ('expensive_compute', 'external_api_call'):
+    elif isinstance(m, ToolReturnPart) and m.tool_name in ('train_model', 'process_dataset'):
         # After deferred tools complete, check if we have all results to provide final response
         tool_names = {part.tool_name for msg in messages for part in msg.parts if isinstance(part, ToolReturnPart)}
-        if 'expensive_compute' in tool_names and 'external_api_call' in tool_names:
-            return ModelResponse(parts=[TextPart('I completed task-123 and retrieved data from the /data endpoint.')])
+        if 'train_model' in tool_names and 'process_dataset' in tool_names:
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        'Model gpt-4 trained on large_dataset and dataset processing job job_large_dataset_transform completed'
+                    )
+                ]
+            )
         # If we don't have both results yet, just acknowledge the tool result
         return ModelResponse(parts=[TextPart(f'Received result from {m.tool_name}')])
 
