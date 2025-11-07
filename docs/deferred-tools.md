@@ -345,14 +345,14 @@ from pydantic_ai import (
 
 @dataclass
 class User:
-    home_location: str = "St. Louis, MO"
+    home_location: str = 'St. Louis, MO'
 
 
 class FlightAPI:
     COSTS = {
-        ("St. Louis, MO", "Lisbon, Portugal"): 850,
-        ("St. Louis, MO", "Santiago, Chile"): 1200,
-        ("St. Louis, MO", "Los Angeles, CA"): 300,
+        ('St. Louis, MO', 'Lisbon, Portugal'): 850,
+        ('St. Louis, MO', 'Santiago, Chile'): 1200,
+        ('St. Louis, MO', 'Los Angeles, CA'): 300,
     }
 
     def get_flight_cost(self, origin: str, destination: str) -> int:
@@ -394,7 +394,7 @@ def book_flight(ctx: RunContext[TravelDeps], destination: str) -> str:
             }
         )
 
-    return f"Flight booked to {destination}"
+    return f'Flight booked to {destination}'
 
 
 @agent.tool
@@ -413,7 +413,7 @@ def authenticate_with_airline(ctx: RunContext[TravelDeps], airline: str) -> str:
 
 
 # Set up dependencies
-user = User(home_location="St. Louis, MO")
+user = User(home_location='St. Louis, MO')
 flight_api = FlightAPI()
 deps = TravelDeps(user=user, flight_api=flight_api)
 
@@ -433,7 +433,7 @@ for call in requests.approvals:
     metadata = requests.metadata.get(call.tool_call_id, {})
     cost = metadata.get('cost_usd', 0)
 
-    print(f"Approval needed: {call.tool_name}")
+    print(f'Approval needed: {call.tool_name}')
     #> Approval needed: book_flight
     print(f"  {metadata['origin']} → {metadata['destination']}: ${cost}")
     #>   St. Louis, MO → Lisbon, Portugal: $850
@@ -448,12 +448,12 @@ for call in requests.calls:
     metadata = requests.metadata.get(call.tool_call_id, {})
     auth_url = metadata.get('auth_url')
 
-    print(f"Browser auth required: {auth_url}")
+    print(f'Browser auth required: {auth_url}')
     #> Browser auth required: https://example.com/auth/skyway-airlines
 
     # In real code: open browser, wait for auth completion
     # For demo, just mark as completed
-    results.calls[call.tool_call_id] = "Frequent flyer account linked"
+    results.calls[call.tool_call_id] = 'Frequent flyer account linked'
 
 # Continue with results
 result = agent.run_sync(

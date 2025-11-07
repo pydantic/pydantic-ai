@@ -720,6 +720,21 @@ async def model_logic(  # noqa: C901
                     TextPart(content='The factorial of 15 is **1,307,674,368,000**.'),
                 ]
             )
+        elif m.content == 'Book a flight to Lisbon, Portugal and link my SkyWay Airlines account':
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='book_flight',
+                        args={'destination': 'Lisbon, Portugal'},
+                        tool_call_id='pyd_ai_tool_call_id_1',
+                    ),
+                    ToolCallPart(
+                        tool_name='authenticate_with_airline',
+                        args={'airline': 'SkyWay Airlines'},
+                        tool_call_id='pyd_ai_tool_call_id_2',
+                    ),
+                ]
+            )
 
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
@@ -893,6 +908,15 @@ async def model_logic(  # noqa: C901
                         'Model gpt-4 trained on large_dataset and dataset processing job job_large_dataset_transform completed'
                     )
                 ]
+            )
+        # If we don't have both results yet, just acknowledge the tool result
+        return ModelResponse(parts=[TextPart(f'Received result from {m.tool_name}')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name in ('book_flight', 'authenticate_with_airline'):
+        # After deferred tools complete, check if we have all results to provide final response
+        tool_names = {part.tool_name for msg in messages for part in msg.parts if isinstance(part, ToolReturnPart)}
+        if 'book_flight' in tool_names and 'authenticate_with_airline' in tool_names:
+            return ModelResponse(
+                parts=[TextPart('Flight to Lisbon booked successfully and your SkyWay Airlines account is now linked.')]
             )
         # If we don't have both results yet, just acknowledge the tool result
         return ModelResponse(parts=[TextPart(f'Received result from {m.tool_name}')])
