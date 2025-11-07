@@ -2542,7 +2542,10 @@ def test_empty_response():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
-            ModelRequest(parts=[], run_id=IsStr(),),
+            ModelRequest(
+                parts=[],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content='ok here is text')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
@@ -2582,7 +2585,10 @@ def test_empty_response_without_recovery():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
-            ModelRequest(parts=[], run_id=IsStr(),),
+            ModelRequest(
+                parts=[],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[],
                 usage=RequestUsage(input_tokens=51),
