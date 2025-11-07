@@ -1762,15 +1762,14 @@ class OpenAIStreamedResponse(StreamedResponse):
             for event in self._map_part_delta(choice):
                 yield event
 
-    async def _validate_response(self):
+    def _validate_response(self):
         """Hook that validates incoming chunks.
 
         This method may be overridden by subclasses of `OpenAIStreamedResponse` to apply custom chunk validations.
 
         By default, this is a no-op since `ChatCompletionChunk` is already validated.
         """
-        async for chunk in self._response:
-            yield chunk
+        return self._response
 
     def _map_part_delta(self, choice: Choice):
         """Hook that determines the sequence of mappings that will be called to produce events.

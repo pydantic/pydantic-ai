@@ -582,8 +582,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
 
     @override
     def _map_thinking_delta(self, choice: chat_completion_chunk.Choice):
-        # We can cast with confidence because chunk was validated in `_validate_response`
-        choice = cast(OpenRouterChunkChoice, choice)
+        assert isinstance(choice, OpenRouterChunkChoice)
 
         if reasoning_details := choice.delta.reasoning_details:
             for detail in reasoning_details:
@@ -597,7 +596,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
 
     @override
     def _map_provider_details(self, chunk: chat.ChatCompletionChunk) -> dict[str, str] | None:
-        chunk = cast(OpenRouterChatCompletionChunk, chunk)
+        assert isinstance(chunk, OpenRouterChatCompletionChunk)
 
         if provider_details := super()._map_provider_details(chunk):
             if provider := chunk.provider:  # pragma: lax no cover
