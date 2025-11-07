@@ -324,18 +324,9 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ## Attaching Metadata to Deferred Tools
 
-Both [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] and [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] exceptions accept an optional `metadata` parameter that allows you to attach arbitrary context information to deferred tool calls. This metadata is then available in the [`DeferredToolRequests.metadata`][pydantic_ai.tools.DeferredToolRequests.metadata] dictionary, keyed by the tool call ID.
+Both [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] and [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] exceptions accept an optional `metadata` parameter that allows you to attach arbitrary context information to deferred tool calls. This metadata is available in [`DeferredToolRequests.metadata`][pydantic_ai.tools.DeferredToolRequests.metadata] keyed by tool call ID.
 
-A common pattern is to use [`RunContext`][pydantic_ai.tools.RunContext] to access application dependencies (databases, APIs, calculators) and compute metadata based on the tool arguments and current context. This allows you to provide rich information for approval decisions or external task tracking.
-
-Common use cases for metadata include:
-
-- Computing cost estimates based on tool arguments and dependency services
-- Including job IDs or tracking information for external execution systems
-- Storing approval context like user permissions or resource availability
-- Attaching priority levels computed from current system state
-
-Here's an example showing how to use metadata with deps to make informed approval decisions:
+Common use cases include cost estimates for approval decisions and tracking information for external systems.
 
 ```python {title="deferred_tools_with_metadata.py"}
 from dataclasses import dataclass
@@ -353,68 +344,82 @@ from pydantic_ai import (
 
 
 @dataclass
-class ComputeDeps:
-    """Dependencies providing cost estimation and job scheduling."""
+class User:
+    home_location: str = "St. Louis, MO"
 
-    def estimate_cost(self, dataset: str, model_type: str) -> float:
-        # In real code, query pricing API or database
-        costs = {'gpt-4': 50.0, 'gpt-3.5': 10.0}
-        return costs.get(model_type, 25.0)
 
-    def estimate_duration(self, dataset: str) -> int:
-        # In real code, estimate based on dataset size
-        return 30 if dataset == 'large_dataset' else 5
+class FlightAPI:
+    COSTS = {
+        ("St. Louis, MO", "Lisbon, Portugal"): 850,
+        ("St. Louis, MO", "Santiago, Chile"): 1200,
+        ("St. Louis, MO", "Los Angeles, CA"): 300,
+    }
 
-    def submit_job(self, dataset: str, model_type: str) -> str:
-        # In real code, submit to batch processing system
-        return f'job_{dataset}_{model_type}'
+    def get_flight_cost(self, origin: str, destination: str) -> int:
+        return self.COSTS.get((origin, destination), 500)
+
+    def get_airline_auth_url(self, airline: str) -> str:
+        # In real code, this might generate a proper OAuth URL
+        return f"https://example.com/auth/{airline.lower().replace(' ', '-')}"
+
+
+@dataclass
+class TravelDeps:
+    user: User
+    flight_api: FlightAPI
 
 
 agent = Agent(
     'openai:gpt-5',
-    deps_type=ComputeDeps,
+    deps_type=TravelDeps,
     output_type=[str, DeferredToolRequests],
 )
 
 
 @agent.tool
-def train_model(ctx: RunContext[ComputeDeps], dataset: str, model_type: str) -> str:
-    """Train ML model - requires approval for expensive models."""
+def book_flight(ctx: RunContext[TravelDeps], destination: str) -> str:
+    """Book a flight to the destination."""
     if not ctx.tool_call_approved:
-        # Use deps to compute actual estimates based on args
-        cost = ctx.deps.estimate_cost(dataset, model_type)
-        duration = ctx.deps.estimate_duration(dataset)
+        # Look up cost based on user's location and destination
+        cost = ctx.deps.flight_api.get_flight_cost(
+            ctx.deps.user.home_location,
+            destination
+        )
 
         raise ApprovalRequired(
             metadata={
-                'dataset': dataset,
-                'model_type': model_type,
-                'estimated_cost_usd': cost,
-                'estimated_duration_minutes': duration,
+                'origin': ctx.deps.user.home_location,
+                'destination': destination,
+                'cost_usd': cost,
             }
         )
 
-    return f'Model {model_type} trained on {dataset}'
+    return f"Flight booked to {destination}"
 
 
 @agent.tool
-def process_dataset(ctx: RunContext[ComputeDeps], dataset: str, operation: str) -> str:
-    """Process dataset in external batch system."""
-    # Submit job and defer execution
-    job_id = ctx.deps.submit_job(dataset, operation)
+def authenticate_with_airline(ctx: RunContext[TravelDeps], airline: str) -> str:
+    """Authenticate with airline website to link frequent flyer account."""
+    # Generate auth URL that would normally open in browser
+    auth_url = ctx.deps.flight_api.get_airline_auth_url(airline)
 
+    # Cannot complete auth in this process - need user interaction
     raise CallDeferred(
         metadata={
-            'job_id': job_id,
-            'dataset': dataset,
-            'operation': operation,
+            'airline': airline,
+            'auth_url': auth_url,
         }
     )
 
 
-deps = ComputeDeps()
+# Set up dependencies
+user = User(home_location="St. Louis, MO")
+flight_api = FlightAPI()
+deps = TravelDeps(user=user, flight_api=flight_api)
+
+# Agent calls both tools
 result = agent.run_sync(
-    'Train gpt-4 on large_dataset and process large_dataset with transform',
+    'Book a flight to Lisbon, Portugal and link my SkyWay Airlines account',
     deps=deps,
 )
 messages = result.all_messages()
@@ -422,38 +427,42 @@ messages = result.all_messages()
 assert isinstance(result.output, DeferredToolRequests)
 requests = result.output
 
-# Make approval decisions based on metadata
+# Make approval decision using metadata
 results = DeferredToolResults()
 for call in requests.approvals:
     metadata = requests.metadata.get(call.tool_call_id, {})
-    cost = metadata.get('estimated_cost_usd', 0)
+    cost = metadata.get('cost_usd', 0)
 
-    print(f'Approval needed: {call.tool_name}')
-    #> Approval needed: train_model
-    print(f'  Model: {metadata.get("model_type")}, Cost: ${cost}')
-    #>   Model: gpt-4, Cost: $50.0
+    print(f"Approval needed: {call.tool_name}")
+    #> Approval needed: book_flight
+    print(f"  {metadata['origin']} → {metadata['destination']}: ${cost}")
+    #>   St. Louis, MO → Lisbon, Portugal: $850
 
-    if cost < 100:
+    if cost < 1000:
         results.approvals[call.tool_call_id] = ToolApproved()
     else:
-        results.approvals[call.tool_call_id] = ToolDenied('Cost exceeds limit')
+        results.approvals[call.tool_call_id] = ToolDenied('Cost exceeds budget')
 
-# Process external jobs using metadata
+# Handle deferred calls using metadata
 for call in requests.calls:
     metadata = requests.metadata.get(call.tool_call_id, {})
-    job_id = metadata.get('job_id')
+    auth_url = metadata.get('auth_url')
 
-    print(f'External job: {job_id}')
-    #> External job: job_large_dataset_transform
+    print(f"Browser auth required: {auth_url}")
+    #> Browser auth required: https://example.com/auth/skyway-airlines
 
-    # In real code, poll job status and get result
-    results.calls[call.tool_call_id] = f'Completed {job_id}'
+    # In real code: open browser, wait for auth completion
+    # For demo, just mark as completed
+    results.calls[call.tool_call_id] = "Frequent flyer account linked"
 
-result = agent.run_sync(message_history=messages, deferred_tool_results=results, deps=deps)
+# Continue with results
+result = agent.run_sync(
+    message_history=messages,
+    deferred_tool_results=results,
+    deps=deps,
+)
 print(result.output)
-"""
-Model gpt-4 trained on large_dataset and dataset processing job job_large_dataset_transform completed
-"""
+#> Flight to Lisbon booked successfully and your SkyWay Airlines account is now linked.
 ```
 
 _(This example is complete, it can be run "as is")_
