@@ -74,7 +74,7 @@ class CallDeferred(Exception):
     """
 
     def __init__(self, metadata: dict[str, Any] | None = None):
-        self.metadata = metadata or {}
+        self.metadata = metadata
         super().__init__()
 
 
@@ -89,7 +89,7 @@ class ApprovalRequired(Exception):
     """
 
     def __init__(self, metadata: dict[str, Any] | None = None):
-        self.metadata = metadata or {}
+        self.metadata = metadata
         super().__init__()
 
 

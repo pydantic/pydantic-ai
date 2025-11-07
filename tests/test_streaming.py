@@ -1152,10 +1152,10 @@ async def test_early_strategy_with_deferred_tool_call():
         assert isinstance(response, DeferredToolRequests)
         assert len(response.calls) == 1
         assert response.calls[0].tool_name == 'deferred_tool'
-        # Check metadata exists for this tool_call_id
+        # When no metadata is provided, the tool_call_id should not be in metadata dict
         tool_call_id = response.calls[0].tool_call_id
-        assert tool_call_id in response.metadata
-        assert response.metadata[tool_call_id] == {}
+        assert tool_call_id not in response.metadata
+        assert response.metadata == {}
         messages = result.all_messages()
 
     # Verify no tools were called
@@ -1639,18 +1639,10 @@ async def test_tool_raises_call_deferred():
     async with agent.run_stream('Hello') as result:
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                DeferredToolRequests(
-                    calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-                    metadata={'pyd_ai_tool_call_id__my_tool': {}},
-                )
-            ]
+            [DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])]
         )
         assert await result.get_output() == snapshot(
-            DeferredToolRequests(
-                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-                metadata={'pyd_ai_tool_call_id__my_tool': {}},
-            )
+            DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
         )
         responses = [c async for c, _is_last in result.stream_responses(debounce_by=None)]
         assert responses == snapshot(
@@ -1665,10 +1657,7 @@ async def test_tool_raises_call_deferred():
             ]
         )
         assert await result.validate_response_output(responses[0]) == snapshot(
-            DeferredToolRequests(
-                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-                metadata={'pyd_ai_tool_call_id__my_tool': {}},
-            )
+            DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
         )
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=0))
         assert result.timestamp() == IsNow(tz=timezone.utc)
@@ -1695,10 +1684,7 @@ async def test_tool_raises_approval_required():
         messages = result.all_messages()
         output = await result.get_output()
         assert output == snapshot(
-            DeferredToolRequests(
-                approvals=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id=IsStr())],
-                metadata={'my_tool': {}},
-            )
+            DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id=IsStr())])
         )
         assert result.is_complete
 
@@ -1873,7 +1859,6 @@ async def test_tool_raises_call_deferred_approval_required_iter():
         DeferredToolRequests(
             calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
             approvals=[ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())],
-            metadata={'pyd_ai_tool_call_id__my_tool': {}, 'pyd_ai_tool_call_id__my_other_tool': {}},
         )
     )
 

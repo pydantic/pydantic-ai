@@ -1318,10 +1318,7 @@ def test_tool_raises_call_deferred():
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(
-        DeferredToolRequests(
-            calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-            metadata={'pyd_ai_tool_call_id__my_tool': {}},
-        )
+        DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
     )
 
 
@@ -1351,10 +1348,7 @@ def test_tool_raises_approval_required():
     result = agent.run_sync('Hello')
     messages = result.all_messages()
     assert result.output == snapshot(
-        DeferredToolRequests(
-            approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')],
-            metadata={'my_tool': {}},
-        )
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')])
     )
 
     result = agent.run_sync(
@@ -1749,8 +1743,7 @@ def test_parallel_tool_return_with_deferred():
                 ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
                 ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
                 ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
-            ],
-            metadata={'buy_apple': {}, 'buy_banana': {}, 'buy_pear': {}},
+            ]
         )
     )
 
@@ -2098,8 +2091,7 @@ async def test_approval_required_toolset():
             approvals=[
                 ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id='foo1'),
                 ToolCallPart(tool_name='foo', args={'x': 2}, tool_call_id='foo2'),
-            ],
-            metadata={'foo1': {}, 'foo2': {}},
+            ]
         )
     )
 

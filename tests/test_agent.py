@@ -4860,10 +4860,10 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
     assert isinstance(result.output, DeferredToolRequests)
     assert len(result.output.approvals) == 1
     assert result.output.approvals[0].tool_name == 'requires_approval'
-    # Check metadata exists for this tool_call_id
+    # When no metadata is provided, the tool_call_id should not be in metadata dict
     tool_call_id = result.output.approvals[0].tool_call_id
-    assert tool_call_id in result.output.metadata
-    assert result.output.metadata[tool_call_id] == {}
+    assert tool_call_id not in result.output.metadata
+    assert result.output.metadata == {}
     assert integer_holder == 2
 
 

@@ -952,7 +952,7 @@ async def _call_tools(
     tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
     user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
-    deferred_metadata_by_index: dict[int, dict[str, Any]] = {}
+    deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
     if usage_limits.tool_calls_limit is not None:
         projected_usage = deepcopy(usage)
@@ -1038,7 +1038,7 @@ async def _call_tools(
 def _populate_deferred_calls(
     tool_calls: list[_messages.ToolCallPart],
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']],
-    deferred_metadata_by_index: dict[int, dict[str, Any]],
+    deferred_metadata_by_index: dict[int, dict[str, Any] | None],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
     output_deferred_metadata: dict[str, dict[str, Any]],
 ) -> None:
@@ -1047,7 +1047,9 @@ def _populate_deferred_calls(
         call = tool_calls[k]
         output_deferred_calls[deferred_calls_by_index[k]].append(call)
         if k in deferred_metadata_by_index:
-            output_deferred_metadata[call.tool_call_id] = deferred_metadata_by_index[k]
+            metadata = deferred_metadata_by_index[k]
+            if metadata is not None:
+                output_deferred_metadata[call.tool_call_id] = metadata
 
 
 async def _call_tool(

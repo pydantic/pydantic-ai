@@ -77,6 +77,7 @@ DeferredToolRequests(
             tool_call_id='delete_file',
         ),
     ],
+    metadata={},
 )
 """
 
@@ -247,6 +248,7 @@ async def main():
             )
         ],
         approvals=[],
+        metadata={},
     )
     """
 
@@ -385,17 +387,24 @@ requests = result.output
 # Handle approvals with metadata
 for call in requests.approvals:
     metadata = requests.metadata.get(call.tool_call_id, {})
-    print(f"Approval needed for {call.tool_name}")
-    print(f"  Cost: ${metadata.get('estimated_cost_usd')}")
-    print(f"  Time: {metadata.get('estimated_time_minutes')} minutes")
-    print(f"  Reason: {metadata.get('reason')}")
+    print(f'Approval needed for {call.tool_name}')
+    #> Approval needed for expensive_compute
+    print(f'  Cost: ${metadata.get("estimated_cost_usd")}')
+    #>   Cost: $25.5
+    print(f'  Time: {metadata.get("estimated_time_minutes")} minutes')
+    #>   Time: 15 minutes
+    print(f'  Reason: {metadata.get("reason")}')
+    #>   Reason: High compute cost
 
 # Handle external calls with metadata
 for call in requests.calls:
     metadata = requests.metadata.get(call.tool_call_id, {})
-    print(f"External call to {call.tool_name}")
-    print(f"  Task ID: {metadata.get('task_id')}")
-    print(f"  Priority: {metadata.get('priority')}")
+    print(f'External call to {call.tool_name}')
+    #> External call to external_api_call
+    print(f'  Task ID: {metadata.get("task_id")}')
+    #>   Task ID: api_call_external_api_call
+    print(f'  Priority: {metadata.get("priority")}')
+    #>   Priority: high
 
 # Build results with approvals and external results
 results = DeferredToolResults()
@@ -416,9 +425,7 @@ for call in requests.calls:
 
 result = agent.run_sync(message_history=messages, deferred_tool_results=results)
 print(result.output)
-"""
-I completed task-123 and retrieved data from the /data endpoint.
-"""
+#> I completed task-123 and retrieved data from the /data endpoint.
 ```
 
 _(This example is complete, it can be run "as is")_
