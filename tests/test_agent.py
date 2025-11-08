@@ -1090,7 +1090,7 @@ def test_output_type_function_with_retry():
                         timestamp=IsDatetime(),
                     )
                 ],
-                run_id=IsStr()
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1401,7 +1401,7 @@ def test_output_type_handoff_to_agent():
                         timestamp=IsDatetime(),
                     )
                 ],
-                run_id=IsStr()
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1439,7 +1439,7 @@ def test_output_type_handoff_to_agent():
                         timestamp=IsDatetime(),
                     )
                 ],
-                run_id=IsStr()
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2259,7 +2259,7 @@ def test_run_with_history_new_structured():
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
-                run_id=IsStr()
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2305,7 +2305,7 @@ def test_run_with_history_new_structured():
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ],
-                run_id=IsStr()
+                run_id=IsStr(),
             ),
             # second call, notice no repeated system prompt
             ModelRequest(
@@ -2330,7 +2330,7 @@ def test_run_with_history_new_structured():
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ],
-                run_id=IsStr()
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3091,7 +3091,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
-                    run_id=IsStr()
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -3199,7 +3199,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
-                    run_id=IsStr()
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -4946,7 +4946,7 @@ def test_prepare_output_tools():
                         timestamp=IsDatetime(),
                     )
                 ],
-                run_id=IsStr()
+                run_id=IsStr(),
             ),
         ]
     )
@@ -5314,7 +5314,7 @@ async def test_hitl_tool_approval():
                         timestamp=IsDatetime(),
                     )
                 ],
-                run_id=IsStr()
+                run_id=IsStr(),
             ),
         ]
     )
@@ -5372,7 +5372,7 @@ async def test_hitl_tool_approval():
                         timestamp=IsDatetime(),
                     )
                 ],
-                run_id=IsStr()
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5951,7 +5951,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                         timestamp=IsDatetime(),
                     )
                 ],
-                run_id=IsStr()
+                run_id=IsStr(),
             ),
         ]
     )
@@ -6009,7 +6009,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                         timestamp=IsDatetime(),
                     )
                 ],
-                run_id=IsStr()
+                run_id=IsStr(),
             ),
         ]
     )
@@ -6100,6 +6100,7 @@ async def test_message_history():
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='function:llm:',
                     timestamp=IsDatetime(),
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -6112,13 +6113,15 @@ async def test_message_history():
                             content='Hello',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='ok here is text')],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='function:llm:',
                     timestamp=IsDatetime(),
+                    run_id=IsStr(),
                 ),
             ]
         )
