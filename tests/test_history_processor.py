@@ -192,7 +192,7 @@ async def test_history_processor_streaming_replaces_message_history(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Question 3', timestamp=IsDatetime())],
-                run_id=IsStr()
+                run_id=IsStr(),
             ),
             ModelRequest(parts=[SystemPromptPart(content='Processed answer', timestamp=IsDatetime())]),
             ModelResponse(
@@ -200,7 +200,7 @@ async def test_history_processor_streaming_replaces_message_history(
                 usage=RequestUsage(input_tokens=50, output_tokens=1),
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
-                run_id=IsStr()
+                run_id=IsStr(),
             ),
         ]
     )

@@ -1580,7 +1580,7 @@ def test_parallel_tool_return_with_deferred():
                         timestamp=IsDatetime(),
                     ),
                 ],
-                run_id=IsStr()
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1673,7 +1673,7 @@ def test_parallel_tool_return_with_deferred():
                         timestamp=IsDatetime(),
                     ),
                 ],
-                run_id=IsStr()
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1941,7 +1941,7 @@ async def test_approval_required_toolset():
                         timestamp=IsDatetime(),
                     )
                 ],
-                run_id=IsStr()
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1994,7 +1994,7 @@ async def test_approval_required_toolset():
                         timestamp=IsDatetime(),
                     )
                 ],
-                run_id=IsStr()
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
