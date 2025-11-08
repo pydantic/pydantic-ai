@@ -54,6 +54,12 @@ nav:
       - Multi-Agent Patterns: multi-agent-applications.md
       - Testing: testing.md
 
+  - Pydantic AI Gateway:
+      - Overview: gateway.md
+      - Getting Started:
+          - Quick Start: ai_gateway/quick-start.md
+          - Usage: ai_gateway/usage.md
+
   - Pydantic Evals:
       - Overview: evals.md
       - Getting Started:
@@ -232,6 +238,7 @@ theme:
     - navigation.indexes
     - navigation.sections
     - navigation.tracking
+    - navigation.footer
     - toc.follow
   logo: "img/logo-white.svg"
   favicon: "favicon.ico"
