@@ -61,7 +61,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     partial_output: bool = False
     """Whether the output passed to an output validator is partial."""
     run_id: str | None = None
-    """"Unique identifer for the agent run."""
+    """"Unique identifier for the agent run."""
 
     @property
     def last_attempt(self) -> bool:
