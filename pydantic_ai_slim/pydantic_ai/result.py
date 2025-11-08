@@ -557,7 +557,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     async def _marked_completed(self, message: _messages.ModelResponse | None = None) -> None:
         self.is_complete = True
         if message is not None:
-            if self._stream_response:
+            if self._stream_response:  # pragma: no branch
                 message.run_id = self._stream_response.run_id
             self._all_messages.append(message)
         if self._on_complete is not None:
