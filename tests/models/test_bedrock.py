@@ -76,7 +76,8 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                         content='Hello!',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -90,6 +91,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -132,7 +134,8 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         content='What was the temperature in London 1st January 2022?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -151,6 +154,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -160,7 +164,8 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -179,6 +184,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -263,7 +269,8 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         content='What is the capital of France?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -282,6 +289,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -291,7 +299,8 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -309,6 +318,7 @@ I'm sorry, but the tool I have does not support retrieving the capital of France
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -584,6 +594,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -597,6 +608,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -641,7 +653,10 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
                 usage=RequestUsage(input_tokens=12, output_tokens=693),
@@ -650,6 +665,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -666,7 +682,8 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
@@ -676,6 +693,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -696,7 +714,10 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ThinkingPart(
@@ -712,6 +733,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -728,7 +750,8 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -745,6 +768,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -773,7 +797,8 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                         content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -791,6 +816,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -807,7 +833,8 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                         content='What was that?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -825,6 +852,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -863,7 +891,8 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                         content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -887,6 +916,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -995,7 +1025,8 @@ async def test_bedrock_model_thinking_part_from_other_model(
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1030,6 +1061,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c1ffe0f9a48191894c46b63c1a4f440003919771fccd27',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1053,7 +1085,8 @@ async def test_bedrock_model_thinking_part_from_other_model(
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1070,6 +1103,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1204,7 +1238,8 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                         content='Hello',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1221,6 +1256,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )

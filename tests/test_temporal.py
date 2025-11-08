@@ -1814,6 +1814,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                         )
                     ],
                     instructions='Just call tools without asking for confirmation.',
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1844,6 +1845,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1861,6 +1863,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                         ),
                     ],
                     instructions='Just call tools without asking for confirmation.',
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1884,6 +1887,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -1933,7 +1937,8 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             content='What is the weather in CDMX?',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1959,6 +1964,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1968,7 +1974,8 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1994,6 +2001,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -2003,7 +2011,8 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The weather in Mexico City is currently sunny.')],
@@ -2023,6 +2032,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )

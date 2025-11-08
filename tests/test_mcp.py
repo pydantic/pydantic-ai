@@ -206,7 +206,8 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                             content='What is 0 degrees Celsius in Fahrenheit?',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='0cd8b512-4191-436d-be81-fa7b78b1105b',
                 ),
                 ModelResponse(
                     parts=[
@@ -232,6 +233,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlnvvqIPFofAtKqtQKMWZkgXhzlT',
                     finish_reason='tool_call',
+                    run_id='0cd8b512-4191-436d-be81-fa7b78b1105b',
                 ),
                 ModelRequest(
                     parts=[
@@ -241,7 +243,8 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                             tool_call_id='call_QssdxTGkPblTYHmyVES1tKBj',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='0cd8b512-4191-436d-be81-fa7b78b1105b',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='0 degrees Celsius is equal to 32 degrees Fahrenheit.')],
@@ -261,6 +264,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRlnyjUo5wlyqvdNdM5I8vIWjo1qF',
                     finish_reason='stop',
+                    run_id='0cd8b512-4191-436d-be81-fa7b78b1105b',
                 ),
             ]
         )
@@ -336,7 +340,8 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                             content='What is the weather in Mexico City?',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='03ee1ca5-577c-472c-a717-def53bcf6f2b',
                 ),
                 ModelResponse(
                     parts=[
@@ -362,6 +367,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlo3e1Ud2lnvkddMilmwC7LAemiy',
                     finish_reason='tool_call',
+                    run_id='03ee1ca5-577c-472c-a717-def53bcf6f2b',
                 ),
                 ModelRequest(
                     parts=[
@@ -371,7 +377,8 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                             tool_call_id='call_m9goNwaHBbU926w47V7RtWPt',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='03ee1ca5-577c-472c-a717-def53bcf6f2b',
                 ),
                 ModelResponse(
                     parts=[
@@ -395,6 +402,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRlo41LxqBYgGKWgGrQn67fQacOLp',
                     finish_reason='stop',
+                    run_id='03ee1ca5-577c-472c-a717-def53bcf6f2b',
                 ),
             ]
         )
@@ -412,7 +420,8 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                             content='Get me the product name',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='136b00a4-6be8-4d4d-94aa-69a1b5c8272f',
                 ),
                 ModelResponse(
                     parts=[
@@ -438,6 +447,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRmhyweJVYonarb7s9ckIMSHf2vHo',
                     finish_reason='tool_call',
+                    run_id='136b00a4-6be8-4d4d-94aa-69a1b5c8272f',
                 ),
                 ModelRequest(
                     parts=[
@@ -447,7 +457,8 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                             tool_call_id='call_LaiWltzI39sdquflqeuF0EyE',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='136b00a4-6be8-4d4d-94aa-69a1b5c8272f',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The product name is "Pydantic AI".')],
@@ -467,6 +478,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRmhzqXFObpYwSzREMpJvX9kbDikR',
                     finish_reason='stop',
+                    run_id='136b00a4-6be8-4d4d-94aa-69a1b5c8272f',
                 ),
             ]
         )
@@ -484,7 +496,8 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                             content='Get me the product name via get_product_name_link',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='a3980fca-bb03-43d2-bee1-1fe36dc1b1dc',
                 ),
                 ModelResponse(
                     parts=[
@@ -510,6 +523,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BwdHSFe0EykAOpf0LWZzsWAodIQzb',
                     finish_reason='tool_call',
+                    run_id='a3980fca-bb03-43d2-bee1-1fe36dc1b1dc',
                 ),
                 ModelRequest(
                     parts=[
@@ -519,7 +533,8 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                             tool_call_id='call_qi5GtBeIEyT7Y3yJvVFIi062',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='a3980fca-bb03-43d2-bee1-1fe36dc1b1dc',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The product name is "Pydantic AI".')],
@@ -539,6 +554,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BwdHTIlBZWzXJPBR8VTOdC4O57ZQA',
                     finish_reason='stop',
+                    run_id='a3980fca-bb03-43d2-bee1-1fe36dc1b1dc',
                 ),
             ]
         )
@@ -558,7 +574,8 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                             content='Get me the image resource',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='78243118-78a2-46ca-ab7e-4c608a98c9a4',
                 ),
                 ModelResponse(
                     parts=[
@@ -584,6 +601,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlo7KYJVXuNZ5lLLdYcKZDsX2CHb',
                     finish_reason='tool_call',
+                    run_id='78243118-78a2-46ca-ab7e-4c608a98c9a4',
                 ),
                 ModelRequest(
                     parts=[
@@ -594,7 +612,8 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                             timestamp=IsDatetime(),
                         ),
                         UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
-                    ]
+                    ],
+                    run_id='78243118-78a2-46ca-ab7e-4c608a98c9a4',
                 ),
                 ModelResponse(
                     parts=[
@@ -618,6 +637,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloBGHh27w3fQKwxq4fX2cPuZJa9',
                     finish_reason='stop',
+                    run_id='78243118-78a2-46ca-ab7e-4c608a98c9a4',
                 ),
             ]
         )
@@ -639,7 +659,8 @@ async def test_tool_returning_image_resource_link(
                             content='Get me the image resource via get_image_resource_link',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='76e9c626-426e-4ce2-97ee-8f1d2bc1be4a',
                 ),
                 ModelResponse(
                     parts=[
@@ -665,6 +686,7 @@ async def test_tool_returning_image_resource_link(
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BwdHygYePH1mZgHo2Xxzib0Y7sId7',
                     finish_reason='tool_call',
+                    run_id='76e9c626-426e-4ce2-97ee-8f1d2bc1be4a',
                 ),
                 ModelRequest(
                     parts=[
@@ -675,7 +697,8 @@ async def test_tool_returning_image_resource_link(
                             timestamp=IsDatetime(),
                         ),
                         UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
-                    ]
+                    ],
+                    run_id='76e9c626-426e-4ce2-97ee-8f1d2bc1be4a',
                 ),
                 ModelResponse(
                     parts=[
@@ -699,6 +722,7 @@ async def test_tool_returning_image_resource_link(
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BwdI2D2r9dvqq3pbsA0qgwKDEdTtD',
                     finish_reason='stop',
+                    run_id='76e9c626-426e-4ce2-97ee-8f1d2bc1be4a',
                 ),
             ]
         )
@@ -714,7 +738,8 @@ async def test_tool_returning_audio_resource(
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content="What's the content of the audio resource?", timestamp=IsDatetime())]
+                    parts=[UserPromptPart(content="What's the content of the audio resource?", timestamp=IsDatetime())],
+                    run_id='9cb9aac4-4689-46ed-b6e8-cdc079a55814',
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_audio_resource', args={}, tool_call_id=IsStr())],
@@ -727,6 +752,7 @@ async def test_tool_returning_audio_resource(
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
+                    run_id='9cb9aac4-4689-46ed-b6e8-cdc079a55814',
                 ),
                 ModelRequest(
                     parts=[
@@ -737,7 +763,8 @@ async def test_tool_returning_audio_resource(
                             timestamp=IsDatetime(),
                         ),
                         UserPromptPart(content=['This is file 2d36ae:', audio_content], timestamp=IsDatetime()),
-                    ]
+                    ],
+                    run_id='9cb9aac4-4689-46ed-b6e8-cdc079a55814',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The audio resource contains a voice saying "Hello, my name is Marcelo."')],
@@ -753,6 +780,7 @@ async def test_tool_returning_audio_resource(
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
+                    run_id='9cb9aac4-4689-46ed-b6e8-cdc079a55814',
                 ),
             ]
         )
@@ -773,7 +801,8 @@ async def test_tool_returning_audio_resource_link(
                             content="What's the content of the audio resource via get_audio_resource_link?",
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='31d922a4-d2ff-439b-b25f-cb2b1b5bc3e9',
                 ),
                 ModelResponse(
                     parts=[
@@ -797,6 +826,7 @@ async def test_tool_returning_audio_resource_link(
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id='Pe_BaJGqOKSdz7IP0NqogA8',
                     finish_reason='stop',
+                    run_id='31d922a4-d2ff-439b-b25f-cb2b1b5bc3e9',
                 ),
                 ModelRequest(
                     parts=[
@@ -813,7 +843,8 @@ async def test_tool_returning_audio_resource_link(
                             ],
                             timestamp=IsDatetime(),
                         ),
-                    ]
+                    ],
+                    run_id='31d922a4-d2ff-439b-b25f-cb2b1b5bc3e9',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='00:05')],
@@ -829,6 +860,7 @@ async def test_tool_returning_audio_resource_link(
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id='QO_BaLC6AozQz7IPh5Kj4Q4',
                     finish_reason='stop',
+                    run_id='31d922a4-d2ff-439b-b25f-cb2b1b5bc3e9',
                 ),
             ]
         )
@@ -846,7 +878,8 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                             content='Get me an image',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='f17ae2e1-1c4a-4aa6-aeaf-467265878525',
                 ),
                 ModelResponse(
                     parts=[
@@ -872,6 +905,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloGQJWIX0Qk7gtNzF4s2Fez0O29',
                     finish_reason='tool_call',
+                    run_id='f17ae2e1-1c4a-4aa6-aeaf-467265878525',
                 ),
                 ModelRequest(
                     parts=[
@@ -888,7 +922,8 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                             ],
                             timestamp=IsDatetime(),
                         ),
-                    ]
+                    ],
+                    run_id='f17ae2e1-1c4a-4aa6-aeaf-467265878525',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Here is an image of a sliced kiwi on a white background.')],
@@ -908,6 +943,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloJHR654fSD0fcvLWZxtKtn0pag',
                     finish_reason='stop',
+                    run_id='f17ae2e1-1c4a-4aa6-aeaf-467265878525',
                 ),
             ]
         )
@@ -925,7 +961,8 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                             content='Get me a dict, respond on one line',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='0c64c293-8fd3-4ff7-a0b8-85b7cb343288',
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_dict', args='{}', tool_call_id='call_oqKviITBj8PwpQjGyUu4Zu5x')],
@@ -945,6 +982,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloOs7Bb2tq8wJyy9Rv7SQ7L65a7',
                     finish_reason='tool_call',
+                    run_id='0c64c293-8fd3-4ff7-a0b8-85b7cb343288',
                 ),
                 ModelRequest(
                     parts=[
@@ -954,7 +992,8 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                             tool_call_id='call_oqKviITBj8PwpQjGyUu4Zu5x',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='0c64c293-8fd3-4ff7-a0b8-85b7cb343288',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"foo":"bar","baz":123}')],
@@ -974,6 +1013,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloPczU1HSCWnreyo21DdNtdOM7L',
                     finish_reason='stop',
+                    run_id='0c64c293-8fd3-4ff7-a0b8-85b7cb343288',
                 ),
             ]
         )
@@ -991,7 +1031,8 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                             content='Get me an unstructured dict, respond on one line',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='253d1500-904e-44dd-ace5-df6d40ae36c9',
                 ),
                 ModelResponse(
                     parts=[
@@ -1015,6 +1056,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-CLbP82ODQMEznhobUKdq6Rjn9Aa12',
                     finish_reason='tool_call',
+                    run_id='253d1500-904e-44dd-ace5-df6d40ae36c9',
                 ),
                 ModelRequest(
                     parts=[
@@ -1024,7 +1066,8 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                             tool_call_id='call_R0n2R7S9vL2aZOX25T9jahTd',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='253d1500-904e-44dd-ace5-df6d40ae36c9',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"foo":"bar","baz":123}')],
@@ -1044,6 +1087,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-CLbPAOYN3jPYdvYeD8JNOOXF5N554',
                     finish_reason='stop',
+                    run_id='253d1500-904e-44dd-ace5-df6d40ae36c9',
                 ),
             ]
         )
@@ -1063,7 +1107,8 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             content='Get me an error, pass False as a value, unless the tool tells you otherwise',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='0f46e402-fe3b-4067-9ec3-36e4197df01b',
                 ),
                 ModelResponse(
                     parts=[
@@ -1089,6 +1134,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloSNg7aGSp1rXDkhInjMIUHKd7A',
                     finish_reason='tool_call',
+                    run_id='0f46e402-fe3b-4067-9ec3-36e4197df01b',
                 ),
                 ModelRequest(
                     parts=[
@@ -1098,7 +1144,8 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             tool_call_id='call_rETXZWddAGZSHyVHAxptPGgc',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='0f46e402-fe3b-4067-9ec3-36e4197df01b',
                 ),
                 ModelResponse(
                     parts=[
@@ -1124,6 +1171,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloTvSkFeX4DZKQLqfH9KbQkWlpt',
                     finish_reason='tool_call',
+                    run_id='0f46e402-fe3b-4067-9ec3-36e4197df01b',
                 ),
                 ModelRequest(
                     parts=[
@@ -1133,7 +1181,8 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             tool_call_id='call_4xGyvdghYKHN8x19KWkRtA5N',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='0f46e402-fe3b-4067-9ec3-36e4197df01b',
                 ),
                 ModelResponse(
                     parts=[
@@ -1157,6 +1206,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloU3MhnqNEqujs28a3ofRbs7VPF',
                     finish_reason='stop',
+                    run_id='0f46e402-fe3b-4067-9ec3-36e4197df01b',
                 ),
             ]
         )
@@ -1174,7 +1224,8 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                             content='Call the none tool and say Hello',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='6b73c04c-837c-4ae3-9719-3ff3e9f4d378',
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_none', args='{}', tool_call_id='call_mJTuQ2Cl5SaHPTJbIILEUhJC')],
@@ -1194,6 +1245,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloX2RokWc9j9PAXAuNXGR73WNqY',
                     finish_reason='tool_call',
+                    run_id='6b73c04c-837c-4ae3-9719-3ff3e9f4d378',
                 ),
                 ModelRequest(
                     parts=[
@@ -1203,7 +1255,8 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                             tool_call_id='call_mJTuQ2Cl5SaHPTJbIILEUhJC',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='6b73c04c-837c-4ae3-9719-3ff3e9f4d378',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Hello! How can I assist you today?')],
@@ -1223,6 +1276,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloYWGujk8yE94gfVSsM1T1Ol2Ej',
                     finish_reason='stop',
+                    run_id='6b73c04c-837c-4ae3-9719-3ff3e9f4d378',
                 ),
             ]
         )
@@ -1242,7 +1296,8 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                             content='Get me multiple items and summarize in one sentence',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='27e550bd-5d4c-40fd-8ac2-b7d6e370e9b8',
                 ),
                 ModelResponse(
                     parts=[
@@ -1268,6 +1323,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlobKLgm6vf79c9O8sloZaYx3coC',
                     finish_reason='tool_call',
+                    run_id='27e550bd-5d4c-40fd-8ac2-b7d6e370e9b8',
                 ),
                 ModelRequest(
                     parts=[
@@ -1289,7 +1345,8 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                             ],
                             timestamp=IsDatetime(),
                         ),
-                    ]
+                    ],
+                    run_id='27e550bd-5d4c-40fd-8ac2-b7d6e370e9b8',
                 ),
                 ModelResponse(
                     parts=[
@@ -1313,6 +1370,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloepWR5NJpTgSqFBGTSPeM1SWm8',
                     finish_reason='stop',
+                    run_id='27e550bd-5d4c-40fd-8ac2-b7d6e370e9b8',
                 ),
             ]
         )

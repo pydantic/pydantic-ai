@@ -70,20 +70,25 @@ async def test_streamed_text_response():
         assert not result.is_complete
         assert result.all_messages() == snapshot(
             [
-                ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+                ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                    run_id='23adaf70-e1a3-43c6-ac79-dd5ff6759727',
+                ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                     usage=RequestUsage(input_tokens=51),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    run_id='23adaf70-e1a3-43c6-ac79-dd5ff6759727',
                 ),
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
                             tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                         )
-                    ]
+                    ],
+                    run_id='23adaf70-e1a3-43c6-ac79-dd5ff6759727',
                 ),
             ]
         )
@@ -101,20 +106,25 @@ async def test_streamed_text_response():
         assert result.timestamp() == IsNow(tz=timezone.utc)
         assert result.all_messages() == snapshot(
             [
-                ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+                ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                    run_id='23adaf70-e1a3-43c6-ac79-dd5ff6759727',
+                ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                     usage=RequestUsage(input_tokens=51),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    run_id='23adaf70-e1a3-43c6-ac79-dd5ff6759727',
                 ),
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
                             tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                         )
-                    ]
+                    ],
+                    run_id='23adaf70-e1a3-43c6-ac79-dd5ff6759727',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -150,20 +160,25 @@ def test_streamed_text_sync_response():
     assert not result.is_complete
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id='85e42324-0a1d-45ce-a601-a4cf58d97237',
+            ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                run_id='85e42324-0a1d-45ce-a601-a4cf58d97237',
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                     )
-                ]
+                ],
+                run_id='85e42324-0a1d-45ce-a601-a4cf58d97237',
             ),
         ]
     )
@@ -191,20 +206,25 @@ def test_streamed_text_sync_response():
     )
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id='85e42324-0a1d-45ce-a601-a4cf58d97237',
+            ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                run_id='85e42324-0a1d-45ce-a601-a4cf58d97237',
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                     )
-                ]
+                ],
+                run_id='85e42324-0a1d-45ce-a601-a4cf58d97237',
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -561,12 +581,16 @@ async def test_call_tool():
     async with agent.run_stream('hello') as result:
         assert result.all_messages() == snapshot(
             [
-                ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                    run_id='5c951452-53b4-46ba-b26c-d8d64791d11a',
+                ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}', tool_call_id=IsStr())],
                     usage=RequestUsage(input_tokens=50, output_tokens=5),
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
+                    run_id='5c951452-53b4-46ba-b26c-d8d64791d11a',
                 ),
                 ModelRequest(
                     parts=[
@@ -576,19 +600,24 @@ async def test_call_tool():
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
                         )
-                    ]
+                    ],
+                    run_id='5c951452-53b4-46ba-b26c-d8d64791d11a',
                 ),
             ]
         )
         assert await result.get_output() == snapshot(('hello world', 2))
         assert result.all_messages() == snapshot(
             [
-                ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                    run_id='5c951452-53b4-46ba-b26c-d8d64791d11a',
+                ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}', tool_call_id=IsStr())],
                     usage=RequestUsage(input_tokens=50, output_tokens=5),
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
+                    run_id='5c951452-53b4-46ba-b26c-d8d64791d11a',
                 ),
                 ModelRequest(
                     parts=[
@@ -598,7 +627,8 @@ async def test_call_tool():
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
                         )
-                    ]
+                    ],
+                    run_id='5c951452-53b4-46ba-b26c-d8d64791d11a',
                 ),
                 ModelResponse(
                     parts=[
@@ -650,15 +680,17 @@ async def test_empty_response():
                         content='hello',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id='44222743-1d28-4a28-8067-b279fc42a0fd',
             ),
             ModelResponse(
                 parts=[],
                 usage=RequestUsage(input_tokens=50),
                 model_name='function::stream_structured_function',
                 timestamp=IsDatetime(),
+                run_id='44222743-1d28-4a28-8067-b279fc42a0fd',
             ),
-            ModelRequest(parts=[]),
+            ModelRequest(parts=[], run_id='44222743-1d28-4a28-8067-b279fc42a0fd'),
             ModelResponse(
                 parts=[TextPart(content='ok here is text')],
                 usage=RequestUsage(input_tokens=50, output_tokens=4),
@@ -690,12 +722,16 @@ async def test_call_tool_wrong_name():
 
     assert messages == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id='54da334c-60ac-457a-b6f3-f1e9e72f9df6',
+            ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=50, output_tokens=1),
                 model_name='function::stream_structured_function',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id='54da334c-60ac-457a-b6f3-f1e9e72f9df6',
             ),
         ]
     )
@@ -742,7 +778,10 @@ async def test_early_strategy_stops_after_first_final_result():
     # Verify we got tool returns for all calls
     assert messages == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='test early strategy', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='test early strategy', timestamp=IsNow(tz=timezone.utc))],
+                run_id='c0c4976e-c7a3-493e-b0af-630a370e54a0',
+            ),
             ModelResponse(
                 parts=[
                     ToolCallPart(tool_name='final_result', args='{"value": "final"}', tool_call_id=IsStr()),
@@ -798,7 +837,8 @@ async def test_early_strategy_uses_first_final_result():
     assert messages == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))]
+                parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
+                run_id='a8f9b5a6-0d73-409a-962a-d710f719ed94',
             ),
             ModelResponse(
                 parts=[
@@ -863,7 +903,10 @@ async def test_exhaustive_strategy_executes_all_tools():
     # Verify we got tool returns in the correct order
     assert messages == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='test exhaustive strategy', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='test exhaustive strategy', timestamp=IsNow(tz=timezone.utc))],
+                run_id='cc5cc5f8-28ad-4155-b48c-84ac0fb2de50',
+            ),
             ModelResponse(
                 parts=[
                     ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
@@ -952,6 +995,7 @@ async def test_early_strategy_with_final_result_in_middle():
                         part_kind='user-prompt',
                     )
                 ],
+                run_id='10047265-7079-4765-b07d-8bf1de341701',
                 kind='request',
             ),
             ModelResponse(
@@ -1082,6 +1126,7 @@ async def test_early_strategy_with_external_tool_call():
                         part_kind='user-prompt',
                     )
                 ],
+                run_id='d9468233-4cf0-4e28-ac06-db645fb19d25',
                 kind='request',
             ),
             ModelResponse(
@@ -1168,6 +1213,7 @@ async def test_early_strategy_with_deferred_tool_call():
                         part_kind='user-prompt',
                     )
                 ],
+                run_id='d11be4ad-16fc-4079-8900-66f3b6e1aaec',
                 kind='request',
             ),
             ModelResponse(
@@ -1182,6 +1228,7 @@ async def test_early_strategy_with_deferred_tool_call():
                 usage=RequestUsage(input_tokens=50, output_tokens=3),
                 model_name='function::sf',
                 timestamp=IsNow(tz=datetime.timezone.utc),
+                run_id='d11be4ad-16fc-4079-8900-66f3b6e1aaec',
                 kind='response',
             ),
             ModelRequest(
@@ -1224,7 +1271,8 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
                     UserPromptPart(
                         content='test early strategy with regular tool calls', timestamp=IsNow(tz=timezone.utc)
                     )
-                ]
+                ],
+                run_id='3c7d44d2-1812-4c15-9f4b-ac40a835c68f',
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='regular_tool', args={'x': 0}, tool_call_id=IsStr())],
@@ -1232,13 +1280,15 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                run_id='3c7d44d2-1812-4c15-9f4b-ac40a835c68f',
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='regular_tool', content=0, timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                     )
-                ]
+                ],
+                run_id='3c7d44d2-1812-4c15-9f4b-ac40a835c68f',
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'value': 'a'}, tool_call_id=IsStr())],
@@ -1651,6 +1701,7 @@ async def test_tool_raises_call_deferred():
                     model_name='test',
                     timestamp=IsDatetime(),
                     provider_name='test',
+                    run_id='ed7a8309-7882-446b-b6c2-614901f5077c',
                 )
             ]
         )
@@ -1702,13 +1753,15 @@ async def test_tool_raises_approval_required():
                             content='Hello',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='4e9c303a-5851-48d1-8f2c-bfc85e27d968',
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id='my_tool')],
                     usage=RequestUsage(input_tokens=50, output_tokens=3),
                     model_name='function::llm',
                     timestamp=IsDatetime(),
+                    run_id='4e9c303a-5851-48d1-8f2c-bfc85e27d968',
                 ),
                 ModelRequest(
                     parts=[
@@ -1718,7 +1771,8 @@ async def test_tool_raises_approval_required():
                             tool_call_id='my_tool',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id='51ce57ed-a8b2-48de-83c0-447da13c8719',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Done!')],
