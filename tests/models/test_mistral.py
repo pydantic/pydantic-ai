@@ -453,7 +453,8 @@ async def test_request_native_with_arguments_dict_response(allow_model_requests:
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -520,7 +521,8 @@ async def test_request_native_with_arguments_str_response(allow_model_requests: 
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -584,7 +586,8 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1351,7 +1354,8 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1467,6 +1471,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id='x',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1476,7 +1481,8 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1579,6 +1585,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='x',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1722,6 +1729,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='x',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )

@@ -702,7 +702,8 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -984,6 +985,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='google-gla',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -993,7 +995,8 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1054,6 +1057,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1063,7 +1067,8 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1774,7 +1779,8 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1855,7 +1861,8 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )

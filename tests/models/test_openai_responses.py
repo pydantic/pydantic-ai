@@ -1408,7 +1408,8 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -6051,7 +6052,8 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         tool_call_id='call_eE7MHM5WMJnMt5srV69NmBJk',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -6570,7 +6572,8 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                         tool_call_id='call_LIXPi261Xx3dGYzlDsOoyHGk',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )

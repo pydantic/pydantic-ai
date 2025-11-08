@@ -260,7 +260,8 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -510,6 +511,7 @@ async def test_stream_structured(allow_model_requests: None):
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='groq',
                 provider_response_id='x',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -519,7 +521,8 @@ async def test_stream_structured(allow_model_requests: None):
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )

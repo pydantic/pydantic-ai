@@ -194,7 +194,8 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )

@@ -123,6 +123,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     @property
     def run_id(self) -> str | None:
         return self._run_ctx.run_id
+
     # TODO (v2): Drop in favor of `response` property
     def get(self) -> _messages.ModelResponse:
         """Get the current state of the response."""
@@ -557,7 +558,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         self.is_complete = True
         if message is not None:
             if self._stream_response:
-                message.run_id = self._stream_response.run_id         
+                message.run_id = self._stream_response.run_id
             self._all_messages.append(message)
         if self._on_complete is not None:
             await self._on_complete()

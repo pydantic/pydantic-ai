@@ -101,7 +101,8 @@ def test_custom_output_args():
                         tool_call_id='pyd_ai_tool_call_id__final_result',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -147,7 +148,8 @@ def test_custom_output_args_model():
                         tool_call_id='pyd_ai_tool_call_id__final_result',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -189,7 +191,8 @@ def test_output_type():
                         tool_call_id='pyd_ai_tool_call_id__final_result',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )

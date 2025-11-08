@@ -484,6 +484,7 @@ async def test_stream_text():
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::stream_text_function',
                     timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
                 ),
             ]
         )
