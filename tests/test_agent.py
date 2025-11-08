@@ -6078,3 +6078,48 @@ async def test_run_with_unapproved_tool_call_in_history():
     assert result.output == snapshot(
         DeferredToolRequests(approvals=[ToolCallPart(tool_name='delete_file', tool_call_id=IsStr())])
     )
+
+
+async def test_message_history():
+    def llm(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('ok here is text')])
+
+    agent = Agent(FunctionModel(llm))
+
+    async with agent.iter(
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ],
+    ) as run:
+        async for _ in run:
+            pass
+        assert run.new_messages() == snapshot(
+            [
+                ModelResponse(
+                    parts=[TextPart(content='ok here is text')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='function:llm:',
+                    timestamp=IsDatetime(),
+                ),
+            ]
+        )
+        assert run.new_messages_json().startswith(b'[{"parts":[{"content":"ok here is text",')
+        assert run.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Hello',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='ok here is text')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='function:llm:',
+                    timestamp=IsDatetime(),
+                ),
+            ]
+        )
+        assert run.all_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
