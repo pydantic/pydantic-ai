@@ -94,7 +94,8 @@ async def main():
                         content='Tell me a joke.',
                         timestamp=datetime.datetime(...),
                     ),
-                ]
+                ],
+                run_id='...',
             )
         ]
         """
