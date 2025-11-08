@@ -77,6 +77,10 @@ try:
     )
     from mistralai.models.assistantmessage import AssistantMessage as MistralAssistantMessage
     from mistralai.models.function import Function as MistralFunction
+    from mistralai.models.prediction import (
+        Prediction as MistralPrediction,
+        PredictionTypedDict as MistralPredictionTypedDict,
+    )
     from mistralai.models.systemmessage import SystemMessage as MistralSystemMessage
     from mistralai.models.toolmessage import ToolMessage as MistralToolMessage
     from mistralai.models.usermessage import UserMessage as MistralUserMessage
@@ -114,8 +118,13 @@ class MistralModelSettings(ModelSettings, total=False):
     """Settings used for a Mistral model request."""
 
     # ALL FIELDS MUST BE `mistral_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    mistral_prediction: str | MistralPrediction | MistralPredictionTypedDict | None
+    """Prediction content for the model to use as a prefix. See Predictive outputs.
 
-    # This class is a placeholder for any future mistral-specific settings
+    This feature is currently only supported for certain Mistral models. See the model cards at Models.
+    For example, it is supported for the latest Mistral Serie Large (> 2), Medium (> 3), Small (> 3) and Pixtral models,
+    but not for reasoning or coding models yet.
+    """
 
 
 @dataclass(init=False)
@@ -241,6 +250,7 @@ class MistralModel(Model):
                 timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
                 random_seed=model_settings.get('seed', UNSET),
                 stop=model_settings.get('stop_sequences', None),
+                prediction=self._map_setting_prediction(model_settings.get('mistral_prediction', None)),
                 http_headers={'User-Agent': get_user_agent()},
             )
         except SDKError as e:
@@ -281,6 +291,7 @@ class MistralModel(Model):
                 presence_penalty=model_settings.get('presence_penalty'),
                 frequency_penalty=model_settings.get('frequency_penalty'),
                 stop=model_settings.get('stop_sequences', None),
+                prediction=self._map_setting_prediction(model_settings.get('mistral_prediction', None)),
                 http_headers={'User-Agent': get_user_agent()},
             )
 
@@ -298,6 +309,7 @@ class MistralModel(Model):
                     'type': 'json_object'
                 },  # TODO: Should be able to use json_schema now: https://docs.mistral.ai/capabilities/structured-output/custom_structured_output/, https://github.com/mistralai/client-python/blob/bc4adf335968c8a272e1ab7da8461c9943d8e701/src/mistralai/extra/utils/response_format.py#L9
                 stream=True,
+                prediction=self._map_setting_prediction(model_settings.get('mistral_prediction', None)),
                 http_headers={'User-Agent': get_user_agent()},
             )
 
@@ -307,6 +319,7 @@ class MistralModel(Model):
                 model=str(self._model_name),
                 messages=mistral_messages,
                 stream=True,
+                prediction=self._map_setting_prediction(model_settings.get('mistral_prediction', None)),
                 http_headers={'User-Agent': get_user_agent()},
             )
         assert response, 'A unexpected empty response from Mistral.'
@@ -426,6 +439,24 @@ class MistralModel(Model):
             type='function',
             function=MistralFunctionCall(name=t.tool_name, arguments=t.args or {}),
         )
+
+    @staticmethod
+    def _map_setting_prediction(
+        prediction: str | MistralPredictionTypedDict | MistralPrediction | None,
+    ) -> MistralPrediction | None:
+        """Maps various prediction input types to a MistralPrediction object."""
+        if not prediction:
+            return None
+        if isinstance(prediction, MistralPrediction):
+            return prediction
+        elif isinstance(prediction, str):
+            return MistralPrediction(content=prediction)
+        elif isinstance(prediction, dict):
+            return MistralPrediction.model_validate(prediction)
+        else:
+            raise RuntimeError(
+                f'Unsupported prediction type: {type(prediction)} for MistralModelSettings. Expected str, dict, or MistralPrediction.'
+            )
 
     def _generate_user_output_format(self, schemas: list[dict[str, Any]]) -> MistralUserMessage:
         """Get a message with an example of the expected output format."""
