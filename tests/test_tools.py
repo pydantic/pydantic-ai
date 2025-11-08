@@ -1579,7 +1579,8 @@ def test_parallel_tool_return_with_deferred():
                         content='The price of pear is 10.0.',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr()
             ),
         ]
     )
@@ -1671,7 +1672,8 @@ def test_parallel_tool_return_with_deferred():
                         content='The price of pear is 10.0.',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr()
             ),
             ModelRequest(
                 parts=[
@@ -1938,7 +1940,8 @@ async def test_approval_required_toolset():
                         tool_call_id='bar',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr()
             ),
         ]
     )
@@ -1990,7 +1993,8 @@ async def test_approval_required_toolset():
                         tool_call_id='bar',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr()
             ),
             ModelRequest(
                 parts=[

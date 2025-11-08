@@ -219,7 +219,8 @@ def test_result_pydantic_model_retry():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -344,7 +345,8 @@ def test_output_validator():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -488,7 +490,8 @@ def test_plain_response_then_tuple():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -499,7 +502,8 @@ def test_plain_response_then_tuple():
                 ToolReturnPart(
                     tool_name='final_result', content='foobar', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
                 )
-            ]
+            ],
+            run_id=IsStr(),
         )
     )
     assert result.all_messages()[-1] == snapshot(
@@ -511,7 +515,8 @@ def test_plain_response_then_tuple():
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 )
-            ]
+            ],
+            run_id=IsStr(),
         )
     )
 
@@ -1084,7 +1089,8 @@ def test_output_type_function_with_retry():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr()
             ),
         ]
     )
@@ -1394,7 +1400,8 @@ def test_output_type_handoff_to_agent():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr()
             ),
         ]
     )
@@ -1431,7 +1438,8 @@ def test_output_type_handoff_to_agent():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr()
             ),
         ]
     )
@@ -2250,7 +2258,8 @@ def test_run_with_history_new_structured():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr()
             ),
         ]
     )
@@ -2296,6 +2305,7 @@ def test_run_with_history_new_structured():
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ],
+                run_id=IsStr()
             ),
             # second call, notice no repeated system prompt
             ModelRequest(
@@ -2319,7 +2329,8 @@ def test_run_with_history_new_structured():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     ),
-                ]
+                ],
+                run_id=IsStr()
             ),
         ]
     )
@@ -3079,7 +3090,8 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
-                    ]
+                    ],
+                    run_id=IsStr()
                 ),
             ]
         )
@@ -3186,7 +3198,8 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
-                    ]
+                    ],
+                    run_id=IsStr()
                 ),
             ]
         )
@@ -4932,7 +4945,8 @@ def test_prepare_output_tools():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr()
             ),
         ]
     )
@@ -5299,7 +5313,8 @@ async def test_hitl_tool_approval():
                         tool_call_id='create_file',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr()
             ),
         ]
     )
@@ -5356,7 +5371,8 @@ async def test_hitl_tool_approval():
                         tool_call_id='create_file',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr()
             ),
             ModelRequest(
                 parts=[
@@ -5934,7 +5950,8 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                         tool_call_id='pyd_ai_tool_call_id__final_result',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr()
             ),
         ]
     )
@@ -5991,7 +6008,8 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                         tool_call_id='pyd_ai_tool_call_id__final_result',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr()
             ),
         ]
     )
