@@ -81,10 +81,10 @@ Markdown.elements.update(
     heading_open=LeftHeading,
 )
 
-_DEFAULT_CLI_MODEL = 'openai:gpt-4.1'
+_DEFAULT_CLI_MODEL = 'openai:gpt-5'
 _MODEL_OPTION_HELP_TEMPLATE = (
-    'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4.1" or '
-    '"anthropic:claude-sonnet-4-0". Defaults to "{default_model}".'
+    'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or '
+    '"anthropic:claude-sonnet-4-5". Defaults to "{default_model}".'
 )
 _CLI_CONTEXT_DEFAULTS_KEY = 'default_model'
 
