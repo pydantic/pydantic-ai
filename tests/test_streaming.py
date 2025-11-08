@@ -132,6 +132,7 @@ async def test_streamed_text_response():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -232,6 +233,7 @@ def test_streamed_text_sync_response():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -407,6 +409,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsDatetime(),
                     provider_name='test',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -520,6 +523,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -641,6 +645,7 @@ async def test_call_tool():
                     usage=RequestUsage(input_tokens=50, output_tokens=7),
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -697,6 +702,7 @@ async def test_empty_response():
                 usage=RequestUsage(input_tokens=50, output_tokens=4),
                 model_name='function::stream_structured_function',
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -792,6 +798,7 @@ async def test_early_strategy_stops_after_first_final_result():
                 usage=RequestUsage(input_tokens=50, output_tokens=10),
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -850,6 +857,7 @@ async def test_early_strategy_uses_first_final_result():
                 usage=RequestUsage(input_tokens=50, output_tokens=8),
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -921,6 +929,7 @@ async def test_exhaustive_strategy_executes_all_tools():
                 usage=RequestUsage(input_tokens=50, output_tokens=18),
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1032,6 +1041,7 @@ async def test_early_strategy_with_final_result_in_middle():
                 usage=RequestUsage(input_tokens=50, output_tokens=14),
                 model_name='function::sf',
                 timestamp=IsNow(tz=datetime.timezone.utc),
+                run_id=IsStr(),
                 kind='response',
             ),
             ModelRequest(
@@ -1151,6 +1161,7 @@ async def test_early_strategy_with_external_tool_call():
                 usage=RequestUsage(input_tokens=50, output_tokens=7),
                 model_name='function::sf',
                 timestamp=IsNow(tz=datetime.timezone.utc),
+                run_id=IsStr(),
                 kind='response',
             ),
             ModelRequest(
@@ -1303,6 +1314,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1787,6 +1799,7 @@ async def test_tool_raises_approval_required():
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::llm',
                     timestamp=IsDatetime(),
+                    run_id=IsStr(),
                 ),
             ]
         )

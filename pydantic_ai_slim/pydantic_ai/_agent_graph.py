@@ -778,6 +778,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         if ctx.deps.instrumentation_settings
         else DEFAULT_INSTRUMENTATION_VERSION,
         run_step=ctx.state.run_step,
+        run_id=ctx.state.run_id
     )
 
 
