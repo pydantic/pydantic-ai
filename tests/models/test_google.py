@@ -2046,7 +2046,8 @@ async def test_google_url_input(
                         content=['What is the main content of this URL?', Is(url)],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(expected_output))],
@@ -2057,6 +2058,7 @@ async def test_google_url_input(
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2086,7 +2088,8 @@ async def test_google_url_input_force_download(
                         content=['What is the main content of this URL?', Is(video_url)],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(output))],
@@ -2097,6 +2100,7 @@ async def test_google_url_input_force_download(
                 provider_response_id=IsStr(),
                 provider_name='google-vertex',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
