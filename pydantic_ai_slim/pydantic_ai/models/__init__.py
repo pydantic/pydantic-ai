@@ -569,7 +569,17 @@ class StreamedResponse(ABC):
                         next_part_kind=next_part.part_kind if next_part else None,
                     )
 
-                async for event in iterator:
+                async def chain_async_and_sync_iters(
+                    iter1: AsyncIterator[ModelResponseStreamEvent], iter2: Iterator[ModelResponseStreamEvent]
+                ) -> AsyncIterator[ModelResponseStreamEvent]:
+                    async for event in iter1:
+                        yield event
+                    for event in (
+                        iter2
+                    ):  # pragma: no cover - loop never started - flush_buffer() seems to be being called before
+                        yield event
+
+                async for event in chain_async_and_sync_iters(iterator, self._parts_manager.flush_buffer()):
                     if isinstance(event, PartStartEvent):
                         if last_start_event:
                             end_event = part_end_event(event.part)
@@ -580,16 +590,6 @@ class StreamedResponse(ABC):
                         last_start_event = event
 
                     yield event
-
-                # Flush any buffered content and stream finalize events
-                for finalize_event in self._parts_manager.finalize():  # pragma: no cover
-                    if isinstance(finalize_event, PartStartEvent):
-                        if last_start_event:
-                            end_event = part_end_event(finalize_event.part)
-                            if end_event:
-                                yield end_event
-                        last_start_event = finalize_event
-                    yield finalize_event
 
                 end_event = part_end_event()
                 if end_event:
@@ -616,7 +616,7 @@ class StreamedResponse(ABC):
         # Flush any buffered content before building response
         # clone parts manager to avoid modifying the ongoing stream state
         cloned_manager = copy.deepcopy(self._parts_manager)
-        for _ in cloned_manager.finalize():
+        for _ in cloned_manager.flush_buffer():
             pass
 
         return ModelResponse(
