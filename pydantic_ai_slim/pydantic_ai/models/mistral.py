@@ -122,8 +122,7 @@ class MistralModelSettings(ModelSettings, total=False):
     """Prediction content for the model to use as a prefix. See Predictive outputs.
 
     This feature is currently only supported for certain Mistral models. See the model cards at Models.
-    For example, it is supported for the latest Mistral Serie Large (> 2), Medium (> 3), Small (> 3) and Pixtral models,
-    but not for reasoning or coding models yet.
+    As of now, codestral-latest and mistral-large-2411 support [predicted outputs](https://docs.mistral.ai/capabilities/predicted_outputs). 
     """
 
 

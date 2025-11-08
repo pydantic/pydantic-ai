@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '246'
+      - '315'
       content-type:
       - application/json
       host:
@@ -17,13 +17,16 @@ interactions:
     parsed_body:
       messages:
       - content:
-        - text: Correct only the math, respond with no explanation, no formatting.
+        - text: Correct the math, keep everything else. No explanation, no formatting.
           type: text
         - text: The result of 21+21=99
           type: text
         role: user
-      model: mistral-small-latest
+      model: mistral-large-2411
       n: 1
+      prediction:
+        content: The result of 21+21=99
+        type: content
       stream: false
       top_p: 1.0
     uri: https://api.mistral.ai/v1/chat/completions
@@ -36,11 +39,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '321'
+      - '319'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019a639b-7bf4-7481-96af-078cd1a7d277
+      - 019a63b7-40ba-70cb-94d0-84f036d7c76f
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -53,14 +56,14 @@ interactions:
           content: The result of 21+21=42
           role: assistant
           tool_calls: null
-      created: 1762607725
-      id: a7952046ef794d1697627b54231df17a
-      model: mistral-small-latest
+      created: 1762609545
+      id: 6c36e8b6c3c145bd8ada32f9bd0f6be9
+      model: mistral-large-2411
       object: chat.completion
       usage:
         completion_tokens: 13
-        prompt_tokens: 28
-        total_tokens: 41
+        prompt_tokens: 33
+        total_tokens: 46
     status:
       code: 200
       message: OK
