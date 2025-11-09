@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import base64
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 from uuid import uuid4
@@ -37,7 +37,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfileSpec
-from ..providers import Provider
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -85,8 +85,6 @@ try:
         UrlContextDict,
         VideoMetadataDict,
     )
-
-    from ..providers.google import GoogleProvider
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google model, '
@@ -128,6 +126,8 @@ _FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
     GoogleFinishReason.MALFORMED_FUNCTION_CALL: 'error',
     GoogleFinishReason.IMAGE_SAFETY: 'content_filter',
     GoogleFinishReason.UNEXPECTED_TOOL_CALL: 'error',
+    GoogleFinishReason.IMAGE_PROHIBITED_CONTENT: 'content_filter',
+    GoogleFinishReason.NO_IMAGE: 'error',
 }
 
 
@@ -187,7 +187,7 @@ class GoogleModel(Model):
         self,
         model_name: GoogleModelName,
         *,
-        provider: Literal['google-gla', 'google-vertex'] | Provider[Client] = 'google-gla',
+        provider: Literal['google-gla', 'google-vertex', 'gateway'] | Provider[Client] = 'google-gla',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -196,15 +196,15 @@ class GoogleModel(Model):
         Args:
             model_name: The name of the model to use.
             provider: The provider to use for authentication and API access. Can be either the string
-                'google-gla' or 'google-vertex' or an instance of `Provider[httpx.AsyncClient]`.
-                If not provided, a new provider will be created using the other parameters.
+                'google-gla' or 'google-vertex' or an instance of `Provider[google.genai.AsyncClient]`.
+                Defaults to 'google-gla'.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: The model settings to use. Defaults to None.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = GoogleProvider(vertexai=provider == 'google-vertex')
+            provider = infer_provider('gateway/google-vertex' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
@@ -223,6 +223,18 @@ class GoogleModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    def prepare_request(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        if model_request_parameters.builtin_tools and model_request_parameters.output_tools:
+            if model_request_parameters.output_mode == 'auto':
+                model_request_parameters = replace(model_request_parameters, output_mode='prompted')
+            else:
+                raise UserError(
+                    'Google does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+                )
+        return super().prepare_request(model_settings, model_request_parameters)
 
     async def request(
         self,
@@ -320,12 +332,8 @@ class GoogleModel(Model):
         ]
 
         if model_request_parameters.builtin_tools:
-            if model_request_parameters.output_tools:
-                raise UserError(
-                    'Gemini does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
-                )
             if model_request_parameters.function_tools:
-                raise UserError('Gemini does not support user tools and built-in tools at the same time.')
+                raise UserError('Google does not support function tools and built-in tools at the same time.')
 
             for tool in model_request_parameters.builtin_tools:
                 if isinstance(tool, WebSearchTool):
@@ -402,7 +410,7 @@ class GoogleModel(Model):
         if model_request_parameters.output_mode == 'native':
             if tools:
                 raise UserError(
-                    'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+                    'Google does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
                 )
             response_mime_type = 'application/json'
             output_object = model_request_parameters.output_object
@@ -414,7 +422,7 @@ class GoogleModel(Model):
             response_mime_type = 'application/json'
 
         tool_config = self._get_tool_config(model_request_parameters, tools)
-        system_instruction, contents = await self._map_messages(messages)
+        system_instruction, contents = await self._map_messages(messages, model_request_parameters)
 
         modalities = [Modality.TEXT.value]
         if self.profile.supports_image_output:
@@ -455,22 +463,25 @@ class GoogleModel(Model):
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
         if not response.candidates:
             raise UnexpectedModelBehavior('Expected at least one candidate in Gemini response')  # pragma: no cover
+
         candidate = response.candidates[0]
-        if candidate.content is None or candidate.content.parts is None:
-            if candidate.finish_reason == 'SAFETY':
-                raise UnexpectedModelBehavior('Safety settings triggered', str(response))
-            else:
-                raise UnexpectedModelBehavior(
-                    'Content field missing from Gemini response', str(response)
-                )  # pragma: no cover
-        parts = candidate.content.parts or []
 
         vendor_id = response.response_id
         vendor_details: dict[str, Any] | None = None
         finish_reason: FinishReason | None = None
-        if raw_finish_reason := candidate.finish_reason:  # pragma: no branch
+        raw_finish_reason = candidate.finish_reason
+        if raw_finish_reason:  # pragma: no branch
             vendor_details = {'finish_reason': raw_finish_reason.value}
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
+        if candidate.content is None or candidate.content.parts is None:
+            if finish_reason == 'content_filter' and raw_finish_reason:
+                raise UnexpectedModelBehavior(
+                    f'Content filter {raw_finish_reason.value!r} triggered', response.model_dump_json()
+                )
+            parts = []  # pragma: no cover
+        else:
+            parts = candidate.content.parts or []
 
         usage = _metadata_as_usage(response)
         return _process_response_from_parts(
@@ -501,7 +512,9 @@ class GoogleModel(Model):
             _provider_name=self._provider.name,
         )
 
-    async def _map_messages(self, messages: list[ModelMessage]) -> tuple[ContentDict | None, list[ContentUnionDict]]:
+    async def _map_messages(
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
 
@@ -548,7 +561,7 @@ class GoogleModel(Model):
                 contents.append(_content_model_response(m, self.system))
             else:
                 assert_never(m)
-        if instructions := self._get_instructions(messages):
+        if instructions := self._get_instructions(messages, model_request_parameters):
             system_parts.insert(0, {'text': instructions})
         system_instruction = ContentDict(role='user', parts=system_parts) if system_parts else None
         return system_instruction, contents
@@ -625,7 +638,8 @@ class GeminiStreamedResponse(StreamedResponse):
             if chunk.response_id:  # pragma: no branch
                 self.provider_response_id = chunk.response_id
 
-            if raw_finish_reason := candidate.finish_reason:
+            raw_finish_reason = candidate.finish_reason
+            if raw_finish_reason:
                 self.provider_details = {'finish_reason': raw_finish_reason.value}
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
@@ -643,13 +657,12 @@ class GeminiStreamedResponse(StreamedResponse):
             #     )
 
             if candidate.content is None or candidate.content.parts is None:
-                if candidate.finish_reason == 'STOP':  # pragma: no cover
-                    # Normal completion - skip this chunk
-                    continue
-                elif candidate.finish_reason == 'SAFETY':  # pragma: no cover
-                    raise UnexpectedModelBehavior('Safety settings triggered', str(chunk))
+                if self.finish_reason == 'content_filter' and raw_finish_reason:  # pragma: no cover
+                    raise UnexpectedModelBehavior(
+                        f'Content filter {raw_finish_reason.value!r} triggered', chunk.model_dump_json()
+                    )
                 else:  # pragma: no cover
-                    raise UnexpectedModelBehavior('Content field missing from streaming Gemini response', str(chunk))
+                    continue
 
             parts = candidate.content.parts
             if not parts:
@@ -664,7 +677,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         provider_name=self.provider_name,
                     )
 
-                if part.text is not None:
+                if part.text:
                     if part.thought:
                         yield self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=part.text)
                     else:
@@ -809,7 +822,7 @@ def _process_response_from_parts(
         elif part.code_execution_result is not None:
             assert code_execution_tool_call_id is not None
             item = _map_code_execution_result(part.code_execution_result, provider_name, code_execution_tool_call_id)
-        elif part.text is not None:
+        elif part.text:
             if part.thought:
                 item = ThinkingPart(content=part.text)
             else:

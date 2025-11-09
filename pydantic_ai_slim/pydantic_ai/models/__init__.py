@@ -21,12 +21,13 @@ from typing_extensions import TypeAliasType, TypedDict
 
 from .. import _utils
 from .._json_schema import JsonSchemaTransformer
-from .._output import OutputObjectDefinition
+from .._output import OutputObjectDefinition, PromptedOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from ..builtin_tools import AbstractBuiltinTool
 from ..exceptions import UserError
 from ..messages import (
+    BaseToolCallPart,
     BinaryImage,
     FilePart,
     FileUrl,
@@ -35,14 +36,18 @@ from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     ModelResponseStreamEvent,
+    PartEndEvent,
     PartStartEvent,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     VideoUrl,
 )
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
+from ..providers import infer_provider
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -314,12 +319,19 @@ class ModelRequestParameters:
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list)
+    prompted_output_template: str | None = None
     allow_text_output: bool = True
     allow_image_output: bool = False
 
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
+
+    @cached_property
+    def prompted_output_instructions(self) -> str | None:
+        if self.output_mode == 'prompted' and self.prompted_output_template and self.output_object:
+            return PromptedOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
+        return None
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -413,15 +425,52 @@ class Model(ABC):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         """Prepare request inputs before they are passed to the provider.
 
-        This merges the given ``model_settings`` with the model's own ``settings`` attribute and ensures
-        ``customize_request_parameters`` is applied to the resolved
+        This merges the given `model_settings` with the model's own `settings` attribute and ensures
+        `customize_request_parameters` is applied to the resolved
         [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters]. Subclasses can override this method if
         they need to customize the preparation flow further, but most implementations should simply call
-        ``self.prepare_request(...)`` at the start of their ``request`` (and related) methods.
+        `self.prepare_request(...)` at the start of their `request` (and related) methods.
         """
-        merged_settings = merge_model_settings(self.settings, model_settings)
-        customized_parameters = self.customize_request_parameters(model_request_parameters)
-        return merged_settings, customized_parameters
+        model_settings = merge_model_settings(self.settings, model_settings)
+
+        params = self.customize_request_parameters(model_request_parameters)
+
+        if builtin_tools := params.builtin_tools:
+            # Deduplicate builtin tools
+            params = replace(
+                params,
+                builtin_tools=list({tool.unique_id: tool for tool in builtin_tools}.values()),
+            )
+
+        if params.output_mode == 'auto':
+            output_mode = self.profile.default_structured_output_mode
+            params = replace(
+                params,
+                output_mode=output_mode,
+                allow_text_output=output_mode in ('native', 'prompted'),
+            )
+
+        # Reset irrelevant fields
+        if params.output_tools and params.output_mode != 'tool':
+            params = replace(params, output_tools=[])
+        if params.output_object and params.output_mode not in ('native', 'prompted'):
+            params = replace(params, output_object=None)
+        if params.prompted_output_template and params.output_mode != 'prompted':
+            params = replace(params, prompted_output_template=None)  # pragma: no cover
+
+        # Set default prompted output template
+        if params.output_mode == 'prompted' and not params.prompted_output_template:
+            params = replace(params, prompted_output_template=self.profile.prompted_output_template)
+
+        # Check if output mode is supported
+        if params.output_mode == 'native' and not self.profile.supports_json_schema_output:
+            raise UserError('Native structured output is not supported by this model.')
+        if params.output_mode == 'tool' and not self.profile.supports_tools:
+            raise UserError('Tool output is not supported by this model.')
+        if params.allow_image_output and not self.profile.supports_image_output:
+            raise UserError('Image output is not supported by this model.')
+
+        return model_settings, params
 
     @property
     @abstractmethod
@@ -459,13 +508,17 @@ class Model(ABC):
         return None
 
     @staticmethod
-    def _get_instructions(messages: list[ModelMessage]) -> str | None:
+    def _get_instructions(
+        messages: list[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
+    ) -> str | None:
         """Get instructions from the first ModelRequest found when iterating messages in reverse.
 
         In the case that a "mock" request was generated to include a tool-return part for a result tool,
         we want to use the instructions from the second-to-most-recent request (which should correspond to the
         original request that generated the response that resulted in the tool-return part).
         """
+        instructions = None
+
         last_two_requests: list[ModelRequest] = []
         for message in reversed(messages):
             if isinstance(message, ModelRequest):
@@ -473,33 +526,38 @@ class Model(ABC):
                 if len(last_two_requests) == 2:
                     break
                 if message.instructions is not None:
-                    return message.instructions
+                    instructions = message.instructions
+                    break
 
         # If we don't have two requests, and we didn't already return instructions, there are definitely not any:
-        if len(last_two_requests) != 2:
-            return None
+        if instructions is None and len(last_two_requests) == 2:
+            most_recent_request = last_two_requests[0]
+            second_most_recent_request = last_two_requests[1]
 
-        most_recent_request = last_two_requests[0]
-        second_most_recent_request = last_two_requests[1]
+            # If we've gotten this far and the most recent request consists of only tool-return parts or retry-prompt parts,
+            # we use the instructions from the second-to-most-recent request. This is necessary because when handling
+            # result tools, we generate a "mock" ModelRequest with a tool-return part for it, and that ModelRequest will not
+            # have the relevant instructions from the agent.
 
-        # If we've gotten this far and the most recent request consists of only tool-return parts or retry-prompt parts,
-        # we use the instructions from the second-to-most-recent request. This is necessary because when handling
-        # result tools, we generate a "mock" ModelRequest with a tool-return part for it, and that ModelRequest will not
-        # have the relevant instructions from the agent.
+            # While it's possible that you could have a message history where the most recent request has only tool returns,
+            # I believe there is no way to achieve that would _change_ the instructions without manually crafting the most
+            # recent message. That might make sense in principle for some usage pattern, but it's enough of an edge case
+            # that I think it's not worth worrying about, since you can work around this by inserting another ModelRequest
+            # with no parts at all immediately before the request that has the tool calls (that works because we only look
+            # at the two most recent ModelRequests here).
 
-        # While it's possible that you could have a message history where the most recent request has only tool returns,
-        # I believe there is no way to achieve that would _change_ the instructions without manually crafting the most
-        # recent message. That might make sense in principle for some usage pattern, but it's enough of an edge case
-        # that I think it's not worth worrying about, since you can work around this by inserting another ModelRequest
-        # with no parts at all immediately before the request that has the tool calls (that works because we only look
-        # at the two most recent ModelRequests here).
+            # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
 
-        # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
+            if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
+                instructions = second_most_recent_request.instructions
 
-        if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
-            return second_most_recent_request.instructions
+        if model_request_parameters and (output_instructions := model_request_parameters.prompted_output_instructions):
+            if instructions:
+                instructions = '\n\n'.join([instructions, output_instructions])
+            else:
+                instructions = output_instructions
 
-        return None
+        return instructions
 
 
 @dataclass
@@ -544,7 +602,44 @@ class StreamedResponse(ABC):
                 async for event in iterator:
                     yield event
 
-            self._event_iterator = iterator_with_final_event(self._get_event_iterator())
+            async def iterator_with_part_end(
+                iterator: AsyncIterator[ModelResponseStreamEvent],
+            ) -> AsyncIterator[ModelResponseStreamEvent]:
+                last_start_event: PartStartEvent | None = None
+
+                def part_end_event(next_part: ModelResponsePart | None = None) -> PartEndEvent | None:
+                    if not last_start_event:
+                        return None
+
+                    index = last_start_event.index
+                    part = self._parts_manager.get_parts()[index]
+                    if not isinstance(part, TextPart | ThinkingPart | BaseToolCallPart):
+                        # Parts other than these 3 don't have deltas, so don't need an end part.
+                        return None
+
+                    return PartEndEvent(
+                        index=index,
+                        part=part,
+                        next_part_kind=next_part.part_kind if next_part else None,
+                    )
+
+                async for event in iterator:
+                    if isinstance(event, PartStartEvent):
+                        if last_start_event:
+                            end_event = part_end_event(event.part)
+                            if end_event:
+                                yield end_event
+
+                            event.previous_part_kind = last_start_event.part.part_kind
+                        last_start_event = event
+
+                    yield event
+
+                end_event = part_end_event()
+                if end_event:
+                    yield end_event
+
+            self._event_iterator = iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
         return self._event_iterator
 
     @abstractmethod
@@ -647,41 +742,39 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         return TestModel()
 
     try:
-        provider, model_name = model.split(':', maxsplit=1)
+        provider_name, model_name = model.split(':', maxsplit=1)
     except ValueError:
-        provider = None
+        provider_name = None
         model_name = model
         if model_name.startswith(('gpt', 'o1', 'o3')):
-            provider = 'openai'
+            provider_name = 'openai'
         elif model_name.startswith('claude'):
-            provider = 'anthropic'
+            provider_name = 'anthropic'
         elif model_name.startswith('gemini'):
-            provider = 'google-gla'
+            provider_name = 'google-gla'
 
-        if provider is not None:
+        if provider_name is not None:
             warnings.warn(
-                f"Specifying a model name without a provider prefix is deprecated. Instead of {model_name!r}, use '{provider}:{model_name}'.",
+                f"Specifying a model name without a provider prefix is deprecated. Instead of {model_name!r}, use '{provider_name}:{model_name}'.",
                 DeprecationWarning,
             )
         else:
             raise UserError(f'Unknown model: {model}')
 
-    if provider == 'vertexai':  # pragma: no cover
+    if provider_name == 'vertexai':  # pragma: no cover
         warnings.warn(
             "The 'vertexai' provider name is deprecated. Use 'google-vertex' instead.",
             DeprecationWarning,
         )
-        provider = 'google-vertex'
+        provider_name = 'google-vertex'
 
-    if provider == 'gateway':
-        from ..providers.gateway import infer_model as infer_model_from_gateway
+    provider = infer_provider(provider_name)
 
-        return infer_model_from_gateway(model_name)
-    elif provider == 'cohere':
-        from .cohere import CohereModel
-
-        return CohereModel(model_name, provider=provider)
-    elif provider in (
+    model_kind = provider_name
+    if model_kind.startswith('gateway/'):
+        model_kind = provider_name.removeprefix('gateway/')
+    if model_kind in (
+        'openai',
         'azure',
         'deepseek',
         'cerebras',
@@ -692,42 +785,50 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         'heroku',
         'moonshotai',
         'ollama',
-        'openai',
-        'openai-chat',
         'openrouter',
         'together',
         'vercel',
         'litellm',
         'nebius',
+        'ovhcloud',
     ):
+        model_kind = 'openai-chat'
+    elif model_kind in ('google-gla', 'google-vertex'):
+        model_kind = 'google'
+
+    if model_kind == 'openai-chat':
         from .openai import OpenAIChatModel
 
         return OpenAIChatModel(model_name, provider=provider)
-    elif provider == 'openai-responses':
+    elif model_kind == 'openai-responses':
         from .openai import OpenAIResponsesModel
 
-        return OpenAIResponsesModel(model_name, provider='openai')
-    elif provider in ('google-gla', 'google-vertex'):
+        return OpenAIResponsesModel(model_name, provider=provider)
+    elif model_kind == 'google':
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)
-    elif provider == 'groq':
+    elif model_kind == 'groq':
         from .groq import GroqModel
 
         return GroqModel(model_name, provider=provider)
-    elif provider == 'mistral':
+    elif model_kind == 'cohere':
+        from .cohere import CohereModel
+
+        return CohereModel(model_name, provider=provider)
+    elif model_kind == 'mistral':
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
-    elif provider == 'anthropic':
+    elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 
         return AnthropicModel(model_name, provider=provider)
-    elif provider == 'bedrock':
+    elif model_kind == 'bedrock':
         from .bedrock import BedrockConverseModel
 
         return BedrockConverseModel(model_name, provider=provider)
-    elif provider == 'huggingface':
+    elif model_kind == 'huggingface':
         from .huggingface import HuggingFaceModel
 
         return HuggingFaceModel(model_name, provider=provider)

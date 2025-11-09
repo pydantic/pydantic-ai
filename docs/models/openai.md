@@ -674,7 +674,7 @@ You can set the `HEROKU_INFERENCE_KEY` and (optionally )`HEROKU_INFERENCE_URL` e
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('heroku:claude-3-7-sonnet')
+agent = Agent('heroku:claude-sonnet-4-5')
 ...
 ```
 
@@ -686,7 +686,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.heroku import HerokuProvider
 
 model = OpenAIChatModel(
-    'claude-3-7-sonnet',
+    'claude-sonnet-4-5',
     provider=HerokuProvider(api_key='your-heroku-inference-key'),
 )
 agent = Agent(model)
@@ -740,7 +740,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.litellm import LiteLLMProvider
 
 model = OpenAIChatModel(
-    'openai/gpt-3.5-turbo',
+    'openai/gpt-5',
     provider=LiteLLMProvider(
         api_base='<api-base-url>',
         api_key='<api-key>'
@@ -779,6 +779,40 @@ from pydantic_ai.providers.nebius import NebiusProvider
 model = OpenAIChatModel(
     'Qwen/Qwen3-32B-fast',
     provider=NebiusProvider(api_key='your-nebius-api-key'),
+)
+agent = Agent(model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+### OVHcloud AI Endpoints
+
+To use OVHcloud AI Endpoints, you need to create a new API key. To do so, go to the [OVHcloud manager](https://ovh.com/manager), then in Public Cloud > AI Endpoints > API keys. Click on `Create a new API key` and copy your new key.
+
+You can explore the [catalog](https://endpoints.ai.cloud.ovh.net/catalog) to find which models are available.
+
+You can set the `OVHCLOUD_API_KEY` environment variable and use [`OVHcloudProvider`][pydantic_ai.providers.ovhcloud.OVHcloudProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('ovhcloud:gpt-oss-120b')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+If you need to configure the provider, you can use the [`OVHcloudProvider`][pydantic_ai.providers.ovhcloud.OVHcloudProvider] class:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.ovhcloud import OVHcloudProvider
+
+model = OpenAIChatModel(
+    'gpt-oss-120b',
+    provider=OVHcloudProvider(api_key='your-api-key'),
 )
 agent = Agent(model)
 result = agent.run_sync('What is the capital of France?')

@@ -44,6 +44,13 @@ class OpenAIModelProfile(ModelProfile):
     openai_supports_encrypted_reasoning_content: bool = False
     """Whether the model supports including encrypted reasoning content in the response."""
 
+    openai_responses_requires_function_call_status_none: bool = False
+    """Whether the Responses API requires the `status` field on function tool calls to be `None`.
+
+    This is required by vLLM Responses API versions before https://github.com/vllm-project/vllm/pull/26706.
+    See https://github.com/pydantic/pydantic-ai/issues/3245 for more details.
+    """
+
     def __post_init__(self):  # pragma: no cover
         if not self.openai_supports_sampling_settings:
             warnings.warn(
@@ -55,7 +62,10 @@ class OpenAIModelProfile(ModelProfile):
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
-    is_reasoning_model = model_name.startswith('o') or model_name.startswith('gpt-5')
+    is_gpt_5 = model_name.startswith('gpt-5')
+    is_o_series = model_name.startswith('o')
+    is_reasoning_model = is_o_series or (is_gpt_5 and 'gpt-5-chat' not in model_name)
+
     # Check if the model supports web search (only specific search-preview models)
     supports_web_search = '-search-preview' in model_name
 
@@ -84,7 +94,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         json_schema_transformer=OpenAIJsonSchemaTransformer,
         supports_json_schema_output=True,
         supports_json_object_output=True,
-        supports_image_output=is_reasoning_model or '4.1' in model_name or '4o' in model_name,
+        supports_image_output=is_gpt_5 or 'o3' in model_name or '4.1' in model_name or '4o' in model_name,
         openai_unsupported_model_settings=openai_unsupported_model_settings,
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,
