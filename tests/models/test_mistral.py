@@ -1719,6 +1719,7 @@ def test_map_setting_prediction_valid(request: pytest.FixtureRequest, input_valu
         assert isinstance(result, MistralPrediction)
         assert result.content == expected_content
 
+
 def test_map_setting_prediction_unsupported_type():
     """Test that _map_setting_prediction raises RuntimeError for unsupported types."""
     with pytest.raises(
