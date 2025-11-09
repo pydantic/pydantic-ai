@@ -510,7 +510,9 @@ class ModelResponsePartsManager:
 
         if existing_part is not None and existing_part.part.content:
             new_part_index = self.append_and_track_new_part(thinking_part, vendor_part_id)
-            if existing_part.part.potential_opening_tag_buffer:
+            if (
+                existing_part.part.potential_opening_tag_buffer
+            ):  # pragma: no cover - this can't happen by the current logic so it's more of a safeguard
                 raise RuntimeError(
                     'The buffer of an existing TextPart should have been flushed before creating a ThinkingPart'
                 )
