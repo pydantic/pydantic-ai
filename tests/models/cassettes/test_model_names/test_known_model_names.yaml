@@ -134,15 +134,19 @@ interactions:
     parsed_body:
       data:
       - created: 0
-        id: qwen-3-32b
+        id: gpt-oss-120b
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: qwen-3-235b-a22b-thinking-2507
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: llama-3.3-70b
         object: model
         owned_by: Cerebras
       - created: 0
         id: qwen-3-235b-a22b-instruct-2507
-        object: model
-        owned_by: Cerebras
-      - created: 0
-        id: gpt-oss-120b
         object: model
         owned_by: Cerebras
       - created: 0
@@ -154,11 +158,7 @@ interactions:
         object: model
         owned_by: Cerebras
       - created: 0
-        id: llama-3.3-70b
-        object: model
-        owned_by: Cerebras
-      - created: 0
-        id: qwen-3-235b-a22b-thinking-2507
+        id: qwen-3-32b
         object: model
         owned_by: Cerebras
       object: list
