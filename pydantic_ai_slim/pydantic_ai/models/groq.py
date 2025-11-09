@@ -272,7 +272,7 @@ class GroqModel(Model):
         else:
             tool_choice = 'auto'
 
-        groq_messages = self._map_messages(messages)
+        groq_messages = self._map_messages(messages, model_request_parameters)
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
@@ -388,7 +388,9 @@ class GroqModel(Model):
                 )
         return tools
 
-    def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
+    def _map_messages(
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
         groq_messages: list[chat.ChatCompletionMessageParam] = []
         for message in messages:
@@ -423,7 +425,7 @@ class GroqModel(Model):
                 groq_messages.append(message_param)
             else:
                 assert_never(message)
-        if instructions := self._get_instructions(messages):
+        if instructions := self._get_instructions(messages, model_request_parameters):
             groq_messages.insert(0, chat.ChatCompletionSystemMessageParam(role='system', content=instructions))
         return groq_messages
 

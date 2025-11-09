@@ -2323,7 +2323,7 @@ async def test_google_native_output_with_tools(allow_model_requests: None, googl
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+            'Google does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
         ),
     ):
         await agent.run('What is the largest city in the user country?')
@@ -2454,14 +2454,7 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
                         content='What is the largest city in Mexico?',
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -2505,14 +2498,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                         content='What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
@@ -2534,14 +2520,7 @@ Don't include any text or Markdown fencing before or after.\
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -2583,14 +2562,7 @@ async def test_google_prompted_output_multiple(allow_model_requests: None, googl
                         content='What is the largest city in Mexico?',
                         timestamp=IsDatetime(),
                     )
-                ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                ]
             ),
             ModelResponse(
                 parts=[
@@ -2713,7 +2685,7 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
 
     with pytest.raises(
         UserError,
-        match=re.escape('Gemini does not support user tools and built-in tools at the same time.'),
+        match=re.escape('Google does not support function tools and built-in tools at the same time.'),
     ):
         await agent.run('What is the largest city in the user country?')
 
@@ -2726,12 +2698,14 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Gemini does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+            'Google does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
         ),
     ):
         await agent.run('What is the largest city in Mexico?')
 
-    agent = Agent(m, output_type=PromptedOutput(CityLocation), builtin_tools=[UrlContextTool()])
+    # Will default to prompted output
+    agent = Agent(m, output_type=CityLocation, builtin_tools=[UrlContextTool()])
+
     result = await agent.run('What is the largest city in Mexico?')
     assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
 
@@ -2844,7 +2818,6 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
             BinaryImage(
                 data=IsBytes(),
                 media_type='image/png',
-                _identifier='9ff9cc',
                 identifier='9ff9cc',
             )
         )
@@ -2952,7 +2925,6 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
-                            _identifier='00f2af',
                             identifier=IsStr(),
                         )
                     ),
@@ -2988,7 +2960,6 @@ async def test_google_image_or_text_output(allow_model_requests: None, google_pr
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
-            _identifier='f82faf',
             identifier='f82faf',
         )
     )
@@ -3007,7 +2978,6 @@ async def test_google_image_and_text_output(allow_model_requests: None, google_p
             BinaryImage(
                 data=IsBytes(),
                 media_type='image/png',
-                _identifier='67b12f',
                 identifier='67b12f',
             )
         ]

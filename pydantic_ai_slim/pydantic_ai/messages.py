@@ -485,7 +485,7 @@ class BinaryContent:
     """
 
     _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
-        compare=False, default=None, repr=False
+        compare=False, default=None
     )
 
     kind: Literal['binary'] = 'binary'
@@ -888,7 +888,10 @@ class RetryPromptPart:
                 description = self.content
         else:
             json_errors = error_details_ta.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
-            description = f'{len(self.content)} validation errors: {json_errors.decode()}'
+            plural = isinstance(self.content, list) and len(self.content) != 1
+            description = (
+                f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
+            )
         return f'{description}\n\nFix the errors and try again.'
 
     def otel_event(self, settings: InstrumentationSettings) -> Event:

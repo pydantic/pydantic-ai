@@ -553,6 +553,7 @@ def test_logfire(
                         'output_mode': 'text',
                         'output_tools': [],
                         'output_object': None,
+                        'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
                     }
@@ -995,6 +996,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'metadata': None,
                             }
                         ],
+                        'prompted_output_template': None,
                         'allow_text_output': False,
                         'allow_image_output': False,
                     }
@@ -1100,6 +1102,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
+                        'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
                     },

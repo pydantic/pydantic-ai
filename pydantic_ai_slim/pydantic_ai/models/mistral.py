@@ -230,7 +230,7 @@ class MistralModel(Model):
         try:
             response = await self.client.chat.complete_async(
                 model=str(self._model_name),
-                messages=self._map_messages(messages),
+                messages=self._map_messages(messages, model_request_parameters),
                 n=1,
                 tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
                 tool_choice=self._get_tool_choice(model_request_parameters),
@@ -259,7 +259,7 @@ class MistralModel(Model):
     ) -> MistralEventStreamAsync[MistralCompletionEvent]:
         """Create a streaming completion request to the Mistral model."""
         response: MistralEventStreamAsync[MistralCompletionEvent] | None
-        mistral_messages = self._map_messages(messages)
+        mistral_messages = self._map_messages(messages, model_request_parameters)
 
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
@@ -523,7 +523,9 @@ class MistralModel(Model):
             else:
                 assert_never(part)
 
-    def _map_messages(self, messages: list[ModelMessage]) -> list[MistralMessages]:
+    def _map_messages(
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> list[MistralMessages]:
         """Just maps a `pydantic_ai.Message` to a `MistralMessage`."""
         mistral_messages: list[MistralMessages] = []
         for message in messages:
@@ -554,7 +556,7 @@ class MistralModel(Model):
                 mistral_messages.append(MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls))
             else:
                 assert_never(message)
-        if instructions := self._get_instructions(messages):
+        if instructions := self._get_instructions(messages, model_request_parameters):
             mistral_messages.insert(0, MistralSystemMessage(content=instructions))
 
         # Post-process messages to insert fake assistant message after tool message if followed by user message
