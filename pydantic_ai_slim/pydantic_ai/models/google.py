@@ -677,7 +677,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         provider_name=self.provider_name,
                     )
 
-                if part.text is not None:
+                if part.text:
                     if part.thought:
                         yield self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=part.text)
                     else:
@@ -822,7 +822,7 @@ def _process_response_from_parts(
         elif part.code_execution_result is not None:
             assert code_execution_tool_call_id is not None
             item = _map_code_execution_result(part.code_execution_result, provider_name, code_execution_tool_call_id)
-        elif part.text is not None:
+        elif part.text:
             if part.thought:
                 item = ThinkingPart(content=part.text)
             else:

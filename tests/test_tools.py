@@ -1850,7 +1850,7 @@ def test_deferred_tool_call_approved_fails():
         DeferredToolRequests(calls=[ToolCallPart(tool_name='foo', args={'x': 0}, tool_call_id='foo')])
     )
 
-    with pytest.raises(RuntimeError, match='Deferred tools cannot be called'):
+    with pytest.raises(RuntimeError, match='External tools cannot be called'):
         agent.run_sync(
             message_history=result.all_messages(),
             deferred_tool_results=DeferredToolResults(
