@@ -1719,12 +1719,12 @@ def test_map_setting_prediction_valid(request: pytest.FixtureRequest, input_valu
         assert isinstance(result, MistralPrediction)
         assert result.content == expected_content
 
-    def test_map_setting_prediction_unsupported_type():
-        """Test that _map_setting_prediction raises RuntimeError for unsupported types."""
-        with pytest.raises(
-            RuntimeError, match='Unsupported prediction type.*int.*Expected str, dict, or MistralPrediction'
-        ):
-            MistralModel._map_setting_prediction(123)  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+def test_map_setting_prediction_unsupported_type():
+    """Test that _map_setting_prediction raises RuntimeError for unsupported types."""
+    with pytest.raises(
+        RuntimeError, match='Unsupported prediction type.*int.*Expected str, dict, or MistralPrediction'
+    ):
+        MistralModel._map_setting_prediction(123)  # pyright: ignore[reportPrivateUsage, reportArgumentType]
 
 
 def test_generate_user_output_format_complex(mistral_api_key: str):
