@@ -160,7 +160,7 @@ class ModelResponsePartsManager:
         - Partial Opening and Closing tags without adjacent content won't emit an event.
         - EC2: No event is emitted for opening tags until they are fully formed and there is content following them.
             - This is called 'delayed thinking'
-        - No event is emitted for closing tags that complete a ThinkingPart without any preceding content.
+        - No event is emitted for closing tags that complete a ThinkingPart without any adjacent content.
 
         Args:
             vendor_part_id: The ID the vendor uses to identify this piece
@@ -257,6 +257,7 @@ class ModelResponsePartsManager:
                 if potential_part.found_by == 'vendor_part_id':
                     # if there's an existing thinking part found by vendor_part_id, handle it directly
                     combined_buffer = potential_part.part.closing_tag_buffer + content
+                    potential_part.part.closing_tag_buffer = ''
 
                     closing_events = list(
                         self._handle_text_with_thinking_closing(
