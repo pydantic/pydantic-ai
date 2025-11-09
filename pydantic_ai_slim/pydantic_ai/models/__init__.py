@@ -574,12 +574,12 @@ class StreamedResponse(ABC):
                 ) -> AsyncIterator[ModelResponseStreamEvent]:
                     async for event in iter1:
                         yield event
-                    for event in (
-                        iter2
-                    ):  # pragma: no cover - loop never started - flush_buffer() seems to be being called before
+                    for (
+                        event
+                    ) in iter2:  # pragma: no cover - loop never started - final_flush() seems to be being called before
                         yield event
 
-                async for event in chain_async_and_sync_iters(iterator, self._parts_manager.flush_buffer()):
+                async for event in chain_async_and_sync_iters(iterator, self._parts_manager.final_flush()):
                     if isinstance(event, PartStartEvent):
                         if last_start_event:
                             end_event = part_end_event(event.part)
@@ -616,7 +616,7 @@ class StreamedResponse(ABC):
         # Flush any buffered content before building response
         # clone parts manager to avoid modifying the ongoing stream state
         cloned_manager = copy.deepcopy(self._parts_manager)
-        for _ in cloned_manager.flush_buffer():
+        for _ in cloned_manager.final_flush():
             pass
 
         return ModelResponse(

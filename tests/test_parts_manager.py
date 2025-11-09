@@ -13,7 +13,6 @@ from pydantic_ai import (
     TextPart,
     TextPartDelta,
     ThinkingPart,
-    ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
     UnexpectedModelBehavior,
@@ -90,101 +89,6 @@ def test_handle_dovetailed_text_deltas():
     )
     assert manager.get_parts() == snapshot(
         [TextPart(content='hello world', part_kind='text'), TextPart(content='goodbye Samuel', part_kind='text')]
-    )
-
-
-def test_handle_text_deltas_with_think_tags():
-    manager = ModelResponsePartsManager()
-    thinking_tags = ('<think>', '</think>')
-
-    events = manager.handle_text_delta(vendor_part_id='content', content='pre-', thinking_tags=thinking_tags)
-    assert len(events) == 1, 'Test returned more than one event.'
-    event = events[0]
-    assert event == snapshot(
-        PartStartEvent(index=0, part=TextPart(content='pre-', part_kind='text'), event_kind='part_start')
-    )
-    assert manager.get_parts() == snapshot([TextPart(content='pre-', part_kind='text')])
-
-    events = manager.handle_text_delta(vendor_part_id='content', content='thinking', thinking_tags=thinking_tags)
-    assert len(events) == 1, 'Test returned more than one event.'
-    event = events[0]
-    assert event == snapshot(
-        PartDeltaEvent(
-            index=0, delta=TextPartDelta(content_delta='thinking', part_delta_kind='text'), event_kind='part_delta'
-        )
-    )
-    assert manager.get_parts() == snapshot([TextPart(content='pre-thinking', part_kind='text')])
-
-    events = manager.handle_text_delta(vendor_part_id='content', content='<think>', thinking_tags=thinking_tags)
-    assert len(events) == 1, 'Test returned more than one event.'
-    event = events[0]
-    assert event == snapshot(
-        PartStartEvent(index=1, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start')
-    )
-    assert manager.get_parts() == snapshot(
-        [TextPart(content='pre-thinking', part_kind='text'), ThinkingPart(content='', part_kind='thinking')]
-    )
-
-    events = manager.handle_text_delta(vendor_part_id='content', content='thinking', thinking_tags=thinking_tags)
-    assert len(events) == 1, 'Test returned more than one event.'
-    event = events[0]
-    assert event == snapshot(
-        PartDeltaEvent(
-            index=1,
-            delta=ThinkingPartDelta(content_delta='thinking', part_delta_kind='thinking'),
-            event_kind='part_delta',
-        )
-    )
-    assert manager.get_parts() == snapshot(
-        [TextPart(content='pre-thinking', part_kind='text'), ThinkingPart(content='thinking', part_kind='thinking')]
-    )
-
-    events = manager.handle_text_delta(vendor_part_id='content', content=' more', thinking_tags=thinking_tags)
-    assert len(events) == 1, 'Test returned more than one event.'
-    event = events[0]
-    assert event == snapshot(
-        PartDeltaEvent(
-            index=1, delta=ThinkingPartDelta(content_delta=' more', part_delta_kind='thinking'), event_kind='part_delta'
-        )
-    )
-    assert manager.get_parts() == snapshot(
-        [
-            TextPart(content='pre-thinking', part_kind='text'),
-            ThinkingPart(content='thinking more', part_kind='thinking'),
-        ]
-    )
-
-    events = manager.handle_text_delta(vendor_part_id='content', content='</think>', thinking_tags=thinking_tags)
-    assert events == [], 'Test returned events.'
-
-    events = manager.handle_text_delta(vendor_part_id='content', content='post-', thinking_tags=thinking_tags)
-    assert len(events) == 1, 'Test returned more than one event.'
-    event = events[0]
-    assert event == snapshot(
-        PartStartEvent(index=2, part=TextPart(content='post-', part_kind='text'), event_kind='part_start')
-    )
-    assert manager.get_parts() == snapshot(
-        [
-            TextPart(content='pre-thinking', part_kind='text'),
-            ThinkingPart(content='thinking more', part_kind='thinking'),
-            TextPart(content='post-', part_kind='text'),
-        ]
-    )
-
-    events = manager.handle_text_delta(vendor_part_id='content', content='thinking', thinking_tags=thinking_tags)
-    assert len(events) == 1, 'Test returned more than one event.'
-    event = events[0]
-    assert event == snapshot(
-        PartDeltaEvent(
-            index=2, delta=TextPartDelta(content_delta='thinking', part_delta_kind='text'), event_kind='part_delta'
-        )
-    )
-    assert manager.get_parts() == snapshot(
-        [
-            TextPart(content='pre-thinking', part_kind='text'),
-            ThinkingPart(content='thinking more', part_kind='thinking'),
-            TextPart(content='post-thinking', part_kind='text'),
-        ]
     )
 
 

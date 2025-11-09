@@ -82,7 +82,7 @@ class ModelResponsePartsManager:
 
     _parts: list[ManagedPart] = field(default_factory=list, init=False)
     """A list of parts (text or tool calls) that make up the current state of the model's response."""
-    _tracked_vendor_part_ids: dict[VendorId, int] = field(default_factory=dict, init=False)
+    _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict, init=False)
     """Tracks the vendor part IDs of parts to their indices in the `_parts` list.
 
     Not all parts arrive with vendor part IDs, so the length of the tracker doesn't mirror the length of the _parts.
@@ -96,7 +96,7 @@ class ModelResponsePartsManager:
         """
         new_part_index = len(self._parts)
         if vendor_part_id is not None:  # pragma: no branch
-            self._tracked_vendor_part_ids[vendor_part_id] = new_part_index
+            self._vendor_id_to_part_index[vendor_part_id] = new_part_index
         self._parts.append(part)
         return new_part_index
 
@@ -108,7 +108,7 @@ class ModelResponsePartsManager:
         Args:
             vendor_part_id: The vendor part ID to stop tracking.
         """
-        self._tracked_vendor_part_ids.pop(vendor_part_id, None)
+        self._vendor_id_to_part_index.pop(vendor_part_id, None)
 
     def get_parts(self) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
@@ -158,7 +158,8 @@ class ModelResponsePartsManager:
         - EC1: Opening tags are buffered in the potential_opening_tag_buffer of a TextPart until fully formed.
         - Closing tags are buffered in the ThinkingPart until fully formed.
         - Partial Opening and Closing tags without adjacent content won't emit an event.
-        - No event is emitted for opening tags until they are fully formed.
+        - EC2: No event is emitted for opening tags until they are fully formed and there is content following them.
+            - This is called 'delayed thinking'
         - No event is emitted for closing tags that complete a ThinkingPart without any preceding content.
 
         Args:
@@ -189,7 +190,7 @@ class ModelResponsePartsManager:
                     potential_part = _ExistingPart(part=latest_part, index=part_index, found_by='latest_part')
                     # ✅ vendor_part_id and ✅ potential_part is a TextPart
                 else:
-                    # NOTE that the latest part could be a ThinkingPart
+                    # NOTE that the latest part could be a ThinkingPart but
                     #   -> C4: we require ThinkingParts come from/with vendor_part_id's
                     # ❌ vendor_part_id is None + ❌ potential_part is None -> new part!
                     pass
@@ -198,7 +199,7 @@ class ModelResponsePartsManager:
                 pass
         else:
             # Otherwise, attempt to look up an existing TextPart by vendor_part_id
-            part_index = self._tracked_vendor_part_ids.get(vendor_part_id)
+            part_index = self._vendor_id_to_part_index.get(vendor_part_id)
             if part_index is not None:
                 existing_part = self._parts[part_index]
                 if isinstance(existing_part, ThinkingPart):
@@ -220,11 +221,21 @@ class ModelResponsePartsManager:
 
         def handle_as_text_part() -> list[PartDeltaEvent | PartStartEvent]:
             if potential_part and isinstance(potential_part.part, TextPart):
+                has_buffer = bool(potential_part.part.potential_opening_tag_buffer)
                 combined_buffer = potential_part.part.potential_opening_tag_buffer + content
                 potential_part.part.potential_opening_tag_buffer = ''
-                part_delta = TextPartDelta(content_delta=combined_buffer)
-                self._parts[potential_part.index] = part_delta.apply(potential_part.part)
-                return [PartDeltaEvent(index=potential_part.index, delta=part_delta)]
+
+                # Emit Delta if: part has content OR was created without buffering (already emitted Start)
+                # Emit Start if: part has no content AND was created with buffering (delayed emission)
+                if potential_part.part.content or not has_buffer:
+                    part_delta = TextPartDelta(content_delta=combined_buffer)
+                    self._parts[potential_part.index] = part_delta.apply(potential_part.part)
+                    return [PartDeltaEvent(index=potential_part.index, delta=part_delta)]
+                else:
+                    # This is the delayed emission case - part was created with a buffer, no content
+                    potential_part.part.content = combined_buffer
+                    self._parts[potential_part.index] = potential_part.part
+                    return [PartStartEvent(index=potential_part.index, part=potential_part.part)]
             else:
                 new_text_part = TextPart(content=content, id=id)
                 new_part_index = self.append_and_track_new_part(new_text_part, vendor_part_id)
@@ -233,25 +244,30 @@ class ModelResponsePartsManager:
         if thinking_tags:
             # handle loose thinking
             if potential_part is not None and isinstance(potential_part.part, ThinkingPart):
-                if is_empty_thinking(potential_part.part, content, thinking_tags):
-                    # TODO remove when we delay emitting empty thinking parts
-                    # special case: content only completes the closing tag, no prior content
+                if is_empty_thinking(
+                    potential_part.part, content, thinking_tags
+                ):  # pragma: no cover - don't have a test case for this yet
+                    # TODO discuss how to handle empty thinking
+                    #  this applies to non-empty, whitespace-only thinking as well
+                    #  -> for now we just untrack it
                     self.stop_tracking_vendor_id(vendor_part_id)
-                    return []  # RT0
+                    return []  # RT2
 
                 potential_part = cast(_ExistingPart[ThinkingPart], potential_part)
                 if potential_part.found_by == 'vendor_part_id':
                     # if there's an existing thinking part found by vendor_part_id, handle it directly
                     combined_buffer = potential_part.part.closing_tag_buffer + content
 
-                    closing_events = self._handle_text_with_thinking_closing(  # RT2
-                        thinking_part=potential_part.part,
-                        part_index=potential_part.index,
-                        thinking_tags=thinking_tags,
-                        vendor_part_id=vendor_part_id,
-                        combined_buffer=combined_buffer,
+                    closing_events = list(
+                        self._handle_text_with_thinking_closing(
+                            thinking_part=potential_part.part,
+                            part_index=potential_part.index,
+                            thinking_tags=thinking_tags,
+                            vendor_part_id=vendor_part_id,
+                            combined_buffer=combined_buffer,
+                        )
                     )
-                    return closing_events
+                    return closing_events  # RT3
                 else:
                     # C4: Unhandled branch 1: if the latest part is a ThinkingPart without a vendor_part_id
                     # it will be ignored and a new TextPart will be created instead
@@ -263,16 +279,20 @@ class ModelResponsePartsManager:
                 else:
                     text_part = cast(_ExistingPart[TextPart] | None, potential_part)
                     # we discarded this is a ThinkingPart above
-                    return self._handle_text_with_thinking_opening(  # RT3
-                        existing_text_part=text_part,
-                        thinking_tags=thinking_tags,
-                        vendor_part_id=vendor_part_id,
-                        content=content,
-                        id=id,
-                        handle_invalid_opening_tag=handle_as_text_part,
+                    events = list(
+                        self._handle_text_with_thinking_opening(
+                            existing_text_part=text_part,
+                            thinking_tags=thinking_tags,
+                            vendor_part_id=vendor_part_id,
+                            new_content=content,
+                            id=id,
+                            handle_invalid_opening_tag=handle_as_text_part,
+                        )
                     )
 
-        return handle_as_text_part()  # RT4
+                    return events  # RT4
+
+        return handle_as_text_part()  # RT5
 
     def _handle_text_with_thinking_closing(
         self,
@@ -282,60 +302,44 @@ class ModelResponsePartsManager:
         thinking_tags: ThinkingTags,
         vendor_part_id: VendorId,
         combined_buffer: str,
-    ) -> Sequence[PartStartEvent | PartDeltaEvent]:
+    ) -> Generator[PartStartEvent | PartDeltaEvent, None, None]:
         """Handle text content that may contain a closing thinking tag."""
         _, closing_tag = thinking_tags
-        events: list[PartStartEvent | PartDeltaEvent] = []
+
         if closing_tag in combined_buffer:
             # covers '</think>', 'filling</think>' and 'filling</think>more filling' cases
             before_closing, after_closing = combined_buffer.split(closing_tag, 1)
             if before_closing:
-                events.append(
-                    self._emit_thinking_delta_from_text(
-                        thinking_part=thinking_part,
-                        part_index=part_index,
-                        content=before_closing,
-                    )
+                yield self._emit_thinking_delta_from_text(  # ReturnClosing 1 (RC1)
+                    thinking_part=thinking_part,
+                    part_index=part_index,
+                    content=before_closing,
                 )
             if after_closing:
                 new_text_part = TextPart(content=after_closing, id=None)
                 new_text_part_index = self.append_and_track_new_part(new_text_part, vendor_part_id)
                 # NOTE no need to stop_tracking because appending will re-write the mapping to the new part
-                events.append(PartStartEvent(index=new_text_part_index, part=new_text_part))
+                yield PartStartEvent(index=new_text_part_index, part=new_text_part)
             else:
                 self.stop_tracking_vendor_id(vendor_part_id)
-
-            return events  # ReturnClosing 1 (RC1)
         elif (overlap := suffix_prefix_overlap(combined_buffer, closing_tag)) > 0:
             # handles split closing tag cases,
-            #   e.g. 'more</th' becomes content += 'more'; buffer = '</th'
-            #   then 'fooink>' becomes content += '</thfooink>'; buffer = ''
+            #   e.g. 1 'more</th' becomes PartDelta('more'); buffer = '</th'
+            #   e.g. 2 '</thfoo' becomes PartDelta('</thfoo'); buffer = ''
             content_to_add = combined_buffer[:-overlap]
             content_to_buffer = combined_buffer[-overlap:]
-            if vendor_part_id is None:
-                content_to_add += content_to_buffer
-                content_to_buffer = ''
 
             thinking_part.closing_tag_buffer = content_to_buffer
-            if thinking_part.closing_tag_buffer == closing_tag:
-                # completed the closing tag
-                self.stop_tracking_vendor_id(vendor_part_id)
 
             if content_to_add:
-                events.append(
-                    self._emit_thinking_delta_from_text(
-                        thinking_part=thinking_part, part_index=part_index, content=content_to_add
-                    )
+                yield self._emit_thinking_delta_from_text(  # RC2
+                    thinking_part=thinking_part, part_index=part_index, content=content_to_add
                 )
-            return events  # RC2
         else:
             thinking_part.closing_tag_buffer = ''
-            events.append(
-                self._emit_thinking_delta_from_text(
-                    thinking_part=thinking_part, part_index=part_index, content=combined_buffer
-                )
+            yield self._emit_thinking_delta_from_text(
+                thinking_part=thinking_part, part_index=part_index, content=combined_buffer
             )
-            return events  # RC3
 
     def _emit_thinking_delta_from_text(
         self,
@@ -348,45 +352,75 @@ class ModelResponsePartsManager:
         self._parts[part_index] = part_delta.apply(thinking_part)
         return PartDeltaEvent(index=part_index, delta=part_delta)
 
-    def _handle_text_with_thinking_opening(
+    def _handle_text_with_thinking_opening(  # noqa: C901
         self,
         *,
         existing_text_part: _ExistingPart[TextPart] | None,
         thinking_tags: ThinkingTags,
         vendor_part_id: VendorId | None,
-        content: str,
+        new_content: str,
         id: str | None = None,
         handle_invalid_opening_tag: Callable[[], Sequence[PartStartEvent | PartDeltaEvent]],
-    ) -> Sequence[PartStartEvent | PartDeltaEvent]:
+    ) -> Generator[PartStartEvent | PartDeltaEvent, None, None]:
+        opening_tag, closing_tag = thinking_tags
+
+        if opening_tag.startswith(new_content) or new_content.startswith(opening_tag):
+            # handle stutter e.g. 1: buffer = '<th'; new_content = '<think>content</think>'
+            # e.g. 2: buffer = '<th'; new_content = '<th'
+            if (
+                existing_text_part
+                and existing_text_part.part.potential_opening_tag_buffer
+                and existing_text_part.part.potential_opening_tag_buffer != opening_tag
+            ):
+                # if we have stuff in the buffer that is not a valid opening tag, we flush it as text
+                # that way the new_content (that also looks like an opening tag) can be processed independently
+                if existing_text_part.part.content:
+                    text_delta = TextPartDelta(content_delta=existing_text_part.part.potential_opening_tag_buffer)
+                    existing_text_part.part.potential_opening_tag_buffer = ''
+                    self._parts[existing_text_part.index] = text_delta.apply(existing_text_part.part)
+                    delta_event = PartDeltaEvent(index=existing_text_part.index, delta=text_delta)
+                    yield delta_event
+                else:
+                    existing_text_part.part.content = existing_text_part.part.potential_opening_tag_buffer
+                    existing_text_part.part.potential_opening_tag_buffer = ''
+                    part_start_event = PartStartEvent(
+                        index=existing_text_part.index,
+                        part=existing_text_part.part,
+                    )
+                    yield part_start_event
+
+        combined_buffer = (
+            existing_text_part.part.potential_opening_tag_buffer + new_content
+            if existing_text_part is not None
+            else new_content
+        )
+        # after we handle stutter we can safely combine the new content with any existing buffer
+
         def _buffer_thinking() -> Sequence[PartStartEvent | PartDeltaEvent]:
+            if vendor_part_id is None:
+                # C4: can't buffer opening tags without a vendor_part_id
+                return handle_invalid_opening_tag()
             if existing_text_part is not None:
                 existing_text_part.part.potential_opening_tag_buffer = combined_buffer
-                return []  # RO10
+                return []
             else:
                 # EC1: create a new TextPart to hold the potential opening tag in the buffer
                 # we don't emit an event until we determine exactly what this part is
                 new_text_part = TextPart(content='', id=id, potential_opening_tag_buffer=combined_buffer)
                 self.append_and_track_new_part(new_text_part, vendor_part_id)
-                return []  # RO11
+                return []
 
-        opening_tag, closing_tag = thinking_tags
-
-        if opening_tag in content:
-            # here we cover cases like '<think>', 'content<think>' and 'pre<think>content'
-            # NOTE: in this branch we ignore the existing_text_part
-            #   i.e. we're ignoring potential buffers like '<thi'
-            if content == opening_tag:
+        if opening_tag in combined_buffer:
+            # covers cases like '<think>', 'content<think>' and 'pre<think>content'
+            if combined_buffer == opening_tag:
                 # this block covers the '<think>' case
-                # NOTE 1: `_emit_thinking_start_from_text` rewrites the vendor_part_id mapping to the new thinking part
-                # NOTE 2: we emit an empty thinking part here
-                #  -> TODO buffer the bare opening tag until we see content
-                return self._emit_thinking_start_from_text(  # ReturnOpening 1 (RO1)(not R0)
-                    existing_part=existing_text_part,
-                    content='',
-                    vendor_part_id=vendor_part_id,
-                )
-            elif content.startswith(opening_tag):
-                after_opening = content[len(opening_tag) :]
+                # EC2: delayed thinking - we don't emit an event until there's content after the tag
+                yield from _buffer_thinking()  # RO1
+            elif combined_buffer.startswith(opening_tag):
+                # TODO this whole elif is very close to a duplicate of `_handle_text_with_thinking_closing`,
+                #   but we can't delegate because we're generating different events (starting ThinkingPart vs updating it)
+                #   and there's no easy abstraction that comes to mind, so I'll leave it as is for now.
+                after_opening = combined_buffer[len(opening_tag) :]
                 # this block handles the cases:
                 #   1. where the content might close the thinking tag in the same chunk
                 #   2. where the content ends with a partial closing tag: '</th' or '</thi'
@@ -395,9 +429,10 @@ class ModelResponsePartsManager:
                     before_closing, after_closing = after_opening.split(closing_tag, 1)
                     if not before_closing:
                         # 1.a. '<think></think>more content'
-                        return handle_invalid_opening_tag()  # RO2
+                        yield from handle_invalid_opening_tag()  # RO2
+                        return
 
-                    events = self._emit_thinking_start_from_text(
+                    yield from self._emit_thinking_start_from_text(
                         existing_part=existing_text_part,
                         content=before_closing,
                         vendor_part_id=vendor_part_id,
@@ -407,13 +442,13 @@ class ModelResponsePartsManager:
                         # NOTE follows constraint C3.1: anything after the closing tag is treated as text
                         new_text_part = TextPart(content=after_closing, id=None)
                         new_text_part_index = self.append_and_track_new_part(new_text_part, vendor_part_id)
-                        events.append(PartStartEvent(index=new_text_part_index, part=new_text_part))
+                        yield PartStartEvent(index=new_text_part_index, part=new_text_part)
                     else:
                         # 1.c. '<think>content</think>'
                         # if there was no content after closing, the thinking tag closed cleanly
                         self.stop_tracking_vendor_id(vendor_part_id)
 
-                    return events  # RO3
+                    return  # RO3
                 elif (overlap := suffix_prefix_overlap(after_opening, closing_tag)) > 0:
                     # handles case 2.a. and 2.b.
                     before_closing = after_opening[:-overlap]
@@ -422,10 +457,11 @@ class ModelResponsePartsManager:
                         # 2.a. content = '<think></th'
                         # NOTE: we're not covering the case where this is indeed a valid thinking part
                         # like: '<think></th' + 'eres a snake in my boot</think>'
-                        return handle_invalid_opening_tag()  # RO4
+                        yield from handle_invalid_opening_tag()  # RO4
+                        return
 
                     # 2.b. content = '<think>content</th'
-                    return self._emit_thinking_start_from_text(  # RO5
+                    yield from self._emit_thinking_start_from_text(  # RO5
                         existing_part=existing_text_part,
                         content=before_closing,
                         vendor_part_id=vendor_part_id,
@@ -433,44 +469,24 @@ class ModelResponsePartsManager:
                     )
                 else:
                     # 3.: '<think>content'
-                    return self._emit_thinking_start_from_text(  # RO6
+                    yield from self._emit_thinking_start_from_text(  # RO6
                         existing_part=existing_text_part,
                         content=after_opening,
                         vendor_part_id=vendor_part_id,
                     )
             else:
                 # constraint C2: we don't allow text before opening tags like 'pre<think>content'
-                return handle_invalid_opening_tag()  # RO7
-        elif content in opening_tag:
+                yield from handle_invalid_opening_tag()  # RO7
+        elif combined_buffer in opening_tag:
             # here we handle cases like '<thi', 'hink', and 'nk>'
-            combined_buffer = (
-                existing_text_part.part.potential_opening_tag_buffer + content
-                if existing_text_part is not None
-                else content
-            )
             if opening_tag.startswith(combined_buffer):
-                # check if it's still a potentially valid opening tag
-                if combined_buffer == opening_tag:
-                    # completed the opening tag
-                    # NOTE 3: we emit an empty thinking part here
-                    #  -> TODO buffer the bare opening tag until we see content
-                    return self._emit_thinking_start_from_text(  # RO8
-                        existing_part=existing_text_part,
-                        content='',
-                        vendor_part_id=vendor_part_id,
-                    )
-                else:
-                    if vendor_part_id is None:
-                        # C4: can't buffer opening tags without a vendor_part_id
-                        return handle_invalid_opening_tag()  # RO9
-                    else:
-                        return _buffer_thinking()  # RO10
+                yield from _buffer_thinking()  # RO8
             else:
                 # not a valid opening tag, flush the buffer as text
-                return handle_invalid_opening_tag()  # RO11
+                yield from handle_invalid_opening_tag()  # RO9
         else:
             # not a valid opening tag, flush the buffer as text
-            return handle_invalid_opening_tag()  # RO12
+            yield from handle_invalid_opening_tag()  # RO10
 
     def _emit_thinking_start_from_text(
         self,
@@ -494,13 +510,10 @@ class ModelResponsePartsManager:
 
         if existing_part is not None and existing_part.part.content:
             new_part_index = self.append_and_track_new_part(thinking_part, vendor_part_id)
-
             if existing_part.part.potential_opening_tag_buffer:
-                # if there's a buffer, flush it as text before the new thinking part
-                text_delta = TextPartDelta(content_delta=existing_part.part.potential_opening_tag_buffer)
-                existing_part.part.potential_opening_tag_buffer = ''
-                self._parts[existing_part.index] = text_delta.apply(existing_part.part)
-                events.append(PartDeltaEvent(index=existing_part.index, delta=text_delta))
+                raise RuntimeError(
+                    'The buffer of an existing TextPart should have been flushed before creating a ThinkingPart'
+                )
         elif existing_part is not None and not existing_part.part.content:
             # C2: we probably used an empty TextPart (that emitted no event) for buffering
             # so instead of appending a new part, we replace that one
@@ -510,13 +523,17 @@ class ModelResponsePartsManager:
             new_part_index = self.append_and_track_new_part(thinking_part, vendor_part_id)
 
         if vendor_part_id is not None:
-            self._tracked_vendor_part_ids[vendor_part_id] = new_part_index
+            self._vendor_id_to_part_index[vendor_part_id] = new_part_index
 
         events.append(PartStartEvent(index=new_part_index, part=thinking_part))
         return events
 
-    def flush_buffer(self) -> Generator[ModelResponseStreamEvent, None, None]:
-        """Emit any buffered content from the last part in the manager."""
+    def final_flush(self) -> Generator[ModelResponseStreamEvent, None, None]:
+        """Emit any buffered content from the last part in the manager.
+
+        This function isn't used internally, it's used by the overarching StreamedResponse
+        to ensure any buffered content is flushed when the stream ends.
+        """
         # finalize only flushes the buffered content of the last part
         if len(self._parts) == 0:
             return
@@ -579,7 +596,7 @@ class ModelResponsePartsManager:
                     existing_thinking_part_and_index = latest_part, part_index
         else:
             # Otherwise, attempt to look up an existing ThinkingPart by vendor_part_id
-            part_index = self._tracked_vendor_part_ids.get(vendor_part_id)
+            part_index = self._vendor_id_to_part_index.get(vendor_part_id)
             if part_index is not None:
                 existing_part = self._parts[part_index]
                 if not isinstance(existing_part, ThinkingPart):
@@ -654,7 +671,7 @@ class ModelResponsePartsManager:
                     existing_matching_part_and_index = latest_part, part_index
         else:
             # vendor_part_id is provided, so look up the corresponding part or delta
-            part_index = self._tracked_vendor_part_ids.get(vendor_part_id)
+            part_index = self._vendor_id_to_part_index.get(vendor_part_id)
             if part_index is not None:
                 existing_part = self._parts[part_index]
                 if not isinstance(existing_part, ToolCallPartDelta | ToolCallPart | BuiltinToolCallPart):
@@ -722,14 +739,14 @@ class ModelResponsePartsManager:
             self._parts.append(new_part)
         else:
             # vendor_part_id is provided, so find and overwrite or create a new ToolCallPart.
-            maybe_part_index = self._tracked_vendor_part_ids.get(vendor_part_id)
+            maybe_part_index = self._vendor_id_to_part_index.get(vendor_part_id)
             if maybe_part_index is not None and isinstance(self._parts[maybe_part_index], ToolCallPart):
                 new_part_index = maybe_part_index
                 self._parts[new_part_index] = new_part
             else:
                 new_part_index = len(self._parts)
                 self._parts.append(new_part)
-            self._tracked_vendor_part_ids[vendor_part_id] = new_part_index
+            self._vendor_id_to_part_index[vendor_part_id] = new_part_index
         return PartStartEvent(index=new_part_index, part=new_part)
 
     def handle_part(
@@ -755,12 +772,12 @@ class ModelResponsePartsManager:
             self._parts.append(part)
         else:
             # vendor_part_id is provided, so find and overwrite or create a new part.
-            maybe_part_index = self._tracked_vendor_part_ids.get(vendor_part_id)
+            maybe_part_index = self._vendor_id_to_part_index.get(vendor_part_id)
             if maybe_part_index is not None and isinstance(self._parts[maybe_part_index], type(part)):
                 new_part_index = maybe_part_index
                 self._parts[new_part_index] = part
             else:
                 new_part_index = len(self._parts)
                 self._parts.append(part)
-            self._tracked_vendor_part_ids[vendor_part_id] = new_part_index
+            self._vendor_id_to_part_index[vendor_part_id] = new_part_index
         return PartStartEvent(index=new_part_index, part=part)
