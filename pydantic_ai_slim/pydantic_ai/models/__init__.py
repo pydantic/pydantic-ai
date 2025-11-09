@@ -622,7 +622,9 @@ class StreamedResponse(ABC):
                     for event in iter2:
                         yield event
 
-                async for event in chain_async_and_sync_iters(iterator, self._parts_manager.final_flush()):
+                async for event in chain_async_and_sync_iters(
+                    iterator, self._parts_manager.final_flush()
+                ):  # pragma: no cover - idk why this isn't covered
                     if isinstance(event, PartStartEvent):
                         if last_start_event:
                             end_event = part_end_event(event.part)

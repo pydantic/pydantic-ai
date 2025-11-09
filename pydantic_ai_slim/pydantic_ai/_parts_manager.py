@@ -316,13 +316,14 @@ class ModelResponsePartsManager:
                     part_index=part_index,
                     content=before_closing,
                 )
+
+            self.stop_tracking_vendor_id(vendor_part_id)
+
             if after_closing:
                 new_text_part = TextPart(content=after_closing, id=None)
                 new_text_part_index = self.append_and_track_new_part(new_text_part, vendor_part_id)
-                # NOTE no need to stop_tracking because appending will re-write the mapping to the new part
                 yield PartStartEvent(index=new_text_part_index, part=new_text_part)
-            else:
-                self.stop_tracking_vendor_id(vendor_part_id)
+
         elif (overlap := suffix_prefix_overlap(combined_buffer, closing_tag)) > 0:
             # handles split closing tag cases,
             #   e.g. 1 'more</th' becomes PartDelta('more'); buffer = '</th'

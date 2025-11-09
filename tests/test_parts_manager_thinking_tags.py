@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Hashable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import pytest
@@ -13,7 +13,7 @@ from pydantic_ai.messages import ModelResponseStreamEvent
 
 def stream_text_deltas(
     case: Case,
-) -> tuple[list[ModelResponseStreamEvent], list[ModelResponseStreamEvent], list[ModelResponsePart], str]:
+) -> tuple[list[ModelResponseStreamEvent], list[ModelResponseStreamEvent], list[ModelResponsePart]]:
     """Helper to stream chunks through manager and return all events + final parts."""
     manager = ModelResponsePartsManager()
     events_before_flushing: list[ModelResponseStreamEvent] = []
@@ -32,14 +32,7 @@ def stream_text_deltas(
     for event in manager.final_flush():
         all_events.append(event)
 
-    parts = manager.get_parts()
-    leftover_closing_bufffer = ''
-    for part in parts:
-        if isinstance(part, ThinkingPart):
-            leftover_closing_bufffer = part.closing_tag_buffer
-            break
-
-    return events_before_flushing, all_events, parts, leftover_closing_bufffer
+    return events_before_flushing, all_events, manager.get_parts()
 
 
 @dataclass
@@ -51,7 +44,7 @@ class Case:
     expected_events_before_flushing: Sequence[ModelResponseStreamEvent] | Literal['same-as-expected-events'] = (
         'same-as-expected-events'
     )
-    leftover_closing_bufffer: str = ''
+    leftover_closing_bufffer: list[str] = field(default_factory=list)
     vendor_part_id: Hashable | None = 'content'
     ignore_leading_whitespace: bool = False
     thinking_tags: tuple[str, str] | None = ('<think>', '</think>')
@@ -66,7 +59,7 @@ FULL_SPLITS = [
             PartStartEvent(index=0, part=ThinkingPart('con')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='tent')),
         ],
-        leftover_closing_bufffer='</th',  # a full ['</th', 'ink>'] would leave the buffer empty
+        leftover_closing_bufffer=['</th'],  # a full ['</th', 'ink>'] would leave the buffer empty
     ),
     Case(
         name='full_split_on_both_sides_clean',
@@ -274,7 +267,7 @@ PARTIAL_CLOSING_CASES: list[Case] = [
         expected_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
         ],
-        leftover_closing_bufffer='</th',
+        leftover_closing_bufffer=['</th'],
     ),
     Case(
         name='existing_thinking_partial_closing',
@@ -283,7 +276,7 @@ PARTIAL_CLOSING_CASES: list[Case] = [
         expected_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
         ],
-        leftover_closing_bufffer='</th',
+        leftover_closing_bufffer=['</th'],
     ),
     Case(
         name='existing_thinking_buffer_completes_partial_closing',
@@ -301,7 +294,7 @@ PARTIAL_CLOSING_CASES: list[Case] = [
             PartStartEvent(index=0, part=ThinkingPart('content')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='more')),
         ],
-        leftover_closing_bufffer='</th',
+        leftover_closing_bufffer=['</th'],
     ),
     Case(
         name='existing_thinking_buffer_multi_partial_closing_completes',
@@ -529,7 +522,7 @@ def test_thinking_parts_parametrized(case: Case) -> None:
     """
     Parametrized coverage for all cases described in the report.
     """
-    events_before_flushing, events, final_parts, leftover_closing_bufffer = stream_text_deltas(case)
+    events_before_flushing, events, final_parts = stream_text_deltas(case)
 
     # Parts observed from final state (after all deltas have been applied)
     assert final_parts == case.expected_parts, f'\nObserved: {final_parts}\nExpected: {case.expected_parts}'
@@ -546,6 +539,10 @@ def test_thinking_parts_parametrized(case: Case) -> None:
         assert events_before_flushing == case.expected_events_before_flushing, (
             f'\nObserved: {events_before_flushing}\nExpected: {case.expected_events_before_flushing}'
         )
+
+    leftover_closing_bufffer = [
+        part.closing_tag_buffer for part in final_parts if isinstance(part, ThinkingPart) and part.closing_tag_buffer
+    ]
 
     assert leftover_closing_bufffer == case.leftover_closing_bufffer, (
         f'\nObserved: {leftover_closing_bufffer}\nExpected: {case.leftover_closing_bufffer}'
