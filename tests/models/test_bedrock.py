@@ -2,8 +2,10 @@ from __future__ import annotations as _annotations
 
 import datetime
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
+from botocore.exceptions import ClientError
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
@@ -14,6 +16,7 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    ModelHTTPError,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
@@ -1376,3 +1379,87 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
             PartEndEvent(index=1, part=TextPart(content='Hello! How can I help you today?')),
         ]
     )
+
+
+def test_bedrock_throttling_error(bedrock_provider: BedrockProvider):
+    """Test that ThrottlingException converts to ModelHTTPError with 429 status."""
+    expected_error = {'Code': 'ThrottlingException', 'Message': 'Rate exceeded'}
+    expected_status = 429
+    model_id = 'us.amazon.nova.micro-v1:0'
+
+    # Mock the client to raise throttling exception
+    error_response = {'Error': expected_error, 'ResponseMetadata': {'HTTPStatusCode': expected_status}}
+    mock_client = Mock()
+    mock_client.converse.side_effect = ClientError(error_response, 'Converse')  # type: ignore[reportArgumentType]
+    mock_client.meta.endpoint_url = 'https://bedrock-runtime.us-east-1.amazonaws.com'
+
+    # Create provider with mocked client
+    from pydantic_ai.providers.bedrock import BedrockProvider
+
+    provider = BedrockProvider(bedrock_client=mock_client)
+    model = BedrockConverseModel(model_id, provider=provider)
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        agent.run_sync('hello')
+
+    assert exc_info.value.status_code == expected_status
+    assert exc_info.value.model_name == model_id
+    assert exc_info.value.body == expected_error
+
+
+def test_bedrock_server_error():
+    """Test that 5xx errors convert to ModelHTTPError."""
+    expected_error = {'Code': 'InternalServerError', 'Message': 'Internal error'}
+    expected_status = 500
+    model_id = 'us.amazon.nova.micro-v1:0'
+
+    # Mock the client to raise throttling exception
+    error_response = {'Error': expected_error, 'ResponseMetadata': {'HTTPStatusCode': expected_status}}
+    mock_client = Mock()
+    mock_client.converse.side_effect = ClientError(error_response, 'Converse')  # type: ignore[reportArgumentType]
+
+    mock_client.meta.endpoint_url = 'https://bedrock-runtime.us-east-1.amazonaws.com'
+
+    # Create provider with mocked client
+    from pydantic_ai.providers.bedrock import BedrockProvider
+
+    provider = BedrockProvider(bedrock_client=mock_client)
+    model = BedrockConverseModel(model_id, provider=provider)
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        agent.run_sync('hello')
+
+    assert exc_info.value.status_code == expected_status
+    assert exc_info.value.model_name == model_id
+    assert exc_info.value.body == expected_error
+
+
+async def test_bedrock_streaming_error():
+    """Test that errors during streaming convert to ModelHTTPError."""
+    expected_error = {'Code': 'ThrottlingException', 'Message': 'Rate exceeded'}
+    expected_status = 429
+    model_id = 'us.amazon.nova.micro-v1:0'
+
+    # Mock the client to raise throttling exception
+    error_response = {'Error': expected_error, 'ResponseMetadata': {'HTTPStatusCode': expected_status}}
+    mock_client = Mock()
+    mock_client.converse_stream.side_effect = ClientError(error_response, 'ConverseStream')  # type: ignore[reportArgumentType]
+
+    mock_client.meta.endpoint_url = 'https://bedrock-runtime.us-east-1.amazonaws.com'
+
+    # Create provider with mocked client
+    from pydantic_ai.providers.bedrock import BedrockProvider
+
+    provider = BedrockProvider(bedrock_client=mock_client)
+    model = BedrockConverseModel(model_id, provider=provider)
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with agent.run_stream('hello'):
+            pass
+
+    assert exc_info.value.status_code == expected_status
+    assert exc_info.value.model_name == model_id
+    assert exc_info.value.body == expected_error

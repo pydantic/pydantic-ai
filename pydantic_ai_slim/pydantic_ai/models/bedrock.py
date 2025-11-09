@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 import anyio
 import anyio.to_thread
+from botocore.exceptions import ClientError
 from typing_extensions import ParamSpec, assert_never
 
 from pydantic_ai import (
@@ -21,6 +22,7 @@ from pydantic_ai import (
     DocumentUrl,
     FinishReason,
     ImageUrl,
+    ModelHTTPError,
     ModelMessage,
     ModelProfileSpec,
     ModelRequest,
@@ -408,10 +410,18 @@ class BedrockConverseModel(Model):
             if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
                 params['promptVariables'] = prompt_variables
 
-        if stream:
-            model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse_stream, **params))
-        else:
-            model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
+        try:
+            if stream:
+                model_response = await anyio.to_thread.run_sync(
+                    functools.partial(self.client.converse_stream, **params)
+                )
+            else:
+                model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
+        except ClientError as e:
+            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode', 500)
+            raise ModelHTTPError(
+                status_code=status_code, model_name=self.model_name, body=e.response.get('Error')
+            ) from e
         return model_response
 
     @staticmethod
