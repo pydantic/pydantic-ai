@@ -375,7 +375,7 @@ class OpenAIChatModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
+            provider = infer_provider('gateway/chat' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
@@ -944,7 +944,7 @@ class OpenAIResponsesModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
+            provider = infer_provider('gateway/responses' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 

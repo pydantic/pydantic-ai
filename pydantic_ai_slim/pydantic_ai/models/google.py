@@ -204,7 +204,7 @@ class GoogleModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider('gateway/google-vertex' if provider == 'gateway' else provider)
+            provider = infer_provider('gateway/gemini' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
