@@ -1123,7 +1123,7 @@ async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: Bed
     ]
 
     # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req)  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [
@@ -1242,7 +1242,7 @@ async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvi
     # Models other than Mistral support toolResult.content with text, not json
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req)  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [
@@ -1258,7 +1258,7 @@ async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvi
     # Mistral requires toolResult.content to hold json, not text
     model = BedrockConverseModel('mistral.mistral-7b-instruct-v0:2', provider=bedrock_provider)
     # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req)  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [

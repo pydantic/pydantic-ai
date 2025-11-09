@@ -477,7 +477,7 @@ class OpenAIChatModel(Model):
         else:
             tool_choice = 'auto'
 
-        openai_messages = await self._map_messages(messages)
+        openai_messages = await self._map_messages(messages, model_request_parameters)
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
@@ -672,7 +672,9 @@ class OpenAIChatModel(Model):
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIChatModel`. If it should be, please file an issue.'
                 )
 
-    async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
+    async def _map_messages(
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         for message in messages:
@@ -713,7 +715,7 @@ class OpenAIChatModel(Model):
                 openai_messages.append(message_param)
             else:
                 assert_never(message)
-        if instructions := self._get_instructions(messages):
+        if instructions := self._get_instructions(messages, model_request_parameters):
             openai_messages.insert(0, chat.ChatCompletionSystemMessageParam(content=instructions, role='system'))
         return openai_messages
 
@@ -1164,7 +1166,7 @@ class OpenAIResponsesModel(Model):
         if previous_response_id == 'auto':
             previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
 
-        instructions, openai_messages = await self._map_messages(messages, model_settings)
+        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._get_reasoning(model_settings)
 
         text: responses.ResponseTextConfigParam | None = None
@@ -1352,7 +1354,10 @@ class OpenAIResponsesModel(Model):
             return None, messages
 
     async def _map_messages(  # noqa: C901
-        self, messages: list[ModelMessage], model_settings: OpenAIResponsesModelSettings
+        self,
+        messages: list[ModelMessage],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> tuple[str | NotGiven, list[responses.ResponseInputItemParam]]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam`."""
         profile = OpenAIModelProfile.from_profile(self.profile)
@@ -1577,7 +1582,7 @@ class OpenAIResponsesModel(Model):
                         assert_never(item)
             else:
                 assert_never(message)
-        instructions = self._get_instructions(messages) or NOT_GIVEN
+        instructions = self._get_instructions(messages, model_request_parameters) or NOT_GIVEN
         return instructions, openai_messages
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> responses.ResponseFormatTextJSONSchemaConfigParam:
