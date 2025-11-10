@@ -180,3 +180,15 @@ async def test_model_provider_argument():
 
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider='gateway')
     assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+
+
+async def test_gateway_provider_routing_group_header(gateway_api_key: str):
+    provider = gateway_provider('chat', routing_group='openai', api_key=gateway_api_key)
+    httpx_client = provider.client._client  # type: ignore[reportPrivateUsage]
+    assert httpx_client.headers['pydantic-ai-gateway-routing-group'] == 'openai'
+
+
+async def test_gateway_provider_profile_header(gateway_api_key: str):
+    provider = gateway_provider('chat', profile='openai', api_key=gateway_api_key)
+    httpx_client = provider.client._client  # type: ignore[reportPrivateUsage]
+    assert httpx_client.headers['pydantic-ai-gateway-profile'] == 'openai'
