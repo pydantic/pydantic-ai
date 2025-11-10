@@ -56,7 +56,6 @@ Set your gateway credentials as environment variables:
 
 ```bash
 export ANTHROPIC_AUTH_TOKEN="YOUR_PAIG_TOKEN"
-
 export ANTHROPIC_BASE_URL="https://gateway.pydantic.dev/proxy/anthropic"
 ```
 
