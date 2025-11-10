@@ -474,7 +474,7 @@ class PersonalizedGreeting(BaseModel):
     language_code: str
 
 
-agent = Agent('openai:gpt-4o', toolsets=[toolset], output_type=PersonalizedGreeting)
+agent = Agent('openai:gpt-5', toolsets=[toolset], output_type=PersonalizedGreeting)
 
 result = agent.run_sync('Greet the user in a personalized way')
 print(repr(result.output))
@@ -661,7 +661,10 @@ If you want to reuse a network connection or session across tool listings and ca
 
 ### MCP Servers
 
-See the [MCP Client](./mcp/client.md) documentation for how to use MCP servers with Pydantic AI.
+Pydantic AI provides two toolsets that allow an agent to connect to and call tools on local and remote MCP Servers:
+
+1. `MCPServer`: the [MCP SDK-based Client](./mcp/client.md) which offers more direct control by leveraging the MCP SDK directly
+2. `FastMCPToolset`: the [FastMCP-based Client](./mcp/fastmcp-client.md) which offers additional capabilities like Tool Transformation, simpler OAuth configuration, and more.
 
 ### LangChain Tools {#langchain-tools}
 
@@ -678,7 +681,7 @@ from pydantic_ai.ext.langchain import LangChainToolset
 toolkit = SlackToolkit()
 toolset = LangChainToolset(toolkit.get_tools())
 
-agent = Agent('openai:gpt-4o', toolsets=[toolset])
+agent = Agent('openai:gpt-5', toolsets=[toolset])
 # ...
 ```
 
@@ -702,5 +705,5 @@ toolset = ACIToolset(
     linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
 )
 
-agent = Agent('openai:gpt-4o', toolsets=[toolset])
+agent = Agent('openai:gpt-5', toolsets=[toolset])
 ```

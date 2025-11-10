@@ -19,7 +19,7 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('google-gla:gemini-1.5-flash', output_type=CityLocation)
+agent = Agent('google-gla:gemini-2.5-flash', output_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 #> city='London' country='United Kingdom'
@@ -70,7 +70,7 @@ class Box(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-4o-mini',
+    'openai:gpt-5-mini',
     output_type=[Box, str], # (1)!
     system_prompt=(
         "Extract me the dimensions of a box, "
@@ -97,7 +97,7 @@ Here's an example of using a union return type, which will register multiple out
 from pydantic_ai import Agent
 
 agent = Agent[None, list[str] | list[int]](
-    'openai:gpt-4o-mini',
+    'openai:gpt-5-mini',
     output_type=list[str] | list[int],  # type: ignore # (1)!
     system_prompt='Extract either colors or sizes from the shapes provided.',
 )
@@ -176,7 +176,7 @@ def run_sql_query(query: str) -> list[Row]:
 
 
 sql_agent = Agent[None, list[Row] | SQLFailure](
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=[run_sql_query, SQLFailure],
     instructions='You are a SQL agent that can run SQL queries on a database.',
 )
@@ -208,7 +208,7 @@ class RouterFailure(BaseModel):
 
 
 router_agent = Agent[None, list[Row] | RouterFailure](
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=[hand_off_to_sql_agent, RouterFailure],
     instructions='You are a router to other agents. Never try to solve a problem yourself, just pass it on.',
 )
@@ -248,7 +248,7 @@ def split_into_words(text: str) -> list[str]:
 
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=TextOutput(split_into_words),
 )
 result = agent.run_sync('Who was Albert Einstein?')
@@ -291,7 +291,7 @@ class Vehicle(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=[ # (1)!
         ToolOutput(Fruit, name='return_fruit'),
         ToolOutput(Vehicle, name='return_vehicle'),
@@ -318,7 +318,7 @@ from pydantic_ai import Agent, NativeOutput
 from tool_output import Fruit, Vehicle
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=NativeOutput(
         [Fruit, Vehicle], # (1)!
         name='Fruit_or_vehicle',
@@ -358,7 +358,7 @@ class Device(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=PromptedOutput(
         [Vehicle, Device], # (1)!
         name='Vehicle or device',
@@ -370,7 +370,7 @@ print(repr(result.output))
 #> Device(name='MacBook', kind='laptop')
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=PromptedOutput(
         [Vehicle, Device],
         template='Gimme some JSON: {schema}'
@@ -411,7 +411,7 @@ HumanDict = StructuredDict(
     description='A human with a name and age',
 )
 
-agent = Agent('openai:gpt-4o', output_type=HumanDict)
+agent = Agent('openai:gpt-5', output_type=HumanDict)
 result = agent.run_sync('Create a person')
 #> {'name': 'John Doe', 'age': 30}
 ```
@@ -442,7 +442,7 @@ class InvalidRequest(BaseModel):
 
 Output = Success | InvalidRequest
 agent = Agent[DatabaseConn, Output](
-    'google-gla:gemini-1.5-flash',
+    'google-gla:gemini-2.5-flash',
     output_type=Output,  # type: ignore
     deps_type=DatabaseConn,
     system_prompt='Generate PostgreSQL flavored SQL queries based on user input.',
@@ -469,6 +469,40 @@ print(result.output)
 ```
 
 _(This example is complete, it can be run "as is")_
+
+#### Handling partial output in output validators {#partial-output}
+
+You can use the `partial_output` field on `RunContext` to handle validation differently for partial outputs during streaming (e.g. skip validation altogether).
+
+```python {title="partial_validation_streaming.py" line_length="120"}
+from pydantic_ai import Agent, ModelRetry, RunContext
+
+agent = Agent('openai:gpt-5')
+
+@agent.output_validator
+def validate_output(ctx: RunContext, output: str) -> str:
+    if ctx.partial_output:
+        return output
+    else:
+        if len(output) < 50:
+            raise ModelRetry('Output is too short.')
+        return output
+
+
+async def main():
+    async with agent.run_stream('Write a long story about a cat') as result:
+        async for message in result.stream_text():
+            print(message)
+            #> Once upon a
+            #> Once upon a time, there was
+            #> Once upon a time, there was a curious cat
+            #> Once upon a time, there was a curious cat named Whiskers who
+            #> Once upon a time, there was a curious cat named Whiskers who loved to explore
+            #> Once upon a time, there was a curious cat named Whiskers who loved to explore the world around
+            #> Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ## Image output
 
@@ -529,7 +563,7 @@ Example of streamed text output:
 ```python {title="streamed_hello_world.py" line_length="120"}
 from pydantic_ai import Agent
 
-agent = Agent('google-gla:gemini-1.5-flash')  # (1)!
+agent = Agent('google-gla:gemini-2.5-flash')  # (1)!
 
 
 async def main():
@@ -555,7 +589,7 @@ We can also stream text as deltas rather than the entire text in each item:
 ```python {title="streamed_delta_hello_world.py"}
 from pydantic_ai import Agent
 
-agent = Agent('google-gla:gemini-1.5-flash')
+agent = Agent('google-gla:gemini-2.5-flash')
 
 
 async def main():
@@ -597,7 +631,7 @@ class UserProfile(TypedDict):
 
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     output_type=UserProfile,
     system_prompt='Extract a user profile from the input',
 )
@@ -613,7 +647,6 @@ async def main():
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes'}
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the '}
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyr'}
-            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
 ```
 
@@ -640,7 +673,7 @@ class UserProfile(TypedDict, total=False):
     bio: str
 
 
-agent = Agent('openai:gpt-4o', output_type=UserProfile)
+agent = Agent('openai:gpt-5', output_type=UserProfile)
 
 
 async def main():
@@ -660,6 +693,7 @@ async def main():
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes'}
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the '}
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyr'}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
 ```

@@ -272,7 +272,7 @@ class GroqModel(Model):
         else:
             tool_choice = 'auto'
 
-        groq_messages = self._map_messages(messages)
+        groq_messages = self._map_messages(messages, model_request_parameters)
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
@@ -388,7 +388,9 @@ class GroqModel(Model):
                 )
         return tools
 
-    def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
+    def _map_messages(
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
         groq_messages: list[chat.ChatCompletionMessageParam] = []
         for message in messages:
@@ -423,7 +425,7 @@ class GroqModel(Model):
                 groq_messages.append(message_param)
             else:
                 assert_never(message)
-        if instructions := self._get_instructions(messages):
+        if instructions := self._get_instructions(messages, model_request_parameters):
             groq_messages.insert(0, chat.ChatCompletionSystemMessageParam(role='system', content=instructions))
         return groq_messages
 
@@ -524,6 +526,8 @@ class GroqStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         try:
             executed_tool_call_id: str | None = None
+            reasoning_index = 0
+            reasoning = False
             async for chunk in self._response:
                 self._usage += _map_usage(chunk)
 
@@ -540,10 +544,16 @@ class GroqStreamedResponse(StreamedResponse):
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
                 if choice.delta.reasoning is not None:
+                    if not reasoning:
+                        reasoning_index += 1
+                        reasoning = True
+
                     # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
                     yield self._parts_manager.handle_thinking_delta(
-                        vendor_part_id='reasoning', content=choice.delta.reasoning
+                        vendor_part_id=f'reasoning-{reasoning_index}', content=choice.delta.reasoning
                     )
+                else:
+                    reasoning = False
 
                 if choice.delta.executed_tools:
                     for tool in choice.delta.executed_tools:

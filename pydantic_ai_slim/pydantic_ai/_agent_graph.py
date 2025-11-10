@@ -20,7 +20,8 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_graph import BaseNode, Graph, GraphRunContext
+from pydantic_graph import BaseNode, GraphRunContext
+from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
 
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
@@ -266,6 +267,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         next_message.instructions = await ctx.deps.get_instructions(run_context)
 
+        if not messages and not next_message.parts and not next_message.instructions:
+            raise exceptions.UserError('No message history, user prompt, or instructions provided')
+
         return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
 
     async def _handle_deferred_tool_results(  # noqa: C901
@@ -370,9 +374,10 @@ async def _prepare_request_parameters(
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
     output_schema = ctx.deps.output_schema
-    output_object = None
-    if isinstance(output_schema, _output.NativeOutputSchema):
-        output_object = output_schema.object_def
+
+    prompted_output_template = (
+        output_schema.template if isinstance(output_schema, _output.PromptedOutputSchema) else None
+    )
 
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
@@ -387,7 +392,8 @@ async def _prepare_request_parameters(
         builtin_tools=ctx.deps.builtin_tools,
         output_mode=output_schema.mode,
         output_tools=output_tools,
-        output_object=output_object,
+        output_object=output_schema.object_def,
+        prompted_output_template=prompted_output_template,
         allow_text_output=output_schema.allows_text,
         allow_image_output=output_schema.allows_image,
     )
@@ -485,7 +491,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         message_history = _clean_message_history(message_history)
 
         model_request_parameters = await _prepare_request_parameters(ctx)
-        model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
 
         model_settings = ctx.deps.model_settings
         usage = ctx.state.usage
@@ -566,7 +571,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # we got an empty response.
                     # this sometimes happens with anthropic (and perhaps other models)
                     # when the model has already returned text along side tool calls
-                    if text_processor := output_schema.text_processor:
+                    if text_processor := output_schema.text_processor:  # pragma: no branch
                         # in this scenario, if text responses are allowed, we return text from the most recent model
                         # response, if any
                         for message in reversed(ctx.state.message_history):
@@ -580,15 +585,23 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                                         # not part of the final result output, so we reset the accumulated text
                                         text = ''  # pragma: no cover
                                 if text:
-                                    self._next_node = await self._handle_text_response(ctx, text, text_processor)
-                                    return
+                                    try:
+                                        self._next_node = await self._handle_text_response(ctx, text, text_processor)
+                                        return
+                                    except ToolRetryError:
+                                        # If the text from the preview response was invalid, ignore it.
+                                        pass
 
                     # Go back to the model request node with an empty request, which means we'll essentially
                     # resubmit the most recent request that resulted in an empty response,
                     # as the empty response and request will not create any items in the API payload,
                     # in the hope the model will return a non-empty response this time.
                     ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
-                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[]))
+                    run_context = build_run_context(ctx)
+                    instructions = await ctx.deps.get_instructions(run_context)
+                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                        _messages.ModelRequest(parts=[], instructions=instructions)
+                    )
                     return
 
                 text = ''
@@ -614,11 +627,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     else:
                         assert_never(part)
 
-                # At the moment, we prioritize at least executing tool calls if they are present.
-                # In the future, we'd consider making this configurable at the agent or run level.
-                # This accounts for cases like anthropic returns that might contain a text response
-                # and a tool call response, where the text response just indicates the tool call will happen.
                 try:
+                    # At the moment, we prioritize at least executing tool calls if they are present.
+                    # In the future, we'd consider making this configurable at the agent or run level.
+                    # This accounts for cases like anthropic returns that might contain a text response
+                    # and a tool call response, where the text response just indicates the tool call will happen.
                     alternatives: list[str] = []
                     if tool_calls:
                         async for event in self._handle_tool_calls(ctx, tool_calls):
@@ -652,7 +665,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     ctx.state.increment_retries(
                         ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
                     )
-                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
+                    run_context = build_run_context(ctx)
+                    instructions = await ctx.deps.get_instructions(run_context)
+                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                        _messages.ModelRequest(parts=[e.tool_retry], instructions=instructions)
+                    )
 
             self._events_iterator = _run_stream()
 
@@ -758,7 +775,6 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         if ctx.deps.instrumentation_settings
         else DEFAULT_INSTRUMENTATION_VERSION,
         run_step=ctx.state.run_step,
-        tool_call_approved=ctx.state.run_step == 0,
     )
 
 
@@ -1022,7 +1038,7 @@ async def _call_tool(
         elif isinstance(tool_call_result, ToolApproved):
             if tool_call_result.override_args is not None:
                 tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
-            tool_result = await tool_manager.handle_call(tool_call)
+            tool_result = await tool_manager.handle_call(tool_call, approved=True)
         elif isinstance(tool_call_result, ToolDenied):
             return _messages.ToolReturnPart(
                 tool_name=tool_call.tool_name,
@@ -1154,22 +1170,32 @@ def build_agent_graph(
     name: str | None,
     deps_type: type[DepsT],
     output_type: OutputSpec[OutputT],
-) -> Graph[GraphAgentState, GraphAgentDeps[DepsT, result.FinalResult[OutputT]], result.FinalResult[OutputT]]:
+) -> Graph[
+    GraphAgentState,
+    GraphAgentDeps[DepsT, OutputT],
+    UserPromptNode[DepsT, OutputT],
+    result.FinalResult[OutputT],
+]:
     """Build the execution [Graph][pydantic_graph.Graph] for a given agent."""
-    nodes = (
-        UserPromptNode[DepsT],
-        ModelRequestNode[DepsT],
-        CallToolsNode[DepsT],
-        SetFinalResult[DepsT],
-    )
-    graph = Graph[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[OutputT]](
-        nodes=nodes,
+    g = GraphBuilder(
         name=name or 'Agent',
         state_type=GraphAgentState,
-        run_end_type=result.FinalResult[OutputT],
+        deps_type=GraphAgentDeps[DepsT, OutputT],
+        input_type=UserPromptNode[DepsT, OutputT],
+        output_type=result.FinalResult[OutputT],
         auto_instrument=False,
     )
-    return graph
+
+    g.add(
+        g.edge_from(g.start_node).to(UserPromptNode[DepsT, OutputT]),
+        g.node(UserPromptNode[DepsT, OutputT]),
+        g.node(ModelRequestNode[DepsT, OutputT]),
+        g.node(CallToolsNode[DepsT, OutputT]),
+        g.node(
+            SetFinalResult[DepsT, OutputT],
+        ),
+    )
+    return g.build(validate_graph_structure=False)
 
 
 async def _process_message_history(

@@ -4,6 +4,7 @@ from pydantic import TypeAdapter
 from pydantic_ai.builtin_tools import (
     CodeExecutionTool,
     ImageGenerationTool,
+    MCPServerTool,
     MemoryTool,
     UrlContextTool,
     WebSearchTool,
@@ -31,6 +32,7 @@ def test_model_request_parameters_are_serializable():
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [],
+            'prompted_output_template': None,
             'allow_text_output': True,
             'allow_image_output': False,
         }
@@ -45,6 +47,8 @@ def test_model_request_parameters_are_serializable():
             UrlContextTool(),
             ImageGenerationTool(size='1024x1024'),
             MemoryTool(),
+            MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'),
+            MCPServerTool(id='github', url='https://api.githubcopilot.com/mcp'),
         ],
         output_mode='text',
         allow_text_output=True,
@@ -89,6 +93,24 @@ def test_model_request_parameters_are_serializable():
                     'size': '1024x1024',
                 },
                 {'kind': 'memory'},
+                {
+                    'kind': 'mcp_server',
+                    'id': 'deepwiki',
+                    'url': 'https://mcp.deepwiki.com/mcp',
+                    'authorization_token': None,
+                    'description': None,
+                    'allowed_tools': None,
+                    'headers': None,
+                },
+                {
+                    'kind': 'mcp_server',
+                    'id': 'github',
+                    'url': 'https://api.githubcopilot.com/mcp',
+                    'authorization_token': None,
+                    'description': None,
+                    'allowed_tools': None,
+                    'headers': None,
+                },
             ],
             'output_mode': 'text',
             'output_object': None,
@@ -104,6 +126,7 @@ def test_model_request_parameters_are_serializable():
                     'metadata': None,
                 }
             ],
+            'prompted_output_template': None,
             'allow_text_output': True,
             'allow_image_output': False,
         }

@@ -145,6 +145,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .ovhcloud import OVHcloudProvider
 
         return OVHcloudProvider
+    elif provider == 'outlines':
+        from .outlines import OutlinesProvider
+
+        return OutlinesProvider
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
 
@@ -154,8 +158,8 @@ def infer_provider(provider: str) -> Provider[Any]:
     if provider.startswith('gateway/'):
         from .gateway import gateway_provider
 
-        provider = provider.removeprefix('gateway/')
-        return gateway_provider(provider)
+        api_type = provider.removeprefix('gateway/')
+        return gateway_provider(api_type)
     elif provider in ('google-vertex', 'google-gla'):
         from .google import GoogleProvider
 
