@@ -3097,10 +3097,6 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
     )
 
     events = [event async for event in streamed_response._get_event_iterator()]  # pyright: ignore[reportPrivateUsage]
-    assert len(events) == 1
-    event = events[0]
-    assert isinstance(event, PartStartEvent)
-    assert isinstance(event.part, TextPart)
     assert events == snapshot([PartStartEvent(index=0, part=TextPart(content='streamed text'))])
 
 
