@@ -12,6 +12,7 @@ Pydantic AI supports the following built-in tools:
 - **[`UrlContextTool`][pydantic_ai.builtin_tools.UrlContextTool]**: Enables agents to pull URL contents into their context
 - **[`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool]**: Enables agents to use memory
 - **[`MCPServerTool`][pydantic_ai.builtin_tools.MCPServerTool]**: Enables agents to use remote MCP servers with communication handled by the model provider
+- **[`FileSearchTool`][pydantic_ai.builtin_tools.FileSearchTool]**: Enables agents to search through uploaded files using vector search (RAG)
 
 These tools are passed to the agent via the `builtin_tools` parameter and are executed by the model provider's infrastructure.
 
@@ -565,6 +566,99 @@ _(This example is complete, it can be run "as is")_
 | `allowed_tools`       | ✅ | ✅ |
 | `description`         | ✅ | ❌ |
 | `headers`             | ✅ | ❌ |
+
+## File Search Tool
+
+The [`FileSearchTool`][pydantic_ai.builtin_tools.FileSearchTool] enables your agent to search through uploaded files using vector search, providing a fully managed Retrieval-Augmented Generation (RAG) system. This tool handles file storage, chunking, embedding generation, and context injection into prompts.
+
+### Provider Support
+
+| Provider | Supported | Notes |
+|----------|-----------|-------|
+| OpenAI Responses | ✅ | Full feature support. Requires files to be uploaded to vector stores via the [OpenAI Files API](https://platform.openai.com/docs/api-reference/files). Vector stores must be created and file IDs added before using the tool. |
+| Google (Gemini) | ✅ | Requires files to be uploaded via the [Gemini Files API](https://ai.google.dev/gemini-api/docs/files). Files are automatically deleted after 48 hours. Supports up to 2 GB per file and 20 GB per project. Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
+| Anthropic | ❌ | Not supported |
+| Groq | ❌ | Not supported |
+| OpenAI Chat Completions | ❌ | Not supported |
+| Bedrock | ❌ | Not supported |
+| Mistral | ❌ | Not supported |
+| Cohere | ❌ | Not supported |
+| HuggingFace | ❌ | Not supported |
+| Outlines | ❌ | Not supported |
+
+### Usage
+
+#### OpenAI Responses
+
+With OpenAI, you need to first upload files to a vector store, then reference the vector store IDs when using the `FileSearchTool`:
+
+```py {title="file_search_openai.py"}
+from pydantic_ai import Agent, FileSearchTool
+
+agent = Agent(
+    'openai-responses:gpt-5',
+    builtin_tools=[FileSearchTool(vector_store_ids=['vs_abc123'])]  # (1)
+)
+
+result = agent.run_sync('What information is in my documents about pydantic?')
+print(result.output)
+#> Based on your documents, Pydantic is a data validation library for Python...
+```
+
+1. Replace `vs_abc123` with your actual vector store ID from the OpenAI API.
+
+_(This example is complete, it can be run "as is")_
+
+#### Google (Gemini)
+
+With Gemini, you need to first upload files via the Files API, then reference the file resource names:
+
+```py {title="file_search_google.py"}
+from pydantic_ai import Agent, FileSearchTool
+
+agent = Agent(
+    'google-gla:gemini-2.5-flash',
+    builtin_tools=[FileSearchTool(vector_store_ids=['files/abc123'])]  # (1)
+)
+
+result = agent.run_sync('Summarize the key points from my uploaded documents.')
+print(result.output)
+#> The documents discuss the following key points: ...
+```
+
+1. Replace `files/abc123` with your actual file resource name from the Gemini Files API.
+
+_(This example is complete, it can be run "as is")_
+
+!!! note "Gemini File Search API Status"
+    The File Search Tool for Gemini was announced on November 6, 2025. The implementation may require adjustment as the official `google-genai` SDK is updated to fully support this feature.
+
+### Configuration
+
+The `FileSearchTool` accepts a list of vector store IDs:
+
+- **OpenAI**: Vector store IDs created via the [OpenAI Files API](https://platform.openai.com/docs/api-reference/files)
+- **Google**: File resource names from the [Gemini Files API](https://ai.google.dev/gemini-api/docs/files)
+
+```py {title="file_search_configured.py"}
+from pydantic_ai import Agent, FileSearchTool
+
+agent = Agent(
+    'openai-responses:gpt-5',
+    builtin_tools=[
+        FileSearchTool(
+            vector_store_ids=['vs_store1', 'vs_store2']  # (1)
+        )
+    ]
+)
+
+result = agent.run_sync('Find information across all my document collections.')
+print(result.output)
+```
+
+1. You can provide multiple vector store IDs to search across different collections.
+
+_(This example is complete, it can be run "as is")_
 
 ## API Reference
 

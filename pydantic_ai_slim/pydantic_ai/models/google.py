@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, UrlContextTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, FileSearchTool, ImageGenerationTool, UrlContextTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
@@ -342,6 +342,13 @@ class GoogleModel(Model):
                     tools.append(ToolDict(url_context=UrlContextDict()))
                 elif isinstance(tool, CodeExecutionTool):
                     tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
+                elif isinstance(tool, FileSearchTool):
+                    # File Search Tool for Gemini API
+                    # The file_search tool uses file resource names (vector_store_ids) to search through uploaded files
+                    # Note: This requires files to be uploaded via the Files API first
+                    # The structure below is based on the Gemini File Search Tool announcement (Nov 2025)
+                    # and may require adjustment when the official google-genai SDK is updated
+                    tools.append(ToolDict(file_search={'file_names': tool.vector_store_ids}))  # type: ignore[reportGeneralTypeIssues]
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                     if not self.profile.supports_image_output:
                         raise UserError(
