@@ -40,7 +40,7 @@ You can access multiple models with the same API key, as shown in the code snipp
 from pydantic_ai import Agent
 
 agent = Agent(
-    'gateway/openai:gpt-4.1',
+    'gateway/openai:gpt-5',
     instructions='Be concise, reply with one sentence.'
 )
 
@@ -50,7 +50,7 @@ print(result.output)
 
 
 ## Claude Code
-Before you start, log out of Claude Code using `claude /logout`.
+Before you start, log out of Claude Code using `/logout`.
 
 Set your gateway credentials as environment variables:
 
