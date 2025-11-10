@@ -20,36 +20,70 @@ In typing terms, agents are generic in their dependency and output types, e.g., 
 
 Here's a toy example of an agent that simulates a roulette wheel:
 
-```python {title="roulette_wheel.py"}
-from pydantic_ai import Agent, RunContext
+=== "Pydantic AI Gateway"
 
-roulette_agent = Agent(  # (1)!
-    'openai:gpt-5',
-    deps_type=int,
-    output_type=bool,
-    system_prompt=(
-        'Use the `roulette_wheel` function to see if the '
-        'customer has won based on the number they provide.'
-    ),
-)
+    ```python title="roulette_wheel.py"
+    from pydantic_ai import Agent, RunContext
 
-
-@roulette_agent.tool
-async def roulette_wheel(ctx: RunContext[int], square: int) -> str:  # (2)!
-    """check if the square is a winner"""
-    return 'winner' if square == ctx.deps else 'loser'
+    roulette_agent = Agent(  # (1)!
+        'gateway/openai:gpt-5',
+        deps_type=int,
+        output_type=bool,
+        system_prompt=(
+            'Use the `roulette_wheel` function to see if the '
+            'customer has won based on the number they provide.'
+        ),
+    )
 
 
-# Run the agent
-success_number = 18  # (3)!
-result = roulette_agent.run_sync('Put my money on square eighteen', deps=success_number)
-print(result.output)  # (4)!
-#> True
+    @roulette_agent.tool
+    async def roulette_wheel(ctx: RunContext[int], square: int) -> str:  # (2)!
+        """check if the square is a winner"""
+        return 'winner' if square == ctx.deps else 'loser'
 
-result = roulette_agent.run_sync('I bet five is the winner', deps=success_number)
-print(result.output)
-#> False
-```
+
+    # Run the agent
+    success_number = 18  # (3)!
+    result = roulette_agent.run_sync('Put my money on square eighteen', deps=success_number)
+    print(result.output)  # (4)!
+    #> True
+
+    result = roulette_agent.run_sync('I bet five is the winner', deps=success_number)
+    print(result.output)
+    #> False
+    ```
+=== "Pydantic AI"
+
+    ```python title="roulette_wheel.py"
+    from pydantic_ai import Agent, RunContext
+
+    roulette_agent = Agent(  # (1)!
+        'openai:gpt-5',
+        deps_type=int,
+        output_type=bool,
+        system_prompt=(
+            'Use the `roulette_wheel` function to see if the '
+            'customer has won based on the number they provide.'
+        ),
+    )
+
+
+    @roulette_agent.tool
+    async def roulette_wheel(ctx: RunContext[int], square: int) -> str:  # (2)!
+        """check if the square is a winner"""
+        return 'winner' if square == ctx.deps else 'loser'
+
+
+    # Run the agent
+    success_number = 18  # (3)!
+    result = roulette_agent.run_sync('Put my money on square eighteen', deps=success_number)
+    print(result.output)  # (4)!
+    #> True
+
+    result = roulette_agent.run_sync('I bet five is the winner', deps=success_number)
+    print(result.output)
+    #> False
+    ```
 
 1. Create an agent, which expects an integer dependency and produces a boolean output. This agent will have type `#!python Agent[int, bool]`.
 2. Define a tool that checks if the square is a winner. Here [`RunContext`][pydantic_ai.tools.RunContext] is parameterized with the dependency type `int`; if you got the dependency type wrong you'd get a typing error.
@@ -71,47 +105,93 @@ There are five ways to run an agent:
 
 Here's a simple example demonstrating the first four:
 
-```python {title="run_agent.py"}
-from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent
+=== "Pydantic AI Gateway"
 
-agent = Agent('openai:gpt-5')
+    ```python {title="run_agent.py"}
+    from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent
 
-result_sync = agent.run_sync('What is the capital of Italy?')
-print(result_sync.output)
-#> The capital of Italy is Rome.
+    agent = Agent('gateway/openai:gpt-5')
+
+    result_sync = agent.run_sync('What is the capital of Italy?')
+    print(result_sync.output)
+    #> The capital of Italy is Rome.
 
 
-async def main():
-    result = await agent.run('What is the capital of France?')
-    print(result.output)
-    #> The capital of France is Paris.
+    async def main():
+        result = await agent.run('What is the capital of France?')
+        print(result.output)
+        #> The capital of France is Paris.
 
-    async with agent.run_stream('What is the capital of the UK?') as response:
-        async for text in response.stream_text():
-            print(text)
-            #> The capital of
-            #> The capital of the UK is
-            #> The capital of the UK is London.
+        async with agent.run_stream('What is the capital of the UK?') as response:
+            async for text in response.stream_text():
+                print(text)
+                #> The capital of
+                #> The capital of the UK is
+                #> The capital of the UK is London.
 
-    events: list[AgentStreamEvent | AgentRunResultEvent] = []
-    async for event in agent.run_stream_events('What is the capital of Mexico?'):
-        events.append(event)
-    print(events)
-    """
-    [
-        PartStartEvent(index=0, part=TextPart(content='The capital of ')),
-        FinalResultEvent(tool_name=None, tool_call_id=None),
-        PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='Mexico is Mexico ')),
-        PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='City.')),
-        PartEndEvent(
-            index=0, part=TextPart(content='The capital of Mexico is Mexico City.')
-        ),
-        AgentRunResultEvent(
-            result=AgentRunResult(output='The capital of Mexico is Mexico City.')
-        ),
-    ]
-    """
-```
+        events: list[AgentStreamEvent | AgentRunResultEvent] = []
+        async for event in agent.run_stream_events('What is the capital of Mexico?'):
+            events.append(event)
+        print(events)
+        """
+        [
+            PartStartEvent(index=0, part=TextPart(content='The capital of ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='Mexico is Mexico ')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='City.')),
+            PartEndEvent(
+                index=0, part=TextPart(content='The capital of Mexico is Mexico City.')
+            ),
+            AgentRunResultEvent(
+                result=AgentRunResult(output='The capital of Mexico is Mexico City.')
+            ),
+        ]
+        """
+    ```
+
+=== "Pydantic AI"
+
+    ```python {title="run_agent.py"}
+    from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent
+
+    agent = Agent('openai:gpt-5')
+
+    result_sync = agent.run_sync('What is the capital of Italy?')
+    print(result_sync.output)
+    #> The capital of Italy is Rome.
+
+
+    async def main():
+        result = await agent.run('What is the capital of France?')
+        print(result.output)
+        #> The capital of France is Paris.
+
+        async with agent.run_stream('What is the capital of the UK?') as response:
+            async for text in response.stream_text():
+                print(text)
+                #> The capital of
+                #> The capital of the UK is
+                #> The capital of the UK is London.
+
+        events: list[AgentStreamEvent | AgentRunResultEvent] = []
+        async for event in agent.run_stream_events('What is the capital of Mexico?'):
+            events.append(event)
+        print(events)
+        """
+        [
+            PartStartEvent(index=0, part=TextPart(content='The capital of ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='Mexico is Mexico ')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='City.')),
+            PartEndEvent(
+                index=0, part=TextPart(content='The capital of Mexico is Mexico City.')
+            ),
+            AgentRunResultEvent(
+                result=AgentRunResult(output='The capital of Mexico is Mexico City.')
+            ),
+        ]
+        """
+    ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -131,99 +211,197 @@ The example below shows how to stream events and text output. You can also [stre
     If you want to always run the agent graph to completion and stream all events from the model's streaming response and the agent's execution of tools,
     use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] instead, as described in the following sections.
 
-```python {title="run_stream_event_stream_handler.py"}
-import asyncio
-from collections.abc import AsyncIterable
-from datetime import date
+=== "Pydantic AI Gateway"
 
-from pydantic_ai import (
-    Agent,
-    AgentStreamEvent,
-    FinalResultEvent,
-    FunctionToolCallEvent,
-    FunctionToolResultEvent,
-    PartDeltaEvent,
-    PartStartEvent,
-    RunContext,
-    TextPartDelta,
-    ThinkingPartDelta,
-    ToolCallPartDelta,
-)
+    ```python {title="run_stream_event_stream_handler.py"}
+    import asyncio
+    from collections.abc import AsyncIterable
+    from datetime import date
 
-weather_agent = Agent(
-    'openai:gpt-5',
-    system_prompt='Providing a weather forecast at the locations the user provides.',
-)
+    from pydantic_ai import (
+        Agent,
+        AgentStreamEvent,
+        FinalResultEvent,
+        FunctionToolCallEvent,
+        FunctionToolResultEvent,
+        PartDeltaEvent,
+        PartStartEvent,
+        RunContext,
+        TextPartDelta,
+        ThinkingPartDelta,
+        ToolCallPartDelta,
+    )
 
-
-@weather_agent.tool
-async def weather_forecast(
-    ctx: RunContext,
-    location: str,
-    forecast_date: date,
-) -> str:
-    return f'The forecast in {location} on {forecast_date} is 24°C and sunny.'
+    weather_agent = Agent(
+        'gateway/openai:gpt-5',
+        system_prompt='Providing a weather forecast at the locations the user provides.',
+    )
 
 
-output_messages: list[str] = []
-
-async def handle_event(event: AgentStreamEvent):
-    if isinstance(event, PartStartEvent):
-        output_messages.append(f'[Request] Starting part {event.index}: {event.part!r}')
-    elif isinstance(event, PartDeltaEvent):
-        if isinstance(event.delta, TextPartDelta):
-            output_messages.append(f'[Request] Part {event.index} text delta: {event.delta.content_delta!r}')
-        elif isinstance(event.delta, ThinkingPartDelta):
-            output_messages.append(f'[Request] Part {event.index} thinking delta: {event.delta.content_delta!r}')
-        elif isinstance(event.delta, ToolCallPartDelta):
-            output_messages.append(f'[Request] Part {event.index} args delta: {event.delta.args_delta}')
-    elif isinstance(event, FunctionToolCallEvent):
-        output_messages.append(
-            f'[Tools] The LLM calls tool={event.part.tool_name!r} with args={event.part.args} (tool_call_id={event.part.tool_call_id!r})'
-        )
-    elif isinstance(event, FunctionToolResultEvent):
-        output_messages.append(f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}')
-    elif isinstance(event, FinalResultEvent):
-        output_messages.append(f'[Result] The model starting producing a final result (tool_name={event.tool_name})')
+    @weather_agent.tool
+    async def weather_forecast(
+        ctx: RunContext,
+        location: str,
+        forecast_date: date,
+    ) -> str:
+        return f'The forecast in {location} on {forecast_date} is 24°C and sunny.'
 
 
-async def event_stream_handler(
-    ctx: RunContext,
-    event_stream: AsyncIterable[AgentStreamEvent],
-):
-    async for event in event_stream:
-        await handle_event(event)
+    output_messages: list[str] = []
 
-async def main():
-    user_prompt = 'What will the weather be like in Paris on Tuesday?'
+    async def handle_event(event: AgentStreamEvent):
+        if isinstance(event, PartStartEvent):
+            output_messages.append(f'[Request] Starting part {event.index}: {event.part!r}')
+        elif isinstance(event, PartDeltaEvent):
+            if isinstance(event.delta, TextPartDelta):
+                output_messages.append(f'[Request] Part {event.index} text delta: {event.delta.content_delta!r}')
+            elif isinstance(event.delta, ThinkingPartDelta):
+                output_messages.append(f'[Request] Part {event.index} thinking delta: {event.delta.content_delta!r}')
+            elif isinstance(event.delta, ToolCallPartDelta):
+                output_messages.append(f'[Request] Part {event.index} args delta: {event.delta.args_delta}')
+        elif isinstance(event, FunctionToolCallEvent):
+            output_messages.append(
+                f'[Tools] The LLM calls tool={event.part.tool_name!r} with args={event.part.args} (tool_call_id={event.part.tool_call_id!r})'
+            )
+        elif isinstance(event, FunctionToolResultEvent):
+            output_messages.append(f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}')
+        elif isinstance(event, FinalResultEvent):
+            output_messages.append(f'[Result] The model starting producing a final result (tool_name={event.tool_name})')
 
-    async with weather_agent.run_stream(user_prompt, event_stream_handler=event_stream_handler) as run:
-        async for output in run.stream_text():
-            output_messages.append(f'[Output] {output}')
+
+    async def event_stream_handler(
+        ctx: RunContext,
+        event_stream: AsyncIterable[AgentStreamEvent],
+    ):
+        async for event in event_stream:
+            await handle_event(event)
+
+    async def main():
+        user_prompt = 'What will the weather be like in Paris on Tuesday?'
+
+        async with weather_agent.run_stream(user_prompt, event_stream_handler=event_stream_handler) as run:
+            async for output in run.stream_text():
+                output_messages.append(f'[Output] {output}')
 
 
-if __name__ == '__main__':
-    asyncio.run(main())
+    if __name__ == '__main__':
+        asyncio.run(main())
 
-    print(output_messages)
-    """
-    [
-        "[Request] Starting part 0: ToolCallPart(tool_name='weather_forecast', tool_call_id='0001')",
-        '[Request] Part 0 args delta: {"location":"Pa',
-        '[Request] Part 0 args delta: ris","forecast_',
-        '[Request] Part 0 args delta: date":"2030-01-',
-        '[Request] Part 0 args delta: 01"}',
-        '[Tools] The LLM calls tool=\'weather_forecast\' with args={"location":"Paris","forecast_date":"2030-01-01"} (tool_call_id=\'0001\')',
-        "[Tools] Tool call '0001' returned => The forecast in Paris on 2030-01-01 is 24°C and sunny.",
-        "[Request] Starting part 0: TextPart(content='It will be ')",
-        '[Result] The model starting producing a final result (tool_name=None)',
-        '[Output] It will be ',
-        '[Output] It will be warm and sunny ',
-        '[Output] It will be warm and sunny in Paris on ',
-        '[Output] It will be warm and sunny in Paris on Tuesday.',
-    ]
-    """
-```
+        print(output_messages)
+        """
+        [
+            "[Request] Starting part 0: ToolCallPart(tool_name='weather_forecast', tool_call_id='0001')",
+            '[Request] Part 0 args delta: {"location":"Pa',
+            '[Request] Part 0 args delta: ris","forecast_',
+            '[Request] Part 0 args delta: date":"2030-01-',
+            '[Request] Part 0 args delta: 01"}',
+            '[Tools] The LLM calls tool=\'weather_forecast\' with args={"location":"Paris","forecast_date":"2030-01-01"} (tool_call_id=\'0001\')',
+            "[Tools] Tool call '0001' returned => The forecast in Paris on 2030-01-01 is 24°C and sunny.",
+            "[Request] Starting part 0: TextPart(content='It will be ')",
+            '[Result] The model starting producing a final result (tool_name=None)',
+            '[Output] It will be ',
+            '[Output] It will be warm and sunny ',
+            '[Output] It will be warm and sunny in Paris on ',
+            '[Output] It will be warm and sunny in Paris on Tuesday.',
+        ]
+        """
+    ```
+
+=== "Pydantic AI"
+
+    ```python {title="run_stream_event_stream_handler.py"}
+    import asyncio
+    from collections.abc import AsyncIterable
+    from datetime import date
+
+    from pydantic_ai import (
+        Agent,
+        AgentStreamEvent,
+        FinalResultEvent,
+        FunctionToolCallEvent,
+        FunctionToolResultEvent,
+        PartDeltaEvent,
+        PartStartEvent,
+        RunContext,
+        TextPartDelta,
+        ThinkingPartDelta,
+        ToolCallPartDelta,
+    )
+
+    weather_agent = Agent(
+        'openai:gpt-5',
+        system_prompt='Providing a weather forecast at the locations the user provides.',
+    )
+
+
+    @weather_agent.tool
+    async def weather_forecast(
+        ctx: RunContext,
+        location: str,
+        forecast_date: date,
+    ) -> str:
+        return f'The forecast in {location} on {forecast_date} is 24°C and sunny.'
+
+
+    output_messages: list[str] = []
+
+    async def handle_event(event: AgentStreamEvent):
+        if isinstance(event, PartStartEvent):
+            output_messages.append(f'[Request] Starting part {event.index}: {event.part!r}')
+        elif isinstance(event, PartDeltaEvent):
+            if isinstance(event.delta, TextPartDelta):
+                output_messages.append(f'[Request] Part {event.index} text delta: {event.delta.content_delta!r}')
+            elif isinstance(event.delta, ThinkingPartDelta):
+                output_messages.append(f'[Request] Part {event.index} thinking delta: {event.delta.content_delta!r}')
+            elif isinstance(event.delta, ToolCallPartDelta):
+                output_messages.append(f'[Request] Part {event.index} args delta: {event.delta.args_delta}')
+        elif isinstance(event, FunctionToolCallEvent):
+            output_messages.append(
+                f'[Tools] The LLM calls tool={event.part.tool_name!r} with args={event.part.args} (tool_call_id={event.part.tool_call_id!r})'
+            )
+        elif isinstance(event, FunctionToolResultEvent):
+            output_messages.append(f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}')
+        elif isinstance(event, FinalResultEvent):
+            output_messages.append(f'[Result] The model starting producing a final result (tool_name={event.tool_name})')
+
+
+    async def event_stream_handler(
+        ctx: RunContext,
+        event_stream: AsyncIterable[AgentStreamEvent],
+    ):
+        async for event in event_stream:
+            await handle_event(event)
+
+    async def main():
+        user_prompt = 'What will the weather be like in Paris on Tuesday?'
+
+        async with weather_agent.run_stream(user_prompt, event_stream_handler=event_stream_handler) as run:
+            async for output in run.stream_text():
+                output_messages.append(f'[Output] {output}')
+
+
+    if __name__ == '__main__':
+        asyncio.run(main())
+
+        print(output_messages)
+        """
+        [
+            "[Request] Starting part 0: ToolCallPart(tool_name='weather_forecast', tool_call_id='0001')",
+            '[Request] Part 0 args delta: {"location":"Pa',
+            '[Request] Part 0 args delta: ris","forecast_',
+            '[Request] Part 0 args delta: date":"2030-01-',
+            '[Request] Part 0 args delta: 01"}',
+            '[Tools] The LLM calls tool=\'weather_forecast\' with args={"location":"Paris","forecast_date":"2030-01-01"} (tool_call_id=\'0001\')',
+            "[Tools] Tool call '0001' returned => The forecast in Paris on 2030-01-01 is 24°C and sunny.",
+            "[Request] Starting part 0: TextPart(content='It will be ')",
+            '[Result] The model starting producing a final result (tool_name=None)',
+            '[Output] It will be ',
+            '[Output] It will be warm and sunny ',
+            '[Output] It will be warm and sunny in Paris on ',
+            '[Output] It will be warm and sunny in Paris on Tuesday.',
+        ]
+        """
+    ```
 
 ### Streaming All Events
 
@@ -278,7 +456,7 @@ if __name__ == '__main__':
     """
 ```
 
-_(This example is complete, it can be run "as is")_
+_(This example is complete, it can be run "as is".)_
 
 ### Iterating Over an Agent's Graph
 
@@ -290,82 +468,22 @@ In many scenarios, you don't need to worry about pydantic-graph at all; calling 
 
 Here's an example of using `async for` with `iter` to record each node the agent executes:
 
-```python {title="agent_iter_async_for.py"}
-from pydantic_ai import Agent
+=== "Pydantic AI Gateway"
 
-agent = Agent('openai:gpt-5')
+    ```python {title="agent_iter_async_for.py"}
+    from pydantic_ai import Agent
 
-
-async def main():
-    nodes = []
-    # Begin an AgentRun, which is an async-iterable over the nodes of the agent's graph
-    async with agent.iter('What is the capital of France?') as agent_run:
-        async for node in agent_run:
-            # Each node represents a step in the agent's execution
-            nodes.append(node)
-    print(nodes)
-    """
-    [
-        UserPromptNode(
-            user_prompt='What is the capital of France?',
-            instructions_functions=[],
-            system_prompts=(),
-            system_prompt_functions=[],
-            system_prompt_dynamic_functions={},
-        ),
-        ModelRequestNode(
-            request=ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='What is the capital of France?',
-                        timestamp=datetime.datetime(...),
-                    )
-                ]
-            )
-        ),
-        CallToolsNode(
-            model_response=ModelResponse(
-                parts=[TextPart(content='The capital of France is Paris.')],
-                usage=RequestUsage(input_tokens=56, output_tokens=7),
-                model_name='gpt-5',
-                timestamp=datetime.datetime(...),
-            )
-        ),
-        End(data=FinalResult(output='The capital of France is Paris.')),
-    ]
-    """
-    print(agent_run.result.output)
-    #> The capital of France is Paris.
-```
-
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
-
-- The `AgentRun` is an async iterator that yields each node (`BaseNode` or `End`) in the flow.
-- The run ends when an `End` node is returned.
-
-#### Using `.next(...)` manually
-
-You can also drive the iteration manually by passing the node you want to run next to the `AgentRun.next(...)` method. This allows you to inspect or modify the node before it executes or skip nodes based on your own logic, and to catch errors in `next()` more easily:
-
-```python {title="agent_iter_next.py"}
-from pydantic_ai import Agent
-from pydantic_graph import End
-
-agent = Agent('openai:gpt-5')
+    agent = Agent('gateway/openai:gpt-5')
 
 
-async def main():
-    async with agent.iter('What is the capital of France?') as agent_run:
-        node = agent_run.next_node  # (1)!
-
-        all_nodes = [node]
-
-        # Drive the iteration manually:
-        while not isinstance(node, End):  # (2)!
-            node = await agent_run.next(node)  # (3)!
-            all_nodes.append(node)  # (4)!
-
-        print(all_nodes)
+    async def main():
+        nodes = []
+        # Begin an AgentRun, which is an async-iterable over the nodes of the agent's graph
+        async with agent.iter('What is the capital of France?') as agent_run:
+            async for node in agent_run:
+                # Each node represents a step in the agent's execution
+                nodes.append(node)
+        print(nodes)
         """
         [
             UserPromptNode(
@@ -396,7 +514,173 @@ async def main():
             End(data=FinalResult(output='The capital of France is Paris.')),
         ]
         """
-```
+        print(agent_run.result.output)
+        #> The capital of France is Paris.
+    ```
+
+=== "Pydantic AI"
+
+    ```python {title="agent_iter_async_for.py"}
+    from pydantic_ai import Agent
+
+    agent = Agent('openai:gpt-5')
+
+
+    async def main():
+        nodes = []
+        # Begin an AgentRun, which is an async-iterable over the nodes of the agent's graph
+        async with agent.iter('What is the capital of France?') as agent_run:
+            async for node in agent_run:
+                # Each node represents a step in the agent's execution
+                nodes.append(node)
+        print(nodes)
+        """
+        [
+            UserPromptNode(
+                user_prompt='What is the capital of France?',
+                instructions_functions=[],
+                system_prompts=(),
+                system_prompt_functions=[],
+                system_prompt_dynamic_functions={},
+            ),
+            ModelRequestNode(
+                request=ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='What is the capital of France?',
+                            timestamp=datetime.datetime(...),
+                        )
+                    ]
+                )
+            ),
+            CallToolsNode(
+                model_response=ModelResponse(
+                    parts=[TextPart(content='The capital of France is Paris.')],
+                    usage=RequestUsage(input_tokens=56, output_tokens=7),
+                    model_name='gpt-5',
+                    timestamp=datetime.datetime(...),
+                )
+            ),
+            End(data=FinalResult(output='The capital of France is Paris.')),
+        ]
+        """
+        print(agent_run.result.output)
+        #> The capital of France is Paris.
+    ```
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+- The `AgentRun` is an async iterator that yields each node (`BaseNode` or `End`) in the flow.
+- The run ends when an `End` node is returned.
+
+#### Using `.next(...)` manually
+
+You can also drive the iteration manually by passing the node you want to run next to the `AgentRun.next(...)` method. This allows you to inspect or modify the node before it executes or skip nodes based on your own logic, and to catch errors in `next()` more easily:
+
+=== "Pydantic AI Gateway"
+
+    ```python {title="agent_iter_next.py"}
+    from pydantic_ai import Agent
+    from pydantic_graph import End
+
+    agent = Agent('gateway/openai:gpt-5')
+
+
+    async def main():
+        async with agent.iter('What is the capital of France?') as agent_run:
+            node = agent_run.next_node  # (1)!
+
+            all_nodes = [node]
+
+            # Drive the iteration manually:
+            while not isinstance(node, End):  # (2)!
+                node = await agent_run.next(node)  # (3)!
+                all_nodes.append(node)  # (4)!
+
+            print(all_nodes)
+            """
+            [
+                UserPromptNode(
+                    user_prompt='What is the capital of France?',
+                    instructions_functions=[],
+                    system_prompts=(),
+                    system_prompt_functions=[],
+                    system_prompt_dynamic_functions={},
+                ),
+                ModelRequestNode(
+                    request=ModelRequest(
+                        parts=[
+                            UserPromptPart(
+                                content='What is the capital of France?',
+                                timestamp=datetime.datetime(...),
+                            )
+                        ]
+                    )
+                ),
+                CallToolsNode(
+                    model_response=ModelResponse(
+                        parts=[TextPart(content='The capital of France is Paris.')],
+                        usage=RequestUsage(input_tokens=56, output_tokens=7),
+                        model_name='gpt-5',
+                        timestamp=datetime.datetime(...),
+                    )
+                ),
+                End(data=FinalResult(output='The capital of France is Paris.')),
+            ]
+            """
+    ```
+
+=== "Pydantic AI"
+
+    ```python {title="agent_iter_next.py"}
+    from pydantic_ai import Agent
+    from pydantic_graph import End
+
+    agent = Agent('openai:gpt-5')
+
+
+    async def main():
+        async with agent.iter('What is the capital of France?') as agent_run:
+            node = agent_run.next_node  # (1)!
+
+            all_nodes = [node]
+
+            # Drive the iteration manually:
+            while not isinstance(node, End):  # (2)!
+                node = await agent_run.next(node)  # (3)!
+                all_nodes.append(node)  # (4)!
+
+            print(all_nodes)
+            """
+            [
+                UserPromptNode(
+                    user_prompt='What is the capital of France?',
+                    instructions_functions=[],
+                    system_prompts=(),
+                    system_prompt_functions=[],
+                    system_prompt_dynamic_functions={},
+                ),
+                ModelRequestNode(
+                    request=ModelRequest(
+                        parts=[
+                            UserPromptPart(
+                                content='What is the capital of France?',
+                                timestamp=datetime.datetime(...),
+                            )
+                        ]
+                    )
+                ),
+                CallToolsNode(
+                    model_response=ModelResponse(
+                        parts=[TextPart(content='The capital of France is Paris.')],
+                        usage=RequestUsage(input_tokens=56, output_tokens=7),
+                        model_name='gpt-5',
+                        timestamp=datetime.datetime(...),
+                    )
+                ),
+                End(data=FinalResult(output='The capital of France is Paris.')),
+            ]
+            """
+    ```
 
 1. We start by grabbing the first node that will be run in the agent's graph.
 2. The agent run is finished once an `End` node has been produced; instances of `End` cannot be passed to `next`.
@@ -415,151 +699,299 @@ Once the run finishes, `agent_run.result` becomes a [`AgentRunResult`][pydantic_
 
 Here is an example of streaming an agent run in combination with `async for` iteration:
 
-```python {title="streaming_iter.py"}
-import asyncio
-from dataclasses import dataclass
-from datetime import date
+=== "Pydantic AI Gateway"
 
-from pydantic_ai import (
-    Agent,
-    FinalResultEvent,
-    FunctionToolCallEvent,
-    FunctionToolResultEvent,
-    PartDeltaEvent,
-    PartStartEvent,
-    RunContext,
-    TextPartDelta,
-    ThinkingPartDelta,
-    ToolCallPartDelta,
-)
+    ```python {title="streaming_iter.py"}
+    import asyncio
+    from dataclasses import dataclass
+    from datetime import date
 
-
-@dataclass
-class WeatherService:
-    async def get_forecast(self, location: str, forecast_date: date) -> str:
-        # In real code: call weather API, DB queries, etc.
-        return f'The forecast in {location} on {forecast_date} is 24°C and sunny.'
-
-    async def get_historic_weather(self, location: str, forecast_date: date) -> str:
-        # In real code: call a historical weather API or DB
-        return f'The weather in {location} on {forecast_date} was 18°C and partly cloudy.'
+    from pydantic_ai import (
+        Agent,
+        FinalResultEvent,
+        FunctionToolCallEvent,
+        FunctionToolResultEvent,
+        PartDeltaEvent,
+        PartStartEvent,
+        RunContext,
+        TextPartDelta,
+        ThinkingPartDelta,
+        ToolCallPartDelta,
+    )
 
 
-weather_agent = Agent[WeatherService, str](
-    'openai:gpt-5',
-    deps_type=WeatherService,
-    output_type=str,  # We'll produce a final answer as plain text
-    system_prompt='Providing a weather forecast at the locations the user provides.',
-)
+    @dataclass
+    class WeatherService:
+        async def get_forecast(self, location: str, forecast_date: date) -> str:
+            # In real code: call weather API, DB queries, etc.
+            return f'The forecast in {location} on {forecast_date} is 24°C and sunny.'
+
+        async def get_historic_weather(self, location: str, forecast_date: date) -> str:
+            # In real code: call a historical weather API or DB
+            return f'The weather in {location} on {forecast_date} was 18°C and partly cloudy.'
 
 
-@weather_agent.tool
-async def weather_forecast(
-    ctx: RunContext[WeatherService],
-    location: str,
-    forecast_date: date,
-) -> str:
-    if forecast_date >= date.today():
-        return await ctx.deps.get_forecast(location, forecast_date)
-    else:
-        return await ctx.deps.get_historic_weather(location, forecast_date)
+    weather_agent = Agent[WeatherService, str](
+        'gateway/openai:gpt-5',
+        deps_type=WeatherService,
+        output_type=str,  # We'll produce a final answer as plain text
+        system_prompt='Providing a weather forecast at the locations the user provides.',
+    )
 
 
-output_messages: list[str] = []
+    @weather_agent.tool
+    async def weather_forecast(
+        ctx: RunContext[WeatherService],
+        location: str,
+        forecast_date: date,
+    ) -> str:
+        if forecast_date >= date.today():
+            return await ctx.deps.get_forecast(location, forecast_date)
+        else:
+            return await ctx.deps.get_historic_weather(location, forecast_date)
 
 
-async def main():
-    user_prompt = 'What will the weather be like in Paris on Tuesday?'
+    output_messages: list[str] = []
 
-    # Begin a node-by-node, streaming iteration
-    async with weather_agent.iter(user_prompt, deps=WeatherService()) as run:
-        async for node in run:
-            if Agent.is_user_prompt_node(node):
-                # A user prompt node => The user has provided input
-                output_messages.append(f'=== UserPromptNode: {node.user_prompt} ===')
-            elif Agent.is_model_request_node(node):
-                # A model request node => We can stream tokens from the model's request
-                output_messages.append('=== ModelRequestNode: streaming partial request tokens ===')
-                async with node.stream(run.ctx) as request_stream:
-                    final_result_found = False
-                    async for event in request_stream:
-                        if isinstance(event, PartStartEvent):
-                            output_messages.append(f'[Request] Starting part {event.index}: {event.part!r}')
-                        elif isinstance(event, PartDeltaEvent):
-                            if isinstance(event.delta, TextPartDelta):
+
+    async def main():
+        user_prompt = 'What will the weather be like in Paris on Tuesday?'
+
+        # Begin a node-by-node, streaming iteration
+        async with weather_agent.iter(user_prompt, deps=WeatherService()) as run:
+            async for node in run:
+                if Agent.is_user_prompt_node(node):
+                    # A user prompt node => The user has provided input
+                    output_messages.append(f'=== UserPromptNode: {node.user_prompt} ===')
+                elif Agent.is_model_request_node(node):
+                    # A model request node => We can stream tokens from the model's request
+                    output_messages.append('=== ModelRequestNode: streaming partial request tokens ===')
+                    async with node.stream(run.ctx) as request_stream:
+                        final_result_found = False
+                        async for event in request_stream:
+                            if isinstance(event, PartStartEvent):
+                                output_messages.append(f'[Request] Starting part {event.index}: {event.part!r}')
+                            elif isinstance(event, PartDeltaEvent):
+                                if isinstance(event.delta, TextPartDelta):
+                                    output_messages.append(
+                                        f'[Request] Part {event.index} text delta: {event.delta.content_delta!r}'
+                                    )
+                                elif isinstance(event.delta, ThinkingPartDelta):
+                                    output_messages.append(
+                                        f'[Request] Part {event.index} thinking delta: {event.delta.content_delta!r}'
+                                    )
+                                elif isinstance(event.delta, ToolCallPartDelta):
+                                    output_messages.append(
+                                        f'[Request] Part {event.index} args delta: {event.delta.args_delta}'
+                                    )
+                            elif isinstance(event, FinalResultEvent):
                                 output_messages.append(
-                                    f'[Request] Part {event.index} text delta: {event.delta.content_delta!r}'
+                                    f'[Result] The model started producing a final result (tool_name={event.tool_name})'
                                 )
-                            elif isinstance(event.delta, ThinkingPartDelta):
+                                final_result_found = True
+                                break
+
+                        if final_result_found:
+                            # Once the final result is found, we can call `AgentStream.stream_text()` to stream the text.
+                            # A similar `AgentStream.stream_output()` method is available to stream structured output.
+                            async for output in request_stream.stream_text():
+                                output_messages.append(f'[Output] {output}')
+                elif Agent.is_call_tools_node(node):
+                    # A handle-response node => The model returned some data, potentially calls a tool
+                    output_messages.append('=== CallToolsNode: streaming partial response & tool usage ===')
+                    async with node.stream(run.ctx) as handle_stream:
+                        async for event in handle_stream:
+                            if isinstance(event, FunctionToolCallEvent):
                                 output_messages.append(
-                                    f'[Request] Part {event.index} thinking delta: {event.delta.content_delta!r}'
+                                    f'[Tools] The LLM calls tool={event.part.tool_name!r} with args={event.part.args} (tool_call_id={event.part.tool_call_id!r})'
                                 )
-                            elif isinstance(event.delta, ToolCallPartDelta):
+                            elif isinstance(event, FunctionToolResultEvent):
                                 output_messages.append(
-                                    f'[Request] Part {event.index} args delta: {event.delta.args_delta}'
+                                    f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}'
                                 )
-                        elif isinstance(event, FinalResultEvent):
-                            output_messages.append(
-                                f'[Result] The model started producing a final result (tool_name={event.tool_name})'
-                            )
-                            final_result_found = True
-                            break
-
-                    if final_result_found:
-                        # Once the final result is found, we can call `AgentStream.stream_text()` to stream the text.
-                        # A similar `AgentStream.stream_output()` method is available to stream structured output.
-                        async for output in request_stream.stream_text():
-                            output_messages.append(f'[Output] {output}')
-            elif Agent.is_call_tools_node(node):
-                # A handle-response node => The model returned some data, potentially calls a tool
-                output_messages.append('=== CallToolsNode: streaming partial response & tool usage ===')
-                async with node.stream(run.ctx) as handle_stream:
-                    async for event in handle_stream:
-                        if isinstance(event, FunctionToolCallEvent):
-                            output_messages.append(
-                                f'[Tools] The LLM calls tool={event.part.tool_name!r} with args={event.part.args} (tool_call_id={event.part.tool_call_id!r})'
-                            )
-                        elif isinstance(event, FunctionToolResultEvent):
-                            output_messages.append(
-                                f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}'
-                            )
-            elif Agent.is_end_node(node):
-                # Once an End node is reached, the agent run is complete
-                assert run.result is not None
-                assert run.result.output == node.data.output
-                output_messages.append(f'=== Final Agent Output: {run.result.output} ===')
+                elif Agent.is_end_node(node):
+                    # Once an End node is reached, the agent run is complete
+                    assert run.result is not None
+                    assert run.result.output == node.data.output
+                    output_messages.append(f'=== Final Agent Output: {run.result.output} ===')
 
 
-if __name__ == '__main__':
-    asyncio.run(main())
+    if __name__ == '__main__':
+        asyncio.run(main())
 
-    print(output_messages)
-    """
-    [
-        '=== UserPromptNode: What will the weather be like in Paris on Tuesday? ===',
-        '=== ModelRequestNode: streaming partial request tokens ===',
-        "[Request] Starting part 0: ToolCallPart(tool_name='weather_forecast', tool_call_id='0001')",
-        '[Request] Part 0 args delta: {"location":"Pa',
-        '[Request] Part 0 args delta: ris","forecast_',
-        '[Request] Part 0 args delta: date":"2030-01-',
-        '[Request] Part 0 args delta: 01"}',
-        '=== CallToolsNode: streaming partial response & tool usage ===',
-        '[Tools] The LLM calls tool=\'weather_forecast\' with args={"location":"Paris","forecast_date":"2030-01-01"} (tool_call_id=\'0001\')',
-        "[Tools] Tool call '0001' returned => The forecast in Paris on 2030-01-01 is 24°C and sunny.",
-        '=== ModelRequestNode: streaming partial request tokens ===',
-        "[Request] Starting part 0: TextPart(content='It will be ')",
-        '[Result] The model started producing a final result (tool_name=None)',
-        '[Output] It will be ',
-        '[Output] It will be warm and sunny ',
-        '[Output] It will be warm and sunny in Paris on ',
-        '[Output] It will be warm and sunny in Paris on Tuesday.',
-        '=== CallToolsNode: streaming partial response & tool usage ===',
-        '=== Final Agent Output: It will be warm and sunny in Paris on Tuesday. ===',
-    ]
-    """
-```
+        print(output_messages)
+        """
+        [
+            '=== UserPromptNode: What will the weather be like in Paris on Tuesday? ===',
+            '=== ModelRequestNode: streaming partial request tokens ===',
+            "[Request] Starting part 0: ToolCallPart(tool_name='weather_forecast', tool_call_id='0001')",
+            '[Request] Part 0 args delta: {"location":"Pa',
+            '[Request] Part 0 args delta: ris","forecast_',
+            '[Request] Part 0 args delta: date":"2030-01-',
+            '[Request] Part 0 args delta: 01"}',
+            '=== CallToolsNode: streaming partial response & tool usage ===',
+            '[Tools] The LLM calls tool=\'weather_forecast\' with args={"location":"Paris","forecast_date":"2030-01-01"} (tool_call_id=\'0001\')',
+            "[Tools] Tool call '0001' returned => The forecast in Paris on 2030-01-01 is 24°C and sunny.",
+            '=== ModelRequestNode: streaming partial request tokens ===',
+            "[Request] Starting part 0: TextPart(content='It will be ')",
+            '[Result] The model started producing a final result (tool_name=None)',
+            '[Output] It will be ',
+            '[Output] It will be warm and sunny ',
+            '[Output] It will be warm and sunny in Paris on ',
+            '[Output] It will be warm and sunny in Paris on Tuesday.',
+            '=== CallToolsNode: streaming partial response & tool usage ===',
+            '=== Final Agent Output: It will be warm and sunny in Paris on Tuesday. ===',
+        ]
+        """
+    ```
 
-_(This example is complete, it can be run "as is")_
+=== "Pydantic AI"
+
+    ```python {title="streaming_iter.py"}
+    import asyncio
+    from dataclasses import dataclass
+    from datetime import date
+
+    from pydantic_ai import (
+        Agent,
+        FinalResultEvent,
+        FunctionToolCallEvent,
+        FunctionToolResultEvent,
+        PartDeltaEvent,
+        PartStartEvent,
+        RunContext,
+        TextPartDelta,
+        ThinkingPartDelta,
+        ToolCallPartDelta,
+    )
+
+
+    @dataclass
+    class WeatherService:
+        async def get_forecast(self, location: str, forecast_date: date) -> str:
+            # In real code: call weather API, DB queries, etc.
+            return f'The forecast in {location} on {forecast_date} is 24°C and sunny.'
+
+        async def get_historic_weather(self, location: str, forecast_date: date) -> str:
+            # In real code: call a historical weather API or DB
+            return f'The weather in {location} on {forecast_date} was 18°C and partly cloudy.'
+
+
+    weather_agent = Agent[WeatherService, str](
+        'openai:gpt-5',
+        deps_type=WeatherService,
+        output_type=str,  # We'll produce a final answer as plain text
+        system_prompt='Providing a weather forecast at the locations the user provides.',
+    )
+
+
+    @weather_agent.tool
+    async def weather_forecast(
+        ctx: RunContext[WeatherService],
+        location: str,
+        forecast_date: date,
+    ) -> str:
+        if forecast_date >= date.today():
+            return await ctx.deps.get_forecast(location, forecast_date)
+        else:
+            return await ctx.deps.get_historic_weather(location, forecast_date)
+
+
+    output_messages: list[str] = []
+
+
+    async def main():
+        user_prompt = 'What will the weather be like in Paris on Tuesday?'
+
+        # Begin a node-by-node, streaming iteration
+        async with weather_agent.iter(user_prompt, deps=WeatherService()) as run:
+            async for node in run:
+                if Agent.is_user_prompt_node(node):
+                    # A user prompt node => The user has provided input
+                    output_messages.append(f'=== UserPromptNode: {node.user_prompt} ===')
+                elif Agent.is_model_request_node(node):
+                    # A model request node => We can stream tokens from the model's request
+                    output_messages.append('=== ModelRequestNode: streaming partial request tokens ===')
+                    async with node.stream(run.ctx) as request_stream:
+                        final_result_found = False
+                        async for event in request_stream:
+                            if isinstance(event, PartStartEvent):
+                                output_messages.append(f'[Request] Starting part {event.index}: {event.part!r}')
+                            elif isinstance(event, PartDeltaEvent):
+                                if isinstance(event.delta, TextPartDelta):
+                                    output_messages.append(
+                                        f'[Request] Part {event.index} text delta: {event.delta.content_delta!r}'
+                                    )
+                                elif isinstance(event.delta, ThinkingPartDelta):
+                                    output_messages.append(
+                                        f'[Request] Part {event.index} thinking delta: {event.delta.content_delta!r}'
+                                    )
+                                elif isinstance(event.delta, ToolCallPartDelta):
+                                    output_messages.append(
+                                        f'[Request] Part {event.index} args delta: {event.delta.args_delta}'
+                                    )
+                            elif isinstance(event, FinalResultEvent):
+                                output_messages.append(
+                                    f'[Result] The model started producing a final result (tool_name={event.tool_name})'
+                                )
+                                final_result_found = True
+                                break
+
+                        if final_result_found:
+                            # Once the final result is found, we can call `AgentStream.stream_text()` to stream the text.
+                            # A similar `AgentStream.stream_output()` method is available to stream structured output.
+                            async for output in request_stream.stream_text():
+                                output_messages.append(f'[Output] {output}')
+                elif Agent.is_call_tools_node(node):
+                    # A handle-response node => The model returned some data, potentially calls a tool
+                    output_messages.append('=== CallToolsNode: streaming partial response & tool usage ===')
+                    async with node.stream(run.ctx) as handle_stream:
+                        async for event in handle_stream:
+                            if isinstance(event, FunctionToolCallEvent):
+                                output_messages.append(
+                                    f'[Tools] The LLM calls tool={event.part.tool_name!r} with args={event.part.args} (tool_call_id={event.part.tool_call_id!r})'
+                                )
+                            elif isinstance(event, FunctionToolResultEvent):
+                                output_messages.append(
+                                    f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}'
+                                )
+                elif Agent.is_end_node(node):
+                    # Once an End node is reached, the agent run is complete
+                    assert run.result is not None
+                    assert run.result.output == node.data.output
+                    output_messages.append(f'=== Final Agent Output: {run.result.output} ===')
+
+
+    if __name__ == '__main__':
+        asyncio.run(main())
+
+        print(output_messages)
+        """
+        [
+            '=== UserPromptNode: What will the weather be like in Paris on Tuesday? ===',
+            '=== ModelRequestNode: streaming partial request tokens ===',
+            "[Request] Starting part 0: ToolCallPart(tool_name='weather_forecast', tool_call_id='0001')",
+            '[Request] Part 0 args delta: {"location":"Pa',
+            '[Request] Part 0 args delta: ris","forecast_',
+            '[Request] Part 0 args delta: date":"2030-01-',
+            '[Request] Part 0 args delta: 01"}',
+            '=== CallToolsNode: streaming partial response & tool usage ===',
+            '[Tools] The LLM calls tool=\'weather_forecast\' with args={"location":"Paris","forecast_date":"2030-01-01"} (tool_call_id=\'0001\')',
+            "[Tools] Tool call '0001' returned => The forecast in Paris on 2030-01-01 is 24°C and sunny.",
+            '=== ModelRequestNode: streaming partial request tokens ===',
+            "[Request] Starting part 0: TextPart(content='It will be ')",
+            '[Result] The model started producing a final result (tool_name=None)',
+            '[Output] It will be ',
+            '[Output] It will be warm and sunny ',
+            '[Output] It will be warm and sunny in Paris on ',
+            '[Output] It will be warm and sunny in Paris on Tuesday.',
+            '=== CallToolsNode: streaming partial response & tool usage ===',
+            '=== Final Agent Output: It will be warm and sunny in Paris on Tuesday. ===',
+        ]
+        """
+    ```
+
+_(This example is complete, it can be run "as is".)_
 
 ### Additional Configuration
 
@@ -572,67 +1004,135 @@ You can apply these settings by passing the `usage_limits` argument to the `run{
 
 Consider the following example, where we limit the number of response tokens:
 
-```py
-from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
+=== "Pydantic AI Gateway"
 
-agent = Agent('anthropic:claude-sonnet-4-5')
+    ```python
+    from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
 
-result_sync = agent.run_sync(
-    'What is the capital of Italy? Answer with just the city.',
-    usage_limits=UsageLimits(response_tokens_limit=10),
-)
-print(result_sync.output)
-#> Rome
-print(result_sync.usage())
-#> RunUsage(input_tokens=62, output_tokens=1, requests=1)
+    agent = Agent('gateway/anthropic:claude-sonnet-4-5')
 
-try:
     result_sync = agent.run_sync(
-        'What is the capital of Italy? Answer with a paragraph.',
+        'What is the capital of Italy? Answer with just the city.',
         usage_limits=UsageLimits(response_tokens_limit=10),
     )
-except UsageLimitExceeded as e:
-    print(e)
-    #> Exceeded the output_tokens_limit of 10 (output_tokens=32)
-```
+    print(result_sync.output)
+    #> Rome
+    print(result_sync.usage())
+    #> RunUsage(input_tokens=62, output_tokens=1, requests=1)
+
+    try:
+        result_sync = agent.run_sync(
+            'What is the capital of Italy? Answer with a paragraph.',
+            usage_limits=UsageLimits(response_tokens_limit=10),
+        )
+    except UsageLimitExceeded as e:
+        print(e)
+        #> Exceeded the output_tokens_limit of 10 (output_tokens=32)
+    ```
+
+=== "Pydantic AI"
+
+    ```python
+    from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
+
+    agent = Agent('anthropic:claude-sonnet-4-5')
+
+    result_sync = agent.run_sync(
+        'What is the capital of Italy? Answer with just the city.',
+        usage_limits=UsageLimits(response_tokens_limit=10),
+    )
+    print(result_sync.output)
+    #> Rome
+    print(result_sync.usage())
+    #> RunUsage(input_tokens=62, output_tokens=1, requests=1)
+
+    try:
+        result_sync = agent.run_sync(
+            'What is the capital of Italy? Answer with a paragraph.',
+            usage_limits=UsageLimits(response_tokens_limit=10),
+        )
+    except UsageLimitExceeded as e:
+        print(e)
+        #> Exceeded the output_tokens_limit of 10 (output_tokens=32)
+    ```
 
 Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling:
 
-```py
-from typing_extensions import TypedDict
+=== "Pydantic AI Gateway"
 
-from pydantic_ai import Agent, ModelRetry, UsageLimitExceeded, UsageLimits
+    ```python
+    from typing_extensions import TypedDict
 
-
-class NeverOutputType(TypedDict):
-    """
-    Never ever coerce data to this type.
-    """
-
-    never_use_this: str
+    from pydantic_ai import Agent, ModelRetry, UsageLimitExceeded, UsageLimits
 
 
-agent = Agent(
-    'anthropic:claude-sonnet-4-5',
-    retries=3,
-    output_type=NeverOutputType,
-    system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
-)
+    class NeverOutputType(TypedDict):
+        """
+        Never ever coerce data to this type.
+        """
+
+        never_use_this: str
 
 
-@agent.tool_plain(retries=5)  # (1)!
-def infinite_retry_tool() -> int:
-    raise ModelRetry('Please try again.')
-
-
-try:
-    result_sync = agent.run_sync(
-        'Begin infinite retry loop!', usage_limits=UsageLimits(request_limit=3)  # (2)!
+    agent = Agent(
+        'gateway/anthropic:claude-sonnet-4-5',
+        retries=3,
+        output_type=NeverOutputType,
+        system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
     )
-except UsageLimitExceeded as e:
-    print(e)
-    #> The next request would exceed the request_limit of 3
-```
+
+
+    @agent.tool_plain(retries=5)  # (1)!
+    def infinite_retry_tool() -> int:
+        raise ModelRetry('Please try again.')
+
+
+    try:
+        result_sync = agent.run_sync(
+            'Begin infinite retry loop!', usage_limits=UsageLimits(request_limit=3)  # (2)!
+        )
+    except UsageLimitExceeded as e:
+        print(e)
+        #> The next request would exceed the request_limit of 3
+    ```
+
+=== "Pydantic AI"
+
+    ```python
+        from typing_extensions import TypedDict
+
+        from pydantic_ai import Agent, ModelRetry, UsageLimitExceeded, UsageLimits
+
+
+        class NeverOutputType(TypedDict):
+            """
+            Never ever coerce data to this type.
+            """
+
+            never_use_this: str
+
+
+        agent = Agent(
+            'anthropic:claude-sonnet-4-5',
+            retries=3,
+            output_type=NeverOutputType,
+            system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
+        )
+
+
+        @agent.tool_plain(retries=5)  # (1)!
+        def infinite_retry_tool() -> int:
+            raise ModelRetry('Please try again.')
+
+
+        try:
+            result_sync = agent.run_sync(
+                'Begin infinite retry loop!', usage_limits=UsageLimits(request_limit=3)  # (2)!
+            )
+        except UsageLimitExceeded as e:
+            print(e)
+            #> The next request would exceed the request_limit of 3
+    ```
 
 1. This tool has the ability to retry 5 times before erroring, simulating a tool that might get stuck in a loop.
 2. This run will error after 3 requests, preventing the infinite tool calling.
@@ -641,24 +1141,47 @@ except UsageLimitExceeded as e:
 
 If you need a limit on the number of successful tool invocations within a single run, use `tool_calls_limit`:
 
-```py
-from pydantic_ai import Agent
-from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.usage import UsageLimits
+=== "Pydantic AI Gateway"
 
-agent = Agent('anthropic:claude-sonnet-4-5')
+    ```python
+    from pydantic_ai import Agent
+    from pydantic_ai.exceptions import UsageLimitExceeded
+    from pydantic_ai.usage import UsageLimits
 
-@agent.tool_plain
-def do_work() -> str:
-    return 'ok'
+    agent = Agent('gateway/anthropic:claude-sonnet-4-5')
 
-try:
-    # Allow at most one executed tool call in this run
-    agent.run_sync('Please call the tool twice', usage_limits=UsageLimits(tool_calls_limit=1))
-except UsageLimitExceeded as e:
-    print(e)
-    #> The next tool call(s) would exceed the tool_calls_limit of 1 (tool_calls=2).
-```
+    @agent.tool_plain
+    def do_work() -> str:
+        return 'ok'
+
+    try:
+        # Allow at most one executed tool call in this run
+        agent.run_sync('Please call the tool twice', usage_limits=UsageLimits(tool_calls_limit=1))
+    except UsageLimitExceeded as e:
+        print(e)
+        #> The next tool call(s) would exceed the tool_calls_limit of 1 (tool_calls=2).
+    ```
+
+=== "Pydantic AI"
+
+    ```python
+    from pydantic_ai import Agent
+    from pydantic_ai.exceptions import UsageLimitExceeded
+    from pydantic_ai.usage import UsageLimits
+
+    agent = Agent('anthropic:claude-sonnet-4-5')
+
+    @agent.tool_plain
+    def do_work() -> str:
+        return 'ok'
+
+    try:
+        # Allow at most one executed tool call in this run
+        agent.run_sync('Please call the tool twice', usage_limits=UsageLimits(tool_calls_limit=1))
+    except UsageLimitExceeded as e:
+        print(e)
+        #> The next tool call(s) would exceed the tool_calls_limit of 1 (tool_calls=2).
+    ```
 
 !!! note
     - Usage limits are especially relevant if you've registered many tools. Use `request_limit` to bound the number of model turns, and `tool_calls_limit` to cap the number of successful tool executions within a run.
@@ -679,7 +1202,7 @@ There are three ways to apply these settings, with a clear precedence order:
 For example, if you'd like to set the `temperature` setting to `0.0` to ensure less random behavior,
 you can do the following:
 
-```py
+```python
 from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.models.openai import OpenAIChatModel
 
@@ -713,36 +1236,71 @@ If you wish to further customize model behavior, you can use a subclass of [`Mod
 
 For example:
 
-```py
-from pydantic_ai import Agent, UnexpectedModelBehavior
-from pydantic_ai.models.google import GoogleModelSettings
+=== "Pydantic AI Gateway"
 
-agent = Agent('google-gla:gemini-2.5-flash')
+    ```py
+    from pydantic_ai import Agent, UnexpectedModelBehavior
+    from pydantic_ai.models.google import GoogleModelSettings
 
-try:
-    result = agent.run_sync(
-        'Write a list of 5 very rude things that I might say to the universe after stubbing my toe in the dark:',
-        model_settings=GoogleModelSettings(
-            temperature=0.0,  # general model settings can also be specified
-            gemini_safety_settings=[
-                {
-                    'category': 'HARM_CATEGORY_HARASSMENT',
-                    'threshold': 'BLOCK_LOW_AND_ABOVE',
-                },
-                {
-                    'category': 'HARM_CATEGORY_HATE_SPEECH',
-                    'threshold': 'BLOCK_LOW_AND_ABOVE',
-                },
-            ],
-        ),
-    )
-except UnexpectedModelBehavior as e:
-    print(e)  # (1)!
-    """
-    Content filter 'SAFETY' triggered, body:
-    <safety settings details>
-    """
-```
+    agent = Agent('gateway/google-gla:gemini-2.5-flash')
+
+    try:
+        result = agent.run_sync(
+            'Write a list of 5 very rude things that I might say to the universe after stubbing my toe in the dark:',
+            model_settings=GoogleModelSettings(
+                temperature=0.0,  # general model settings can also be specified
+                gemini_safety_settings=[
+                    {
+                        'category': 'HARM_CATEGORY_HARASSMENT',
+                        'threshold': 'BLOCK_LOW_AND_ABOVE',
+                    },
+                    {
+                        'category': 'HARM_CATEGORY_HATE_SPEECH',
+                        'threshold': 'BLOCK_LOW_AND_ABOVE',
+                    },
+                ],
+            ),
+        )
+    except UnexpectedModelBehavior as e:
+        print(e)  # (1)!
+        """
+        Content filter 'SAFETY' triggered, body:
+        <safety settings details>
+        """
+    ```
+
+=== "Pydantic AI"
+
+    ```python
+    from pydantic_ai import Agent, UnexpectedModelBehavior
+    from pydantic_ai.models.google import GoogleModelSettings
+
+    agent = Agent('google-gla:gemini-2.5-flash')
+
+    try:
+        result = agent.run_sync(
+            'Write a list of 5 very rude things that I might say to the universe after stubbing my toe in the dark:',
+            model_settings=GoogleModelSettings(
+                temperature=0.0,  # general model settings can also be specified
+                gemini_safety_settings=[
+                    {
+                        'category': 'HARM_CATEGORY_HARASSMENT',
+                        'threshold': 'BLOCK_LOW_AND_ABOVE',
+                    },
+                    {
+                        'category': 'HARM_CATEGORY_HATE_SPEECH',
+                        'threshold': 'BLOCK_LOW_AND_ABOVE',
+                    },
+                ],
+            ),
+        )
+    except UnexpectedModelBehavior as e:
+        print(e)  # (1)!
+        """
+        Content filter 'SAFETY' triggered, body:
+        <safety settings details>
+        """
+    ```
 
 1. This error is raised because the safety thresholds were exceeded.
 
