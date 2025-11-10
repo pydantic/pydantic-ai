@@ -678,7 +678,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     )
 
                 if part.text is not None:
-                    if part.text != '':
+                    if len(part.text) > 0:
                         if part.thought:
                             yield self._parts_manager.handle_thinking_delta(
                                 vendor_part_id='thinking', content=part.text
@@ -689,7 +689,6 @@ class GeminiStreamedResponse(StreamedResponse):
                             )
                             if maybe_event is not None:  # pragma: no branch
                                 yield maybe_event
-                    # If the text is empty, don't yield anything
                 elif part.function_call:
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=uuid4(),
@@ -830,7 +829,7 @@ def _process_response_from_parts(
             item = _map_code_execution_result(part.code_execution_result, provider_name, code_execution_tool_call_id)
         elif part.text is not None:
             # Google sometimes sends empty text parts, we don't want to add them to the response
-            if part.text == '':
+            if len(part.text) == 0:
                 continue
             if part.thought:
                 item = ThinkingPart(content=part.text)
