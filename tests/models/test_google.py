@@ -1,4 +1,3 @@
-# pyright: reportPrivateUsage=false
 from __future__ import annotations as _annotations
 
 import datetime
@@ -72,7 +71,7 @@ with try_import() as imports_successful:
         GeminiStreamedResponse,
         GoogleModel,
         GoogleModelSettings,
-        _metadata_as_usage,
+        _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.google import GoogleProvider
@@ -3078,9 +3077,9 @@ def test_google_process_response_filters_empty_text_parts(google_provider: Googl
     model = GoogleModel('gemini-1.5-flash', provider=google_provider)
     response = _generate_response_with_texts(response_id='resp-123', texts=['', 'first', '', 'second'])
 
-    result = model._process_response(response)
+    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
 
-    assert [part.content for part in result.parts if isinstance(part, TextPart)] == ['first', 'second']
+    assert result.parts == snapshot([TextPart(content='first'), TextPart(content='second')])
 
 
 async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
@@ -3097,12 +3096,12 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
         _provider_name='test-provider',
     )
 
-    events = [event async for event in streamed_response._get_event_iterator()]
+    events = [event async for event in streamed_response._get_event_iterator()]  # pyright: ignore[reportPrivateUsage]
     assert len(events) == 1
     event = events[0]
     assert isinstance(event, PartStartEvent)
     assert isinstance(event.part, TextPart)
-    assert event.part.content == 'streamed text'
+    assert events == snapshot([PartStartEvent(index=0, part=TextPart(content='streamed text'))])
 
 
 def _generate_response_with_texts(response_id: str, texts: list[str]) -> GenerateContentResponse:
