@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Tag
@@ -415,6 +415,7 @@ class Tool(Generic[ToolAgentDepsT]):
             strict=self.strict,
             sequential=self.sequential,
             metadata=self.metadata,
+            kind='unapproved' if self.requires_approval else 'function',
         )
 
     async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
@@ -427,9 +428,6 @@ class Tool(Generic[ToolAgentDepsT]):
             return a `ToolDefinition` or `None` if the tools should not be registered for this run.
         """
         base_tool_def = self.tool_def
-
-        if self.requires_approval and not ctx.tool_call_approved:
-            base_tool_def = replace(base_tool_def, kind='unapproved')
 
         if self.prepare is not None:
             return await self.prepare(ctx, base_tool_def)

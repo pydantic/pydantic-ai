@@ -7,7 +7,6 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx
-from typing_extensions import deprecated
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
@@ -18,6 +17,7 @@ if TYPE_CHECKING:
     from groq import AsyncGroq
     from openai import AsyncOpenAI
 
+    from pydantic_ai.models import Model
     from pydantic_ai.models.anthropic import AsyncAnthropicClient
     from pydantic_ai.providers import Provider
 
@@ -25,9 +25,8 @@ GATEWAY_BASE_URL = 'https://gateway.pydantic.dev/proxy'
 
 
 @overload
-@deprecated('Use `chat` or `responses` API type instead of `openai` provider type.')
 def gateway_provider(
-    upstream_provider: Literal['openai', 'openai-chat', 'openai-responses'],
+    api_type: Literal['chat', 'responses'],
     /,
     *,
     api_key: str | None = None,
@@ -38,7 +37,7 @@ def gateway_provider(
 
 @overload
 def gateway_provider(
-    upstream_provider: Literal['groq'],
+    api_type: Literal['groq'],
     /,
     *,
     api_key: str | None = None,
@@ -48,30 +47,19 @@ def gateway_provider(
 
 
 @overload
-@deprecated('Use `gemini` or `anthropic` API type instead of `google-vertex` provider type.')
 def gateway_provider(
-    upstream_provider: Literal['google-vertex'],
+    api_type: Literal['anthropic'],
     /,
     *,
     api_key: str | None = None,
     base_url: str | None = None,
-) -> Provider[GoogleClient]: ...
-
-
-@overload
-def gateway_provider(
-    upstream_provider: Literal['anthropic'],
-    /,
-    *,
-    api_key: str | None = None,
-    base_url: str | None = None,
+    http_client: httpx.AsyncClient | None = None,
 ) -> Provider[AsyncAnthropicClient]: ...
 
 
 @overload
-@deprecated('Use `converse` or `anthropic` API type instead of `bedrock` provider type.')
 def gateway_provider(
-    upstream_provider: Literal['bedrock'],
+    api_type: Literal['converse'],
     /,
     *,
     api_key: str | None = None,
@@ -81,7 +69,18 @@ def gateway_provider(
 
 @overload
 def gateway_provider(
-    upstream_provider: str,
+    api_type: Literal['gemini'],
+    /,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    http_client: httpx.AsyncClient | None = None,
+) -> Provider[GoogleClient]: ...
+
+
+@overload
+def gateway_provider(
+    api_type: str,
     /,
     *,
     api_key: str | None = None,
@@ -89,25 +88,11 @@ def gateway_provider(
 ) -> Provider[Any]: ...
 
 
-UpstreamProvider = Literal[
-    'chat',
-    'responses',
-    'gemini',
-    'converse',
-    # Deprecated
-    'openai',
-    'openai-chat',
-    'openai-responses',
-    'google-vertex',
-    'bedrock',
-    # Those two are actually the same on both.
-    'anthropic',
-    'groq',
-]
+APIType = Literal['chat', 'responses', 'gemini', 'converse', 'anthropic', 'groq']
 
 
 def gateway_provider(
-    upstream_provider: UpstreamProvider | str,
+    api_type: APIType | str,
     /,
     *,
     # Every provider
@@ -121,7 +106,7 @@ def gateway_provider(
     """Create a new Gateway provider.
 
     Args:
-        upstream_provider: The upstream provider to use.
+        api_type: Determines the API type to use.
         routing_group: The group of APIs that support the same models - the idea is that you can route the requests to
             any provider in a routing group. The `pydantic-ai-gateway-routing-group` header will be added.
         profile: A provider may have a profile, which is a unique identifier for the provider.
@@ -140,7 +125,7 @@ def gateway_provider(
         )
 
     base_url = base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', GATEWAY_BASE_URL)
-    http_client = http_client or cached_async_http_client(provider=f'gateway/{upstream_provider}')
+    http_client = http_client or cached_async_http_client(provider=f'gateway/{api_type}')
     http_client.event_hooks = {'request': [_request_hook(api_key)]}
 
     if profile is not None:
@@ -149,20 +134,15 @@ def gateway_provider(
     if routing_group is not None:
         http_client.headers.setdefault('pydantic-ai-gateway-routing-group', routing_group)
 
-    if upstream_provider in ('openai', 'openai-chat', 'openai-responses'):
+    if api_type in ('chat', 'responses'):
         from .openai import OpenAIProvider
 
-        return OpenAIProvider(api_key=api_key, base_url=_merge_url_path(base_url, 'openai'), http_client=http_client)
-    elif upstream_provider in ('chat', 'responses'):
-        from .openai import OpenAIProvider
-
-        base_url = _merge_url_path(base_url, upstream_provider)
-        return OpenAIProvider(api_key=api_key, base_url=base_url, http_client=http_client)
-    elif upstream_provider == 'groq':
+        return OpenAIProvider(api_key=api_key, base_url=_merge_url_path(base_url, api_type), http_client=http_client)
+    elif api_type == 'groq':
         from .groq import GroqProvider
 
         return GroqProvider(api_key=api_key, base_url=_merge_url_path(base_url, 'groq'), http_client=http_client)
-    elif upstream_provider == 'anthropic':
+    elif api_type == 'anthropic':
         from anthropic import AsyncAnthropic
 
         from .anthropic import AnthropicProvider
@@ -174,25 +154,25 @@ def gateway_provider(
                 http_client=http_client,
             )
         )
-    elif upstream_provider in ('bedrock', 'converse'):
+    elif api_type == 'converse':
         from .bedrock import BedrockProvider
 
         return BedrockProvider(
             api_key=api_key,
-            base_url=_merge_url_path(base_url, upstream_provider),
+            base_url=_merge_url_path(base_url, api_type),
             region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
-    elif upstream_provider in ('google-vertex', 'gemini'):
+    elif api_type == 'gemini':
         from .google import GoogleProvider
 
         return GoogleProvider(
             vertexai=True,
             api_key=api_key,
-            base_url=_merge_url_path(base_url, 'google-vertex'),
+            base_url=_merge_url_path(base_url, 'gemini'),
             http_client=http_client,
         )
     else:
-        raise UserError(f'Unknown upstream provider: {upstream_provider}')
+        raise UserError(f'Unknown API type: {api_type}')
 
 
 def _request_hook(api_key: str) -> Callable[[httpx.Request], Awaitable[httpx.Request]]:
@@ -224,3 +204,33 @@ def _merge_url_path(base_url: str, path: str) -> str:
         path: The path to merge.
     """
     return base_url.rstrip('/') + '/' + path.lstrip('/')
+
+
+def infer_gateway_model(api_type: APIType | str, *, model_name: str) -> Model:
+    """Infer the model class for a given API type."""
+    if api_type == 'chat':
+        from pydantic_ai.models.openai import OpenAIChatModel
+
+        return OpenAIChatModel(model_name=model_name, provider='gateway')
+    elif api_type == 'groq':
+        from pydantic_ai.models.groq import GroqModel
+
+        return GroqModel(model_name=model_name, provider='gateway')
+    elif api_type == 'responses':
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+
+        return OpenAIResponsesModel(model_name=model_name, provider='gateway')
+    elif api_type == 'gemini':
+        from pydantic_ai.models.google import GoogleModel
+
+        return GoogleModel(model_name=model_name, provider='gateway')
+    elif api_type == 'converse':
+        from pydantic_ai.models.bedrock import BedrockConverseModel
+
+        return BedrockConverseModel(model_name=model_name, provider='gateway')
+    elif api_type == 'anthropic':
+        from pydantic_ai.models.anthropic import AnthropicModel
+
+        return AnthropicModel(model_name=model_name, provider='gateway')
+    else:
+        raise ValueError(f'Unknown API type: {api_type}')  # pragma: no cover
