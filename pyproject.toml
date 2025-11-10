@@ -211,7 +211,8 @@ executionEnvironments = [
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
-    "pydantic_ai_slim/pydantic_ai/ext/aci.py",               # aci-sdk is too niche to be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/ext/aci.py",            # aci-sdk is too niche to be added as an (optional) dependency
+    "examples/pydantic_ai_examples/slack_lead_qualifier/modal.py", # modal does not fully define its types, so we need this to stop pyright from complaining.
 ]
 
 [tool.mypy]
