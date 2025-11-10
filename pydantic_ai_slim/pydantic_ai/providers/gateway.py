@@ -111,7 +111,7 @@ def gateway_provider(
 
     Args:
         upstream_provider: The upstream provider to use.
-        route: <DESCRIPTION>.
+        route: The name of the provider or routing group to use to handle the request. If not provided, the default routing group for the API format will be used.
         api_key: The API key to use for authentication. If not provided, the `PYDANTIC_AI_GATEWAY_API_KEY`
             environment variable will be used if available.
         base_url: The base URL to use for the Gateway. If not provided, the `PYDANTIC_AI_GATEWAY_BASE_URL`
