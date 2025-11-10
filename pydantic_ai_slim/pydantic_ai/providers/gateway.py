@@ -220,4 +220,4 @@ def infer_gateway_model(api_type: APIType | str, *, model_name: str) -> Model:
 
         return AnthropicModel(model_name=model_name, provider='gateway')
     else:
-        raise ValueError(f'Unknown API type: {api_type}')
+        raise ValueError(f'Unknown API type: {api_type}')  # pragma: no cover
