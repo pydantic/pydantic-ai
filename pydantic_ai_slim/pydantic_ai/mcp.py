@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import functools
+import os
+import re
 import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
@@ -927,8 +929,43 @@ class MCPServerConfig(BaseModel):
     ]
 
 
+def _expand_env_vars(value: Any) -> Any:
+    """Recursively expand environment variables in a JSON structure.
+
+    Environment variables can be referenced using ${VAR_NAME} syntax.
+
+    Args:
+        value: The value to expand (can be str, dict, list, or other JSON types).
+
+    Returns:
+        The value with all environment variables expanded.
+
+    Raises:
+        ValueError: If an environment variable is not defined.
+    """
+    if isinstance(value, str):
+        # Find all environment variable references in the string
+        env_var_pattern = re.compile(r'\$\{([^}]+)\}')
+        matches = env_var_pattern.findall(value)
+
+        for var_name in matches:
+            if var_name not in os.environ:
+                raise ValueError(f'Environment variable ${{{var_name}}} is not defined')
+            value = value.replace(f'${{{var_name}}}', os.environ[var_name])
+
+        return value
+    elif isinstance(value, dict):
+        return {k: _expand_env_vars(v) for k, v in value.items()}  # type: ignore[misc]
+    elif isinstance(value, list):
+        return [_expand_env_vars(item) for item in value]  # type: ignore[misc]
+    else:
+        return value
+
+
 def load_mcp_servers(config_path: str | Path) -> list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE]:
     """Load MCP servers from a configuration file.
+
+    Environment variables can be referenced in the configuration file using ${VAR_NAME} syntax.
 
     Args:
         config_path: The path to the configuration file.
@@ -939,13 +976,16 @@ def load_mcp_servers(config_path: str | Path) -> list[MCPServerStdio | MCPServer
     Raises:
         FileNotFoundError: If the configuration file does not exist.
         ValidationError: If the configuration file does not match the schema.
+        ValueError: If an environment variable referenced in the configuration is not defined.
     """
     config_path = Path(config_path)
 
     if not config_path.exists():
         raise FileNotFoundError(f'Config file {config_path} not found')
 
-    config = MCPServerConfig.model_validate_json(config_path.read_bytes())
+    config_data = pydantic_core.from_json(config_path.read_bytes())
+    expanded_config_data = _expand_env_vars(config_data)
+    config = MCPServerConfig.model_validate(expanded_config_data)
 
     servers: list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE] = []
     for name, server in config.mcp_servers.items():

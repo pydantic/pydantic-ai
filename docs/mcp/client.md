@@ -187,6 +187,32 @@ The configuration file should be a JSON file with an `mcpServers` object contain
 
     We made this decision given that the SSE transport is deprecated.
 
+### Environment Variables
+
+The configuration file supports environment variable expansion using the `${VAR_NAME}` syntax. This is useful for keeping sensitive information like API keys or host names out of your configuration files:
+
+```json {title="mcp_config_with_env.json"}
+{
+  "mcpServers": {
+    "python-runner": {
+      "command": "${PYTHON_CMD}",
+      "args": ["run", "${MCP_MODULE}", "stdio"],
+      "env": {
+        "API_KEY": "${MY_API_KEY}"
+      }
+    },
+    "weather-api": {
+      "url": "https://${SERVER_HOST}:${SERVER_PORT}/sse"
+    }
+  }
+}
+```
+
+When loading this configuration with [`load_mcp_servers()`][pydantic_ai.mcp.load_mcp_servers], the `${VAR_NAME}` references will be replaced with the corresponding environment variable values.
+
+!!! warning
+    If a referenced environment variable is not defined, a `ValueError` will be raised. Make sure all required environment variables are set before loading the configuration.
+
 ### Usage
 
 ```python {title="mcp_config_loader.py" test="skip"}
