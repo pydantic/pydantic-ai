@@ -32,6 +32,7 @@ def test_model_request_parameters_are_serializable():
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [],
+            'prompted_output_template': None,
             'allow_text_output': True,
             'allow_image_output': False,
         }
@@ -125,6 +126,7 @@ def test_model_request_parameters_are_serializable():
                     'metadata': None,
                 }
             ],
+            'prompted_output_template': None,
             'allow_text_output': True,
             'allow_image_output': False,
         }
