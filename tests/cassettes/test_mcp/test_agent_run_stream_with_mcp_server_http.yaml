@@ -1,0 +1,801 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '165'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+    method: POST
+    parsed_body:
+      id: 0
+      jsonrpc: '2.0'
+      method: initialize
+      params:
+        capabilities:
+          sampling: {}
+        clientInfo:
+          name: mcp
+          version: 0.1.0
+        protocolVersion: '2025-06-18'
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: |+
+        event: message
+        data: {"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2025-03-26","capabilities":{"tools":{"listChanged":true}},"serverInfo":{"name":"DeepWiki","version":"0.0.1"}}}
+
+        event: ping
+        data: ping
+
+    headers:
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
+      access-control-allow-methods:
+      - GET, POST, OPTIONS
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - mcp-session-id
+      access-control-max-age:
+      - '86400'
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      mcp-session-id:
+      - 964c798ce4aa10ca9c0f9d880542fc3b4e87e275755e8eec04cb83b2e7750669
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=zcPHPGuA6djlIkHaontYD%2B5FUsCn5Py1D85TN4e3X5zrA0waHMfYjrWsdI6DA21kKsi7y3PdFYfycrLKDu0xdeNHPcLJwIS6ChL%2F%2Ff1iX2W56nI1Ood%2FxhaDJYwY5adsIGwG6g%3D%3D"}]}'
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json, text/event-stream, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      cache-control:
+      - no-store
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - 964c798ce4aa10ca9c0f9d880542fc3b4e87e275755e8eec04cb83b2e7750669
+    method: GET
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: '{"jsonrpc":"2.0","error":{"code":-32000,"message":"Method not allowed"},"id":null}'
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '82'
+      content-type:
+      - text/plain;charset=UTF-8
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=3scYMLihdDaab3efIAKLpkY3jG0rQ5qbE%2BOnbjX39wilKjjDwcwtNmgV%2FiNwHP0Ncym0tjZkFxshgMgG7g6npuyMS9ldvomuCfFEinfb1rdfsgP8IlulZVPsN1nM%2BJCEd3fymQ%3D%3D"}]}'
+      vary:
+      - accept-encoding
+    status:
+      code: 405
+      message: Method Not Allowed
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '54'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - 964c798ce4aa10ca9c0f9d880542fc3b4e87e275755e8eec04cb83b2e7750669
+    method: POST
+    parsed_body:
+      jsonrpc: '2.0'
+      method: notifications/initialized
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: ''
+    headers:
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
+      access-control-allow-methods:
+      - GET, POST, OPTIONS
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - mcp-session-id
+      access-control-max-age:
+      - '86400'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '0'
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=FG0CXSQjr5Bs1sfjeigfr47JcICvyWXerMoARWUSTx2QRFPZNFAIovh4oCI1iYhvN8Qt3EdneRal4%2B%2Bdggn70g6esyOejT9GTTMj51L0nHkuDzhBETjgV1WYXWmhfjVFE02Afw%3D%3D"}]}'
+      vary:
+      - accept-encoding
+    status:
+      code: 202
+      message: Accepted
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '46'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - 964c798ce4aa10ca9c0f9d880542fc3b4e87e275755e8eec04cb83b2e7750669
+    method: POST
+    parsed_body:
+      id: 1
+      jsonrpc: '2.0'
+      method: tools/list
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: |+
+        event: message
+        data: {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"read_wiki_structure","description":"Get a list of documentation topics for a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"}},"required":["repoName"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}},{"name":"read_wiki_contents","description":"View documentation about a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"}},"required":["repoName"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}},{"name":"ask_question","description":"Ask any question about a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"},"question":{"type":"string","description":"The question to ask about the repository"}},"required":["repoName","question"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}}]}}
+
+        event: ping
+        data: ping
+
+    headers:
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
+      access-control-allow-methods:
+      - GET, POST, OPTIONS
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - mcp-session-id
+      access-control-max-age:
+      - '86400'
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      mcp-session-id:
+      - 964c798ce4aa10ca9c0f9d880542fc3b4e87e275755e8eec04cb83b2e7750669
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=Wqtb0g%2FSGLbACsFjCuxUJBXlYbxpokDYMleXC6fHKvfSPpMJmNLIqp1iaL59C25a1DLmRvG5VoQ7qn7RQdIvfiOou1TqDjaZET4kUBW4LMwLdg%2FtTeFWRw4Ng%2F3STQ1wjlJvvw%3D%3D"}]}'
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1354'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise.
+        role: system
+      - content: Summarize the pydantic/pydantic-ai repo in one sentence
+        role: user
+      model: gpt-4o
+      stream: true
+      stream_options:
+        include_usage: true
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get a list of documentation topics for a GitHub repository
+          name: read_wiki_structure
+          parameters:
+            additionalProperties: false
+            properties:
+              repoName:
+                description: 'GitHub repository: owner/repo (e.g. "facebook/react")'
+                type: string
+            required:
+            - repoName
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: View documentation about a GitHub repository
+          name: read_wiki_contents
+          parameters:
+            additionalProperties: false
+            properties:
+              repoName:
+                description: 'GitHub repository: owner/repo (e.g. "facebook/react")'
+                type: string
+            required:
+            - repoName
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Ask any question about a GitHub repository
+          name: ask_question
+          parameters:
+            additionalProperties: false
+            properties:
+              question:
+                description: The question to ask about the repository
+                type: string
+              repoName:
+                description: 'GitHub repository: owner/repo (e.g. "facebook/react")'
+                type: string
+            required:
+            - repoName
+            - question
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_i6vaX3o98OPFobHi4IMkIHT8","type":"function","function":{"name":"ask_question","arguments":""}}],"refusal":null},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"Jxf3eb9K"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"0d9"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"repo"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"WG"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"Name"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"uJ"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"F"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"p"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"ybPvW"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"yd"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"sA4L"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"antic"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"V"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"/p"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"qiT5"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"yd"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"l3wR"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"antic"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"N"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"-ai"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"jW4"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\",\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"X"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"question"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"Kr129jscdJez90"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"I"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"Can"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"oZR"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" you"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"X1"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" provide"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"OMMxptyZxWZqVY"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" a"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"PTzD"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" summary"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"1mvKMmFyAGUJlp"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" of"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"Gik"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" what"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"E"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" the"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"Sa"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" p"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"dmVq"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"yd"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"wOuc"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"antic"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"B"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"/p"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"bQ8f"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"yd"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"13Vc"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"antic"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"3"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"-ai"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"TDK"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" repository"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"jo64ELPd1g5"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" is"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"kn7"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" about"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" in"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"3WF"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" one"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"S4"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" sentence"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"7HiPQQPbBqauP"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"?\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"1jY"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"D4DLP"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"tool_calls"}],"usage":null,"obfuscation":"7LrC"}
+
+        data: {"id":"chatcmpl-CYLbhBxLUK7M9XZkxGNtvNDMKhBf5","object":"chat.completion.chunk","created":1762302245,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[],"usage":{"prompt_tokens":179,"completion_tokens":46,"total_tokens":225,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":"krMMQXSw8vy3S"}
+
+        data: [DONE]
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '393'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '236'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - 964c798ce4aa10ca9c0f9d880542fc3b4e87e275755e8eec04cb83b2e7750669
+    method: POST
+    parsed_body:
+      id: 2
+      jsonrpc: '2.0'
+      method: tools/call
+      params:
+        arguments:
+          question: Can you provide a summary of what the pydantic/pydantic-ai repository is about in one sentence?
+          repoName: pydantic/pydantic-ai
+        name: ask_question
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: |+
+        event: message
+        data: {"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"The `pydantic/pydantic-ai` repository is a Python agent framework designed to facilitate the development of production-grade Generative AI applications and workflows with a focus on type-safety and an ergonomic developer experience.    \n\nWiki pages you might want to explore:\n- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)\n\nView this search on DeepWiki: https://deepwiki.com/search/can-you-provide-a-summary-of-w_9f1fc7f4-bd0e-4ffc-9a23-960aa25f1e66\n"}]}}
+
+        event: ping
+        data: ping
+
+    headers:
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
+      access-control-allow-methods:
+      - GET, POST, OPTIONS
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - mcp-session-id
+      access-control-max-age:
+      - '86400'
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      mcp-session-id:
+      - 964c798ce4aa10ca9c0f9d880542fc3b4e87e275755e8eec04cb83b2e7750669
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=dCL7CkDVp9An54xVpujO0NkLzmmhJt2wrSnvxED89H7g1wehjFqkkJOLTzeEFEjC0ALwycVABN1vSf07VlE3vFkpm8pIS%2FjTdn1hUDaTHn3J3dGV0M3iFBQcDemIVOYVPM4%3D"}]}'
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '46'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - 964c798ce4aa10ca9c0f9d880542fc3b4e87e275755e8eec04cb83b2e7750669
+    method: POST
+    parsed_body:
+      id: 3
+      jsonrpc: '2.0'
+      method: tools/list
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: |+
+        event: message
+        data: {"jsonrpc":"2.0","id":3,"result":{"tools":[{"name":"read_wiki_structure","description":"Get a list of documentation topics for a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"}},"required":["repoName"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}},{"name":"read_wiki_contents","description":"View documentation about a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"}},"required":["repoName"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}},{"name":"ask_question","description":"Ask any question about a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"},"question":{"type":"string","description":"The question to ask about the repository"}},"required":["repoName","question"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}}]}}
+
+        event: ping
+        data: ping
+
+    headers:
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
+      access-control-allow-methods:
+      - GET, POST, OPTIONS
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - mcp-session-id
+      access-control-max-age:
+      - '86400'
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      mcp-session-id:
+      - 964c798ce4aa10ca9c0f9d880542fc3b4e87e275755e8eec04cb83b2e7750669
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=QKkn6qRC2RJ16w%2FcQ%2BW3N58Hj%2Fo7LU7GZSaVZE5hzIDXrCBbtS%2BHKAJ94sZplivsfgEyrBPIh%2FcWvN28L902BXwqQoM8GP25OhJiXGGBorRUhzAiJpJhGveHFia%2FelcvaPs%3D"}]}'
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2215'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=DXkYdBXT.ellNcdvQW4vKsfqWP4_.oD60_hKZC8jzJ4-1762302245-1.0.1.1-siMAByVn1j71rvJHysPdeRXP0H5euZ7pF3v2ct7OleFhdhtjv7PoaQ5cacSCV0_1L3vPvz6senDV0yXjbqoXGVSbIRpkT.ldy5CzL7lq640;
+        _cfuvid=zfsoD1_L9zkM7l9JaFFliNgh92_vcO_P0XdTn8LjzG4-1762302245499-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise.
+        role: system
+      - content: Summarize the pydantic/pydantic-ai repo in one sentence
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"repoName":"pydantic/pydantic-ai","question":"Can you provide a summary of what the pydantic/pydantic-ai
+              repository is about in one sentence?"}'
+            name: ask_question
+          id: call_i6vaX3o98OPFobHi4IMkIHT8
+          type: function
+      - content: "The `pydantic/pydantic-ai` repository is a Python agent framework designed to facilitate the development
+          of production-grade Generative AI applications and workflows with a focus on type-safety and an ergonomic developer
+          experience.    \n\nWiki pages you might want to explore:\n- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)\n\nView
+          this search on DeepWiki: https://deepwiki.com/search/can-you-provide-a-summary-of-w_9f1fc7f4-bd0e-4ffc-9a23-960aa25f1e66\n"
+        role: tool
+        tool_call_id: call_i6vaX3o98OPFobHi4IMkIHT8
+      model: gpt-4o
+      stream: true
+      stream_options:
+        include_usage: true
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get a list of documentation topics for a GitHub repository
+          name: read_wiki_structure
+          parameters:
+            additionalProperties: false
+            properties:
+              repoName:
+                description: 'GitHub repository: owner/repo (e.g. "facebook/react")'
+                type: string
+            required:
+            - repoName
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: View documentation about a GitHub repository
+          name: read_wiki_contents
+          parameters:
+            additionalProperties: false
+            properties:
+              repoName:
+                description: 'GitHub repository: owner/repo (e.g. "facebook/react")'
+                type: string
+            required:
+            - repoName
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Ask any question about a GitHub repository
+          name: ask_question
+          parameters:
+            additionalProperties: false
+            properties:
+              question:
+                description: The question to ask about the repository
+                type: string
+              repoName:
+                description: 'GitHub repository: owner/repo (e.g. "facebook/react")'
+                type: string
+            required:
+            - repoName
+            - question
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"szam9iRUJNaLHZ"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":"The"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"BR131Bo0tnI79"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" `"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"WjgfeddoWrksZq"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":"p"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"VfVdD10N9JVKD9A"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":"yd"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"Rgz5udLpeNSzU1"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":"antic"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"tdGusYMpUk9"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":"/p"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"34wNqKrQ5vP5eF"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":"yd"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"XHfVDT48nncwp2"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":"antic"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"PkMq9na1btu"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":"-ai"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"LlhhfPFu41xUc"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":"`"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"FseXdAJcWmxY0hn"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" repository"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"E1oSI"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" is"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"oIcxBL09rVsYd"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" a"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"kXsMK0pU2wrLZT"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" Python"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"KjWHHsONF"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" agent"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"nW9xCPRMkF"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" framework"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"QyfYl3"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" designed"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"bSdVnKK"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" to"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"JWFAqs0p2mR8g"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" facilitate"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"2wT6v"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" the"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"8nV07P27QjiN"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" development"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"RVKN"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" of"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"gZ9Heagn2RDRT"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" production"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"F1zGb"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":"-grade"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"1orhIrs5lx"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" Gener"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"ZqtEA8gRss"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":"ative"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"EUXUwXfqBAi"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" AI"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"1DpqG3rAQwmuT"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" applications"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"KuI"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" and"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"RCTobKBHLEm4"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" workflows"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"vcPG4q"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" with"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"RsTbxmlRTmx"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" a"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"lBN0nMjKM5Zp2h"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" focus"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"TUmzvYigIg"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" on"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"HUiEoBh0bCsEh"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" type"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"aSkPGGeOEpd"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":"-s"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"m2R4yD91DxcIkw"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":"afety"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"hJcXIUQD7xU"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" and"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"qq3QQFa31IH7"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" an"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"sHUFKsn2rYlds"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" ergonomic"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"1O5zIF"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" developer"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"7YylF7"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":" experience"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"rmyWA"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{"content":"."},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"sDdWpFZUmfhIX52"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}],"usage":null,"obfuscation":"MQAlTBRkuq"}
+
+        data: {"id":"chatcmpl-CYLc8VSjpdON9Ui6KO7VtpTvKUcTp","object":"chat.completion.chunk","created":1762302272,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_65564d8ba5","choices":[],"usage":{"prompt_tokens":359,"completion_tokens":44,"total_tokens":403,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":"1MoG2vbNBqneY"}
+
+        data: [DONE]
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '365'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - 964c798ce4aa10ca9c0f9d880542fc3b4e87e275755e8eec04cb83b2e7750669
+    method: DELETE
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: '{"jsonrpc":"2.0","error":{"code":-32000,"message":"Method not allowed"},"id":null}'
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '82'
+      content-type:
+      - text/plain;charset=UTF-8
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=HuMDarDN2UBD1306iXmmowGAs4QxCTlrtL9OFzzQ1gB6eLlMS9uqwrTaeqrsLy57NbpCw28IJ5GYb27na%2F13466MPjHFbCkhM%2FbupbQZ%2BYoPDG1g3K7DHjgO5Z1z1jfJZcIxlg%3D%3D"}]}'
+      vary:
+      - accept-encoding
+    status:
+      code: 405
+      message: Method Not Allowed
+version: 1
+...
