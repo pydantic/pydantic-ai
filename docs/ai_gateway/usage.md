@@ -19,12 +19,13 @@ Before you start, update to the latest version of `pydantic-ai`:
 
 === "uv"
 
-    ```python
+    ```bash
     uv sync -P pydantic-ai
     ```
+
 === "pip"
 
-    ```python
+    ```bash
     pip install -U pydantic-ai
     ```
 
@@ -39,13 +40,13 @@ You can access multiple models with the same API key, as shown in the code snipp
 ```python title="hello_world.py"
 from pydantic_ai import Agent
 
-agent = Agent(
-    'gateway/openai:gpt-5',
-    instructions='Be concise, reply with one sentence.'
-)
+agent = Agent('gateway/chat:gpt-5')
 
-result = agent.run_sync('Hello World')
+result = agent.run_sync('Where does "hello world" come from?')
 print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
 ```
 
 
@@ -55,8 +56,8 @@ Before you start, log out of Claude Code using `/logout`.
 Set your gateway credentials as environment variables:
 
 ```bash
-export ANTHROPIC_AUTH_TOKEN="YOUR_PAIG_TOKEN"
 export ANTHROPIC_BASE_URL="https://gateway.pydantic.dev/proxy/anthropic"
+export ANTHROPIC_AUTH_TOKEN="YOUR_PAIG_TOKEN"
 ```
 
 Replace `YOUR_PAIG_TOKEN` with the API key from the Keys page.
@@ -67,11 +68,11 @@ Launch Claude Code by typing `claude`. All requests will now route through the P
 
 === "OpenAI SDK"
 
-    ```python title="hello_world.py"
+    ```python {title="openai_sdk.py" test="skip"}
     import openai
 
     client = openai.Client(
-        base_url='https://gateway.pydantic.dev/proxy/openai/',
+        base_url='https://gateway.pydantic.dev/proxy/chat/',
         api_key='paig_...',
     )
 
@@ -80,10 +81,11 @@ Launch Claude Code by typing `claude`. All requests will now route through the P
         messages=[{'role': 'user', 'content': 'Hello world'}],
     )
     print(response.choices[0].message.content)
+    #> Hello user
     ```
 === "Anthropic SDK"
 
-    ```python title="hello_world.py"
+    ```python {title="anthropic_sdk.py" test="skip"}
     import anthropic
 
     client = anthropic.Anthropic(
@@ -97,4 +99,5 @@ Launch Claude Code by typing `claude`. All requests will now route through the P
         messages=[{'role': 'user', 'content': 'Hello world'}],
     )
     print(response.content[0].text)
+    #> Hello user
     ```

@@ -22,12 +22,12 @@ For questions and feedback, contact us on [Slack](https://logfire.pydantic.dev/d
 ```python {title="hello_word.py"}
 from pydantic_ai import Agent
 
-agent = Agent(
-    'gateway/openai:gpt-4.1',
-    instructions='Be concise, reply with one sentence.'
-)
+agent = Agent('gateway/chat:gpt-4.1')
 
-result = agent.run_sync('Hello World')
+result = agent.run_sync('Where does "hello world" come from?')
 print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
 ```
 For now, this is a complete

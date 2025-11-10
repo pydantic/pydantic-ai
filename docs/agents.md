@@ -26,7 +26,7 @@ Here's a toy example of an agent that simulates a roulette wheel:
     from pydantic_ai import Agent, RunContext
 
     roulette_agent = Agent(  # (1)!
-        'gateway/openai:gpt-5',
+        'gateway/chat:gpt-5',
         deps_type=int,
         output_type=bool,
         system_prompt=(
@@ -110,7 +110,7 @@ Here's a simple example demonstrating the first four:
     ```python {title="run_agent.py"}
     from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent
 
-    agent = Agent('gateway/openai:gpt-5')
+    agent = Agent('gateway/chat:gpt-5')
 
     result_sync = agent.run_sync('What is the capital of Italy?')
     print(result_sync.output)
@@ -233,7 +233,7 @@ The example below shows how to stream events and text output. You can also [stre
     )
 
     weather_agent = Agent(
-        'gateway/openai:gpt-5',
+        'gateway/chat:gpt-5',
         system_prompt='Providing a weather forecast at the locations the user provides.',
     )
 
@@ -473,7 +473,7 @@ Here's an example of using `async for` with `iter` to record each node the agent
     ```python {title="agent_iter_async_for.py"}
     from pydantic_ai import Agent
 
-    agent = Agent('gateway/openai:gpt-5')
+    agent = Agent('gateway/chat:gpt-5')
 
 
     async def main():
@@ -582,7 +582,7 @@ You can also drive the iteration manually by passing the node you want to run ne
     from pydantic_ai import Agent
     from pydantic_graph import End
 
-    agent = Agent('gateway/openai:gpt-5')
+    agent = Agent('gateway/chat:gpt-5')
 
 
     async def main():
@@ -732,7 +732,7 @@ Here is an example of streaming an agent run in combination with `async for` ite
 
 
     weather_agent = Agent[WeatherService, str](
-        'gateway/openai:gpt-5',
+        'gateway/chat:gpt-5',
         deps_type=WeatherService,
         output_type=str,  # We'll produce a final answer as plain text
         system_prompt='Providing a weather forecast at the locations the user provides.',
@@ -1242,7 +1242,7 @@ For example:
     from pydantic_ai import Agent, UnexpectedModelBehavior
     from pydantic_ai.models.google import GoogleModelSettings
 
-    agent = Agent('gateway/google-gla:gemini-2.5-flash')
+    agent = Agent('gateway/gemini:gemini-2.5-flash')
 
     try:
         result = agent.run_sync(
