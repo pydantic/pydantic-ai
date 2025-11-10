@@ -189,29 +189,34 @@ The configuration file should be a JSON file with an `mcpServers` object contain
 
 ### Environment Variables
 
-The configuration file supports environment variable expansion using the `${VAR_NAME}` syntax. This is useful for keeping sensitive information like API keys or host names out of your configuration files:
+The configuration file supports environment variable expansion using the `${VAR}` and `${VAR:-default}` syntax,
+[like Claude Code](https://code.claude.com/docs/en/mcp#environment-variable-expansion-in-mcp-json).
+This is useful for keeping sensitive information like API keys or host names out of your configuration files:
 
 ```json {title="mcp_config_with_env.json"}
 {
   "mcpServers": {
     "python-runner": {
-      "command": "${PYTHON_CMD}",
+      "command": "${PYTHON_CMD:-python3}",
       "args": ["run", "${MCP_MODULE}", "stdio"],
       "env": {
         "API_KEY": "${MY_API_KEY}"
       }
     },
     "weather-api": {
-      "url": "https://${SERVER_HOST}:${SERVER_PORT}/sse"
+      "url": "https://${SERVER_HOST:-localhost}:${SERVER_PORT:-8080}/sse"
     }
   }
 }
 ```
 
-When loading this configuration with [`load_mcp_servers()`][pydantic_ai.mcp.load_mcp_servers], the `${VAR_NAME}` references will be replaced with the corresponding environment variable values.
+When loading this configuration with [`load_mcp_servers()`][pydantic_ai.mcp.load_mcp_servers]:
+
+- `${VAR}` references will be replaced with the corresponding environment variable values.
+- `${VAR:-default}` references will use the environment variable value if set, otherwise the default value.
 
 !!! warning
-    If a referenced environment variable is not defined, a `ValueError` will be raised. Make sure all required environment variables are set before loading the configuration.
+    If a referenced environment variable using `${VAR}` syntax is not defined, a `ValueError` will be raised. Use the `${VAR:-default}` syntax to provide a fallback value.
 
 ### Usage
 
