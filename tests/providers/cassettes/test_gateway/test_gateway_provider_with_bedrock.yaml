@@ -5,7 +5,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        MWYwNDlkMTQtMjVmMC00YTRhLWJhYmMtNTQ0MDdhMmRlNjgw
+        MmEzMzkzMGUtNzI3YS00YzFhLWFmYWQtYzFhYWMyMTI3NDlj
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -15,7 +15,7 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: http://localhost:8787/bedrock/model/amazon.nova-micro-v1%3A0/converse
+    uri: http://localhost:8787/converse/model/amazon.nova-micro-v1%3A0/converse
   response:
     headers:
       content-length:
@@ -26,7 +26,7 @@ interactions:
       - 0.0000USD
     parsed_body:
       metrics:
-        latencyMs: 668
+        latencyMs: 682
       output:
         message:
           content:
