@@ -142,7 +142,7 @@ def gateway_provider(
                 http_client=http_client,
             )
         )
-    elif api_type in 'converse':
+    elif api_type == 'converse':
         from .bedrock import BedrockProvider
 
         return BedrockProvider(
@@ -150,7 +150,7 @@ def gateway_provider(
             base_url=_merge_url_path(base_url, api_type),
             region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
-    elif api_type in 'gemini':
+    elif api_type == 'gemini':
         from .google import GoogleProvider
 
         return GoogleProvider(
