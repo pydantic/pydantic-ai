@@ -773,9 +773,7 @@ def infer_model(  # noqa: C901
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
-        from ..providers.gateway import infer_gateway_model
-
-        return infer_gateway_model(model_kind.removeprefix('gateway/'), model_name=model_name)
+        model_kind = provider_name.removeprefix('gateway/')
     if model_kind in (
         'openai',
         'azure',
