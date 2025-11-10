@@ -156,7 +156,7 @@ def test_list_models(capfd: CaptureFixture[str]):
 
 
 def test_help_uses_overridden_default_model(capfd: CaptureFixture[str]):
-    custom_default = 'anthropic:claude-3-5-sonnet'
+    custom_default = 'anthropic:claude-4-sonnet'
     with pytest.raises(SystemExit) as exc:
         cli(['--help'], default_model=custom_default)
     assert exc.value.code == 0
