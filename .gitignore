@@ -21,3 +21,5 @@ node_modules/
 /test_tmp/
 .mcp.json
 .claude/
+.cursor/
+.devcontainer/
