@@ -283,6 +283,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
         return self._graph_run.state.usage
 
+    @property
+    def run_id(self) -> str | None:
+        """The unique identifier for the agent run."""
+        return self._graph_run.state.run_id
+
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output
         result_repr = '<run not finished>' if result is None else repr(result.output)
@@ -416,6 +421,11 @@ class AgentRunResult(Generic[OutputDataT]):
     def timestamp(self) -> datetime:
         """Return the timestamp of last response."""
         return self.response.timestamp
+
+    @property
+    def run_id(self) -> str | None:
+        """The unique identifier for the agent run."""
+        return self._state.run_id
 
 
 @dataclasses.dataclass(repr=False)

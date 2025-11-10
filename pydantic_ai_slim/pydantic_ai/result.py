@@ -122,6 +122,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     @property
     def run_id(self) -> str | None:
+        """The unique identifier for the agent run."""
         return self._run_ctx.run_id
 
     # TODO (v2): Drop in favor of `response` property
@@ -537,6 +538,16 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
+    @property
+    def run_id(self) -> str | None:
+        """The unique identifier for the agent run."""
+        if self._run_result is not None:
+            return self._run_result.run_id
+        elif self._stream_response is not None:
+            return self._stream_response.run_id
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
+
     @deprecated('`validate_structured_output` is deprecated, use `validate_response_output` instead.')
     async def validate_structured_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
@@ -696,6 +707,11 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._streamed_run_result.timestamp()
+
+    @property
+    def run_id(self) -> str | None:
+        """The unique identifier for the agent run."""
+        return self._streamed_run_result.run_id
 
     def validate_response_output(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
         """Validate a structured result message."""

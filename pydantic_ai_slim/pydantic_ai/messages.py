@@ -948,7 +948,7 @@ class ModelRequest:
     """Message type identifier, this is available on all parts as a discriminator."""
 
     run_id: str | None = None
-    """A unique identifier to identify the run."""
+    """The unique identifier for the agent run that this request was created in."""
 
     @classmethod
     def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
@@ -1192,7 +1192,7 @@ class ModelResponse:
     """Reason the model finished generating the response, normalized to OpenTelemetry values."""
 
     run_id: str | None = None
-    """A unique identifier to identify the run."""
+    """The unique identifier for the agent run that this response was created in."""
 
     @property
     def text(self) -> str | None:
