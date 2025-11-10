@@ -683,9 +683,9 @@ def infer_model(  # noqa: C901
     """Infer the model from the name.
 
     Args:
-        model: 
+        model:
             Model name to instantiate, in the format of `provider:model`. Use the string "test" to instantiate TestModel.
-        provider_factory: 
+        provider_factory:
             Function that instantiates a provider object. The provider name is passed into the function parameter. Defaults to `provider.infer_provider`.
     """
     if isinstance(model, Model):
