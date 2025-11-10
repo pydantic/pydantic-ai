@@ -1,6 +1,6 @@
 # Agent User Interaction (AG-UI)
 
-Example of using Pydantic AI agents with the [AG-UI Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo/apps/dojo) example app.
+Example of using Pydantic AI agents with the [AG-UI Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo) example app.
 
 See the [AG-UI docs](../ui/ag-ui.md) for more information about the AG-UI integration.
 
@@ -48,7 +48,7 @@ Next run the AG-UI Dojo example frontend.
     cd ag-ui/sdks/typescript
     ```
 
-3. Run the Dojo app following the [official instructions](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo/apps/dojo#development-setup)
+3. Run the Dojo app following the [official instructions](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/dojo#development-setup)
 4. Visit <http://localhost:3000/pydantic-ai>
 5. Select View `Pydantic AI` from the sidebar
 
