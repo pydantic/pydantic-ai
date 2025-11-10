@@ -9,7 +9,7 @@ from __future__ import annotations as _annotations
 import base64
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -47,7 +47,7 @@ from ..messages import (
 )
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-from ..providers import infer_provider
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -126,11 +126,8 @@ KnownModelName = TypeAliasType(
         'cerebras:gpt-oss-120b',
         'cerebras:llama3.1-8b',
         'cerebras:llama-3.3-70b',
-        'cerebras:llama-4-scout-17b-16e-instruct',
-        'cerebras:llama-4-maverick-17b-128e-instruct',
         'cerebras:qwen-3-235b-a22b-instruct-2507',
         'cerebras:qwen-3-32b',
-        'cerebras:qwen-3-coder-480b',
         'cerebras:qwen-3-235b-a22b-thinking-2507',
         'cohere:c4ai-aya-expanse-32b',
         'cohere:c4ai-aya-expanse-8b',
@@ -138,6 +135,7 @@ KnownModelName = TypeAliasType(
         'cohere:command-r-08-2024',
         'cohere:command-r-plus-08-2024',
         'cohere:command-r7b-12-2024',
+        'cerebras:zai-glm-4.6',
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
         'google-gla:gemini-2.0-flash',
@@ -189,11 +187,15 @@ KnownModelName = TypeAliasType(
         'groq:llama-3.2-3b-preview',
         'groq:llama-3.2-11b-vision-preview',
         'groq:llama-3.2-90b-vision-preview',
+        'heroku:amazon-rerank-1-0',
         'heroku:claude-3-5-haiku',
         'heroku:claude-3-5-sonnet-latest',
         'heroku:claude-3-7-sonnet',
-        'heroku:claude-4-sonnet',
         'heroku:claude-3-haiku',
+        'heroku:claude-4-5-haiku',
+        'heroku:claude-4-5-sonnet',
+        'heroku:claude-4-sonnet',
+        'heroku:cohere-rerank-3-5',
         'heroku:gpt-oss-120b',
         'heroku:nova-lite',
         'heroku:nova-pro',
@@ -722,8 +724,17 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
-def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
-    """Infer the model from the name."""
+def infer_model(  # noqa: C901
+    model: Model | KnownModelName | str, provider_factory: Callable[[str], Provider[Any]] = infer_provider
+) -> Model:
+    """Infer the model from the name.
+
+    Args:
+        model:
+            Model name to instantiate, in the format of `provider:model`. Use the string "test" to instantiate TestModel.
+        provider_factory:
+            Function that instantiates a provider object. The provider name is passed into the function parameter. Defaults to `provider.infer_provider`.
+    """
     if isinstance(model, Model):
         return model
     elif model == 'test':
@@ -758,11 +769,13 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         )
         provider_name = 'google-vertex'
 
-    provider = infer_provider(provider_name)
+    provider: Provider[Any] = provider_factory(provider_name)
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
-        model_kind = provider_name.removeprefix('gateway/')
+        from ..providers.gateway import infer_gateway_model
+
+        return infer_gateway_model(model_kind.removeprefix('gateway/'), model_name=model_name)
     if model_kind in (
         'openai',
         'azure',

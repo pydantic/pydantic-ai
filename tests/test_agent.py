@@ -5807,3 +5807,74 @@ def test_agent_builtin_tools_runtime_vs_agent_level():
             MCPServerTool(id='example', url='https://mcp.example.com/mcp'),
         ]
     )
+
+
+async def test_run_with_unapproved_tool_call_in_history():
+    def should_not_call_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        raise ValueError('The agent should not call the model.')  # pragma: no cover
+
+    agent = Agent(
+        model=FunctionModel(function=should_not_call_model),
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file() -> None:
+        print('File deleted.')  # pragma: no cover
+
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='delete_file')]),
+    ]
+
+    result = await agent.run(message_history=messages)
+
+    assert result.all_messages() == messages
+    assert result.output == snapshot(
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='delete_file', tool_call_id=IsStr())])
+    )
+
+
+async def test_message_history():
+    def llm(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('ok here is text')])
+
+    agent = Agent(FunctionModel(llm))
+
+    async with agent.iter(
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ],
+    ) as run:
+        async for _ in run:
+            pass
+        assert run.new_messages() == snapshot(
+            [
+                ModelResponse(
+                    parts=[TextPart(content='ok here is text')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='function:llm:',
+                    timestamp=IsDatetime(),
+                ),
+            ]
+        )
+        assert run.new_messages_json().startswith(b'[{"parts":[{"content":"ok here is text",')
+        assert run.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Hello',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='ok here is text')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='function:llm:',
+                    timestamp=IsDatetime(),
+                ),
+            ]
+        )
+        assert run.all_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
