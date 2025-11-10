@@ -74,12 +74,12 @@ TEST_CASES = [
     ),
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
-        'gateway/bedrock:amazon.nova-micro-v1:0',
+        'gateway/converse:amazon.nova-micro-v1:0',
         'amazon.nova-micro-v1:0',
         'bedrock',
         'bedrock',
         BedrockConverseModel,
-        id='gateway/bedrock:amazon.nova-micro-v1:0',
+        id='gateway/converse:amazon.nova-micro-v1:0',
     ),
     pytest.param(
         {'OPENAI_API_KEY': 'openai-api-key'},

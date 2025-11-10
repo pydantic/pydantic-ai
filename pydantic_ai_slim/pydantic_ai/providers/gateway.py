@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from groq import AsyncGroq
     from openai import AsyncOpenAI
 
+    from pydantic_ai.models import Model
     from pydantic_ai.models.anthropic import AsyncAnthropicClient
     from pydantic_ai.providers import Provider
 
@@ -190,3 +191,33 @@ def _merge_url_path(base_url: str, path: str) -> str:
         path: The path to merge.
     """
     return base_url.rstrip('/') + '/' + path.lstrip('/')
+
+
+def infer_gateway_model(api_type: APIType | str, *, model_name: str) -> Model:
+    """Infer the model class for a given API type."""
+    if api_type == 'chat':
+        from pydantic_ai.models.openai import OpenAIChatModel
+
+        return OpenAIChatModel(model_name=model_name, provider='gateway')
+    elif api_type == 'groq':
+        from pydantic_ai.models.groq import GroqModel
+
+        return GroqModel(model_name=model_name, provider='gateway')
+    elif api_type == 'responses':
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+
+        return OpenAIResponsesModel(model_name=model_name, provider='gateway')
+    elif api_type == 'gemini':
+        from pydantic_ai.models.google import GoogleModel
+
+        return GoogleModel(model_name=model_name, provider='gateway')
+    elif api_type == 'converse':
+        from pydantic_ai.models.bedrock import BedrockConverseModel
+
+        return BedrockConverseModel(model_name=model_name, provider='gateway')
+    elif api_type == 'anthropic':
+        from pydantic_ai.models.anthropic import AnthropicModel
+
+        return AnthropicModel(model_name=model_name, provider='gateway')
+    else:
+        raise ValueError(f'Unknown API type: {api_type}')
