@@ -3076,7 +3076,7 @@ async def test_google_httpx_client_is_not_closed(allow_model_requests: None, gem
 
 def test_google_process_response_filters_empty_text_parts(google_provider: GoogleProvider):
     model = GoogleModel('gemini-1.5-flash', provider=google_provider)
-    response = _generate_response_with_texts('resp-123', '', 'first', '', 'second')
+    response = _generate_response_with_texts(response_id='resp-123', texts=['', 'first', '', 'second'])
 
     result = model._process_response(response)
 
@@ -3084,7 +3084,7 @@ def test_google_process_response_filters_empty_text_parts(google_provider: Googl
 
 
 async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
-    chunk = _generate_response_with_texts('stream-1', '', 'streamed text')
+    chunk = _generate_response_with_texts('stream-1', ['', 'streamed text'])
 
     async def response_iterator() -> AsyncIterator[GenerateContentResponse]:
         yield chunk
@@ -3105,7 +3105,7 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
     assert event.part.content == 'streamed text'
 
 
-def _generate_response_with_texts(response_id: str, *texts: str) -> GenerateContentResponse:
+def _generate_response_with_texts(response_id: str, texts: list[str]) -> GenerateContentResponse:
     return GenerateContentResponse.model_validate(
         {
             'response_id': response_id,
