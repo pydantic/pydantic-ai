@@ -126,11 +126,8 @@ KnownModelName = TypeAliasType(
         'cerebras:gpt-oss-120b',
         'cerebras:llama3.1-8b',
         'cerebras:llama-3.3-70b',
-        'cerebras:llama-4-scout-17b-16e-instruct',
-        'cerebras:llama-4-maverick-17b-128e-instruct',
         'cerebras:qwen-3-235b-a22b-instruct-2507',
         'cerebras:qwen-3-32b',
-        'cerebras:qwen-3-coder-480b',
         'cerebras:qwen-3-235b-a22b-thinking-2507',
         'cohere:c4ai-aya-expanse-32b',
         'cohere:c4ai-aya-expanse-8b',
@@ -138,6 +135,7 @@ KnownModelName = TypeAliasType(
         'cohere:command-r-08-2024',
         'cohere:command-r-plus-08-2024',
         'cohere:command-r7b-12-2024',
+        'cerebras:zai-glm-4.6',
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
         'google-gla:gemini-2.0-flash',
@@ -189,11 +187,15 @@ KnownModelName = TypeAliasType(
         'groq:llama-3.2-3b-preview',
         'groq:llama-3.2-11b-vision-preview',
         'groq:llama-3.2-90b-vision-preview',
+        'heroku:amazon-rerank-1-0',
         'heroku:claude-3-5-haiku',
         'heroku:claude-3-5-sonnet-latest',
         'heroku:claude-3-7-sonnet',
-        'heroku:claude-4-sonnet',
         'heroku:claude-3-haiku',
+        'heroku:claude-4-5-haiku',
+        'heroku:claude-4-5-sonnet',
+        'heroku:claude-4-sonnet',
+        'heroku:cohere-rerank-3-5',
         'heroku:gpt-oss-120b',
         'heroku:nova-lite',
         'heroku:nova-pro',
@@ -762,7 +764,9 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
-        model_kind = provider_name.removeprefix('gateway/')
+        from ..providers.gateway import infer_gateway_model
+
+        return infer_gateway_model(model_kind.removeprefix('gateway/'), model_name=model_name)
     if model_kind in (
         'openai',
         'azure',

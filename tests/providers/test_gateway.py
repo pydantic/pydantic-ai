@@ -34,15 +34,12 @@ pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
 
 @pytest.mark.parametrize(
-    'provider_name, provider_cls',
-    [('openai', OpenAIProvider), ('openai-chat', OpenAIProvider), ('openai-responses', OpenAIProvider)],
+    'provider_name, provider_cls, path', [('chat', OpenAIProvider, 'chat'), ('responses', OpenAIProvider, 'responses')]
 )
-def test_init_with_base_url(
-    provider_name: Literal['openai', 'openai-chat', 'openai-responses'], provider_cls: type[Provider[Any]]
-):
+def test_init_with_base_url(provider_name: Literal['chat', 'responses'], provider_cls: type[Provider[Any]], path: str):
     provider = gateway_provider(provider_name, base_url='https://example.com/', api_key='foobar')
     assert isinstance(provider, provider_cls)
-    assert provider.base_url == 'https://example.com/openai/'
+    assert provider.base_url == f'https://example.com/{path}/'
     assert provider.client.api_key == 'foobar'
 
 
@@ -54,12 +51,12 @@ def test_init_gateway_without_api_key_raises_error(env: TestEnv):
             'Set the `PYDANTIC_AI_GATEWAY_API_KEY` environment variable or pass it via `gateway_provider(..., api_key=...)` to use the Pydantic AI Gateway provider.'
         ),
     ):
-        gateway_provider('openai')
+        gateway_provider('chat')
 
 
 async def test_init_with_http_client():
     async with httpx.AsyncClient() as http_client:
-        provider = gateway_provider('openai', http_client=http_client, api_key='foobar')
+        provider = gateway_provider('chat', http_client=http_client, api_key='foobar')
         assert provider.client._client == http_client  # type: ignore
 
 
@@ -84,13 +81,12 @@ def vcr_config():
 @pytest.mark.parametrize(
     'provider_name, provider_cls, path',
     [
-        ('openai', OpenAIProvider, 'openai'),
-        ('openai-chat', OpenAIProvider, 'openai'),
-        ('openai-responses', OpenAIProvider, 'openai'),
+        ('chat', OpenAIProvider, 'chat'),
+        ('responses', OpenAIProvider, 'responses'),
         ('groq', GroqProvider, 'groq'),
-        ('google-vertex', GoogleProvider, 'google-vertex'),
+        ('gemini', GoogleProvider, 'gemini'),
         ('anthropic', AnthropicProvider, 'anthropic'),
-        ('bedrock', BedrockProvider, 'bedrock'),
+        ('converse', BedrockProvider, 'converse'),
     ],
 )
 def test_gateway_provider(provider_name: str, provider_cls: type[Provider[Any]], path: str):
@@ -98,20 +94,17 @@ def test_gateway_provider(provider_name: str, provider_cls: type[Provider[Any]],
     assert isinstance(provider, provider_cls)
 
     # Some providers add a trailing slash, others don't
-    assert provider.base_url in (
-        f'{GATEWAY_BASE_URL}/{path}/',
-        f'{GATEWAY_BASE_URL}/{path}',
-    )
+    assert provider.base_url in (f'{GATEWAY_BASE_URL}/{path}/', f'{GATEWAY_BASE_URL}/{path}')
 
 
 @patch.dict(os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key'})
 def test_gateway_provider_unknown():
-    with raises(snapshot('UserError: Unknown upstream provider: foo')):
+    with raises(snapshot('UserError: Unknown API type: foo')):
         gateway_provider('foo')
 
 
 async def test_gateway_provider_with_openai(allow_model_requests: None, gateway_api_key: str):
-    provider = gateway_provider('openai', api_key=gateway_api_key, base_url='http://localhost:8787')
+    provider = gateway_provider('chat', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = OpenAIChatModel('gpt-5', provider=provider)
     agent = Agent(model)
 
@@ -120,7 +113,7 @@ async def test_gateway_provider_with_openai(allow_model_requests: None, gateway_
 
 
 async def test_gateway_provider_with_openai_responses(allow_model_requests: None, gateway_api_key: str):
-    provider = gateway_provider('openai-responses', api_key=gateway_api_key, base_url='http://localhost:8787')
+    provider = gateway_provider('responses', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = OpenAIResponsesModel('gpt-5', provider=provider)
     agent = Agent(model)
 
@@ -138,12 +131,12 @@ async def test_gateway_provider_with_groq(allow_model_requests: None, gateway_ap
 
 
 async def test_gateway_provider_with_google_vertex(allow_model_requests: None, gateway_api_key: str):
-    provider = gateway_provider('google-vertex', api_key=gateway_api_key, base_url='http://localhost:8787')
-    model = GoogleModel('gemini-1.5-flash', provider=provider)
+    provider = gateway_provider('gemini', api_key=gateway_api_key, base_url='http://localhost:8787')
+    model = GoogleModel('gemini-2.5-flash', provider=provider)
     agent = Agent(model)
 
     result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot('Paris\n')
+    assert result.output == snapshot('The capital of France is **Paris**.')
 
 
 async def test_gateway_provider_with_anthropic(allow_model_requests: None, gateway_api_key: str):
@@ -156,7 +149,7 @@ async def test_gateway_provider_with_anthropic(allow_model_requests: None, gatew
 
 
 async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway_api_key: str):
-    provider = gateway_provider('bedrock', api_key=gateway_api_key, base_url='http://localhost:8787')
+    provider = gateway_provider('converse', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=provider)
     agent = Agent(model)
 
