@@ -37,9 +37,10 @@ def gateway_provider(
 
 @overload
 def gateway_provider(
-    api_key: Literal['groq'],
+    api_type: Literal['groq'],
     /,
     *,
+    api_key: str | None = None,
     base_url: str | None = None,
     http_client: httpx.AsyncClient | None = None,
 ) -> Provider[AsyncGroq]: ...
