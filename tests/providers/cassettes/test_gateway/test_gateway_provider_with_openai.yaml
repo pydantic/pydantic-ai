@@ -20,15 +20,25 @@ interactions:
         role: user
       model: gpt-5
       stream: false
-    uri: http://localhost:8787/openai/chat/completions
+    uri: http://localhost:8787/chat/chat/completions
   response:
     headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
       content-length:
       - '614'
       content-type:
       - application/json
+      openai-processing-ms:
+      - '2046'
+      openai-version:
+      - '2020-10-01'
       pydantic-ai-gateway-price-estimate:
       - 0.0001USD
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
@@ -40,8 +50,8 @@ interactions:
           content: Paris.
           refusal: null
           role: assistant
-      created: 1757577825
-      id: chatcmpl-CEWZNtQzFkg7hbdjFKPJtCT7CwGyc
+      created: 1762685398
+      id: chatcmpl-CZxHa0hkNXToLinJr0VlRYia1OMT0
       model: gpt-5-2025-08-07
       object: chat.completion
       service_tier: default
