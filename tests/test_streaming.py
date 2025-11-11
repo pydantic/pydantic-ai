@@ -1707,6 +1707,7 @@ async def test_tool_raises_call_deferred():
 
     async with agent.run_stream('Hello') as result:
         assert not result.is_complete
+        assert isinstance(result.run_id, str)
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
             [DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])]
         )
