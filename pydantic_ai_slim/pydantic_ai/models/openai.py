@@ -2270,7 +2270,8 @@ def _map_web_search_tool_call(
 
 def _map_file_search_tool_call(  # pragma: no cover
     # File Search Tool mapping - only called from API-dependent response processing paths
-    item: responses.ResponseFileSearchToolCall, provider_name: str
+    item: responses.ResponseFileSearchToolCall,
+    provider_name: str,
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
     args: dict[str, Any] | None = None
 
