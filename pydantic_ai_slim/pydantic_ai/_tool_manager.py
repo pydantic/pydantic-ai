@@ -106,23 +106,23 @@ class ToolManager(Generic[AgentDepsT]):
         """
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
-        
+
         if (tool := self.tools.get(call.tool_name)) and tool.tool_def.kind == 'output':
             output_tool_flag = True
         else:
             output_tool_flag = False
 
         return await self._call_function_tool(
-                call,
-                allow_partial=allow_partial,
-                wrap_validation_errors=wrap_validation_errors,
-                approved=approved,
-                tracer=self.ctx.tracer,
-                include_content=self.ctx.trace_include_content,
-                instrumentation_version=self.ctx.instrumentation_version,
-                usage=self.ctx.usage,
-                output_tool_flag=output_tool_flag,
-            )
+            call,
+            allow_partial=allow_partial,
+            wrap_validation_errors=wrap_validation_errors,
+            approved=approved,
+            tracer=self.ctx.tracer,
+            include_content=self.ctx.trace_include_content,
+            instrumentation_version=self.ctx.instrumentation_version,
+            usage=self.ctx.usage,
+            output_tool_flag=output_tool_flag,
+        )
 
     async def _call_tool(
         self,
@@ -219,8 +219,6 @@ class ToolManager(Generic[AgentDepsT]):
             tool_name = 'output tool'
         else:
             tool_name = call.tool_name
-
-
 
         span_attributes = {
             'gen_ai.tool.name': tool_name,
