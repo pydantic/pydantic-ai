@@ -746,7 +746,7 @@ class OpenAIChatModel(Model):
     def _map_finish_reason(
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
     ) -> FinishReason | None:
-        """Hooks that maps a finish reason key to a [FinishReason](pydantic_ai.messages.FinishReason).
+        """Hooks that maps a finish reason key to a [FinishReason][pydantic_ai.messages.FinishReason].
 
         This method may be overridden by subclasses of `OpenAIChatModel` to accommodate custom keys.
         """
