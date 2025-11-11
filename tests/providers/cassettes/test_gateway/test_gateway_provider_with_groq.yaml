@@ -29,7 +29,7 @@ interactions:
       cache-control:
       - private, max-age=0, no-store, no-cache, must-revalidate
       content-length:
-      - '634'
+      - '635'
       content-type:
       - application/json
       pydantic-ai-gateway-price-estimate:
@@ -46,25 +46,25 @@ interactions:
         message:
           content: The capital of France is Paris.
           role: assistant
-      created: 1757576767
-      id: chatcmpl-cc44ad8f-4b07-468c-9d7b-afac47db1e86
+      created: 1762862275
+      id: chatcmpl-749f02e7-a77a-497b-812b-9faf360c54c2
       model: llama-3.3-70b-versatile
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_3f3b593e33
+      system_fingerprint: fp_fe312f6b04
       usage:
-        completion_time: 0.002254941
+        completion_time: 0.011976711
         completion_tokens: 8
-        prompt_time: 0.01168072
+        prompt_time: 0.001907567
         prompt_tokens: 42
         pydantic_ai_gateway:
           cost_estimate: 3.11e-05
-        queue_time: 0.084482342
-        total_time: 0.013935661
+        queue_time: 0.150316584
+        total_time: 0.013884278
         total_tokens: 50
       usage_breakdown: null
       x_groq:
-        id: req_01k4vvt9maeygb4yh5byz7vjwf
+        id: req_01k9scf6byfegv342g2fqyma68
     status:
       code: 200
       message: OK

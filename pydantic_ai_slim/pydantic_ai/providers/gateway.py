@@ -130,50 +130,43 @@ def gateway_provider(
     http_client = http_client or cached_async_http_client(provider=f'gateway/{upstream_provider}')
     http_client.event_hooks = {'request': [_request_hook(api_key)]}
 
-    if route is not None:
-        http_client.headers.setdefault('pydantic-ai-gateway-route', route)
+    if route is None:
+        # Use the implied providerId as the default route.
+        if upstream_provider in ('openai', 'openai-chat', 'openai-responses'):
+            route = 'openai'
+        else:
+            route = upstream_provider
+
+    base_url = _merge_url_path(base_url, route)
 
     if upstream_provider in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
 
-        return OpenAIProvider(
-            api_key=api_key,
-            base_url=_merge_url_path(base_url, upstream_provider),
-            http_client=http_client,
-        )
+        return OpenAIProvider(api_key=api_key, base_url=base_url, http_client=http_client)
     elif upstream_provider == 'groq':
         from .groq import GroqProvider
 
-        return GroqProvider(api_key=api_key, base_url=_merge_url_path(base_url, 'groq'), http_client=http_client)
+        return GroqProvider(api_key=api_key, base_url=base_url, http_client=http_client)
     elif upstream_provider == 'anthropic':
         from anthropic import AsyncAnthropic
 
         from .anthropic import AnthropicProvider
 
         return AnthropicProvider(
-            anthropic_client=AsyncAnthropic(
-                auth_token=api_key,
-                base_url=_merge_url_path(base_url, 'anthropic'),
-                http_client=http_client,
-            )
+            anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
         )
     elif upstream_provider == 'bedrock':
         from .bedrock import BedrockProvider
 
         return BedrockProvider(
             api_key=api_key,
-            base_url=_merge_url_path(base_url, upstream_provider),
+            base_url=base_url,
             region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
     elif upstream_provider == 'google-vertex':
         from .google import GoogleProvider
 
-        return GoogleProvider(
-            vertexai=True,
-            api_key=api_key,
-            base_url=_merge_url_path(base_url, upstream_provider),
-            http_client=http_client,
-        )
+        return GoogleProvider(vertexai=True, api_key=api_key, base_url=base_url, http_client=http_client)
     else:
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
 
