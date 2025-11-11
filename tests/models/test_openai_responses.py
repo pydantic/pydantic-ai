@@ -15,6 +15,7 @@ from pydantic_ai import (
     BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
+    FileSearchTool,
     FinalResultEvent,
     ImageGenerationTool,
     ImageUrl,
@@ -7302,3 +7303,44 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
             },
         ]
     )
+
+
+async def test_file_search_tool_basic(allow_model_requests: None, openai_api_key: str):
+    """Test that FileSearchTool can be configured without errors."""
+    agent = Agent(
+        OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key)),
+        builtin_tools=[FileSearchTool(vector_store_ids=['vs_test123'])],
+    )
+    
+    # Just verify the agent initializes properly
+    assert agent is not None
+
+
+async def test_file_search_tool_mapping():
+    """Test the _map_file_search_tool_call function."""
+    from unittest.mock import Mock
+
+    from pydantic_ai.models.openai import _map_file_search_tool_call
+    
+    # Create a mock ResponseFileSearchToolCall
+    mock_item = Mock()
+    mock_item.id = 'fs_test123'
+    mock_item.status = 'completed'
+    mock_item.action = None  # Test without action first
+    
+    call_part, return_part = _map_file_search_tool_call(mock_item, 'openai')
+    
+    assert call_part.tool_name == 'file_search'
+    assert call_part.tool_call_id == 'fs_test123'
+    assert call_part.args is None
+    assert return_part.tool_name == 'file_search'
+    assert return_part.tool_call_id == 'fs_test123'
+    assert return_part.content == {'status': 'completed'}
+    
+    # Test with action
+    mock_action = Mock()
+    mock_action.model_dump = Mock(return_value={'query': 'test query'})
+    mock_item.action = mock_action
+    
+    call_part, return_part = _map_file_search_tool_call(mock_item, 'openai')
+    assert call_part.args == {'query': 'test query'}

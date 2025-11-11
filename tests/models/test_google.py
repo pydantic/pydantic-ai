@@ -20,6 +20,7 @@ from pydantic_ai import (
     BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
+    FileSearchTool,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -3120,3 +3121,15 @@ def _generate_response_with_texts(response_id: str, texts: list[str]) -> Generat
             ],
         }
     )
+
+
+async def test_google_model_file_search_tool(allow_model_requests: None, google_provider: GoogleProvider):
+    """Test that FileSearchTool can be configured with Google models."""
+    m = GoogleModel('gemini-2.5-pro', provider=google_provider)
+    agent = Agent(
+        m,
+        builtin_tools=[FileSearchTool(vector_store_ids=['files/test123'])],
+    )
+    
+    # Just verify the agent initializes properly
+    assert agent is not None
