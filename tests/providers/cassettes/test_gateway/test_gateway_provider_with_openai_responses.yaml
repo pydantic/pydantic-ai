@@ -22,17 +22,17 @@ interactions:
         role: user
       model: gpt-5
       stream: false
-    uri: http://localhost:8787/openai-responses/responses
+    uri: http://localhost:8787/openai/responses
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=86400
       content-length:
-      - '2233'
+      - '2213'
       content-type:
       - application/json
       openai-processing-ms:
-      - '942'
+      - '1531'
       openai-version:
       - '2020-10-01'
       pydantic-ai-gateway-price-estimate:
@@ -45,9 +45,9 @@ interactions:
       background: false
       billing:
         payer: developer
-      created_at: 1762862272
+      created_at: 1762865061
       error: null
-      id: resp_095fcffc9ae5e50f00691324c0e76081908b11dd6d0be4337f
+      id: resp_07b2445312dbb5570069132fa527fc819393564902b61223d8
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -56,8 +56,8 @@ interactions:
       model: gpt-5-2025-08-07
       object: response
       output:
-      - encrypted_content: gAAAAABpEyTBZuYGXQ1bsoTD_aq3IEzx0BNkBBDqLNIj16_ptuT5CZ1BNJjD3aYBzMvkFqIMRzQ3wHCXbZW6eHuytYpFiWLt6uLX-OeM9w5oV1mVr2zfv3iURi4k0dygW5BHjcAn_IMsIKJWiSqIrQRZs_NL_Ad95PPDXFEKwKonrMQ5SQoS2RinNAml6b_XxjaGFaqTW92vaaPMipDpDnwK71vgNk1fczKj6TWUm7tHDed38n-pJIHan-Lxns5cTCusu8aru_e3WQ1i8AA09sgnEtzrvjiN2tGG2NKN_Hviz7Fb4P2YBnz6b1PElSRRSO1bKxxh9IZzK5ynhvSZHYz7NMCmFeJffiGVPSXneNSfngHccQF_AoiNnJhXMjzOV4MWbIKbJxQ2LvSqM2o23AyZqBDhLJFb8u3r3Dkv3cO0lT2bnP3oAucdrm6pgnO3gAUGOC9TqcKuxv9IIYcc70GPFgOfOQ_wSm9PhO5bFRXYYhcXDgYEhqjePwR_NXjwJoUNP5mBp8BA1z8llI96dZRrup5kjVoXcr510imTMH6waavtyghutKK_d0gw6xsogdae0vbw7frljWiKGsDKFn3FaHRQyTho0ceI3m8vOo_iKxHauyDCKcFJ-fNZoNHcTdEfM1dAeKHrVHni_cQKRt3Nd7lt2cy0dOmliusP85-V2oFgLbDHVCBsSmXeYhFHak7_f7XyiAwkR-pCluUVl5mvowsSspyzLT2HL1Tk82j0g01pF0l5RkSnwsLvmb7UNKuoebjKQVCuG2LB3B1dkBUP7dPwLcOKANLCR6p9nhV6kYaH1UjFGHbrQkPDYKeTac3SSSbTNFiiR6fJY4DfwvTVdK-FI445SaixuJYkcUGZcoGJdt__RgyE7JgGpHhZ5lsmfmSzMVBGQdN46JEZxEw6ROWRzfJDv8dF5mhA8OCcSQa2TFEs59C6aw5cEQODviySY4AkQMap
-        id: rs_095fcffc9ae5e50f00691324c137a88190b1f9e137f26d351b
+      - encrypted_content: gAAAAABpEy-mmJGM0IIHyqz_gryUx6IjKNlim6S4Ldrd5tGgUcry6lBFTVBDjbCFE9Ro8qHyjmmLfLi41TA3HdFhOcYZtjxuX3mAFyNpv6Ej0gYFMM1Empzu5mDp7bWk_2vl14JGhOBzOa9cwR1ISl8IRSGYXKYiPkb9n93cCX9Kj1kQPsE9hf3ooVidgprkcgVrqrmolYNLivQJzpox8jYOkgs3WJi41Sp-ocfS9cPcpxH64uUidNXqMVO0DTdp1I9XQcGHlKCYag7ju-2_MhPXMlixaPlZaDDlaulZ3ii8B7SqODN43H2F8KMkqMeHQESXykXfCgLCx5USM4hzue3Olc8htW_Hx5s0OMKm6HE4P8fVxAFNXhnJ1XefF_BM6abns3G8U5XF2Yl-ICGHiqXWvl4Tpcnrb9HWxqk_38CvLZyHIyry6VV68YgAmZbSoXxmXrxbzHzbfBOclzgRQhtRIMyLySpxKeUV5mM7qWCVN1017Gmt21A6afiSQMBydmkZJdqs-JlTtIJxZVLpPpW9BPM78Ct4qVu8tNr04qggolh275KG_XcRCIuBr44E8WYh41Be5xtBMDPxtTdOL95ly7UkVMk7FTAAPKgDYUABygOmtgvFL-OvAhaEsulRMA-QtJfLGJAh9icIiywdM93-hXBKZWrwbu6cQNpuHRhJ_cuZw5LRW8LtwVTvUey6xwdTs0oZyNHFEFE8K4B2HWxfq_-VA9QnJSyiq8fPjDaUCxRlj1Zr0O_eufr3qLcConPDu_RyrEiAykE2gEJ9YF4J0-p6nAmA915T537Y4nrAH548G2rwuXQgTX8tlpejcV1jbTzcY6FnJbTmziPBUhKHlV4PZJLoON--j4mBx7nGDJRYxWd8515cvf7VxI-OEPDsXEFQELOI-oiaXzOZzBw4d__GK9VBky0-EssgUVJ8jZ84QWpygmA=
+        id: rs_07b2445312dbb5570069132fa592888193a619c2b77fd28e24
         summary: []
         type: reasoning
       - content:
@@ -65,7 +65,7 @@ interactions:
           logprobs: []
           text: Paris.
           type: output_text
-        id: msg_095fcffc9ae5e50f00691324c189488190a3023a5d21479b84
+        id: msg_07b2445312dbb5570069132fa6037c8193abb6ac48ff6652e5
         role: assistant
         status: completed
         type: message

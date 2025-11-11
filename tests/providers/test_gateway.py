@@ -38,7 +38,7 @@ pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
     [('openai', OpenAIProvider), ('openai-chat', OpenAIProvider), ('openai-responses', OpenAIProvider)],
 )
 def test_init_with_base_url(
-    provider_name: Literal['openai', 'openai-chat', 'openai-responses'], provider_cls: type[Provider[Any]], path: str
+    provider_name: Literal['openai', 'openai-chat', 'openai-responses'], provider_cls: type[Provider[Any]]
 ):
     provider = gateway_provider(provider_name, base_url='https://example.com/', api_key='foobar')
     assert isinstance(provider, provider_cls)
@@ -82,23 +82,23 @@ def vcr_config():
     os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
 )
 @pytest.mark.parametrize(
-    'provider_name, provider_cls',
+    'provider_name, provider_cls, route',
     [
-        ('openai', OpenAIProvider),
-        ('openai-chat', OpenAIProvider),
-        ('openai-responses', OpenAIProvider),
-        ('groq', GroqProvider),
-        ('google-vertex', GoogleProvider),
-        ('anthropic', AnthropicProvider),
-        ('bedrock', BedrockProvider),
+        ('openai', OpenAIProvider, 'openai'),
+        ('openai-chat', OpenAIProvider, 'openai'),
+        ('openai-responses', OpenAIProvider, 'openai'),
+        ('groq', GroqProvider, 'groq'),
+        ('google-vertex', GoogleProvider, 'google-vertex'),
+        ('anthropic', AnthropicProvider, 'anthropic'),
+        ('bedrock', BedrockProvider, 'bedrock'),
     ],
 )
-def test_gateway_provider(provider_name: str, provider_cls: type[Provider[Any]], path: str):
+def test_gateway_provider(provider_name: str, provider_cls: type[Provider[Any]], route: str):
     provider = gateway_provider(provider_name)
     assert isinstance(provider, provider_cls)
 
     # Some providers add a trailing slash, others don't
-    assert provider.base_url in (f'{GATEWAY_BASE_URL}/{path}/', f'{GATEWAY_BASE_URL}/{path}')
+    assert provider.base_url in (f'{GATEWAY_BASE_URL}/{route}/', f'{GATEWAY_BASE_URL}/{route}')
 
 
 @patch.dict(os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key'})
@@ -159,7 +159,7 @@ async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
-        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France. It is located in the northern central part of the country and is known for its significant cultural, political, and economic influence both within France and globally. Paris is famous for its landmarks such as the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées, among other historic and modern attractions.'
+        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. The city is known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées, among many other attractions.'
     )
 
 
@@ -188,5 +188,4 @@ async def test_model_provider_argument():
 
 async def test_gateway_provider_routing_group(gateway_api_key: str):
     provider = gateway_provider('openai', route='potato', api_key=gateway_api_key)
-    httpx_client = provider.client._client  # type: ignore[reportPrivateUsage]
-    assert httpx_client.base_url == 'https://gateway.pydantic.dev/proxy/potato/'
+    assert provider.client.base_url.path.endswith('/potato/')

@@ -33,7 +33,7 @@ interactions:
       pydantic-ai-gateway-price-estimate:
       - 0.0002USD
       retry-after:
-      - '4'
+      - '34'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -42,7 +42,7 @@ interactions:
       content:
       - text: The capital of France is Paris.
         type: text
-      id: msg_014CJbfsNmV1hibygCJwg2FE
+      id: msg_015jjU4Q5dqhSc9vyfCdoujx
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
