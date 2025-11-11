@@ -592,7 +592,7 @@ The [`FileSearchTool`][pydantic_ai.builtin_tools.FileSearchTool] enables your ag
 
 With OpenAI, you need to first upload files to a vector store, then reference the vector store IDs when using the `FileSearchTool`:
 
-```py {title="file_search_openai.py"}
+```py {title="file_search_openai.py" test="skip"}
 from pydantic_ai import Agent, FileSearchTool
 
 agent = Agent(
@@ -611,7 +611,7 @@ print(result.output)
 
 With Gemini, you need to first upload files via the Files API, then reference the file resource names:
 
-```py {title="file_search_google.py"}
+```py {title="file_search_google.py" test="skip"}
 from pydantic_ai import Agent, FileSearchTool
 
 agent = Agent(
@@ -636,7 +636,7 @@ The `FileSearchTool` accepts a list of vector store IDs:
 - **OpenAI**: Vector store IDs created via the [OpenAI Files API](https://platform.openai.com/docs/api-reference/files)
 - **Google**: File resource names from the [Gemini Files API](https://ai.google.dev/gemini-api/docs/files)
 
-```py {title="file_search_configured.py"}
+```py {title="file_search_configured.py" test="skip"}
 from pydantic_ai import Agent, FileSearchTool
 
 agent = Agent(
