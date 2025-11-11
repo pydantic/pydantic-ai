@@ -635,6 +635,11 @@ You can also drive the iteration manually by passing the node you want to run ne
             """
     ```
 
+    1. We start by grabbing the first node that will be run in the agent's graph.
+    2. The agent run is finished once an `End` node has been produced; instances of `End` cannot be passed to `next`.
+    3. When you call `await agent_run.next(node)`, it executes that node in the agent's graph, updates the run's history, and returns the _next_ node to run.
+    4. You could also inspect or mutate the new `node` here as needed.
+
 === "Pydantic AI"
 
     ```python {title="agent_iter_next.py"}
@@ -688,10 +693,10 @@ You can also drive the iteration manually by passing the node you want to run ne
             """
     ```
 
-1. We start by grabbing the first node that will be run in the agent's graph.
-2. The agent run is finished once an `End` node has been produced; instances of `End` cannot be passed to `next`.
-3. When you call `await agent_run.next(node)`, it executes that node in the agent's graph, updates the run's history, and returns the _next_ node to run.
-4. You could also inspect or mutate the new `node` here as needed.
+    1. We start by grabbing the first node that will be run in the agent's graph.
+    2. The agent run is finished once an `End` node has been produced; instances of `End` cannot be passed to `next`.
+    3. When you call `await agent_run.next(node)`, it executes that node in the agent's graph, updates the run's history, and returns the _next_ node to run.
+    4. You could also inspect or mutate the new `node` here as needed.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -1102,6 +1107,9 @@ Restricting the number of requests can be useful in preventing infinite loops or
         #> The next request would exceed the request_limit of 3
     ```
 
+    1. This tool has the ability to retry 5 times before erroring, simulating a tool that might get stuck in a loop.
+    2. This run will error after 3 requests, preventing the infinite tool calling.
+
 === "Pydantic AI"
 
     ```python
@@ -1139,9 +1147,8 @@ Restricting the number of requests can be useful in preventing infinite loops or
             print(e)
             #> The next request would exceed the request_limit of 3
     ```
-
-1. This tool has the ability to retry 5 times before erroring, simulating a tool that might get stuck in a loop.
-2. This run will error after 3 requests, preventing the infinite tool calling.
+    1. This tool has the ability to retry 5 times before erroring, simulating a tool that might get stuck in a loop.
+    2. This run will error after 3 requests, preventing the infinite tool calling.
 
 ##### Capping tool calls
 
@@ -1275,6 +1282,8 @@ For example:
         """
     ```
 
+    1. This error is raised because the safety thresholds were exceeded.
+
 === "Pydantic AI"
 
     ```python
@@ -1308,7 +1317,7 @@ For example:
         """
     ```
 
-1. This error is raised because the safety thresholds were exceeded.
+    1. This error is raised because the safety thresholds were exceeded.
 
 ## Runs vs. Conversations
 
@@ -1316,26 +1325,51 @@ An agent **run** might represent an entire conversation — there's no limit to 
 
 Here's an example of a conversation comprised of multiple runs:
 
-```python {title="conversation_example.py" hl_lines="13"}
-from pydantic_ai import Agent
+=== "Pydantic AI Gateway"
 
-agent = Agent('openai:gpt-5')
+    ```python {title="conversation_example.py" hl_lines="13"}
+    from pydantic_ai import Agent
 
-# First run
-result1 = agent.run_sync('Who was Albert Einstein?')
-print(result1.output)
-#> Albert Einstein was a German-born theoretical physicist.
+    agent = Agent('gateway/chat:gpt-5')
 
-# Second run, passing previous messages
-result2 = agent.run_sync(
-    'What was his most famous equation?',
-    message_history=result1.new_messages(),  # (1)!
-)
-print(result2.output)
-#> Albert Einstein's most famous equation is (E = mc^2).
-```
+    # First run
+    result1 = agent.run_sync('Who was Albert Einstein?')
+    print(result1.output)
+    #> Albert Einstein was a German-born theoretical physicist.
 
-1. Continue the conversation; without `message_history` the model would not know who "his" was referring to.
+    # Second run, passing previous messages
+    result2 = agent.run_sync(
+        'What was his most famous equation?',
+        message_history=result1.new_messages(),  # (1)!
+    )
+    print(result2.output)
+    #> Albert Einstein's most famous equation is (E = mc^2).
+    ```
+
+    1. Continue the conversation; without `message_history` the model would not know who "his" was referring to.
+
+=== "Pydantic AI"
+
+    ```python {title="conversation_example.py" hl_lines="13"}
+    from pydantic_ai import Agent
+
+    agent = Agent('openai:gpt-5')
+
+    # First run
+    result1 = agent.run_sync('Who was Albert Einstein?')
+    print(result1.output)
+    #> Albert Einstein was a German-born theoretical physicist.
+
+    # Second run, passing previous messages
+    result2 = agent.run_sync(
+        'What was his most famous equation?',
+        message_history=result1.new_messages(),  # (1)!
+    )
+    print(result2.output)
+    #> Albert Einstein's most famous equation is (E = mc^2).
+    ```
+
+    1. Continue the conversation; without `message_history` the model would not know who "his" was referring to.
 
 _(This example is complete, it can be run "as is")_
 
@@ -1421,37 +1455,73 @@ You can add both to a single agent; they're appended in the order they're define
 
 Here's an example using both types of system prompts:
 
-```python {title="system_prompts.py"}
-from datetime import date
+=== "Pydantic AI Gateway"
 
-from pydantic_ai import Agent, RunContext
+    ```python {title="system_prompts.py"}
+    from datetime import date
 
-agent = Agent(
-    'openai:gpt-5',
-    deps_type=str,  # (1)!
-    system_prompt="Use the customer's name while replying to them.",  # (2)!
-)
+    from pydantic_ai import Agent, RunContext
 
-
-@agent.system_prompt  # (3)!
-def add_the_users_name(ctx: RunContext[str]) -> str:
-    return f"The user's name is {ctx.deps}."
+    agent = Agent(
+        'gateway/chat:gpt-5',
+        deps_type=str,  # (1)!
+        system_prompt="Use the customer's name while replying to them.",  # (2)!
+    )
 
 
-@agent.system_prompt
-def add_the_date() -> str:  # (4)!
-    return f'The date is {date.today()}.'
+    @agent.system_prompt  # (3)!
+    def add_the_users_name(ctx: RunContext[str]) -> str:
+        return f"The user's name is {ctx.deps}."
 
 
-result = agent.run_sync('What is the date?', deps='Frank')
-print(result.output)
-#> Hello Frank, the date today is 2032-01-02.
-```
+    @agent.system_prompt
+    def add_the_date() -> str:  # (4)!
+        return f'The date is {date.today()}.'
 
-1. The agent expects a string dependency.
-2. Static system prompt defined at agent creation time.
-3. Dynamic system prompt defined via a decorator with [`RunContext`][pydantic_ai.tools.RunContext], this is called just after `run_sync`, not when the agent is created, so can benefit from runtime information like the dependencies used on that run.
-4. Another dynamic system prompt, system prompts don't have to have the `RunContext` parameter.
+
+    result = agent.run_sync('What is the date?', deps='Frank')
+    print(result.output)
+    #> Hello Frank, the date today is 2032-01-02.
+    ```
+
+    1. The agent expects a string dependency.
+    2. Static system prompt defined at agent creation time.
+    3. Dynamic system prompt defined via a decorator with [`RunContext`][pydantic_ai.tools.RunContext], this is called just after `run_sync`, not when the agent is created, so can benefit from runtime information like the dependencies used on that run.
+    4. Another dynamic system prompt, system prompts don't have to have the `RunContext` parameter.
+
+=== "Pydantic AI"
+
+    ```python {title="system_prompts.py"}
+    from datetime import date
+
+    from pydantic_ai import Agent, RunContext
+
+    agent = Agent(
+        'openai:gpt-5',
+        deps_type=str,  # (1)!
+        system_prompt="Use the customer's name while replying to them.",  # (2)!
+    )
+
+
+    @agent.system_prompt  # (3)!
+    def add_the_users_name(ctx: RunContext[str]) -> str:
+        return f"The user's name is {ctx.deps}."
+
+
+    @agent.system_prompt
+    def add_the_date() -> str:  # (4)!
+        return f'The date is {date.today()}.'
+
+
+    result = agent.run_sync('What is the date?', deps='Frank')
+    print(result.output)
+    #> Hello Frank, the date today is 2032-01-02.
+    ```
+
+    1. The agent expects a string dependency.
+    2. Static system prompt defined at agent creation time.
+    3. Dynamic system prompt defined via a decorator with [`RunContext`][pydantic_ai.tools.RunContext], this is called just after `run_sync`, not when the agent is created, so can benefit from runtime information like the dependencies used on that run.
+    4. Another dynamic system prompt, system prompts don't have to have the `RunContext` parameter.
 
 _(This example is complete, it can be run "as is")_
 
@@ -1478,39 +1548,77 @@ All three types of instructions can be added to a single agent, and they are app
 
 Here's an example using a static instruction as well as dynamic instructions:
 
-```python {title="instructions.py"}
-from datetime import date
+=== "Pydantic AI Gateway"
 
-from pydantic_ai import Agent, RunContext
+    ```python {title="instructions.py"}
+    from datetime import date
 
-agent = Agent(
-    'openai:gpt-5',
-    deps_type=str,  # (1)!
-    instructions="Use the customer's name while replying to them.",  # (2)!
-)
+    from pydantic_ai import Agent, RunContext
 
-
-@agent.instructions  # (3)!
-def add_the_users_name(ctx: RunContext[str]) -> str:
-    return f"The user's name is {ctx.deps}."
+    agent = Agent(
+        'gateway/chat:gpt-5',
+        deps_type=str,  # (1)!
+        instructions="Use the customer's name while replying to them.",  # (2)!
+    )
 
 
-@agent.instructions
-def add_the_date() -> str:  # (4)!
-    return f'The date is {date.today()}.'
+    @agent.instructions  # (3)!
+    def add_the_users_name(ctx: RunContext[str]) -> str:
+        return f"The user's name is {ctx.deps}."
 
 
-result = agent.run_sync('What is the date?', deps='Frank')
-print(result.output)
-#> Hello Frank, the date today is 2032-01-02.
-```
+    @agent.instructions
+    def add_the_date() -> str:  # (4)!
+        return f'The date is {date.today()}.'
 
-1. The agent expects a string dependency.
-2. Static instructions defined at agent creation time.
-3. Dynamic instructions defined via a decorator with [`RunContext`][pydantic_ai.tools.RunContext],
-   this is called just after `run_sync`, not when the agent is created, so can benefit from runtime
-   information like the dependencies used on that run.
-4. Another dynamic instruction, instructions don't have to have the `RunContext` parameter.
+
+    result = agent.run_sync('What is the date?', deps='Frank')
+    print(result.output)
+    #> Hello Frank, the date today is 2032-01-02.
+    ```
+
+    1. The agent expects a string dependency.
+    2. Static instructions defined at agent creation time.
+    3. Dynamic instructions defined via a decorator with [`RunContext`][pydantic_ai.tools.RunContext],
+       this is called just after `run_sync`, not when the agent is created, so can benefit from runtime
+       information like the dependencies used on that run.
+    4. Another dynamic instruction, instructions don't have to have the `RunContext` parameter.
+
+=== "Pydantic AI"
+
+    ```python {title="instructions.py"}
+    from datetime import date
+
+    from pydantic_ai import Agent, RunContext
+
+    agent = Agent(
+        'openai:gpt-5',
+        deps_type=str,  # (1)!
+        instructions="Use the customer's name while replying to them.",  # (2)!
+    )
+
+
+    @agent.instructions  # (3)!
+    def add_the_users_name(ctx: RunContext[str]) -> str:
+        return f"The user's name is {ctx.deps}."
+
+
+    @agent.instructions
+    def add_the_date() -> str:  # (4)!
+        return f'The date is {date.today()}.'
+
+
+    result = agent.run_sync('What is the date?', deps='Frank')
+    print(result.output)
+    #> Hello Frank, the date today is 2032-01-02.
+    ```
+
+    1. The agent expects a string dependency.
+    2. Static instructions defined at agent creation time.
+    3. Dynamic instructions defined via a decorator with [`RunContext`][pydantic_ai.tools.RunContext],
+       this is called just after `run_sync`, not when the agent is created, so can benefit from runtime
+       information like the dependencies used on that run.
+    4. Another dynamic instruction, instructions don't have to have the `RunContext` parameter.
 
 _(This example is complete, it can be run "as is")_
 
@@ -1527,48 +1635,95 @@ You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within
 
 Here's an example:
 
-```python {title="tool_retry.py"}
-from pydantic import BaseModel
+=== "Pydantic AI Gateway"
 
-from pydantic_ai import Agent, RunContext, ModelRetry
+    ```python {title="tool_retry.py"}
+    from pydantic import BaseModel
 
-from fake_database import DatabaseConn
+    from pydantic_ai import Agent, RunContext, ModelRetry
 
-
-class ChatResult(BaseModel):
-    user_id: int
-    message: str
+    from fake_database import DatabaseConn
 
 
-agent = Agent(
-    'openai:gpt-5',
-    deps_type=DatabaseConn,
-    output_type=ChatResult,
-)
+    class ChatResult(BaseModel):
+        user_id: int
+        message: str
 
 
-@agent.tool(retries=2)
-def get_user_by_name(ctx: RunContext[DatabaseConn], name: str) -> int:
-    """Get a user's ID from their full name."""
-    print(name)
-    #> John
-    #> John Doe
-    user_id = ctx.deps.users.get(name=name)
-    if user_id is None:
-        raise ModelRetry(
-            f'No user found with name {name!r}, remember to provide their full name'
-        )
-    return user_id
+    agent = Agent(
+        'gateway/chat:gpt-5',
+        deps_type=DatabaseConn,
+        output_type=ChatResult,
+    )
 
 
-result = agent.run_sync(
-    'Send a message to John Doe asking for coffee next week', deps=DatabaseConn()
-)
-print(result.output)
-"""
-user_id=123 message='Hello John, would you be free for coffee sometime next week? Let me know what works for you!'
-"""
-```
+    @agent.tool(retries=2)
+    def get_user_by_name(ctx: RunContext[DatabaseConn], name: str) -> int:
+        """Get a user's ID from their full name."""
+        print(name)
+        #> John
+        #> John Doe
+        user_id = ctx.deps.users.get(name=name)
+        if user_id is None:
+            raise ModelRetry(
+                f'No user found with name {name!r}, remember to provide their full name'
+            )
+        return user_id
+
+
+    result = agent.run_sync(
+        'Send a message to John Doe asking for coffee next week', deps=DatabaseConn()
+    )
+    print(result.output)
+    """
+    user_id=123 message='Hello John, would you be free for coffee sometime next week? Let me know what works for you!'
+    """
+    ```
+
+=== "Pydantic AI"
+
+    ```python {title="tool_retry.py"}
+    from pydantic import BaseModel
+
+    from pydantic_ai import Agent, RunContext, ModelRetry
+
+    from fake_database import DatabaseConn
+
+
+    class ChatResult(BaseModel):
+        user_id: int
+        message: str
+
+
+    agent = Agent(
+        'openai:gpt-5',
+        deps_type=DatabaseConn,
+        output_type=ChatResult,
+    )
+
+
+    @agent.tool(retries=2)
+    def get_user_by_name(ctx: RunContext[DatabaseConn], name: str) -> int:
+        """Get a user's ID from their full name."""
+        print(name)
+        #> John
+        #> John Doe
+        user_id = ctx.deps.users.get(name=name)
+        if user_id is None:
+            raise ModelRetry(
+                f'No user found with name {name!r}, remember to provide their full name'
+            )
+        return user_id
+
+
+    result = agent.run_sync(
+        'Send a message to John Doe asking for coffee next week', deps=DatabaseConn()
+    )
+    print(result.output)
+    """
+    user_id=123 message='Hello John, would you be free for coffee sometime next week? Let me know what works for you!'
+    """
+    ```
 
 ## Model errors
 
@@ -1576,82 +1731,163 @@ If models behave unexpectedly (e.g., the retry limit is exceeded, or their API r
 
 In these cases, [`capture_run_messages`][pydantic_ai.capture_run_messages] can be used to access the messages exchanged during the run to help diagnose the issue.
 
-```python {title="agent_model_errors.py"}
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, capture_run_messages
+=== "Pydantic AI Gateway"
 
-agent = Agent('openai:gpt-5')
+    ```python {title="agent_model_errors.py"}
+    from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, capture_run_messages
 
-
-@agent.tool_plain
-def calc_volume(size: int) -> int:  # (1)!
-    if size == 42:
-        return size**3
-    else:
-        raise ModelRetry('Please try again.')
+    agent = Agent('gateway/chat:gpt-5')
 
 
-with capture_run_messages() as messages:  # (2)!
-    try:
-        result = agent.run_sync('Please get me the volume of a box with size 6.')
-    except UnexpectedModelBehavior as e:
-        print('An error occurred:', e)
-        #> An error occurred: Tool 'calc_volume' exceeded max retries count of 1
-        print('cause:', repr(e.__cause__))
-        #> cause: ModelRetry('Please try again.')
-        print('messages:', messages)
-        """
-        messages:
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Please get me the volume of a box with size 6.',
-                        timestamp=datetime.datetime(...),
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='calc_volume',
-                        args={'size': 6},
-                        tool_call_id='pyd_ai_tool_call_id',
-                    )
-                ],
-                usage=RequestUsage(input_tokens=62, output_tokens=4),
-                model_name='gpt-5',
-                timestamp=datetime.datetime(...),
-            ),
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(
-                        content='Please try again.',
-                        tool_name='calc_volume',
-                        tool_call_id='pyd_ai_tool_call_id',
-                        timestamp=datetime.datetime(...),
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='calc_volume',
-                        args={'size': 6},
-                        tool_call_id='pyd_ai_tool_call_id',
-                    )
-                ],
-                usage=RequestUsage(input_tokens=72, output_tokens=8),
-                model_name='gpt-5',
-                timestamp=datetime.datetime(...),
-            ),
-        ]
-        """
-    else:
-        print(result.output)
-```
+    @agent.tool_plain
+    def calc_volume(size: int) -> int:  # (1)!
+        if size == 42:
+            return size**3
+        else:
+            raise ModelRetry('Please try again.')
 
-1. Define a tool that will raise `ModelRetry` repeatedly in this case.
-2. [`capture_run_messages`][pydantic_ai.capture_run_messages] is used to capture the messages exchanged during the run.
+
+    with capture_run_messages() as messages:  # (2)!
+        try:
+            result = agent.run_sync('Please get me the volume of a box with size 6.')
+        except UnexpectedModelBehavior as e:
+            print('An error occurred:', e)
+            #> An error occurred: Tool 'calc_volume' exceeded max retries count of 1
+            print('cause:', repr(e.__cause__))
+            #> cause: ModelRetry('Please try again.')
+            print('messages:', messages)
+            """
+            messages:
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Please get me the volume of a box with size 6.',
+                            timestamp=datetime.datetime(...),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='calc_volume',
+                            args={'size': 6},
+                            tool_call_id='pyd_ai_tool_call_id',
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=62, output_tokens=4),
+                    model_name='gpt-5',
+                    timestamp=datetime.datetime(...),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Please try again.',
+                            tool_name='calc_volume',
+                            tool_call_id='pyd_ai_tool_call_id',
+                            timestamp=datetime.datetime(...),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='calc_volume',
+                            args={'size': 6},
+                            tool_call_id='pyd_ai_tool_call_id',
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=72, output_tokens=8),
+                    model_name='gpt-5',
+                    timestamp=datetime.datetime(...),
+                ),
+            ]
+            """
+        else:
+            print(result.output)
+    ```
+
+    1. Define a tool that will raise `ModelRetry` repeatedly in this case.
+    2. [`capture_run_messages`][pydantic_ai.capture_run_messages] is used to capture the messages exchanged during the run.
+
+=== "Pydantic AI"
+
+    ```python {title="agent_model_errors.py"}
+    from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, capture_run_messages
+
+    agent = Agent('openai:gpt-5')
+
+
+    @agent.tool_plain
+    def calc_volume(size: int) -> int:  # (1)!
+        if size == 42:
+            return size**3
+        else:
+            raise ModelRetry('Please try again.')
+
+
+    with capture_run_messages() as messages:  # (2)!
+        try:
+            result = agent.run_sync('Please get me the volume of a box with size 6.')
+        except UnexpectedModelBehavior as e:
+            print('An error occurred:', e)
+            #> An error occurred: Tool 'calc_volume' exceeded max retries count of 1
+            print('cause:', repr(e.__cause__))
+            #> cause: ModelRetry('Please try again.')
+            print('messages:', messages)
+            """
+            messages:
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Please get me the volume of a box with size 6.',
+                            timestamp=datetime.datetime(...),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='calc_volume',
+                            args={'size': 6},
+                            tool_call_id='pyd_ai_tool_call_id',
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=62, output_tokens=4),
+                    model_name='gpt-5',
+                    timestamp=datetime.datetime(...),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Please try again.',
+                            tool_name='calc_volume',
+                            tool_call_id='pyd_ai_tool_call_id',
+                            timestamp=datetime.datetime(...),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='calc_volume',
+                            args={'size': 6},
+                            tool_call_id='pyd_ai_tool_call_id',
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=72, output_tokens=8),
+                    model_name='gpt-5',
+                    timestamp=datetime.datetime(...),
+                ),
+            ]
+            """
+        else:
+            print(result.output)
+    ```
+
+    1. Define a tool that will raise `ModelRetry` repeatedly in this case.
+    2. [`capture_run_messages`][pydantic_ai.capture_run_messages] is used to capture the messages exchanged during the run.
 
 _(This example is complete, it can be run "as is")_
 
