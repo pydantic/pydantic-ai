@@ -7317,5 +7317,3 @@ def test_file_search_tool_basic():
 
     # Just verify the agent initializes properly
     assert agent is not None
-
-
