@@ -56,9 +56,6 @@ nav:
 
   - Pydantic AI Gateway:
       - Overview: gateway/overview.md
-      - Getting Started:
-          - Quick Start: gateway/quick-start.md
-          - Usage: gateway/usage.md
 
   - Pydantic Evals:
       - Overview: evals.md
