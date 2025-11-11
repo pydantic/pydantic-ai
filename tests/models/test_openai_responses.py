@@ -7305,10 +7305,13 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
     )
 
 
-async def test_file_search_tool_basic(allow_model_requests: None, openai_api_key: str):
+def test_file_search_tool_basic():
     """Test that FileSearchTool can be configured without errors."""
+    from pydantic_ai import Agent
+    from pydantic_ai.models.test import TestModel
+    
     agent = Agent(
-        OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key)),
+        TestModel(),
         builtin_tools=[FileSearchTool(vector_store_ids=['vs_test123'])],
     )
     
@@ -7316,7 +7319,7 @@ async def test_file_search_tool_basic(allow_model_requests: None, openai_api_key
     assert agent is not None
 
 
-async def test_file_search_tool_mapping():
+def test_file_search_tool_mapping():
     """Test the _map_file_search_tool_call function."""
     from unittest.mock import Mock
 
@@ -7344,3 +7347,89 @@ async def test_file_search_tool_mapping():
     
     call_part, return_part = _map_file_search_tool_call(mock_item, 'openai')
     assert call_part.args == {'query': 'test query'}
+
+
+async def test_file_search_tool_with_mock_responses(allow_model_requests: None):
+    """Test FileSearchTool with mocked OpenAI Responses API."""
+    from unittest.mock import Mock
+
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+
+    from .mock_openai import MockOpenAIResponses, response_message
+
+    # Create mock file_search_call item  
+    fs_call = Mock()
+    fs_call.type = 'file_search_call'
+    fs_call.id = 'fs_test'
+    fs_call.status = 'completed'
+    fs_call.action = Mock()
+    fs_call.action.model_dump = Mock(return_value={'query': 'search documents'})
+    
+    # Create message item
+    msg_content = Mock()
+    msg_content.type = 'text'
+    msg_content.text = 'Found information in documents'
+    
+    msg_item = Mock()
+    msg_item.type = 'message'
+    msg_item.id = 'msg_test'
+    msg_item.role = 'assistant'
+    msg_item.content = [msg_content]
+    msg_item.status = 'completed'
+    
+    # Create response with both items
+    mock_response = response_message([fs_call, msg_item])
+    mock_responses = MockOpenAIResponses.create_mock(mock_response)
+    
+    model = OpenAIResponsesModel('gpt-5')
+    model._client = mock_responses
+    
+    agent = Agent(model, builtin_tools=[FileSearchTool(vector_store_ids=['vs_test'])])
+    
+    result = await agent.run('Search my documents')
+    assert 'Found information in documents' in result.output
+
+
+async def test_file_search_tool_streaming(allow_model_requests: None):
+    """Test FileSearchTool with streaming responses."""
+    from unittest.mock import Mock
+
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+
+    from .mock_openai import MockOpenAIResponses
+
+    # Create file_search_call stream event
+    fs_event = Mock()
+    fs_event.type = 'response.output_item.added'
+    fs_event.item = Mock()
+    fs_event.item.type = 'file_search_call'
+    fs_event.item.id = 'fs_123'
+    fs_event.item.status = 'completed'
+    fs_event.item.action = Mock()
+    fs_event.item.action.model_dump = Mock(return_value={'query': 'test'})
+    
+    # Create message stream event
+    msg_event = Mock()
+    msg_event.type = 'response.output_item.added'
+    msg_event.item = Mock()
+    msg_event.item.type = 'message'
+    msg_event.item.id = 'msg_123'
+    msg_event.item.role = 'assistant'
+    msg_event.item.status = 'completed'
+    msg_content = Mock()
+    msg_content.type = 'text'
+    msg_content.text = 'Result from files'
+    msg_event.item.content = [msg_content]
+    
+    mock_responses = MockOpenAIResponses.create_mock_stream([fs_event, msg_event])
+    
+    model = OpenAIResponsesModel('gpt-5')
+    model._client = mock_responses
+    
+    agent = Agent(model, builtin_tools=[FileSearchTool(vector_store_ids=['vs_test'])])
+    
+    async with agent.run_stream('Search my documents') as result:
+        async for _ in result.stream():
+            pass
+    
+    assert 'Result from files' in result.output
