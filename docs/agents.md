@@ -18,6 +18,14 @@ The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptua
 
 In typing terms, agents are generic in their dependency and output types, e.g., an agent which required dependencies of type `#!python Foobar` and produced outputs of type `#!python list[str]` would have type `Agent[Foobar, list[str]]`. In practice, you shouldn't need to care about this, it should just mean your IDE can tell you when you have the right type, and if you choose to use [static type checking](#static-type-checking) it should work well with Pydantic AI.
 
+!!! info "Code Examples with Gateway Support"
+    Throughout this documentation, code examples are provided in two variations using tabs:
+
+    - **Pydantic AI Gateway**: Shows how to use examples with the [Pydantic AI Gateway](https://gateway.pydantic.dev/), which provides a unified interface to access multiple LLM models with additional features like failover, budget control, and Logfire observability.
+    - **Pydantic AI**: Shows the direct implementation using Pydantic AI with provider-specific model strings.
+
+    Both approaches are functionally equivalent for basic usage. Choose the Gateway tab if you're using Pydantic AI Gateway, or the Pydantic AI tab for direct provider integration.
+
 Here's a toy example of an agent that simulates a roulette wheel:
 
 === "Pydantic AI Gateway"
@@ -108,6 +116,14 @@ There are five ways to run an agent:
 3. [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] — an async context manager which returns a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], which contains methods to stream text and structured output as an async iterable. [`agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] is a synchronous variation that returns a [`StreamedRunResultSync`][pydantic_ai.result.StreamedRunResultSync] with synchronous versions of the same methods.
 4. [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] — a function which returns an async iterable of [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] and a [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] containing the final run result.
 5. [`agent.iter()`][pydantic_ai.Agent.iter] — a context manager which returns an [`AgentRun`][pydantic_ai.agent.AgentRun], an async iterable over the nodes of the agent's underlying [`Graph`][pydantic_graph.graph.Graph].
+
+!!! note "Model String Formats"
+    Examples in this documentation show two model string formats:
+
+    - **Gateway format**: `gateway/chat:gpt-5` or `gateway/anthropic:claude-sonnet-4-5`
+    - **Direct format**: `openai:gpt-5` or `anthropic:claude-sonnet-4-5`
+
+    Use the Gateway format if you're routing requests through Pydantic AI Gateway.
 
 Here's a simple example demonstrating the first four:
 

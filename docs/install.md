@@ -11,6 +11,12 @@ pip/uv-add pydantic-ai
 This installs the `pydantic_ai` package, core dependencies, and libraries required to use all the models included in Pydantic AI.
 If you want to install only those dependencies required to use a specific model, you can install the ["slim"](#slim-install) version of Pydantic AI.
 
+### Gateway Integration
+
+If you're using Pydantic AI Gateway, you'll see "Pydantic AI Gateway" tabs in code examples throughout the documentation. These show how to adapt examples to use the Gateway's unified model interface.
+
+See the [Gateway documentation](gateway/usage.md) for setup instructions.
+
 ## Use with Pydantic Logfire
 
 Pydantic AI has an excellent (but completely optional) integration with [Pydantic Logfire](https://pydantic.dev/logfire) to help you view and understand agent runs.

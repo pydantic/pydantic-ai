@@ -64,6 +64,14 @@ Realistically though, no list is going to be as convincing as [giving it a try](
 
 ## Hello World Example
 
+!!! tip "Two Ways to Run Examples"
+    All code examples in this documentation support both:
+
+    - **Direct usage** with provider-specific models (e.g., `openai:gpt-5`)
+    - **Gateway usage** via Pydantic AI Gateway (e.g., `gateway/chat:gpt-5`)
+
+    Look for the tabs at the top of code examples to switch between implementations. [Learn more about the Gateway →](gateway/overview.md)
+
 Here's a minimal example of Pydantic AI:
 
 ```python {title="hello_world.py"}

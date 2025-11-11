@@ -9,6 +9,12 @@ Sign up at [gateway.pydantic.dev](https://gateway.pydantic.dev/).
 
 For questions and feedback, contact us on [Slack](https://logfire.pydantic.dev/docs/join-slack/).
 
+## Documentation Integration
+
+To help you get started with [Pydantic AI Gateway](https://gateway.pydantic.dev), most code examples throughout the Pydantic AI docs include a "Pydantic AI Gateway" tab alongside the standard "Pydantic AI" tab. This allows you to see how to adapt examples for Gateway usage by simply switching tabs.
+
+The main difference is that when using Gateway, model strings use the `gateway/` prefix.
+
 ## Key features
 - **API key management**: access multiple LLM providers with a single Gateway key.
 - **Cost Limits**: set spending limits at project, user, and API key levels with daily, weekly, and monthly caps.
