@@ -1485,11 +1485,15 @@ class OpenAIResponsesModel(Model):
                                 and item.tool_call_id
                                 and (args := item.args_as_dict())
                             ):
-                                file_search_item = responses.ResponseFileSearchToolCallParam(
-                                    id=item.tool_call_id,
-                                    action=cast(responses.response_file_search_tool_call_param.Action, args),
-                                    status='completed',
-                                    type='file_search_call',
+                                # The cast is necessary because of incomplete OpenAI SDK types for FileSearchToolCall
+                                file_search_item = cast(
+                                    responses.ResponseFileSearchToolCallParam,
+                                    {
+                                        'id': item.tool_call_id,
+                                        'action': args,
+                                        'status': 'completed',
+                                        'type': 'file_search_call',
+                                    },
                                 )
                                 openai_messages.append(file_search_item)
                             elif item.tool_name == ImageGenerationTool.kind and item.tool_call_id:
@@ -2268,14 +2272,15 @@ def _map_file_search_tool_call(
         'status': item.status,
     }
 
-    if action := item.action:
-        args = action.model_dump(mode='json')
+    # The OpenAI SDK has incomplete types for FileSearchToolCall.action
+    if action := item.action:  # type: ignore[reportAttributeAccessIssue]
+        args = action.model_dump(mode='json')  # type: ignore[reportUnknownMemberType]
 
     return (
         BuiltinToolCallPart(
             tool_name=FileSearchTool.kind,
             tool_call_id=item.id,
-            args=args,
+            args=args,  # type: ignore[reportUnknownArgumentType]
             provider_name=provider_name,
         ),
         BuiltinToolReturnPart(

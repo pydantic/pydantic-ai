@@ -52,9 +52,7 @@ async def test_builtin_tools_not_supported_file_search(model: Model, allow_model
         await agent.run('Search my files')
 
 
-@pytest.mark.parametrize(
-    'model', ('bedrock', 'mistral', 'huggingface', 'groq', 'anthropic', 'outlines'), indirect=True
-)
+@pytest.mark.parametrize('model', ('bedrock', 'mistral', 'huggingface', 'groq', 'anthropic', 'outlines'), indirect=True)
 async def test_builtin_tools_not_supported_file_search_stream(model: Model, allow_model_requests: None):
     agent = Agent(model=model, builtin_tools=[FileSearchTool(vector_store_ids=['test-id'])])
 
