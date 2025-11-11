@@ -9,7 +9,7 @@ from __future__ import annotations as _annotations
 import base64
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -47,7 +47,7 @@ from ..messages import (
 )
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-from ..providers import infer_provider
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -724,8 +724,17 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
-def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
-    """Infer the model from the name."""
+def infer_model(  # noqa: C901
+    model: Model | KnownModelName | str, provider_factory: Callable[[str], Provider[Any]] = infer_provider
+) -> Model:
+    """Infer the model from the name.
+
+    Args:
+        model:
+            Model name to instantiate, in the format of `provider:model`. Use the string "test" to instantiate TestModel.
+        provider_factory:
+            Function that instantiates a provider object. The provider name is passed into the function parameter. Defaults to `provider.infer_provider`.
+    """
     if isinstance(model, Model):
         return model
     elif model == 'test':
@@ -760,11 +769,13 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         )
         provider_name = 'google-vertex'
 
-    provider = infer_provider(provider_name)
+    provider: Provider[Any] = provider_factory(provider_name)
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
-        model_kind = provider_name.removeprefix('gateway/')
+        from ..providers.gateway import infer_gateway_model
+
+        return infer_gateway_model(model_kind.removeprefix('gateway/'), model_name=model_name)
     if model_kind in (
         'openai',
         'azure',
