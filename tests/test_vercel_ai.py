@@ -2513,3 +2513,46 @@ async def test_convert_user_prompt_part_without_urls():
             FileUIPart(media_type='application/pdf', url='data:application/pdf;base64,ZGF0YQ=='),
         ]
     )
+
+
+async def test_adapter_dump_messages_file_without_text():
+    """Test a file part appearing without any preceding text."""
+    messages = [
+        ModelResponse(
+            parts=[
+                FilePart(content=BinaryContent(data=b'file_data', media_type='image/png')),
+            ]
+        ),
+    ]
+
+    id_gen = predictable_id_generator()
+    ui_messages = VercelAIAdapter.dump_messages(messages, _id_generator=id_gen)
+
+    assert ui_messages == snapshot(
+        [
+            UIMessage(
+                id='test-id-1',
+                role='assistant',
+                parts=[FileUIPart(media_type='image/png', url='data:image/png;base64,ZmlsZV9kYXRh')],
+            )
+        ]
+    )
+
+
+async def test_convert_user_prompt_part_only_urls():
+    """Test converting a user prompt with only URL content (no binary)."""
+    from pydantic_ai.ui.vercel_ai._adapter import _convert_user_prompt_part  # pyright: ignore[reportPrivateUsage]
+
+    part = UserPromptPart(
+        content=[
+            ImageUrl(url='https://example.com/img.png', media_type='image/png'),
+            VideoUrl(url='https://example.com/vid.mp4', media_type='video/mp4'),
+        ]
+    )
+    ui_parts = _convert_user_prompt_part(part)
+    assert ui_parts == snapshot(
+        [
+            FileUIPart(media_type='image/png', url='https://example.com/img.png'),
+            FileUIPart(media_type='video/mp4', url='https://example.com/vid.mp4'),
+        ]
+    )

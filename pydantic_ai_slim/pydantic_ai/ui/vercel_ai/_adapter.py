@@ -432,7 +432,9 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                 ui_parts.append(TextUIPart(text=item, state='done'))
             elif isinstance(item, BinaryContent):
                 ui_parts.append(FileUIPart(url=item.data_uri, media_type=item.media_type))
-            elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):
+            elif isinstance(
+                item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl
+            ):  # pragma: no branch - All content types are covered
                 ui_parts.append(FileUIPart(url=item.url, media_type=item.media_type))
 
     return ui_parts
