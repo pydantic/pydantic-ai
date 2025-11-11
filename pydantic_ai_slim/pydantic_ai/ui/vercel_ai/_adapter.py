@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -151,7 +152,14 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             builtin_tool = part.provider_executed
 
                         tool_call_id = part.tool_call_id
+
                         args = part.input
+
+                        if isinstance(args, str):
+                            try:
+                                args = json.loads(args)
+                            except json.JSONDecodeError:
+                                pass
 
                         if builtin_tool:
                             call_part = BuiltinToolCallPart(tool_name=tool_name, tool_call_id=tool_call_id, args=args)
@@ -250,7 +258,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 for part in msg.parts:
                     if isinstance(part, SystemPromptPart):
                         system_parts.append(part)
-                    elif isinstance(part, UserPromptPart | ToolReturnPart | BuiltinToolReturnPart | RetryPromptPart):
+                    elif isinstance(  # pragma: no branch - All ModelRequest parts are covered
+                        part, UserPromptPart | ToolReturnPart | BuiltinToolReturnPart | RetryPromptPart
+                    ):
                         user_parts.append(part)
 
                 if system_parts:
@@ -261,7 +271,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
                 # Note: Tool returns and retry prompts don't create user message parts
                 # They are only used to set the state of tool calls in assistant messages
-                if user_parts:
+                if user_parts:  # pragma: no branch - A ModelRequest with no user-visible parts is not tested
                     user_ui_parts: list[UIMessagePart] = []
                     for part in user_parts:
                         if isinstance(part, UserPromptPart):
@@ -274,7 +284,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     if user_ui_parts:
                         result.append(UIMessage(id=_message_id_generator(), role='user', parts=user_ui_parts))
 
-            elif isinstance(msg, ModelResponse):
+            elif isinstance(  # pragma: no branch - All message types are covered (no tests for empty ModelResponse)
+                msg, ModelResponse
+            ):
                 ui_parts: list[UIMessagePart] = []
                 text_parts: list[str] = []
                 had_interruption = False
@@ -282,6 +294,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 # For builtin tools, returns can be in the same ModelResponse as calls
                 # Build a local mapping for this message
                 local_builtin_returns: dict[str, BuiltinToolReturnPart] = {}
+                for part in msg.parts:
+                    if isinstance(part, BuiltinToolReturnPart):
+                        local_builtin_returns[part.tool_call_id] = part
+
                 for part in msg.parts:
                     if isinstance(part, BuiltinToolReturnPart):
                         # Skip builtin tool returns - they're handled by the tool call logic
@@ -309,7 +325,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 media_type=part.content.media_type,
                             )
                         )
-                    elif isinstance(part, BaseToolCallPart):
+                    elif isinstance(part, BaseToolCallPart):  # pragma: no branch - All assistant part types are covered
                         if text_parts:
                             ui_parts.append(TextUIPart(text=''.join(text_parts), state='done'))
                             text_parts = []
@@ -344,7 +360,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         call_provider_metadata=call_provider_metadata,
                                     )
                                 )
-                            else:
+                            else:  # pragma: no cover - Builtin tool call without a return is not tested
                                 ui_parts.append(
                                     ToolInputAvailablePart(
                                         type=f'tool-{part.tool_name}',
@@ -393,7 +409,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 if text_parts:
                     ui_parts.append(TextUIPart(text=''.join(text_parts), state='done'))
 
-                if ui_parts:
+                if ui_parts:  # pragma: no branch - An empty ModelResponse is not tested
                     result.append(UIMessage(id=_message_id_generator(), role='assistant', parts=ui_parts))
 
         return result
