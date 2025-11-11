@@ -1210,7 +1210,7 @@ async def test_run_stream_builtin_tool_call():
                 'type': 'tool-input-available',
                 'toolCallId': 'search_1',
                 'toolName': 'web_search',
-                'input': '{"query":"Hello world"}',
+                'input': {'query': 'Hello world'},
                 'providerExecuted': True,
                 'providerMetadata': {'pydantic_ai': {'provider_name': 'function'}},
             },
@@ -1302,7 +1302,7 @@ async def test_run_stream_tool_call():
                 'type': 'tool-input-available',
                 'toolCallId': 'search_1',
                 'toolName': 'web_search',
-                'input': '{"query":"Hello world"}',
+                'input': {'query': 'Hello world'},
             },
             {
                 'type': 'tool-output-available',
@@ -1421,9 +1421,13 @@ async def test_run_stream_output_tool():
                 'type': 'tool-input-available',
                 'toolCallId': 'search_1',
                 'toolName': 'final_result',
-                'input': '{"query":"Hello world"}',
+                'input': {'query': 'Hello world'},
             },
-            {'type': 'tool-output-available', 'toolCallId': 'search_1', 'output': 'Final result processed.'},
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'search_1',
+                'output': 'Final result processed.',
+            },
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',
@@ -1468,11 +1472,7 @@ async def test_run_stream_response_error():
                 'toolCallId': IsStr(),
                 'toolName': 'unknown_tool',
             },
-            {
-                'type': 'tool-input-available',
-                'toolCallId': IsStr(),
-                'toolName': 'unknown_tool',
-            },
+            {'type': 'tool-input-available', 'toolCallId': IsStr(), 'toolName': 'unknown_tool', 'input': {}},
             {
                 'type': 'tool-output-error',
                 'toolCallId': IsStr(),
@@ -1489,11 +1489,7 @@ Fix the errors and try again.\
                 'toolCallId': IsStr(),
                 'toolName': 'unknown_tool',
             },
-            {
-                'type': 'tool-input-available',
-                'toolCallId': IsStr(),
-                'toolName': 'unknown_tool',
-            },
+            {'type': 'tool-input-available', 'toolCallId': IsStr(), 'toolName': 'unknown_tool', 'input': {}},
             {'type': 'error', 'errorText': 'Exceeded maximum retries (1) for output validation'},
             {'type': 'finish-step'},
             {'type': 'finish'},
@@ -1832,7 +1828,7 @@ async def test_adapter_load_messages():
                     UserPromptPart(
                         content=[
                             'Here are some files:',
-                            BinaryImage(data=b'fake', media_type='image/png'),
+                            BinaryImage(data=b'fake', media_type='image/png', _identifier='c053ec'),
                             ImageUrl(url='https://example.com/image.png', _media_type='image/png'),
                             VideoUrl(url='https://example.com/video.mp4', _media_type='video/mp4'),
                             AudioUrl(url='https://example.com/audio.mp3', _media_type='audio/mpeg'),
@@ -1846,7 +1842,7 @@ async def test_adapter_load_messages():
                 parts=[
                     ThinkingPart(content='I should tell the user how nice those files are and share another one'),
                     TextPart(content='Nice files, here is another one:'),
-                    FilePart(content=BinaryImage(data=b'fake', media_type='image/png')),
+                    FilePart(content=BinaryImage(data=b'fake', media_type='image/png', _identifier='c053ec')),
                 ],
                 timestamp=IsDatetime(),
             ),

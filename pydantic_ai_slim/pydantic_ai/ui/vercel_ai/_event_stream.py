@@ -155,21 +155,24 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         )
 
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseChunk]:
-        yield ToolInputAvailableChunk(tool_call_id=part.tool_call_id, tool_name=part.tool_name, input=part.args)
+        yield ToolInputAvailableChunk(
+            tool_call_id=part.tool_call_id, tool_name=part.tool_name, input=part.args_as_dict()
+        )
 
     async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
         yield ToolInputAvailableChunk(
             tool_call_id=part.tool_call_id,
             tool_name=part.tool_name,
-            input=part.args,
+            input=part.args_as_dict(),
             provider_executed=True,
             provider_metadata={'pydantic_ai': {'provider_name': part.provider_name}},
         )
 
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseChunk]:
+        output = part.content if isinstance(part.content, str) else part.model_response_object()
         yield ToolOutputAvailableChunk(
             tool_call_id=part.tool_call_id,
-            output=part.content,
+            output=output,
             provider_executed=True,
         )
 
@@ -178,10 +181,11 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         yield FileChunk(url=file.data_uri, media_type=file.media_type)
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
-        result = event.result
-        if isinstance(result, RetryPromptPart):
-            yield ToolOutputErrorChunk(tool_call_id=result.tool_call_id, error_text=result.model_response())
+        part = event.result
+        if isinstance(part, RetryPromptPart):
+            yield ToolOutputErrorChunk(tool_call_id=part.tool_call_id, error_text=part.model_response())
         else:
-            yield ToolOutputAvailableChunk(tool_call_id=result.tool_call_id, output=result.content)
+            output = part.content if isinstance(part.content, str) else part.model_response_object()
+            yield ToolOutputAvailableChunk(tool_call_id=part.tool_call_id, output=output)
 
         # ToolCallResultEvent.content may hold user parts (e.g. text, images) that Vercel AI does not currently have events for
