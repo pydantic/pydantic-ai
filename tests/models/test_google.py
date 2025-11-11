@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import datetime
 import os
 import re
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -47,6 +48,7 @@ from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -56,6 +58,7 @@ from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
     from google.genai.types import (
+        FinishReason as GoogleFinishReason,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
         HarmBlockThreshold,
@@ -64,7 +67,12 @@ with try_import() as imports_successful:
         ModalityTokenCount,
     )
 
-    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings, _metadata_as_usage  # type: ignore
+    from pydantic_ai.models.google import (
+        GeminiStreamedResponse,
+        GoogleModel,
+        GoogleModelSettings,
+        _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -3063,3 +3071,52 @@ async def test_google_httpx_client_is_not_closed(allow_model_requests: None, gem
     agent = Agent(GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key=gemini_api_key)))
     result = await agent.run('What is the capital of Mexico?')
     assert result.output == snapshot('The capital of Mexico is **Mexico City**.')
+
+
+def test_google_process_response_filters_empty_text_parts(google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-pro', provider=google_provider)
+    response = _generate_response_with_texts(response_id='resp-123', texts=['', 'first', '', 'second'])
+
+    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+
+    assert result.parts == snapshot([TextPart(content='first'), TextPart(content='second')])
+
+
+async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
+    chunk = _generate_response_with_texts('stream-1', ['', 'streamed text'])
+
+    async def response_iterator() -> AsyncIterator[GenerateContentResponse]:
+        yield chunk
+
+    streamed_response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-test',
+        _response=response_iterator(),
+        _timestamp=datetime.datetime.now(datetime.timezone.utc),
+        _provider_name='test-provider',
+    )
+
+    events = [event async for event in streamed_response._get_event_iterator()]  # pyright: ignore[reportPrivateUsage]
+    assert events == snapshot([PartStartEvent(index=0, part=TextPart(content='streamed text'))])
+
+
+def _generate_response_with_texts(response_id: str, texts: list[str]) -> GenerateContentResponse:
+    return GenerateContentResponse.model_validate(
+        {
+            'response_id': response_id,
+            'model_version': 'gemini-test',
+            'usage_metadata': GenerateContentResponseUsageMetadata(
+                prompt_token_count=0,
+                candidates_token_count=0,
+            ),
+            'candidates': [
+                {
+                    'finish_reason': GoogleFinishReason.STOP,
+                    'content': {
+                        'role': 'model',
+                        'parts': [{'text': text} for text in texts],
+                    },
+                }
+            ],
+        }
+    )
