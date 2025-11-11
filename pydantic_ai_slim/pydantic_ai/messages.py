@@ -13,7 +13,7 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
-from typing_extensions import TypeVar, deprecated
+from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -23,7 +23,8 @@ from .usage import RequestUsage
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
 
-EventDataT = TypeVar('EventDataT', default=Any)
+CustomEventDataT = TypeVar('CustomEventDataT', default=object, covariant=True)
+"""Covariant type variable for the data type of a custom event."""
 
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
@@ -1787,10 +1788,10 @@ class BuiltinToolResultEvent:
 
 
 @dataclass(repr=False)
-class CustomEvent(Generic[EventDataT]):
-    """An event indicating the result of a function tool call."""
+class CustomEvent(Generic[CustomEventDataT]):
+    """A custom event emitted during the execution of a tool or output function."""
 
-    data: EventDataT = None  # pyright: ignore[reportAssignmentType]
+    data: CustomEventDataT = None  # pyright: ignore[reportAssignmentType]
     """The data of the custom event."""
 
     _: KW_ONLY
@@ -1807,15 +1808,23 @@ class CustomEvent(Generic[EventDataT]):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-HandleResponseEvent = Annotated[
-    FunctionToolCallEvent
-    | FunctionToolResultEvent
-    | CustomEvent
-    | BuiltinToolCallEvent  # pyright: ignore[reportDeprecated]
-    | BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
-    pydantic.Discriminator('event_kind'),
-]
+HandleResponseEvent = TypeAliasType(
+    'HandleResponseEvent',
+    Annotated[
+        FunctionToolCallEvent
+        | FunctionToolResultEvent
+        | CustomEvent[CustomEventDataT]
+        | BuiltinToolCallEvent  # pyright: ignore[reportDeprecated]
+        | BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+        pydantic.Discriminator('event_kind'),
+    ],
+    type_params=(CustomEventDataT,),
+)
 """An event yielded when handling a model response, indicating tool calls and results."""
 
-AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
+AgentStreamEvent = TypeAliasType(
+    'AgentStreamEvent',
+    Annotated[ModelResponseStreamEvent | HandleResponseEvent[CustomEventDataT], pydantic.Discriminator('event_kind')],
+    type_params=(CustomEventDataT,),
+)
 """An event in the agent stream: model response stream events and response-handling events."""

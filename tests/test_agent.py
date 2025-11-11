@@ -5893,7 +5893,7 @@ async def test_agent_custom_events():
     agent = Agent('test')
 
     @agent.tool_plain
-    async def roll_dice() -> AsyncIterator[Any | ToolReturn[int]]:
+    async def roll_dice() -> AsyncIterator[str | ToolReturn[int]]:
         yield 'Considering 1...'
         yield 'Considering 2...'
         yield 'Considering 3...'
@@ -5946,7 +5946,7 @@ async def test_agent_custom_events_model_retry():
     agent = Agent('test')
 
     @agent.tool
-    async def roll_dice(ctx: RunContext) -> AsyncIterator[Any | ToolReturn[int]]:
+    async def roll_dice(ctx: RunContext) -> AsyncIterator[str | ToolReturn[int]]:
         yield 'Considering 1...'
         yield 'Considering 2...'
         yield 'Considering 3...'

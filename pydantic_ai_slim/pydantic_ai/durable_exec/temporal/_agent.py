@@ -28,6 +28,7 @@ from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStre
 from pydantic_ai.agent.abstract import Instructions, RunOutputDataT
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import CustomEventDataT
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
@@ -59,7 +60,7 @@ class TemporalizeToolsetContext(Generic[AgentDepsT]):
     """The type of agent's dependencies object. It needs to be serializable using Pydantic's `TypeAdapter`."""
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT]
     """The `TemporalRunContext` (sub)class that's used to serialize and deserialize the run context."""
-    event_stream_handler: EventStreamHandler[AgentDepsT] | None = None
+    event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None
     """The event stream handler to use for custom events yielded by tools in the toolset."""
 
 
@@ -96,13 +97,13 @@ class _EventStreamHandlerParams:
     serialized_run_context: Any
 
 
-class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
+class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT, CustomEventDataT]):
     def __init__(
         self,
-        wrapped: AbstractAgent[AgentDepsT, OutputDataT],
+        wrapped: AbstractAgent[AgentDepsT, OutputDataT, CustomEventDataT],
         *,
         name: str | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
         activity_config: ActivityConfig | None = None,
         model_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
@@ -253,7 +254,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         return self._model
 
     @property
-    def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+    def event_stream_handler(self) -> EventStreamHandler[AgentDepsT, CustomEventDataT] | None:
         handler = self._event_stream_handler or super().event_stream_handler
         if handler is None:
             return None
@@ -263,7 +264,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             return handler
 
     async def _call_event_stream_handler_activity(
-        self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent]
+        self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent[CustomEventDataT]]
     ) -> None:
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         async for event in stream:
@@ -319,7 +320,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -327,7 +328,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -339,14 +340,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     async def run(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -358,7 +359,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
@@ -439,7 +440,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -447,7 +448,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -459,14 +460,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     def run_sync(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -478,7 +479,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
@@ -557,7 +558,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -565,7 +566,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -577,7 +578,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -585,7 +586,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -597,7 +598,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AsyncIterator[StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
@@ -676,14 +677,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
+    ) -> AsyncIterator[_messages.AgentStreamEvent[CustomEventDataT] | AgentRunResultEvent[OutputDataT]]: ...
 
     @overload
     def run_stream_events(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -695,13 +696,13 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
+    ) -> AsyncIterator[_messages.AgentStreamEvent[CustomEventDataT] | AgentRunResultEvent[RunOutputDataT]]: ...
 
     def run_stream_events(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -713,7 +714,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    ) -> AsyncIterator[_messages.AgentStreamEvent[CustomEventDataT] | AgentRunResultEvent[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
@@ -815,7 +816,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -835,7 +836,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -968,7 +969,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
-        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        tools: Sequence[Tool[AgentDepsT, CustomEventDataT] | ToolFuncEither[AgentDepsT, ..., CustomEventDataT]]
+        | _utils.Unset = _utils.UNSET,
         instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.

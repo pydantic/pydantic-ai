@@ -13,7 +13,7 @@ from typing import Any
 
 from . import DeferredToolResults
 from .agent import AbstractAgent
-from .messages import ModelMessage
+from .messages import CustomEventDataT, ModelMessage
 from .models import KnownModelName, Model
 from .output import OutputSpec
 from .settings import ModelSettings
@@ -49,10 +49,10 @@ __all__ = [
 
 
 async def handle_ag_ui_request(
-    agent: AbstractAgent[AgentDepsT, Any],
+    agent: AbstractAgent[AgentDepsT, Any, CustomEventDataT],
     request: Request,
     *,
-    output_type: OutputSpec[Any] | None = None,
+    output_type: OutputSpec[Any, CustomEventDataT] | None = None,
     message_history: Sequence[ModelMessage] | None = None,
     deferred_tool_results: DeferredToolResults | None = None,
     model: Model | KnownModelName | str | None = None,
@@ -105,11 +105,11 @@ async def handle_ag_ui_request(
 
 
 def run_ag_ui(
-    agent: AbstractAgent[AgentDepsT, Any],
+    agent: AbstractAgent[AgentDepsT, Any, CustomEventDataT],
     run_input: RunAgentInput,
     accept: str = SSE_CONTENT_TYPE,
     *,
-    output_type: OutputSpec[Any] | None = None,
+    output_type: OutputSpec[Any, CustomEventDataT] | None = None,
     message_history: Sequence[ModelMessage] | None = None,
     deferred_tool_results: DeferredToolResults | None = None,
     model: Model | KnownModelName | str | None = None,

@@ -41,6 +41,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Messages exchanged in the conversation so far."""
     tracer: Tracer = field(default_factory=NoOpTracer)
     """The tracer to use for tracing the run."""
+    # TODO (DouweM): Generic param?
     event_stream: MemoryObjectSendStream[_messages.CustomEvent] | None = None
     """The event stream to use for handling custom events."""
     trace_include_content: bool = False

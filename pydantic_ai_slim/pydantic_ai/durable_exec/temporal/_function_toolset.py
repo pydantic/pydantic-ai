@@ -12,7 +12,7 @@ from temporalio.workflow import ActivityConfig
 from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import HandleResponseEvent
+from pydantic_ai.messages import CustomEventDataT, HandleResponseEvent
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
@@ -34,7 +34,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
         tool_activity_config: dict[str, ActivityConfig | Literal[False]],
         deps_type: type[AgentDepsT],
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
     ):
         super().__init__(toolset)
         self.activity_config = activity_config
@@ -62,7 +62,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
                 return await self._wrap_call_tool_result(self.wrapped.call_tool(name, args_dict, ctx, tool))
 
             if self.event_stream_handler is not None:
-                send_stream, receive_stream = anyio.create_memory_object_stream[HandleResponseEvent]()
+                send_stream, receive_stream = anyio.create_memory_object_stream[HandleResponseEvent[CustomEventDataT]]()
 
                 async def _call_tool_with_stream() -> CallToolResult:
                     async with send_stream:
@@ -71,7 +71,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
 
                 task = asyncio.create_task(_call_tool_with_stream())
 
-                async def _receive_events() -> AsyncIterator[HandleResponseEvent]:
+                async def _receive_events() -> AsyncIterator[HandleResponseEvent[CustomEventDataT]]:
                     async with receive_stream:
                         async for event in receive_stream:
                             yield event

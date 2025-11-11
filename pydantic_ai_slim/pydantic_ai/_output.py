@@ -6,7 +6,7 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
+from typing import Any, Generic, Literal, cast, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator, to_json
@@ -33,9 +33,6 @@ from .output import (
 )
 from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
-
-if TYPE_CHECKING:
-    pass
 
 T = TypeVar('T')
 """An invariant TypeVar."""
@@ -231,7 +228,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
     @classmethod
     def build(  # noqa: C901
         cls,
-        output_spec: OutputSpec[OutputDataT],
+        output_spec: OutputSpec[OutputDataT, Any],
         *,
         name: str | None = None,
         description: str | None = None,

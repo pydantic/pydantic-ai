@@ -73,6 +73,13 @@ class FunctionSchema:
                 # We could consider storing the yielded events somewhere and letting them be accessed after the fact as a list.
                 if ctx.event_stream is not None:
                     if isinstance(event_data, CustomEvent):
+                        # TODO (DouweM): Whgat if this is coming from a nested agent run?
+                        # Should rewrap! If there's a tool call ID?
+                        # But what if NativeOutput(output_func)? No tool call ID...
+                        # DeferredToolCalls etc wouldn't work either. Only support yielding output function with ToolOutput()?
+                        # Handoffs; think about custom event T transformer; HandoffEvent with agent_name?
+                        # CustomEvent with tool_call_id, nested deeply...
+                        # How to match tool_call_id to agent name? Through ToolCallPart.tool_name? Start handoff event with metadata?
                         event = cast(CustomEvent, event_data)
                         if ctx.tool_call_id:
                             event = replace(event, tool_call_id=ctx.tool_call_id)

@@ -42,6 +42,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
     def __init__(
         self,
+        # TODO (DouweM): Use CustomEventDataT here?
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
         *,
         max_retries: int = 1,

@@ -3,12 +3,11 @@ from __future__ import annotations as _annotations
 import dataclasses
 import inspect
 import json
-import warnings
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, ClassVar, overload
+from typing import Any, ClassVar, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
@@ -37,6 +36,7 @@ from .._agent_graph import (
 from .._output import OutputToolset
 from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
+from ..messages import CustomEventDataT
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun, AgentRunResult
@@ -66,9 +66,6 @@ from ..toolsets.prepared import PreparedToolset
 from .abstract import AbstractAgent, EventStreamHandler, Instructions, RunOutputDataT
 from .wrapper import WrapperAgent
 
-if TYPE_CHECKING:
-    from ..mcp import MCPServer
-
 __all__ = (
     'Agent',
     'AgentRun',
@@ -91,7 +88,7 @@ NoneType = type(None)
 
 
 @dataclasses.dataclass(init=False)
-class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
+class Agent(AbstractAgent[AgentDepsT, OutputDataT, CustomEventDataT]):
     """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM.
 
     Agents are generic in the dependency type they take [`AgentDepsT`][pydantic_ai.tools.AgentDepsT]
@@ -124,7 +121,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     be merged with this value, with the runtime argument taking priority.
     """
 
-    _output_type: OutputSpec[OutputDataT]
+    _output_type: OutputSpec[OutputDataT, CustomEventDataT]
 
     instrument: InstrumentationSettings | bool | None
     """Options to automatically instrument with OpenTelemetry."""
@@ -148,18 +145,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _max_result_retries: int = dataclasses.field(repr=False)
     _max_tool_retries: int = dataclasses.field(repr=False)
 
-    _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
+    _event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = dataclasses.field(repr=False)
 
     _enter_lock: Lock = dataclasses.field(repr=False)
     _entered_count: int = dataclasses.field(repr=False)
     _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
 
-    @overload
     def __init__(
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
-        output_type: OutputSpec[OutputDataT] = str,
+        output_type: OutputSpec[OutputDataT, CustomEventDataT] = str,
         instructions: Instructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
@@ -167,7 +163,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         retries: int = 1,
         output_retries: int | None = None,
-        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        tools: Sequence[Tool[AgentDepsT, CustomEventDataT] | ToolFuncEither[AgentDepsT, ..., CustomEventDataT]]
+        | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
@@ -176,58 +173,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> None: ...
-
-    @overload
-    @deprecated('`mcp_servers` is deprecated, use `toolsets` instead.')
-    def __init__(
-        self,
-        model: models.Model | models.KnownModelName | str | None = None,
-        *,
-        output_type: OutputSpec[OutputDataT] = str,
-        instructions: Instructions[AgentDepsT] = None,
-        system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = NoneType,
-        name: str | None = None,
-        model_settings: ModelSettings | None = None,
-        retries: int = 1,
-        output_retries: int | None = None,
-        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        builtin_tools: Sequence[AbstractBuiltinTool] = (),
-        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        mcp_servers: Sequence[MCPServer] = (),
-        defer_model_check: bool = False,
-        end_strategy: EndStrategy = 'early',
-        instrument: InstrumentationSettings | bool | None = None,
-        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-    ) -> None: ...
-
-    def __init__(
-        self,
-        model: models.Model | models.KnownModelName | str | None = None,
-        *,
-        output_type: OutputSpec[OutputDataT] = str,
-        instructions: Instructions[AgentDepsT] = None,
-        system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = NoneType,
-        name: str | None = None,
-        model_settings: ModelSettings | None = None,
-        retries: int = 1,
-        output_retries: int | None = None,
-        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        builtin_tools: Sequence[AbstractBuiltinTool] = (),
-        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
-        defer_model_check: bool = False,
-        end_strategy: EndStrategy = 'early',
-        instrument: InstrumentationSettings | bool | None = None,
-        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-        **_deprecated_kwargs: Any,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
     ):
         """Create an agent.
 
@@ -294,14 +240,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.instrument = instrument
         self._deps_type = deps_type
 
-        if mcp_servers := _deprecated_kwargs.pop('mcp_servers', None):
-            if toolsets is not None:  # pragma: no cover
-                raise TypeError('`mcp_servers` and `toolsets` cannot be set at the same time.')
-            warnings.warn('`mcp_servers` is deprecated, use `toolsets` instead', DeprecationWarning)
-            toolsets = mcp_servers
-
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         self._output_schema = _output.OutputSchema[OutputDataT].build(output_type)
         self._output_validators = []
 
@@ -324,7 +262,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._output_toolset.max_retries = self._max_result_retries
 
         self._function_toolset = _AgentFunctionToolset(
-            tools, max_retries=self._max_tool_retries, output_schema=self._output_schema
+            tools or [], max_retries=self._max_tool_retries, output_schema=self._output_schema
         )
         self._dynamic_toolsets = [
             DynamicToolset[AgentDepsT](toolset_func=toolset)
@@ -344,7 +282,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             '_override_toolsets', default=None
         )
         self._override_tools: ContextVar[
-            _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
+            _utils.Option[
+                Sequence[Tool[AgentDepsT, CustomEventDataT] | ToolFuncEither[AgentDepsT, ..., CustomEventDataT]]
+            ]
         ] = ContextVar('_override_tools', default=None)
         self._override_instructions: ContextVar[
             _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
@@ -392,12 +332,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return self._deps_type
 
     @property
-    def output_type(self) -> OutputSpec[OutputDataT]:
+    def output_type(self) -> OutputSpec[OutputDataT, CustomEventDataT]:
         """The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`."""
         return self._output_type
 
     @property
-    def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+    def event_stream_handler(self) -> EventStreamHandler[AgentDepsT, CustomEventDataT] | None:
         """Optional handler for events from the model's streaming response and the agent's execution of tools."""
         return self._event_stream_handler
 
@@ -428,7 +368,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -447,7 +387,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[Any] | None = None,
+        output_type: OutputSpec[Any, Any] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -736,7 +676,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
-        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        tools: Sequence[Tool[AgentDepsT, CustomEventDataT] | ToolFuncEither[AgentDepsT, ..., CustomEventDataT]]
+        | _utils.Unset = _utils.UNSET,
         instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
@@ -1003,7 +944,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return func
 
     @overload
-    def tool(self, func: ToolFuncContext[AgentDepsT, ToolParams], /) -> ToolFuncContext[AgentDepsT, ToolParams]: ...
+    def tool(
+        self, func: ToolFuncContext[AgentDepsT, ToolParams, CustomEventDataT], /
+    ) -> ToolFuncContext[AgentDepsT, ToolParams, CustomEventDataT]: ...
 
     @overload
     def tool(
@@ -1021,11 +964,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-    ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
+    ) -> Callable[
+        [ToolFuncContext[AgentDepsT, ToolParams, CustomEventDataT]],
+        ToolFuncContext[AgentDepsT, ToolParams, CustomEventDataT],
+    ]: ...
 
     def tool(
         self,
-        func: ToolFuncContext[AgentDepsT, ToolParams] | None = None,
+        func: ToolFuncContext[AgentDepsT, ToolParams, CustomEventDataT] | None = None,
         /,
         *,
         name: str | None = None,
@@ -1091,8 +1037,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
 
         def tool_decorator(
-            func_: ToolFuncContext[AgentDepsT, ToolParams],
-        ) -> ToolFuncContext[AgentDepsT, ToolParams]:
+            func_: ToolFuncContext[AgentDepsT, ToolParams, CustomEventDataT],
+        ) -> ToolFuncContext[AgentDepsT, ToolParams, CustomEventDataT]:
             # noinspection PyTypeChecker
             self._function_toolset.add_function(
                 func_,
@@ -1114,7 +1060,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return tool_decorator if func is None else tool_decorator(func)
 
     @overload
-    def tool_plain(self, func: ToolFuncPlain[ToolParams], /) -> ToolFuncPlain[ToolParams]: ...
+    def tool_plain(
+        self, func: ToolFuncPlain[ToolParams, CustomEventDataT], /
+    ) -> ToolFuncPlain[ToolParams, CustomEventDataT]: ...
 
     @overload
     def tool_plain(
@@ -1132,11 +1080,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-    ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
+    ) -> Callable[[ToolFuncPlain[ToolParams, CustomEventDataT]], ToolFuncPlain[ToolParams, CustomEventDataT]]: ...
 
     def tool_plain(
         self,
-        func: ToolFuncPlain[ToolParams] | None = None,
+        func: ToolFuncPlain[ToolParams, CustomEventDataT] | None = None,
         /,
         *,
         name: str | None = None,
@@ -1201,7 +1149,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
         """
 
-        def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
+        def tool_decorator(
+            func_: ToolFuncPlain[ToolParams, CustomEventDataT],
+        ) -> ToolFuncPlain[ToolParams, CustomEventDataT]:
             # noinspection PyTypeChecker
             self._function_toolset.add_function(
                 func_,
@@ -1413,10 +1363,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @overload
     def _prepare_output_schema(
-        self, output_type: OutputSpec[RunOutputDataT]
+        self, output_type: OutputSpec[RunOutputDataT, CustomEventDataT]
     ) -> _output.OutputSchema[RunOutputDataT]: ...
 
-    def _prepare_output_schema(self, output_type: OutputSpec[Any] | None) -> _output.OutputSchema[Any]:
+    def _prepare_output_schema(self, output_type: OutputSpec[Any, Any] | None) -> _output.OutputSchema[Any]:
         if output_type is not None:
             if self._output_validators:
                 raise exceptions.UserError('Cannot set a custom run `output_type` when the agent has output validators')
@@ -1498,7 +1448,7 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
 
     def __init__(
         self,
-        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
+        tools: Sequence[Tool[AgentDepsT, CustomEventDataT] | ToolFuncEither[AgentDepsT, ..., CustomEventDataT]] = [],
         *,
         max_retries: int = 1,
         id: str | None = None,
@@ -1515,7 +1465,7 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
     def label(self) -> str:
         return 'the agent'
 
-    def add_tool(self, tool: Tool[AgentDepsT]) -> None:
+    def add_tool(self, tool: Tool[AgentDepsT, CustomEventDataT]) -> None:
         if tool.requires_approval and not self.output_schema.allows_deferred_tools:
             raise exceptions.UserError(
                 'To use tools that require approval, add `DeferredToolRequests` to the list of output types for this agent.'

@@ -17,6 +17,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import CustomEventDataT
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
@@ -74,7 +75,7 @@ class TemporalModel(WrapperModel):
         activity_config: ActivityConfig,
         deps_type: type[AgentDepsT],
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
-        event_stream_handler: EventStreamHandler[Any] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
     ):
         super().__init__(model)
         self.activity_config = activity_config

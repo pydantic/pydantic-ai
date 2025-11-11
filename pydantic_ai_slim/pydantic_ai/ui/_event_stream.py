@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, TypeVar, cast
 from uuid import uuid4
 
+from typing_extensions import TypeAliasType
+
 from pydantic_ai import _utils
 
 from ..messages import (
@@ -16,6 +18,7 @@ from ..messages import (
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
     CustomEvent,
+    CustomEventDataT,
     FilePart,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -48,7 +51,11 @@ EventT = TypeVar('EventT')
 RunInputT = TypeVar('RunInputT')
 """Type variable for protocol-specific run input types."""
 
-NativeEvent: TypeAlias = AgentStreamEvent | AgentRunResultEvent[Any]
+NativeEvent = TypeAliasType(
+    'NativeEvent',
+    AgentStreamEvent[CustomEventDataT] | AgentRunResultEvent[OutputDataT],
+    type_params=(OutputDataT, CustomEventDataT),
+)
 """Type alias for the native event type, which is either an `AgentStreamEvent` or an `AgentRunResultEvent`."""
 
 OnCompleteFunc: TypeAlias = (
@@ -125,7 +132,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         )
 
     async def transform_stream(  # noqa: C901
-        self, stream: AsyncIterator[NativeEvent], on_complete: OnCompleteFunc[EventT] | None = None
+        self, stream: AsyncIterator[NativeEvent[OutputDataT]], on_complete: OnCompleteFunc[EventT] | None = None
     ) -> AsyncIterator[EventT]:
         """Transform a stream of Pydantic AI events into protocol-specific events.
 
@@ -230,7 +237,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             async for e in self.before_response():
                 yield e
 
-    async def handle_event(self, event: NativeEvent) -> AsyncIterator[EventT]:  # noqa: C901
+    async def handle_event(self, event: NativeEvent[OutputDataT]) -> AsyncIterator[EventT]:  # noqa: C901
         """Transform a Pydantic AI event into one or more protocol-specific events.
 
         This method dispatches to specific `handle_*` methods based on event type:

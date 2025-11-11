@@ -1,18 +1,18 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Tag
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import ParamSpec, Self, TypeVar
+from typing_extensions import ParamSpec, Self, TypeAliasType, TypeVar
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry
-from .messages import RetryPromptPart, ToolCallPart, ToolReturn
+from .messages import CustomEvent, RetryPromptPart, Return, ToolCallPart, ToolReturn
 
 __all__ = (
     'AgentDepsT',
@@ -38,6 +38,9 @@ __all__ = (
 ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
 
+ToolCustomEventDataT = TypeVar('ToolCustomEventDataT', default=object, covariant=True)
+"""Covariant type variable for the data type of a custom event for a tool."""
+
 SystemPromptFunc: TypeAlias = (
     Callable[[RunContext[AgentDepsT]], str]
     | Callable[[RunContext[AgentDepsT]], Awaitable[str]]
@@ -49,17 +52,43 @@ SystemPromptFunc: TypeAlias = (
 Usage `SystemPromptFunc[AgentDepsT]`.
 """
 
-ToolFuncContext: TypeAlias = Callable[Concatenate[RunContext[AgentDepsT], ToolParams], Any]
+ToolFuncContext = TypeAliasType(
+    'ToolFuncContext',
+    Callable[
+        Concatenate[RunContext[AgentDepsT], ToolParams],
+        AsyncIterator[Return[Any] | CustomEvent[ToolCustomEventDataT]],
+    ]
+    | Callable[
+        Concatenate[RunContext[AgentDepsT], ToolParams],
+        AsyncIterator[Return[Any] | ToolCustomEventDataT],
+    ]
+    | Callable[Concatenate[RunContext[AgentDepsT], ToolParams], Awaitable[Any]]
+    | Callable[Concatenate[RunContext[AgentDepsT], ToolParams], Any],
+    type_params=(AgentDepsT, ToolParams, ToolCustomEventDataT),
+)
 """A tool function that takes `RunContext` as the first argument.
 
 Usage `ToolContextFunc[AgentDepsT, ToolParams]`.
 """
-ToolFuncPlain: TypeAlias = Callable[ToolParams, Any]
+ToolFuncPlain = TypeAliasType(
+    'ToolFuncPlain',
+    Callable[ToolParams, AsyncIterator[Return[Any] | CustomEvent[ToolCustomEventDataT]]]
+    | Callable[
+        ToolParams, AsyncIterator[Return[Any] | ToolCustomEventDataT]
+    ]  # TODO (DouweM): Drop one of these, make tool_stream
+    | Callable[ToolParams, Awaitable[Any]]
+    | Callable[ToolParams, Any],
+    type_params=(ToolParams, ToolCustomEventDataT),
+)
 """A tool function that does not take `RunContext` as the first argument.
 
 Usage `ToolPlainFunc[ToolParams]`.
 """
-ToolFuncEither: TypeAlias = ToolFuncContext[AgentDepsT, ToolParams] | ToolFuncPlain[ToolParams]
+ToolFuncEither = TypeAliasType(
+    'ToolFuncEither',
+    ToolFuncContext[AgentDepsT, ToolParams, ToolCustomEventDataT] | ToolFuncPlain[ToolParams, ToolCustomEventDataT],
+    type_params=(AgentDepsT, ToolParams, ToolCustomEventDataT),
+)
 """Either kind of tool function.
 
 This is just a union of [`ToolFuncContext`][pydantic_ai.tools.ToolFuncContext] and
@@ -243,12 +272,15 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
 ToolAgentDepsT = TypeVar('ToolAgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies for a tool."""
 
+ToolCustomEventDataT = TypeVar('ToolCustomEventDataT', default=object, covariant=True)
+"""Covariant type variable for the data type of a custom event for a tool."""
+
 
 @dataclass(init=False)
-class Tool(Generic[ToolAgentDepsT]):
+class Tool(Generic[ToolAgentDepsT, ToolCustomEventDataT]):
     """A tool function for an agent."""
 
-    function: ToolFuncEither[ToolAgentDepsT]
+    function: ToolFuncEither[ToolAgentDepsT, ..., ToolCustomEventDataT]
     takes_ctx: bool
     max_retries: int | None
     name: str
@@ -269,7 +301,7 @@ class Tool(Generic[ToolAgentDepsT]):
 
     def __init__(
         self,
-        function: ToolFuncEither[ToolAgentDepsT],
+        function: ToolFuncEither[ToolAgentDepsT, ..., ToolCustomEventDataT],
         *,
         takes_ctx: bool | None = None,
         max_retries: int | None = None,

@@ -11,7 +11,7 @@ from typing_extensions import Self
 from pydantic_ai import DeferredToolResults
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import CustomEventDataT, ModelMessage
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.settings import ModelSettings
@@ -41,10 +41,10 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
 
     def __init__(
         self,
-        agent: AbstractAgent[AgentDepsT, OutputDataT],
+        agent: AbstractAgent[AgentDepsT, OutputDataT, CustomEventDataT],
         *,
         # AGUIAdapter.dispatch_request parameters
-        output_type: OutputSpec[Any] | None = None,
+        output_type: OutputSpec[Any, CustomEventDataT] | None = None,
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
