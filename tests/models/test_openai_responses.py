@@ -7309,12 +7309,12 @@ def test_file_search_tool_basic():
     """Test that FileSearchTool can be configured without errors."""
     from pydantic_ai import Agent
     from pydantic_ai.models.test import TestModel
-    
+
     agent = Agent(
         TestModel(),
         builtin_tools=[FileSearchTool(vector_store_ids=['vs_test123'])],
     )
-    
+
     # Just verify the agent initializes properly
     assert agent is not None
 
@@ -7324,27 +7324,27 @@ def test_file_search_tool_mapping():
     from unittest.mock import Mock
 
     from pydantic_ai.models.openai import _map_file_search_tool_call
-    
+
     # Create a mock ResponseFileSearchToolCall
     mock_item = Mock()
     mock_item.id = 'fs_test123'
     mock_item.status = 'completed'
     mock_item.action = None  # Test without action first
-    
+
     call_part, return_part = _map_file_search_tool_call(mock_item, 'openai')
-    
+
     assert call_part.tool_name == 'file_search'
     assert call_part.tool_call_id == 'fs_test123'
     assert call_part.args is None
     assert return_part.tool_name == 'file_search'
     assert return_part.tool_call_id == 'fs_test123'
     assert return_part.content == {'status': 'completed'}
-    
+
     # Test with action
     mock_action = Mock()
     mock_action.model_dump = Mock(return_value={'query': 'test query'})
     mock_item.action = mock_action
-    
+
     call_part, return_part = _map_file_search_tool_call(mock_item, 'openai')
     assert call_part.args == {'query': 'test query'}
 
@@ -7357,35 +7357,35 @@ async def test_file_search_tool_with_mock_responses(allow_model_requests: None):
 
     from .mock_openai import MockOpenAIResponses, response_message
 
-    # Create mock file_search_call item  
+    # Create mock file_search_call item
     fs_call = Mock()
     fs_call.type = 'file_search_call'
     fs_call.id = 'fs_test'
     fs_call.status = 'completed'
     fs_call.action = Mock()
     fs_call.action.model_dump = Mock(return_value={'query': 'search documents'})
-    
+
     # Create message item
     msg_content = Mock()
     msg_content.type = 'text'
     msg_content.text = 'Found information in documents'
-    
+
     msg_item = Mock()
     msg_item.type = 'message'
     msg_item.id = 'msg_test'
     msg_item.role = 'assistant'
     msg_item.content = [msg_content]
     msg_item.status = 'completed'
-    
+
     # Create response with both items
     mock_response = response_message([fs_call, msg_item])
     mock_responses = MockOpenAIResponses.create_mock(mock_response)
-    
+
     model = OpenAIResponsesModel('gpt-5')
     model._client = mock_responses
-    
+
     agent = Agent(model, builtin_tools=[FileSearchTool(vector_store_ids=['vs_test'])])
-    
+
     result = await agent.run('Search my documents')
     assert 'Found information in documents' in result.output
 
@@ -7407,7 +7407,7 @@ async def test_file_search_tool_streaming(allow_model_requests: None):
     fs_event.item.status = 'completed'
     fs_event.item.action = Mock()
     fs_event.item.action.model_dump = Mock(return_value={'query': 'test'})
-    
+
     # Create message stream event
     msg_event = Mock()
     msg_event.type = 'response.output_item.added'
@@ -7420,16 +7420,16 @@ async def test_file_search_tool_streaming(allow_model_requests: None):
     msg_content.type = 'text'
     msg_content.text = 'Result from files'
     msg_event.item.content = [msg_content]
-    
+
     mock_responses = MockOpenAIResponses.create_mock_stream([fs_event, msg_event])
-    
+
     model = OpenAIResponsesModel('gpt-5')
     model._client = mock_responses
-    
+
     agent = Agent(model, builtin_tools=[FileSearchTool(vector_store_ids=['vs_test'])])
-    
+
     async with agent.run_stream('Search my documents') as result:
         async for _ in result.stream():
             pass
-    
+
     assert 'Result from files' in result.output

@@ -3130,6 +3130,6 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
         m,
         builtin_tools=[FileSearchTool(vector_store_ids=['files/test123'])],
     )
-    
+
     # Just verify the agent initializes properly
     assert agent is not None

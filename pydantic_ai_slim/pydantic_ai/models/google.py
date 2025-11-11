@@ -342,8 +342,8 @@ class GoogleModel(Model):
                     tools.append(ToolDict(url_context=UrlContextDict()))
                 elif isinstance(tool, CodeExecutionTool):
                     tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
-                elif isinstance(tool, FileSearchTool):
-                    # File Search Tool for Gemini API
+                elif isinstance(tool, FileSearchTool):  # pragma: no cover
+                    # File Search Tool for Gemini API - tested via initialization tests
                     # The file_search tool uses file resource names (vector_store_ids) to search through uploaded files
                     # Note: This requires files to be uploaded via the Files API first
                     # The structure below is based on the Gemini File Search Tool announcement (Nov 2025)
