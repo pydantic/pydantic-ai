@@ -67,6 +67,7 @@ async def test_streamed_text_response():
 
     async with test_agent.run_stream('Hello') as result:
         assert test_agent.name == 'test_agent'
+        assert isinstance(result.run_id, str)
         assert not result.is_complete
         assert result.all_messages() == snapshot(
             [
@@ -158,6 +159,7 @@ def test_streamed_text_sync_response():
 
     result = test_agent.run_stream_sync('Hello')
     assert test_agent.name == 'test_agent'
+    assert isinstance(result.run_id, str)
     assert not result.is_complete
     assert result.all_messages() == snapshot(
         [
@@ -1426,6 +1428,7 @@ async def test_iter_stream_responses():
     stream: AgentStream
     messages: list[ModelResponse] = []
     async with agent.iter('Hello') as run:
+        assert isinstance(run.run_id, str)
         async for node in run:
             if agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:

@@ -80,6 +80,7 @@ def test_result_tuple():
     agent = Agent(FunctionModel(return_tuple), output_type=tuple[str, str])
 
     result = agent.run_sync('Hello')
+    assert isinstance(result.run_id, str)
     assert result.output == ('foo', 'bar')
     assert result.response == snapshot(
         ModelResponse(
