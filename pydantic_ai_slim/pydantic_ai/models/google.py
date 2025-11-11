@@ -681,13 +681,15 @@ class GeminiStreamedResponse(StreamedResponse):
                 if part.text is not None:
                     if len(part.text) > 0:
                         if part.thought:
-                            yield from self._parts_manager.handle_thinking_delta(
+                            for event in self._parts_manager.handle_thinking_delta(
                                 vendor_part_id='thinking', content=part.text
-                            )
+                            ):
+                                yield event
                         else:
-                            yield from self._parts_manager.handle_text_delta(
+                            for event in self._parts_manager.handle_text_delta(
                                 vendor_part_id='content', content=part.text
-                            )
+                            ):
+                                yield event
                 elif part.function_call:
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=uuid4(),

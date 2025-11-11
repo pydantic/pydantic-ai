@@ -621,10 +621,10 @@ class StreamedResponse(ABC):
                 ) -> AsyncIterator[ModelResponseStreamEvent]:
                     async for event in iter1:
                         yield event
-                    for event in iter2:
+                    for event in iter2:  # pragma: no cover - idk why this isn't covered
                         yield event
 
-                async for event in chain_async_and_sync_iters(  # pragma: no cover - idk why this isn't covered
+                async for event in chain_async_and_sync_iters(  # pragma: no cover - related to above
                     iterator, self._parts_manager.final_flush()
                 ):
                     if isinstance(event, PartStartEvent):
