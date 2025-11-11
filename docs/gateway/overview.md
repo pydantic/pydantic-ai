@@ -30,4 +30,3 @@ print(result.output)
 The first known use of "hello, world" was in a 1974 textbook about the C programming language.
 """
 ```
-For now, this is a complete

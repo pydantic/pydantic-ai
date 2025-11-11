@@ -52,10 +52,14 @@ const redirect_lookup: Record<string, string> = {
   '/contributing': '/contributing/',
   '/api/format_as_xml': '/api/format_prompt/',
   '/api/models/ollama': '/models/openai/#ollama',
-  '/examples': 'examples/setup/',
+  '/examples': '/examples/setup/',
   '/mcp': '/mcp/overview/',
   '/models': '/models/overview/',
-  '/ag-ui': '/ui/ag-ui/'
+  '/ag-ui': '/ui/ag-ui/',
+  '/evals': '/evals/',
+  '/graph': '/graph/',
+  '/gateway': '/gateway/overview/',
+  '/api/ag_ui': '/api/ui/ag_ui/'
 }
 
 function redirect(pathname: string): string | null {

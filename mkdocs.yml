@@ -55,10 +55,10 @@ nav:
       - Testing: testing.md
 
   - Pydantic AI Gateway:
-      - Overview: gateway.md
+      - Overview: gateway/overview.md
       - Getting Started:
-          - Quick Start: ai_gateway/quick-start.md
-          - Usage: ai_gateway/usage.md
+          - Quick Start: gateway/quick-start.md
+          - Usage: gateway/usage.md
 
   - Pydantic Evals:
       - Overview: evals.md
