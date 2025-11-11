@@ -284,8 +284,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return self._graph_run.state.usage
 
     @property
-    def run_id(self) -> str | None:
+    def run_id(self) -> str:
         """The unique identifier for the agent run."""
+        assert self._graph_run.state.run_id is not None
         return self._graph_run.state.run_id
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -423,8 +424,9 @@ class AgentRunResult(Generic[OutputDataT]):
         return self.response.timestamp
 
     @property
-    def run_id(self) -> str | None:
+    def run_id(self) -> str:
         """The unique identifier for the agent run."""
+        assert self._state.run_id is not None
         return self._state.run_id
 
 

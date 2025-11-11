@@ -121,8 +121,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield text
 
     @property
-    def run_id(self) -> str | None:
+    def run_id(self) -> str:
         """The unique identifier for the agent run."""
+        assert self._run_ctx.run_id is not None
         return self._run_ctx.run_id
 
     # TODO (v2): Drop in favor of `response` property
@@ -539,11 +540,13 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     @property
-    def run_id(self) -> str | None:
+    def run_id(self) -> str:
         """The unique identifier for the agent run."""
         if self._run_result is not None:
+            assert self._run_result.run_id is not None
             return self._run_result.run_id
         elif self._stream_response is not None:
+            assert self._stream_response.run_id is not None
             return self._stream_response.run_id
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
@@ -709,7 +712,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         return self._streamed_run_result.timestamp()
 
     @property
-    def run_id(self) -> str | None:
+    def run_id(self) -> str:
         """The unique identifier for the agent run."""
         return self._streamed_run_result.run_id
 
