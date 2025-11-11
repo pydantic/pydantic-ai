@@ -607,8 +607,6 @@ print(result.output)
 
 1. Replace `vs_abc123` with your actual vector store ID from the OpenAI API.
 
-_(This example is complete, it can be run "as is")_
-
 #### Google (Gemini)
 
 With Gemini, you need to first upload files via the Files API, then reference the file resource names:
@@ -627,8 +625,6 @@ print(result.output)
 ```
 
 1. Replace `files/abc123` with your actual file resource name from the Gemini Files API.
-
-_(This example is complete, it can be run "as is")_
 
 !!! note "Gemini File Search API Status"
     The File Search Tool for Gemini was announced on November 6, 2025. The implementation may require adjustment as the official `google-genai` SDK is updated to fully support this feature.
@@ -657,8 +653,6 @@ print(result.output)
 ```
 
 1. You can provide multiple vector store IDs to search across different collections.
-
-_(This example is complete, it can be run "as is")_
 
 ## API Reference
 
