@@ -1167,14 +1167,12 @@ async def test_run_stream_builtin_tool_call():
         yield {
             1: BuiltinToolReturnPart(
                 tool_name=WebSearchTool.kind,
-                content={
-                    'results': [
-                        {
-                            'title': '"Hello, World!" program',
-                            'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
-                        }
-                    ]
-                },
+                content=[
+                    {
+                        'title': '"Hello, World!" program',
+                        'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
+                    }
+                ],
                 tool_call_id='search_1',
                 provider_name='function',
             )
@@ -1217,14 +1215,12 @@ async def test_run_stream_builtin_tool_call():
             {
                 'type': 'tool-output-available',
                 'toolCallId': 'search_1',
-                'output': {
-                    'results': [
-                        {
-                            'title': '"Hello, World!" program',
-                            'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
-                        }
-                    ]
-                },
+                'output': [
+                    {
+                        'title': '"Hello, World!" program',
+                        'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
+                    }
+                ],
                 'providerExecuted': True,
             },
             {'type': 'text-start', 'id': IsStr()},

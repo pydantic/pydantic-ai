@@ -9,6 +9,7 @@ from typing import Any
 from pydantic_core import to_json
 
 from ...messages import (
+    BaseToolReturnPart,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FilePart,
@@ -169,10 +170,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         )
 
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseChunk]:
-        output = part.content if isinstance(part.content, str) else part.model_response_object()
         yield ToolOutputAvailableChunk(
             tool_call_id=part.tool_call_id,
-            output=output,
+            output=self._tool_return_output(part),
             provider_executed=True,
         )
 
@@ -185,7 +185,11 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if isinstance(part, RetryPromptPart):
             yield ToolOutputErrorChunk(tool_call_id=part.tool_call_id, error_text=part.model_response())
         else:
-            output = part.content if isinstance(part.content, str) else part.model_response_object()
-            yield ToolOutputAvailableChunk(tool_call_id=part.tool_call_id, output=output)
+            yield ToolOutputAvailableChunk(tool_call_id=part.tool_call_id, output=self._tool_return_output(part))
 
         # ToolCallResultEvent.content may hold user parts (e.g. text, images) that Vercel AI does not currently have events for
+
+    def _tool_return_output(self, part: BaseToolReturnPart) -> Any:
+        output = part.model_response_object()
+        # Unwrap the return value from the output dictionary if it exists
+        return output.get('return_value', output)
