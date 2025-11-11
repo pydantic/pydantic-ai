@@ -1558,7 +1558,8 @@ class OpenAIResponsesModel(Model):
                                 and (status := content.get('status'))
                             ):
                                 web_search_item['status'] = status
-                            elif (
+                            elif (  # pragma: no cover
+                                # File Search Tool status update - only called from API-dependent paths
                                 item.tool_name == FileSearchTool.kind
                                 and file_search_item is not None
                                 and isinstance(item.content, dict)  # pyright: ignore[reportUnknownMemberType]
