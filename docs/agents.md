@@ -21,7 +21,7 @@ In typing terms, agents are generic in their dependency and output types, e.g., 
 !!! info "Code Examples with Gateway Support"
     Throughout this documentation, code examples are provided in two variations using tabs:
 
-    - **Pydantic AI Gateway**: Shows how to use examples with the [Pydantic AI Gateway](https://gateway.pydantic.dev/), which provides a unified interface to access multiple LLM models with additional features like failover, budget control, and Logfire observability.
+    - **Pydantic AI Gateway**: Shows how to use examples with the [Pydantic AI Gateway](gateway.md), which provides a unified interface to access multiple LLM models with additional features like failover, budget control, and automatic [Logfire observability](logfire.md).
     - **Pydantic AI**: Shows the direct implementation using Pydantic AI with provider-specific model strings.
 
     Both approaches are functionally equivalent for basic usage. Choose the Gateway tab if you're using Pydantic AI Gateway, or the Pydantic AI tab for direct provider integration.
@@ -123,7 +123,7 @@ There are five ways to run an agent:
     - **Gateway format**: `gateway/chat:gpt-5` or `gateway/anthropic:claude-sonnet-4-5`
     - **Direct format**: `openai:gpt-5` or `anthropic:claude-sonnet-4-5`
 
-    Use the Gateway format if you're routing requests through Pydantic AI Gateway.
+    Use the Gateway format if you're routing requests through [Pydantic AI Gateway](gateway.md).
 
 Here's a simple example demonstrating the first four:
 

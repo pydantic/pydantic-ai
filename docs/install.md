@@ -15,7 +15,7 @@ If you want to install only those dependencies required to use a specific model,
 
 If you're using Pydantic AI Gateway, you'll see "Pydantic AI Gateway" tabs in code examples throughout the documentation. These show how to adapt examples to use the Gateway's unified model interface.
 
-See the [Gateway documentation](gateway/usage.md) for setup instructions.
+See the [Gateway documentation](gateway.md) for setup instructions.
 
 ## Use with Pydantic Logfire
 

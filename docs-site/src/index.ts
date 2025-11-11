@@ -56,9 +56,6 @@ const redirect_lookup: Record<string, string> = {
   '/mcp': '/mcp/overview/',
   '/models': '/models/overview/',
   '/ag-ui': '/ui/ag-ui/',
-  '/evals': '/evals/',
-  '/graph': '/graph/',
-  '/gateway': '/gateway/overview/',
   '/api/ag_ui': '/api/ui/ag_ui/'
 }
 
