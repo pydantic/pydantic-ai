@@ -22,6 +22,7 @@ from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStre
 from pydantic_ai.agent.abstract import Instructions, RunOutputDataT
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import CustomEventDataT
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
@@ -39,13 +40,13 @@ from ._toolset import prefectify_toolset
 from ._types import TaskConfig, default_task_config
 
 
-class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
+class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT, CustomEventDataT]):
     def __init__(
         self,
-        wrapped: AbstractAgent[AgentDepsT, OutputDataT],
+        wrapped: AbstractAgent[AgentDepsT, OutputDataT, CustomEventDataT],
         *,
         name: str | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
         mcp_task_config: TaskConfig | None = None,
         model_task_config: TaskConfig | None = None,
         tool_task_config: TaskConfig | None = None,
@@ -133,7 +134,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         return self._model
 
     @property
-    def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+    def event_stream_handler(self) -> EventStreamHandler[AgentDepsT, CustomEventDataT] | None:
         handler = self._event_stream_handler or super().event_stream_handler
         if handler is None:
             return None
@@ -144,14 +145,14 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             return handler
 
     async def _call_event_stream_handler_in_flow(
-        self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent]
+        self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent[CustomEventDataT]]
     ) -> None:
         handler = self._event_stream_handler or super().event_stream_handler
         assert handler is not None
 
         # Create a task to handle each event
         @task(name='Handle Stream Event', **self._event_stream_handler_task_config)
-        async def event_stream_handler_task(event: _messages.AgentStreamEvent) -> None:
+        async def event_stream_handler_task(event: _messages.AgentStreamEvent[CustomEventDataT]) -> None:
             async def streamed_response():
                 yield event
 
@@ -188,7 +189,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -196,7 +197,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -208,14 +209,14 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     async def run(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -227,7 +228,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
@@ -312,7 +313,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -320,7 +321,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -332,14 +333,14 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     def run_sync(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -351,7 +352,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
@@ -438,7 +439,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -446,7 +447,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -458,7 +459,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -466,7 +467,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -478,7 +479,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT, CustomEventDataT] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AsyncIterator[StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
@@ -557,14 +558,14 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
+    ) -> AsyncIterator[_messages.AgentStreamEvent[CustomEventDataT] | AgentRunResultEvent[OutputDataT]]: ...
 
     @overload
     def run_stream_events(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -576,13 +577,13 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
+    ) -> AsyncIterator[_messages.AgentStreamEvent[CustomEventDataT] | AgentRunResultEvent[RunOutputDataT]]: ...
 
     def run_stream_events(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -594,7 +595,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    ) -> AsyncIterator[_messages.AgentStreamEvent[CustomEventDataT] | AgentRunResultEvent[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
@@ -695,7 +696,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -714,7 +715,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -834,7 +835,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
-        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        tools: Sequence[Tool[AgentDepsT, CustomEventDataT] | ToolFuncEither[AgentDepsT, ..., CustomEventDataT]]
+        | _utils.Unset = _utils.UNSET,
         instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent dependencies, model, toolsets, tools, or instructions.

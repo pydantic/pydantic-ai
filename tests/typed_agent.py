@@ -2,20 +2,24 @@
 # pyright: reportUnnecessaryTypeIgnoreComment=false
 
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, TypeAlias
 
 from typing_extensions import assert_type
 
-from pydantic_ai import Agent, ModelRetry, RunContext, Tool
+from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent, ModelRetry, Return, RunContext, Tool
 from pydantic_ai.agent import AgentRunResult
+from pydantic_ai.messages import CustomEvent
 from pydantic_ai.output import StructuredDict, TextOutput, ToolOutput
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 
 # Define here so we can check `if MYPY` below. This will not be executed, MYPY will always set it to True
 MYPY = False
+
+simple_agent = Agent()
+assert_type(simple_agent, Agent[None, str, object])
 
 
 @dataclass
@@ -310,3 +314,64 @@ if not MYPY:
 partial_agent: Agent[MyDeps] = Agent(deps_type=MyDeps)
 assert_type(partial_agent, Agent[MyDeps, str])
 assert_type(partial_agent, Agent[MyDeps])
+
+
+async def custom_str_events() -> AsyncIterator[str | Return[float]]:
+    yield 'Getting temperature...'
+    yield Return(28.7)
+
+
+async def custom_decimal_events() -> AsyncIterator[CustomEvent[Decimal] | Return[float]]:
+    yield CustomEvent(data=Decimal(28.0))
+    yield CustomEvent(data=Decimal(0.7))
+    yield Return(28.7)
+
+
+async def custom_int_events() -> AsyncIterator[int | Return[float]]:
+    yield 1
+    yield 2
+    yield 3
+    yield Return(28.7)
+
+
+custom_str_events_tool = Tool(custom_str_events)
+assert_type(custom_str_events_tool, Tool[object, str])
+
+custom_decimal_events_tool = Tool(custom_decimal_events)
+assert_type(custom_decimal_events_tool, Tool[object, Decimal])
+
+custom_int_events_tool = Tool(custom_int_events)
+assert_type(custom_int_events_tool, Tool[object, int])
+
+custom_str_event_agent = Agent(tools=[custom_str_events])
+assert_type(custom_str_event_agent, Agent[None, str, str])
+
+
+# TODO (DouweM): Is valid, but shouldn't be (Decimal != str), but return type
+# `AsyncIterator[CustomEvent[Decimal] | Return[float]]` is matched to
+# Requires stream=True; Error if AsyncIterator and no stream=True; overloads?`Any`
+custom_str_event_agent.tool_plain(custom_decimal_events, stream=True)
+
+# ---
+
+custom_event_agent = Agent(tools=[custom_str_events_tool, custom_decimal_events], output_type=custom_int_events)
+# TODO: Require stream or smth here as well?
+
+# TODO (DouweM): This infers `CustomEventDataT` as `str | decimal` because of `tools`,
+# and then `OutputT` as `AsyncIterator[CustomEvent[int] | Return[float]]` because it matches `Any`
+# Ideally `CustomEventDataT` would be inferred as `str | Decimal | int` and `OutputT` as `float`
+assert_type(custom_event_agent, Agent[None, float, str | int | Decimal])
+
+event_stream = custom_event_agent.run_stream_events()
+assert_type(event_stream, AsyncIterator[AgentStreamEvent[str | int | Decimal] | AgentRunResultEvent[float]])
+
+# ---
+
+custom_event_agent2 = Agent[None, float, str | int | Decimal](
+    tools=[custom_str_events_tool, custom_decimal_events],
+    output_type=custom_int_events,
+)
+assert_type(custom_event_agent2, Agent[None, float, str | int | Decimal])
+
+event_stream2 = custom_event_agent2.run_stream_events()
+assert_type(event_stream2, AsyncIterator[AgentStreamEvent[str | int | Decimal] | AgentRunResultEvent[float]])

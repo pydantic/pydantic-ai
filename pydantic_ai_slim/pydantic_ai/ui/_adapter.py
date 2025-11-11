@@ -12,6 +12,7 @@ from typing import (
     Generic,
     Protocol,
     TypeVar,
+    overload,
     runtime_checkable,
 )
 
@@ -19,10 +20,10 @@ from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.agent.abstract import Instructions
+from pydantic_ai.agent.abstract import Instructions, RunOutputDataT
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import CustomEventDataT, ModelMessage
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.settings import ModelSettings
@@ -166,7 +167,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
     def transform_stream(
         self,
-        stream: AsyncIterator[NativeEvent],
+        stream: AsyncIterator[NativeEvent[OutputDataT]],
         on_complete: OnCompleteFunc[EventT] | None = None,
     ) -> AsyncIterator[EventT]:
         """Transform a stream of Pydantic AI events into protocol-specific events.
@@ -194,10 +195,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """
         return self.build_event_stream().streaming_response(stream)
 
+    @overload
     def run_stream_native(
         self,
         *,
-        output_type: OutputSpec[Any] | None = None,
+        output_type: None = None,
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
@@ -209,7 +211,42 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
-    ) -> AsyncIterator[NativeEvent]:
+    ) -> AsyncIterator[NativeEvent[OutputDataT, CustomEventDataT]]: ...
+
+    @overload
+    def run_stream_native(
+        self,
+        *,
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT],
+        message_history: Sequence[ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: Model | KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: UsageLimits | None = None,
+        usage: RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+    ) -> AsyncIterator[NativeEvent[RunOutputDataT, CustomEventDataT]]: ...
+
+    def run_stream_native(
+        self,
+        *,
+        output_type: OutputSpec[Any, CustomEventDataT] | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: Model | KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: UsageLimits | None = None,
+        usage: RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+    ) -> AsyncIterator[NativeEvent[Any, CustomEventDataT]]:
         """Run the agent with the protocol-specific run input and stream Pydantic AI events.
 
         Args:
@@ -265,7 +302,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     def run_stream(
         self,
         *,
-        output_type: OutputSpec[Any] | None = None,
+        output_type: OutputSpec[Any, Any] | None = None,
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
@@ -327,7 +364,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         model: Model | KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        output_type: OutputSpec[Any] | None = None,
+        output_type: OutputSpec[Any, Any] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
         usage: RunUsage | None = None,

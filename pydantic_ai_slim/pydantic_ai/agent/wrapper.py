@@ -11,6 +11,7 @@ from .. import (
     usage as _usage,
 )
 from ..builtin_tools import AbstractBuiltinTool
+from ..messages import CustomEventDataT
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun
 from ..settings import ModelSettings
@@ -24,13 +25,13 @@ from ..toolsets import AbstractToolset
 from .abstract import AbstractAgent, EventStreamHandler, Instructions, RunOutputDataT
 
 
-class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
+class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT, CustomEventDataT]):
     """Agent which wraps another agent.
 
     Does nothing on its own, used as a base class.
     """
 
-    def __init__(self, wrapped: AbstractAgent[AgentDepsT, OutputDataT]):
+    def __init__(self, wrapped: AbstractAgent[AgentDepsT, OutputDataT, CustomEventDataT]):
         self.wrapped = wrapped
 
     @property
@@ -50,11 +51,11 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         return self.wrapped.deps_type
 
     @property
-    def output_type(self) -> OutputSpec[OutputDataT]:
+    def output_type(self) -> OutputSpec[OutputDataT, CustomEventDataT]:
         return self.wrapped.output_type
 
     @property
-    def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+    def event_stream_handler(self) -> EventStreamHandler[AgentDepsT, CustomEventDataT] | None:
         return self.wrapped.event_stream_handler
 
     @property
@@ -91,7 +92,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -110,7 +111,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: OutputSpec[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT, CustomEventDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -225,7 +226,8 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
-        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        tools: Sequence[Tool[AgentDepsT, CustomEventDataT] | ToolFuncEither[AgentDepsT, ..., CustomEventDataT]]
+        | _utils.Unset = _utils.UNSET,
         instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.

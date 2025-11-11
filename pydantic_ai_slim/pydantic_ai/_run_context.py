@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from dataclasses import field
 from typing import TYPE_CHECKING, Generic
 
+from anyio.streams.memory import MemoryObjectSendStream
 from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
 
@@ -40,6 +41,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Messages exchanged in the conversation so far."""
     tracer: Tracer = field(default_factory=NoOpTracer)
     """The tracer to use for tracing the run."""
+    # TODO (DouweM): Generic param?
+    event_stream: MemoryObjectSendStream[_messages.CustomEvent] | None = None
+    """The event stream to use for handling custom events."""
     trace_include_content: bool = False
     """Whether to include the content of the messages in the trace."""
     instrumentation_version: int = DEFAULT_INSTRUMENTATION_VERSION

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Generic, Literal
 
@@ -11,7 +11,7 @@ from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
-from .messages import ToolCallPart
+from .messages import CustomEvent, Return, ToolCallPart
 from .tools import DeferredToolRequests, ObjectJsonSchema, RunContext, ToolDefinition
 
 __all__ = (
@@ -37,6 +37,9 @@ T_co = TypeVar('T_co', covariant=True)
 OutputDataT = TypeVar('OutputDataT', default=str, covariant=True)
 """Covariant type variable for the output data type of a run."""
 
+OutputCustomEventDataT = TypeVar('OutputCustomEventDataT', default=object, covariant=True)
+"""Covariant type variable for the data type of a custom event."""
+
 OutputMode = Literal['text', 'tool', 'native', 'prompted', 'tool_or_text', 'image', 'auto']
 """All output modes.
 
@@ -46,9 +49,25 @@ OutputMode = Literal['text', 'tool', 'native', 'prompted', 'tool_or_text', 'imag
 StructuredOutputMode = Literal['tool', 'native', 'prompted']
 """Output modes that can be used for structured output. Used by ModelProfile.default_structured_output_mode"""
 
+OutputFunction = TypeAliasType(
+    'OutputFunction',
+    Callable[..., AsyncIterator[Return[T_co] | CustomEvent[OutputCustomEventDataT]]]
+    | Callable[..., AsyncIterator[Return[T_co] | OutputCustomEventDataT]]
+    | Callable[..., Awaitable[T_co]]
+    | Callable[..., T_co],
+    type_params=(T_co, OutputCustomEventDataT),
+)
+"""Definition of an output function.
+
+You should not need to import or use this type directly.
+
+See [output docs](../output.md) for more information.
+"""
 
 OutputTypeOrFunction = TypeAliasType(
-    'OutputTypeOrFunction', type[T_co] | Callable[..., Awaitable[T_co] | T_co], type_params=(T_co,)
+    'OutputTypeOrFunction',
+    OutputFunction[T_co, OutputCustomEventDataT] | type[T_co],
+    type_params=(T_co, OutputCustomEventDataT),
 )
 """Definition of an output type or function.
 
@@ -60,8 +79,15 @@ See [output docs](../output.md) for more information.
 
 TextOutputFunc = TypeAliasType(
     'TextOutputFunc',
-    Callable[[RunContext, str], Awaitable[T_co] | T_co] | Callable[[str], Awaitable[T_co] | T_co],
-    type_params=(T_co,),
+    Callable[[RunContext, str], AsyncIterator[Return[T_co] | CustomEvent[OutputCustomEventDataT]]]
+    | Callable[[RunContext, str], AsyncIterator[Return[T_co] | OutputCustomEventDataT]]
+    | Callable[[RunContext, str], Awaitable[T_co]]
+    | Callable[[RunContext, str], T_co]
+    | Callable[[str], AsyncIterator[Return[T_co] | CustomEvent[OutputCustomEventDataT]]]
+    | Callable[[str], AsyncIterator[Return[T_co] | OutputCustomEventDataT]]
+    | Callable[[str], Awaitable[T_co]]
+    | Callable[[str], T_co],
+    type_params=(T_co, OutputCustomEventDataT),
 )
 """Definition of a function that will be called to process the model's plain text output. The function must take a single string argument.
 
@@ -72,7 +98,7 @@ See [text output docs](../output.md#text-output) for more information.
 
 
 @dataclass(init=False)
-class ToolOutput(Generic[OutputDataT]):
+class ToolOutput(Generic[OutputDataT, OutputCustomEventDataT]):
     """Marker class to use a tool for output and optionally customize the tool.
 
     Example:
@@ -105,7 +131,7 @@ class ToolOutput(Generic[OutputDataT]):
     ```
     """
 
-    output: OutputTypeOrFunction[OutputDataT]
+    output: OutputTypeOrFunction[OutputDataT, OutputCustomEventDataT]
     """An output type or function."""
     name: str | None
     """The name of the tool that will be passed to the model. If not specified and only one output is provided, `final_result` will be used. If multiple outputs are provided, the name of the output type or function will be added to the tool name."""
@@ -118,7 +144,7 @@ class ToolOutput(Generic[OutputDataT]):
 
     def __init__(
         self,
-        type_: OutputTypeOrFunction[OutputDataT],
+        type_: OutputTypeOrFunction[OutputDataT, OutputCustomEventDataT],
         *,
         name: str | None = None,
         description: str | None = None,
@@ -133,7 +159,7 @@ class ToolOutput(Generic[OutputDataT]):
 
 
 @dataclass(init=False)
-class NativeOutput(Generic[OutputDataT]):
+class NativeOutput(Generic[OutputDataT, OutputCustomEventDataT]):
     """Marker class to use the model's native structured outputs functionality for outputs and optionally customize the name and description.
 
     Example:
@@ -156,7 +182,10 @@ class NativeOutput(Generic[OutputDataT]):
     ```
     """
 
-    outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]]
+    outputs: (
+        OutputTypeOrFunction[OutputDataT, OutputCustomEventDataT]
+        | Sequence[OutputTypeOrFunction[OutputDataT, OutputCustomEventDataT]]
+    )
     """The output types or functions."""
     name: str | None
     """The name of the structured output that will be passed to the model. If not specified and only one output is provided, the name of the output type or function will be used."""
@@ -167,7 +196,8 @@ class NativeOutput(Generic[OutputDataT]):
 
     def __init__(
         self,
-        outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]],
+        outputs: OutputTypeOrFunction[OutputDataT, OutputCustomEventDataT]
+        | Sequence[OutputTypeOrFunction[OutputDataT, OutputCustomEventDataT]],
         *,
         name: str | None = None,
         description: str | None = None,
@@ -180,7 +210,7 @@ class NativeOutput(Generic[OutputDataT]):
 
 
 @dataclass(init=False)
-class PromptedOutput(Generic[OutputDataT]):
+class PromptedOutput(Generic[OutputDataT, OutputCustomEventDataT]):
     """Marker class to use a prompt to tell the model what to output and optionally customize the prompt.
 
     Example:
@@ -222,7 +252,10 @@ class PromptedOutput(Generic[OutputDataT]):
     ```
     """
 
-    outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]]
+    outputs: (
+        OutputTypeOrFunction[OutputDataT, OutputCustomEventDataT]
+        | Sequence[OutputTypeOrFunction[OutputDataT, OutputCustomEventDataT]]
+    )
     """The output types or functions."""
     name: str | None
     """The name of the structured output that will be passed to the model. If not specified and only one output is provided, the name of the output type or function will be used."""
@@ -236,7 +269,8 @@ class PromptedOutput(Generic[OutputDataT]):
 
     def __init__(
         self,
-        outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]],
+        outputs: OutputTypeOrFunction[OutputDataT, OutputCustomEventDataT]
+        | Sequence[OutputTypeOrFunction[OutputDataT, OutputCustomEventDataT]],
         *,
         name: str | None = None,
         description: str | None = None,
@@ -259,7 +293,7 @@ class OutputObjectDefinition:
 
 
 @dataclass
-class TextOutput(Generic[OutputDataT]):
+class TextOutput(Generic[OutputDataT, OutputCustomEventDataT]):
     """Marker class to use text output for an output function taking a string argument.
 
     Example:
@@ -281,7 +315,7 @@ class TextOutput(Generic[OutputDataT]):
     ```
     """
 
-    output_function: TextOutputFunc[OutputDataT]
+    output_function: TextOutputFunc[OutputDataT, OutputCustomEventDataT]
     """The function that will be called to process the model's plain text output. The function must take a single string argument."""
 
 
@@ -354,14 +388,18 @@ def StructuredDict(
 
 _OutputSpecItem = TypeAliasType(
     '_OutputSpecItem',
-    OutputTypeOrFunction[T_co] | ToolOutput[T_co] | NativeOutput[T_co] | PromptedOutput[T_co] | TextOutput[T_co],
-    type_params=(T_co,),
+    OutputTypeOrFunction[T_co, OutputCustomEventDataT]
+    | ToolOutput[T_co, OutputCustomEventDataT]
+    | NativeOutput[T_co, OutputCustomEventDataT]
+    | PromptedOutput[T_co, OutputCustomEventDataT]
+    | TextOutput[T_co, OutputCustomEventDataT],
+    type_params=(T_co, OutputCustomEventDataT),
 )
 
 OutputSpec = TypeAliasType(
     'OutputSpec',
-    _OutputSpecItem[T_co] | Sequence['OutputSpec[T_co]'],
-    type_params=(T_co,),
+    _OutputSpecItem[T_co, OutputCustomEventDataT] | Sequence['OutputSpec[T_co, OutputCustomEventDataT]'],
+    type_params=(T_co, OutputCustomEventDataT),
 )
 """Specification of the agent's output data.
 

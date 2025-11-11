@@ -3,17 +3,18 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import ConfigDict, Discriminator, with_config
-from temporalio.workflow import ActivityConfig
 from typing_extensions import assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
+from pydantic_ai.messages import Return, ToolReturn
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
-from ._run_context import TemporalRunContext
+if TYPE_CHECKING:
+    from ._agent import TemporalizeToolsetContext
 
 
 @dataclass
@@ -43,7 +44,7 @@ class _ModelRetry:
 
 @dataclass
 class _ToolReturn:
-    result: Any
+    result: ToolReturn[Any] | Any
     kind: Literal['tool_return'] = 'tool_return'
 
 
@@ -74,6 +75,9 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
     async def _wrap_call_tool_result(self, coro: Awaitable[Any]) -> CallToolResult:
         try:
             result = await coro
+            if type(result) is Return:
+                # We don't use `isinstance` because `ToolReturn` is a subclass of `Return` with additional fields, which should be returned in full.
+                result = result.return_value
             return _ToolReturn(result=result)
         except ApprovalRequired:
             return _ApprovalRequired()
@@ -96,33 +100,20 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
 
 
 def temporalize_toolset(
-    toolset: AbstractToolset[AgentDepsT],
-    activity_name_prefix: str,
-    activity_config: ActivityConfig,
-    tool_activity_config: dict[str, ActivityConfig | Literal[False]],
-    deps_type: type[AgentDepsT],
-    run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
+    toolset: AbstractToolset[AgentDepsT], context: TemporalizeToolsetContext[AgentDepsT]
 ) -> AbstractToolset[AgentDepsT]:
-    """Temporalize a toolset.
-
-    Args:
-        toolset: The toolset to temporalize.
-        activity_name_prefix: Prefix for Temporal activity names.
-        activity_config: The Temporal activity config to use.
-        tool_activity_config: The Temporal activity config to use for specific tools identified by tool name.
-        deps_type: The type of agent's dependencies object. It needs to be serializable using Pydantic's `TypeAdapter`.
-        run_context_type: The `TemporalRunContext` (sub)class that's used to serialize and deserialize the run context.
-    """
+    """Temporalize a toolset."""
     if isinstance(toolset, FunctionToolset):
         from ._function_toolset import TemporalFunctionToolset
 
         return TemporalFunctionToolset(
             toolset,
-            activity_name_prefix=activity_name_prefix,
-            activity_config=activity_config,
-            tool_activity_config=tool_activity_config,
-            deps_type=deps_type,
-            run_context_type=run_context_type,
+            activity_name_prefix=context.activity_name_prefix,
+            activity_config=context.activity_config,
+            tool_activity_config=context.tool_activity_config,
+            deps_type=context.deps_type,
+            run_context_type=context.run_context_type,
+            event_stream_handler=context.event_stream_handler,
         )
 
     try:
@@ -135,11 +126,11 @@ def temporalize_toolset(
         if isinstance(toolset, MCPServer):
             return TemporalMCPServer(
                 toolset,
-                activity_name_prefix=activity_name_prefix,
-                activity_config=activity_config,
-                tool_activity_config=tool_activity_config,
-                deps_type=deps_type,
-                run_context_type=run_context_type,
+                activity_name_prefix=context.activity_name_prefix,
+                activity_config=context.activity_config,
+                tool_activity_config=context.tool_activity_config,
+                deps_type=context.deps_type,
+                run_context_type=context.run_context_type,
             )
 
     return toolset

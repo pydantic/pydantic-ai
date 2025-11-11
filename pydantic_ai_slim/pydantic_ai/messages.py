@@ -7,13 +7,13 @@ from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, cast, overload
 
 import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
-from typing_extensions import deprecated
+from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -22,6 +22,9 @@ from .usage import RequestUsage
 
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
+
+CustomEventDataT = TypeVar('CustomEventDataT', default=object, covariant=True)
+"""Covariant type variable for the data type of a custom event."""
 
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
@@ -615,9 +618,20 @@ class BinaryImage(BinaryContent):
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
 UserContent: TypeAlias = str | MultiModalContent
 
+ReturnValueT = TypeVar('ReturnValueT', default=Any, covariant=True)
+
 
 @dataclass(repr=False)
-class ToolReturn:
+class Return(Generic[ReturnValueT]):
+    """TODO (DouweM): Docstring."""
+
+    return_value: ReturnValueT
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class ToolReturn(Return[ReturnValueT]):
     """A structured return value for tools that need to provide both a return value and custom content to the model.
 
     This class allows tools to return complex responses that include:
@@ -625,9 +639,6 @@ class ToolReturn:
     - Custom content (including multi-modal content) to be sent to the model as a UserPromptPart
     - Optional metadata for application use
     """
-
-    return_value: Any
-    """The return value to be used in the tool response."""
 
     _: KW_ONLY
 
@@ -1776,14 +1787,44 @@ class BuiltinToolResultEvent:
     """Event type identifier, used as a discriminator."""
 
 
-HandleResponseEvent = Annotated[
-    FunctionToolCallEvent
-    | FunctionToolResultEvent
-    | BuiltinToolCallEvent  # pyright: ignore[reportDeprecated]
-    | BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
-    pydantic.Discriminator('event_kind'),
-]
+@dataclass(repr=False)
+class CustomEvent(Generic[CustomEventDataT]):
+    """A custom event emitted during the execution of a tool or output function."""
+
+    data: CustomEventDataT = None  # pyright: ignore[reportAssignmentType]
+    """The data of the custom event."""
+
+    _: KW_ONLY
+
+    name: str | None = None
+    """The name of the custom event."""
+
+    tool_call_id: str | None = None
+    """The tool call ID, if any, that this event is associated with."""
+
+    event_kind: Literal['custom'] = 'custom'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+HandleResponseEvent = TypeAliasType(
+    'HandleResponseEvent',
+    Annotated[
+        FunctionToolCallEvent
+        | FunctionToolResultEvent
+        | CustomEvent[CustomEventDataT]
+        | BuiltinToolCallEvent  # pyright: ignore[reportDeprecated]
+        | BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+        pydantic.Discriminator('event_kind'),
+    ],
+    type_params=(CustomEventDataT,),
+)
 """An event yielded when handling a model response, indicating tool calls and results."""
 
-AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
+AgentStreamEvent = TypeAliasType(
+    'AgentStreamEvent',
+    Annotated[ModelResponseStreamEvent | HandleResponseEvent[CustomEventDataT], pydantic.Discriminator('event_kind')],
+    type_params=(CustomEventDataT,),
+)
 """An event in the agent stream: model response stream events and response-handling events."""

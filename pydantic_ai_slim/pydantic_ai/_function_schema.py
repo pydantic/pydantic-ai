@@ -6,7 +6,7 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from inspect import Parameter, signature
 from typing import TYPE_CHECKING, Any, Concatenate, cast, get_origin
 
@@ -19,9 +19,17 @@ from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, TypeIs, TypeVar
 
+from pydantic_ai.messages import CustomEvent, Return
+
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
-from ._utils import check_object_json_schema, is_async_callable, is_model_like, run_in_executor
+from ._utils import (
+    check_object_json_schema,
+    is_async_callable,
+    is_async_iterator_callable,
+    is_model_like,
+    run_in_executor,
+)
 
 if TYPE_CHECKING:
     from .tools import DocstringFormat, ObjectJsonSchema
@@ -41,13 +49,46 @@ class FunctionSchema:
     # if not None, the function takes a single by that name (besides potentially `info`)
     takes_ctx: bool
     is_async: bool
+    is_async_iterator: bool
     single_arg_name: str | None = None
     positional_fields: list[str] = field(default_factory=list)
     var_positional_field: str | None = None
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
-        if self.is_async:
+        if self.is_async_iterator:
+            return_value: Return | None = None
+            async for event_data in self.function(*args, **kwargs):
+                if return_value is not None:
+                    from .exceptions import UserError
+
+                    raise UserError('Return value must be the last value yielded by the function')
+
+                if isinstance(event_data, Return):
+                    return_value = cast(Return, event_data)
+                    continue
+
+                # If there's no event stream, we're being called from inside `agent.run_stream()` or `AgentStream.get_output()`,
+                # after event streaming has completed and final result streaming has begun, so there's nowhere to yield custom events to.
+                # We could consider storing the yielded events somewhere and letting them be accessed after the fact as a list.
+                if ctx.event_stream is not None:
+                    if isinstance(event_data, CustomEvent):
+                        # TODO (DouweM): Whgat if this is coming from a nested agent run?
+                        # Should rewrap! If there's a tool call ID?
+                        # But what if NativeOutput(output_func)? No tool call ID...
+                        # DeferredToolCalls etc wouldn't work either. Only support yielding output function with ToolOutput()?
+                        # Handoffs; think about custom event T transformer; HandoffEvent with agent_name?
+                        # CustomEvent with tool_call_id, nested deeply...
+                        # How to match tool_call_id to agent name? Through ToolCallPart.tool_name? Start handoff event with metadata?
+                        event = cast(CustomEvent, event_data)
+                        if ctx.tool_call_id:
+                            event = replace(event, tool_call_id=ctx.tool_call_id)
+                    else:
+                        event = CustomEvent(data=event_data, tool_call_id=ctx.tool_call_id)
+                    await ctx.event_stream.send(event)
+
+            return return_value
+        elif self.is_async:
             function = cast(Callable[[Any], Awaitable[str]], self.function)
             return await function(*args, **kwargs)
         else:
@@ -221,6 +262,7 @@ def function_schema(  # noqa: C901
         var_positional_field=var_positional_field,
         takes_ctx=takes_ctx,
         is_async=is_async_callable(function),
+        is_async_iterator=is_async_iterator_callable(function),
         function=function,
     )
 

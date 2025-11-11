@@ -25,6 +25,7 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
+    Return,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -1962,5 +1963,84 @@ async def test_adapter_load_messages():
                 ],
                 timestamp=IsDatetime(),
             ),
+        ]
+    )
+
+
+async def test_custom_events():
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {
+                0: DeltaToolCall(
+                    name='get_weather',
+                    json_args='{"city":',
+                    tool_call_id='get_weather_1',
+                )
+            }
+            yield {
+                0: DeltaToolCall(
+                    json_args='"Mexico City"}',
+                    tool_call_id='get_weather_1',
+                )
+            }
+        else:
+            yield 'The weather in Mexico City is sunny.'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> AsyncIterator[BaseChunk | Return[str]]:
+        yield DataChunk(type='data-progress', data='Getting weather...')
+        yield Return('sunny')
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='What is the weather in Mexico City?')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'get_weather_1', 'toolName': 'get_weather'},
+            {'type': 'tool-input-delta', 'toolCallId': 'get_weather_1', 'inputTextDelta': '{"city":'},
+            {'type': 'tool-input-delta', 'toolCallId': 'get_weather_1', 'inputTextDelta': '"Mexico City"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'get_weather_1',
+                'toolName': 'get_weather',
+                'input': '{"city":"Mexico City"}',
+            },
+            {'type': 'data-progress', 'data': 'Getting weather...'},
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'get_weather_1',
+                'output': 'sunny',
+            },
+            {'type': 'finish-step'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': '2ec4f1af-c0be-44a3-9d50-2244deb4716d'},
+            {
+                'type': 'text-delta',
+                'delta': 'The weather in Mexico City is sunny.',
+                'id': '2ec4f1af-c0be-44a3-9d50-2244deb4716d',
+            },
+            {'type': 'text-end', 'id': '2ec4f1af-c0be-44a3-9d50-2244deb4716d'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
         ]
     )
