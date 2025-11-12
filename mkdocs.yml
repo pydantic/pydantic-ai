@@ -24,7 +24,7 @@ nav:
           - message-history.md
           - direct.md
       - Models & Providers:
-          - Overview: models/gateway.md
+          - Overview: models/overview.md
           - models/openai.md
           - models/anthropic.md
           - models/google.md
@@ -63,7 +63,7 @@ nav:
           - Quick Start: evals/quick-start.md
           - Core Concepts: evals/core-concepts.md
       - Evaluators:
-          - Overview: evals/evaluators/gateway.md
+          - Overview: evals/evaluators/overview.md
           - Built-in Evaluators: evals/evaluators/built-in.md
           - LLM Judge: evals/evaluators/llm-judge.md
           - Custom Evaluators: evals/evaluators/custom.md
@@ -90,12 +90,12 @@ nav:
   - Integrations:
       - Debugging & Monitoring with Pydantic Logfire: logfire.md
       - Durable Execution:
-        - Overview: durable_execution/gateway.md
+        - Overview: durable_execution/overview.md
         - Temporal: durable_execution/temporal.md
         - DBOS: durable_execution/dbos.md
         - Prefect: durable_execution/prefect.md
       - UI Event Streams:
-        - Overview: ui/gateway.md
+        - Overview: ui/overview.md
         - AG-UI: ui/ag-ui.md
         - Vercel AI: ui/vercel-ai.md
       - Agent2Agent (A2A): a2a.md
