@@ -419,9 +419,7 @@ class BedrockConverseModel(Model):
                 model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
         except ClientError as e:
             status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode', 500)
-            raise ModelHTTPError(
-                status_code=status_code, model_name=self.model_name, body=e.response.get('Error')
-            ) from e
+            raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
         return model_response
 
     @staticmethod

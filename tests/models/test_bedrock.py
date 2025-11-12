@@ -1391,7 +1391,7 @@ async def test_bedrock_error(allow_model_requests: None, bedrock_provider: Bedro
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.model_name == model_id
-    assert exc_info.value.body == {'Message': 'The provided model identifier is invalid.', 'Code': '400'}
+    assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
 
 
 @pytest.mark.vcr()
@@ -1407,4 +1407,4 @@ async def test_bedrock_streaming_error(allow_model_requests: None, bedrock_provi
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.model_name == model_id
-    assert exc_info.value.body == {'Message': 'The provided model identifier is invalid.', 'Code': '400'}
+    assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
