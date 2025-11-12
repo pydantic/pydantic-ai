@@ -11,7 +11,7 @@ For questions and feedback, contact us on [Slack](https://logfire.pydantic.dev/d
 
 ## Documentation Integration
 
-To help you get started with [Pydantic AI Gateway](https://gateway.pydantic.dev), some code examples on the Pydantic AI documentation include a "Via Pydantic AI Gateway" tab, alongside a "Direct to Provider API" tab with the standard Pydantic AI model string.  The main difference between them is that when using Gateway, model strings use the `gateway/` prefix.
+To help you get started with [Pydantic AI Gateway](https://gateway.pydantic.dev), some code examples on the Pydantic AI documentation include a "Via Pydantic AI Gateway" tab, alongside a "Direct to Provider API" tab with the standard Pydantic AI model string. The main difference between them is that when using Gateway, model strings use the `gateway/` prefix.
 
 ## Key features
 - **API key management**: access multiple LLM providers with a single Gateway key.
