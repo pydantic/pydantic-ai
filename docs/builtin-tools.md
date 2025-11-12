@@ -590,7 +590,7 @@ The [`FileSearchTool`][pydantic_ai.builtin_tools.FileSearchTool] enables your ag
 
 #### OpenAI Responses
 
-With OpenAI, you need to first upload files to a vector store, then reference the vector store IDs when using the `FileSearchTool`:
+With OpenAI, you need to first [upload files to a vector store](https://platform.openai.com/docs/assistants/tools/file-search), then reference the vector store IDs when using the `FileSearchTool`:
 
 ```py {title="file_search_openai.py" test="skip"}
 from pydantic_ai import Agent, FileSearchTool
@@ -609,7 +609,7 @@ print(result.output)
 
 #### Google (Gemini)
 
-With Gemini, you need to first upload files via the Files API, then reference the file resource names:
+With Gemini, you need to first [create a file search store via the Files API](https://ai.google.dev/gemini-api/docs/files), then reference the file search store names:
 
 ```py {title="file_search_google.py" test="skip"}
 from pydantic_ai import Agent, FileSearchTool
@@ -624,35 +624,7 @@ print(result.output)
 #> The documents discuss the following key points: ...
 ```
 
-1. Replace `files/abc123` with your actual file resource name from the Gemini Files API.
-
-!!! note "Gemini File Search API Status"
-    The File Search Tool for Gemini was announced on November 6, 2025. The implementation may require adjustment as the official `google-genai` SDK is updated to fully support this feature.
-
-### Configuration
-
-The `FileSearchTool` accepts a list of vector store IDs:
-
-- **OpenAI**: Vector store IDs created via the [OpenAI Files API](https://platform.openai.com/docs/api-reference/files)
-- **Google**: File resource names from the [Gemini Files API](https://ai.google.dev/gemini-api/docs/files)
-
-```py {title="file_search_configured.py" test="skip"}
-from pydantic_ai import Agent, FileSearchTool
-
-agent = Agent(
-    'openai-responses:gpt-5',
-    builtin_tools=[
-        FileSearchTool(
-            vector_store_ids=['vs_store1', 'vs_store2']  # (1)
-        )
-    ]
-)
-
-result = agent.run_sync('Find information across all my document collections.')
-print(result.output)
-```
-
-1. You can provide multiple vector store IDs to search across different collections.
+1. Replace `files/abc123` with your actual file search store name from the Gemini Files API.
 
 ## API Reference
 
