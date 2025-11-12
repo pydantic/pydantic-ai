@@ -32,7 +32,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded
+from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, UsageLimitExceeded
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -132,6 +132,21 @@ async def test_bedrock_model_usage_limit_not_exceeded(
         "display all the letters.\n\nIs there something specific you'd like to know about this phrase, or were you "
         'perhaps testing something?'
     )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_count_tokens_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that errors convert to ModelHTTPError."""
+    model_id = 'us.does-not-exist-model-v1:0'
+    model = BedrockConverseModel(model_id, provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.model_name == model_id
+    assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
 
 
 @pytest.mark.parametrize(
