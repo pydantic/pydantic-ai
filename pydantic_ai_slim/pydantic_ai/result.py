@@ -543,10 +543,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     def run_id(self) -> str:
         """The unique identifier for the agent run."""
         if self._run_result is not None:
-            assert self._run_result.run_id is not None
             return self._run_result.run_id
         elif self._stream_response is not None:
-            assert self._stream_response.run_id is not None
             return self._stream_response.run_id
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
