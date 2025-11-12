@@ -312,15 +312,15 @@ plugins:
               - griffe_warnings_deprecated:
                   kind: warning
                   title: Deprecated
-          inventories:
-            - https://logfire.pydantic.dev/docs/objects.inv
-            - https://docs.python.org/3/objects.inv
-            - https://docs.pydantic.dev/latest/objects.inv
-            - https://dirty-equals.helpmanual.io/latest/objects.inv
-            - https://fastapi.tiangolo.com/objects.inv
-            - https://typing-extensions.readthedocs.io/en/latest/objects.inv
-            - https://rich.readthedocs.io/en/stable/objects.inv
-            - https://modelcontextprotocol.github.io/python-sdk/objects.inv
+          import:
+            - url: https://logfire.pydantic.dev/docs/objects.inv
+            - url: https://docs.python.org/3/objects.inv
+            - url: https://docs.pydantic.dev/latest/objects.inv
+            - url: https://dirty-equals.helpmanual.io/latest/objects.inv
+            - url: https://fastapi.tiangolo.com/objects.inv
+            - url: https://typing-extensions.readthedocs.io/en/latest/objects.inv
+            - url: https://rich.readthedocs.io/en/stable/objects.inv
+            - url: https://modelcontextprotocol.github.io/python-sdk/objects.inv
             # waiting for https://github.com/encode/httpx/discussions/3091#discussioncomment-11205594
   - llmstxt:
       enabled: !ENV [CI, false]
