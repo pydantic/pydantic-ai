@@ -54,6 +54,9 @@ nav:
       - Multi-Agent Patterns: multi-agent-applications.md
       - Testing: testing.md
 
+  - Pydantic AI Gateway:
+      - Overview: ai_gateway/overview.md
+
   - Pydantic Evals:
       - Overview: evals.md
       - Getting Started:
