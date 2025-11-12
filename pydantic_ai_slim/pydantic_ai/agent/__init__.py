@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import dataclasses
 import inspect
 import json
-import uuid
 import warnings
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
