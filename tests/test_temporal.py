@@ -718,6 +718,7 @@ async def test_complex_agent_run_in_workflow(
                                 )
                             ],
                         ),
+                        BasicSpan(content='running tool: output tool'),
                     ],
                 ),
                 BasicSpan(content='CompleteWorkflow:ComplexAgentWorkflow'),
