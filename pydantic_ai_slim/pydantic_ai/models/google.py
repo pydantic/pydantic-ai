@@ -267,7 +267,7 @@ class GoogleModel(Model):
             messages, model_settings, model_request_parameters
         )
 
-        # Annoyingly, the type of `GenerateContentConfigDict.get` is "partially `Unknown`" because `response_schema` includes `typing._UnionGenericAlias`,
+        # Annoyingly, the type of `GenerateContentConfigDict.get` is "partially `Unknown`" because `response_json_schema` includes `typing._UnionGenericAlias`,
         # so without this we'd need `pyright: ignore[reportUnknownMemberType]` on every line and wouldn't get type checking anyway.
         generation_config = cast(dict[str, Any], generation_config)
 
@@ -291,7 +291,7 @@ class GoogleModel(Model):
                     thinking_config=generation_config.get('thinking_config'),
                     media_resolution=generation_config.get('media_resolution'),
                     response_mime_type=generation_config.get('response_mime_type'),
-                    response_schema=generation_config.get('response_schema'),
+                    response_json_schema=generation_config.get('response_json_schema'),
                 ),
             )
 
@@ -455,7 +455,7 @@ class GoogleModel(Model):
             tools=cast(ToolListUnionDict, tools),
             tool_config=tool_config,
             response_mime_type=response_mime_type,
-            response_schema=response_schema,
+            response_json_schema=response_schema,
             response_modalities=modalities,
         )
         return contents, config
