@@ -553,6 +553,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         )
                                     ],
                                 ),
+                                BasicSpan(content='running tool: output tool'),
                             ],
                         )
                     ],
