@@ -1489,7 +1489,7 @@ class OpenAIResponsesModel(Model):
                                     responses.ResponseFileSearchToolCallParam,
                                     {
                                         'id': item.tool_call_id,
-                                        'action': args,
+                                        'queries': args.get('queries', []),
                                         'status': 'completed',
                                         'type': 'file_search_call',
                                     },
@@ -2266,20 +2266,19 @@ def _map_file_search_tool_call(
     item: responses.ResponseFileSearchToolCall,
     provider_name: str,
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
-    args: dict[str, Any] | None = None
+    args = {'queries': item.queries}
 
-    result = {
+    result: dict[str, Any] = {
         'status': item.status,
     }
-
-    if action := item.action:  # type: ignore[reportAttributeAccessIssue]
-        args = action.model_dump(mode='json')  # type: ignore[reportUnknownMemberType]
+    if item.results is not None:
+        result['results'] = [r.model_dump(mode='json') for r in item.results]
 
     return (
         BuiltinToolCallPart(
             tool_name=FileSearchTool.kind,
             tool_call_id=item.id,
-            args=args,  # type: ignore[reportUnknownArgumentType]
+            args=args,
             provider_name=provider_name,
         ),
         BuiltinToolReturnPart(
