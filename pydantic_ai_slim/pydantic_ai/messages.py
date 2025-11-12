@@ -970,11 +970,6 @@ class TextPart:
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    potential_opening_tag_buffer: Annotated[str, pydantic.Field(exclude=True)] = field(
-        compare=False, default='', repr=False
-    )
-    """A buffer to accumulate a potential opening tag (like '<thi')."""
-
     def has_content(self) -> bool:
         """Return `True` if the text content is non-empty."""
         return bool(self.content)
@@ -1013,9 +1008,6 @@ class ThinkingPart:
 
     part_kind: Literal['thinking'] = 'thinking'
     """Part type identifier, this is available on all parts as a discriminator."""
-
-    closing_tag_buffer: Annotated[str, pydantic.Field(exclude=True)] = field(compare=False, default='', repr=False)
-    """A buffer to accumulate a potential closing tag (like '</th')."""
 
     def has_content(self) -> bool:
         """Return `True` if the thinking content is non-empty."""

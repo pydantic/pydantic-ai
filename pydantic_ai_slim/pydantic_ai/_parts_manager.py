@@ -13,9 +13,11 @@ event-emitting logic.
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable, Generator, Hashable, Sequence
+from collections.abc import Generator, Hashable
 from dataclasses import dataclass, field, replace
 from typing import Any, Generic, Literal, TypeVar, cast
+
+from pydantic import BaseModel, model_validator
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
@@ -67,10 +69,101 @@ def suffix_prefix_overlap(s1: str, s2: str) -> int:
     return 0
 
 
-def is_empty_thinking(thinking_part: ThinkingPart, new_content: str, thinking_tags: ThinkingTags) -> bool:
-    _, closing_tag = thinking_tags
-    buffered_content = thinking_part.closing_tag_buffer + new_content
-    return buffered_content == closing_tag and thinking_part.content == ''
+class PartialThinkingTag(BaseModel, validate_assignment=True):
+    respective_tag: str
+    buffer: str = ''
+    previous_part_index: int | None = None
+
+    @model_validator(mode='after')
+    def validate_buffer(self) -> PartialThinkingTag:
+        if not self.respective_tag.startswith(self.buffer):
+            raise ValueError(f"Buffer '{self.buffer}' does not match the start of tag '{self.respective_tag}'")
+        return self
+
+    @property
+    def was_emitted(self) -> bool:
+        return self.previous_part_index is not None
+
+    @property
+    def expected_next(self) -> str:
+        return self.respective_tag[len(self.buffer) :]
+
+    @property
+    def is_complete(self) -> bool:
+        return self.buffer == self.respective_tag
+
+
+@dataclass
+class StartTagValidation:
+    flushed_buffer: str = ''
+    """Any buffered content that was flushed because the tag was invalid."""
+
+    thinking_content: str = ''
+    """Any content following the valid opening tag."""
+
+
+class PartialStartTag(PartialThinkingTag):
+    def validate_new_content(self, new_content: str) -> StartTagValidation:
+        combined = self.buffer + new_content
+        if combined.startswith(self.respective_tag):
+            # combined = '<think>content'
+            self.buffer = combined[: len(self.respective_tag)]  # -> complete the tag
+            thinking_content = combined[len(self.respective_tag) :]
+            return StartTagValidation(thinking_content=thinking_content)
+        elif self.respective_tag.startswith(combined):
+            # combined = '<thi'
+            self.buffer = combined
+            return StartTagValidation()
+        elif self.respective_tag.startswith(new_content):
+            # new_content = '<thi' or '<think>'
+            flushed_buffer = self.buffer
+            self.buffer = new_content  # -> may complete the tag
+            return StartTagValidation(flushed_buffer=flushed_buffer)
+        elif new_content.startswith(self.respective_tag):
+            # new_content = '<think>content'
+            flushed_buffer = self.buffer
+            self.buffer = new_content[: len(self.respective_tag)]  # -> complete the tag
+            thinking_content = new_content[len(self.respective_tag) :]
+            return StartTagValidation(flushed_buffer=flushed_buffer, thinking_content=thinking_content)
+        else:
+            self.buffer = ''
+            return StartTagValidation(flushed_buffer=combined)
+
+
+@dataclass
+class EndTagValidation:
+    content_before_closed: str = ''
+    """Any content before the tag was closed."""
+
+    content_after_closed: str = ''
+    """Any content remaining after the tag was closed."""
+
+
+class PartialEndTag(PartialThinkingTag):
+    def validate_new_content(self, new_content: str, trim_whitespace: bool = False) -> EndTagValidation:
+        if trim_whitespace:
+            # strings are passed by value, so the original string is not modified
+            new_content = new_content.lstrip()
+
+        if not new_content:
+            return EndTagValidation()
+        combined = self.buffer + new_content
+        if new_content.startswith(self.expected_next):
+            """check if the new_content completes the tag"""
+            tag_content = combined[: len(self.respective_tag)]
+            self.buffer = tag_content
+            content_after_closed = combined[len(self.respective_tag) :]
+            return EndTagValidation(content_after_closed=content_after_closed)
+        elif (overlap := suffix_prefix_overlap(combined, self.respective_tag)) > 0:
+            """check if the new content starts a partial closing tag"""
+            content_to_add = combined[:-overlap]
+            content_to_buffer = combined[-overlap:]
+            self.buffer = content_to_buffer
+            return EndTagValidation(content_before_closed=content_to_add)
+        else:
+            content_before_closed = combined
+            self.buffer = ''
+            return EndTagValidation(content_before_closed=content_before_closed)
 
 
 @dataclass
@@ -88,6 +181,9 @@ class ModelResponsePartsManager:
     Not all parts arrive with vendor part IDs, so the length of the tracker doesn't mirror the length of the _parts.
     `ThinkingPart`s that are created via the `handle_text_delta` will stop being tracked once their closing tag is seen.
     """
+
+    _partial_tags_list: list[PartialStartTag | PartialEndTag] = field(default_factory=list, init=False)
+    """A list of partial thinking tags being tracked."""
 
     def _append_and_track_new_part(self, part: ManagedPart, vendor_part_id: VendorId | None) -> int:
         """Append a new part to the manager and track it by vendor part ID if provided.
@@ -117,6 +213,52 @@ class ModelResponsePartsManager:
             return self._parts[part_index], part_index
         return None, None
 
+    def _get_partial_by_part_index(self, part_index: int) -> PartialStartTag | PartialEndTag | None:
+        """Get a partial thinking tag by its associated part index."""
+        for partial in self._partial_tags_list:
+            if partial.previous_part_index == part_index:
+                return partial
+        return None
+
+    def _append_partial_tag(self, partial_tag: PartialStartTag | PartialEndTag) -> None:
+        if partial_tag in self._partial_tags_list:
+            # rigurosity check for us, that we're only appending new partial tags
+            raise RuntimeError('Partial tag is already being tracked')
+        self._partial_tags_list.append(partial_tag)
+
+    def _emit_text_start(
+        self,
+        *,
+        content: str,
+        id: str | None = None,
+    ) -> PartStartEvent:
+        new_text_part = TextPart(content=content, id=id)
+        new_part_index = self._append_and_track_new_part(new_text_part, vendor_part_id=None)
+        return PartStartEvent(index=new_part_index, part=new_text_part)
+
+    def _emit_text_delta(
+        self,
+        *,
+        text_part: TextPart,
+        part_index: int,
+        content: str,
+    ) -> PartDeltaEvent:
+        part_delta = TextPartDelta(content_delta=content)
+        self._parts[part_index] = part_delta.apply(text_part)
+        return PartDeltaEvent(index=part_index, delta=part_delta)
+
+    def _emit_thinking_delta_from_text(
+        self,
+        *,
+        thinking_part: ThinkingPart,
+        part_index: int,
+        content: str,
+    ) -> PartDeltaEvent:
+        """Emit a ThinkingPartDelta from text content. Used only for embedded thinking."""
+        part_delta = ThinkingPartDelta(content_delta=content, signature_delta=None, provider_name=None)
+        self._parts[part_index] = part_delta.apply(thinking_part)
+        return PartDeltaEvent(index=part_index, delta=part_delta)
+
     def get_parts(self) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
 
@@ -133,7 +275,7 @@ class ModelResponsePartsManager:
         id: str | None = None,
         thinking_tags: ThinkingTags | None = None,
         ignore_leading_whitespace: bool = False,
-    ) -> Sequence[ModelResponseStreamEvent]:
+    ) -> Generator[ModelResponseStreamEvent, None, None]:
         """Handle incoming text content, creating or updating a TextPart in the manager as appropriate.
 
         This function also handles what we'll call "embedded thinking", which is the generation of
@@ -215,323 +357,235 @@ class ModelResponsePartsManager:
                 pass
 
         if existing_part is None:
-            # This is a workaround for models that emit `<think>\n</think>\n\n` or an empty text part ahead of tool calls (e.g. Ollama + Qwen3),
+            # Some models emit `<think>\n</think>\n\n` or an empty text part ahead of tool calls (e.g. Ollama + Qwen3),
             # which we don't want to end up treating as a final result when using `run_stream` with `str` a valid `output_type`.
-            if ignore_leading_whitespace and (len(content) == 0 or content.isspace()):
-                return []  # ReturnText 1 (RT1)
+            if ignore_leading_whitespace:
+                content = content.lstrip()
 
-        def handle_as_text_part() -> list[PartDeltaEvent | PartStartEvent]:
-            if existing_part and isinstance(existing_part.part, TextPart):
-                has_buffer = bool(existing_part.part.potential_opening_tag_buffer)
-                combined_buffer = existing_part.part.potential_opening_tag_buffer + content
-                existing_part.part.potential_opening_tag_buffer = ''
-
-                # Emit Delta if: part has content OR was created without buffering (already emitted Start)
-                # Emit Start if: part has no content AND was created with buffering (delayed emission)
-                if existing_part.part.content or not has_buffer:
-                    part_delta = TextPartDelta(content_delta=combined_buffer)
-                    self._parts[existing_part.index] = part_delta.apply(existing_part.part)
-                    return [PartDeltaEvent(index=existing_part.index, delta=part_delta)]
-                else:
-                    # This is the delayed emission case - part was created with a buffer, no content
-                    existing_part.part.content = combined_buffer
-                    self._parts[existing_part.index] = existing_part.part
-                    return [PartStartEvent(index=existing_part.index, part=existing_part.part)]
-            else:
-                new_text_part = TextPart(content=content, id=id)
-                new_part_index = self._append_and_track_new_part(new_text_part, vendor_part_id)
-                return [PartStartEvent(index=new_part_index, part=new_text_part)]
+        if not content:
+            return
 
         if thinking_tags:
+            opening_tag, closing_tag = thinking_tags
+
             # handle embedded thinking
-            if existing_part is not None and isinstance(existing_part.part, ThinkingPart):
-                if is_empty_thinking(
-                    existing_part.part, content, thinking_tags
-                ):  # pragma: no cover - don't have a test case for this yet
-                    # TODO discuss how to handle empty thinking
-                    #  this applies to non-empty, whitespace-only thinking as well
-                    #  -> for now we just untrack it
-                    self._stop_tracking_vendor_id(vendor_part_id)
-                    return []  # RT2
+            if existing_part is not None:
+                partial_tag = self._get_partial_by_part_index(existing_part.index)
+                if isinstance(existing_part.part, ThinkingPart):
+                    existing_part = cast(_ExistingPart[ThinkingPart], existing_part)
+                    if existing_part.found_by != 'vendor_part_id':
+                        # C4: we currently disallow updating ThinkingParts created via embedded thinking without a vendor_part_id
+                        raise RuntimeError('Updating of embedded ThinkingParts requires a vendor_part_id')
+                    if partial_tag is None:
+                        # we will always create a `PartialEndTag` ahead of a new `ThinkingPart`
+                        raise RuntimeError('Embedded ThinkingParts must have an associated PartialEndTag')
+                    if isinstance(partial_tag, PartialStartTag):
+                        raise RuntimeError('ThinkingPart cannot be associated with a PartialStartTag')
 
-                existing_part = cast(_ExistingPart[ThinkingPart], existing_part)
-                if existing_part.found_by == 'vendor_part_id':
-                    # if there's an existing thinking part found by vendor_part_id, handle it directly
-                    combined_buffer = existing_part.part.closing_tag_buffer + content
-                    existing_part.part.closing_tag_buffer = ''
+                    end_tag_validation = partial_tag.validate_new_content(content)
 
-                    closing_events = list(
-                        self._handle_text_with_thinking_closing(
+                    if end_tag_validation.content_before_closed:
+                        yield self._emit_thinking_delta_from_text(
                             thinking_part=existing_part.part,
                             part_index=existing_part.index,
-                            thinking_tags=thinking_tags,
-                            vendor_part_id=vendor_part_id,
-                            combined_buffer=combined_buffer,
+                            content=end_tag_validation.content_before_closed,
                         )
-                    )
-                    return closing_events  # RT3
-                else:
-                    # C4: Unhandled branch 1: if the latest part is a ThinkingPart without a vendor_part_id
-                    # it will be ignored and a new TextPart will be created instead
-                    pass
-            else:
-                if existing_part is not None and isinstance(existing_part.part, ThinkingPart):
-                    # Unhandled branch 2: extension of the above
-                    pass
-                else:
-                    text_part = cast(_ExistingPart[TextPart] | None, existing_part)
-                    # we discarded this is a ThinkingPart above
-                    events = list(
-                        self._handle_text_with_thinking_opening(
-                            existing_text_part=text_part,
-                            thinking_tags=thinking_tags,
-                            vendor_part_id=vendor_part_id,
-                            new_content=content,
-                            id=id,
-                            handle_invalid_opening_tag=handle_as_text_part,
-                        )
-                    )
-
-                    return events  # RT4
-
-        return handle_as_text_part()  # RT5
-
-    def _handle_text_with_thinking_closing(
-        self,
-        *,
-        thinking_part: ThinkingPart,
-        part_index: int,
-        thinking_tags: ThinkingTags,
-        vendor_part_id: VendorId,
-        combined_buffer: str,
-    ) -> Generator[PartStartEvent | PartDeltaEvent, None, None]:
-        """Handle text content that may contain a closing thinking tag."""
-        _, closing_tag = thinking_tags
-
-        if closing_tag in combined_buffer:
-            # covers '</think>', 'filling</think>' and 'filling</think>more filling' cases
-            before_closing, after_closing = combined_buffer.split(closing_tag, 1)
-            if before_closing:
-                yield self._emit_thinking_delta_from_text(  # ReturnClosing 1 (RC1)
-                    thinking_part=thinking_part,
-                    part_index=part_index,
-                    content=before_closing,
-                )
-
-            self._stop_tracking_vendor_id(vendor_part_id)
-
-            if after_closing:
-                new_text_part = TextPart(content=after_closing, id=None)
-                new_text_part_index = self._append_and_track_new_part(new_text_part, vendor_part_id)
-                yield PartStartEvent(index=new_text_part_index, part=new_text_part)
-
-        elif (overlap := suffix_prefix_overlap(combined_buffer, closing_tag)) > 0:
-            # handles split closing tag cases,
-            #   e.g. 1 'more</th' becomes PartDelta('more'); buffer = '</th'
-            #   e.g. 2 '</thfoo' becomes PartDelta('</thfoo'); buffer = ''
-            content_to_add = combined_buffer[:-overlap]
-            content_to_buffer = combined_buffer[-overlap:]
-
-            thinking_part.closing_tag_buffer = content_to_buffer
-
-            if content_to_add:
-                yield self._emit_thinking_delta_from_text(  # RC2
-                    thinking_part=thinking_part, part_index=part_index, content=content_to_add
-                )
-        else:
-            thinking_part.closing_tag_buffer = ''
-            yield self._emit_thinking_delta_from_text(
-                thinking_part=thinking_part, part_index=part_index, content=combined_buffer
-            )
-
-    def _emit_thinking_delta_from_text(
-        self,
-        *,
-        thinking_part: ThinkingPart,
-        part_index: int,
-        content: str,
-    ) -> PartDeltaEvent:
-        part_delta = ThinkingPartDelta(content_delta=content, signature_delta=None, provider_name=None)
-        self._parts[part_index] = part_delta.apply(thinking_part)
-        return PartDeltaEvent(index=part_index, delta=part_delta)
-
-    def _handle_text_with_thinking_opening(  # noqa: C901
-        self,
-        *,
-        existing_text_part: _ExistingPart[TextPart] | None,
-        thinking_tags: ThinkingTags,
-        vendor_part_id: VendorId | None,
-        new_content: str,
-        id: str | None = None,
-        handle_invalid_opening_tag: Callable[[], Sequence[PartStartEvent | PartDeltaEvent]],
-    ) -> Generator[PartStartEvent | PartDeltaEvent, None, None]:
-        opening_tag, closing_tag = thinking_tags
-
-        if opening_tag.startswith(new_content) or new_content.startswith(opening_tag):
-            # handle stutter e.g. 1: buffer = '<th'; new_content = '<think>content</think>'
-            # e.g. 2: buffer = '<th'; new_content = '<th'
-            if (
-                existing_text_part
-                and existing_text_part.part.potential_opening_tag_buffer
-                and existing_text_part.part.potential_opening_tag_buffer != opening_tag
-            ):
-                # if we have stuff in the buffer that is not a valid opening tag, we flush it as text
-                # that way the new_content (that also looks like an opening tag) can be processed independently
-                if existing_text_part.part.content:
-                    text_delta = TextPartDelta(content_delta=existing_text_part.part.potential_opening_tag_buffer)
-                    existing_text_part.part.potential_opening_tag_buffer = ''
-                    self._parts[existing_text_part.index] = text_delta.apply(existing_text_part.part)
-                    delta_event = PartDeltaEvent(index=existing_text_part.index, delta=text_delta)
-                    yield delta_event
-                else:
-                    existing_text_part.part.content = existing_text_part.part.potential_opening_tag_buffer
-                    existing_text_part.part.potential_opening_tag_buffer = ''
-                    part_start_event = PartStartEvent(
-                        index=existing_text_part.index,
-                        part=existing_text_part.part,
-                    )
-                    yield part_start_event
-
-        combined_buffer = (
-            existing_text_part.part.potential_opening_tag_buffer + new_content
-            if existing_text_part is not None
-            else new_content
-        )
-        # after we handle stutter we can safely combine the new content with any existing buffer
-
-        def _buffer_thinking() -> Sequence[PartStartEvent | PartDeltaEvent]:
-            if vendor_part_id is None:
-                # C4: can't buffer opening tags without a vendor_part_id
-                return handle_invalid_opening_tag()
-            if existing_text_part is not None:
-                existing_text_part.part.potential_opening_tag_buffer = combined_buffer
-                return []
-            else:
-                # EC1: create a new TextPart to hold the potential opening tag in the buffer
-                # we don't emit an event until we determine exactly what this part is
-                new_text_part = TextPart(content='', id=id, potential_opening_tag_buffer=combined_buffer)
-                self._append_and_track_new_part(new_text_part, vendor_part_id)
-                return []
-
-        if opening_tag in combined_buffer:
-            # covers cases like '<think>', 'content<think>' and 'pre<think>content'
-            if combined_buffer == opening_tag:
-                # this block covers the '<think>' case
-                # EC2: delayed thinking - we don't emit an event until there's content after the tag
-                yield from _buffer_thinking()  # RO1
-            elif combined_buffer.startswith(opening_tag):
-                # TODO this whole elif is very close to a duplicate of `_handle_text_with_thinking_closing`,
-                #   but we can't delegate because we're generating different events (starting ThinkingPart vs updating it)
-                #   and there's no easy abstraction that comes to mind, so I'll leave it as is for now.
-                after_opening = combined_buffer[len(opening_tag) :]
-                # this block handles the cases:
-                #   1. where the content might close the thinking tag in the same chunk
-                #   2. where the content ends with a partial closing tag: '</th' or '</thi'
-                #   3. where the start opens with content without a hint of closing: '<think>content'
-                if closing_tag in after_opening:
-                    before_closing, after_closing = after_opening.split(closing_tag, 1)
-                    if not before_closing:
-                        # 1.a. '<think></think>more content'
-                        yield from handle_invalid_opening_tag()  # RO2
+                    if not partial_tag.is_complete:
                         return
-
-                    yield from self._emit_thinking_start_from_text(
-                        existing_part=existing_text_part,
-                        content=before_closing,
-                        vendor_part_id=vendor_part_id,
-                    )
-                    if after_closing:
-                        # 1.b. '<think>content</think>more content'
-                        # NOTE follows constraint C3.1: anything after the closing tag is treated as text
-                        new_text_part = TextPart(content=after_closing, id=None)
-                        new_text_part_index = self._append_and_track_new_part(new_text_part, vendor_part_id)
-                        yield PartStartEvent(index=new_text_part_index, part=new_text_part)
                     else:
-                        # 1.c. '<think>content</think>'
-                        # if there was no content after closing, the thinking tag closed cleanly
                         self._stop_tracking_vendor_id(vendor_part_id)
+                        self._partial_tags_list.remove(partial_tag)
 
-                    return  # RO3
-                elif (overlap := suffix_prefix_overlap(after_opening, closing_tag)) > 0:
-                    # handles case 2.a. and 2.b.
-                    before_closing = after_opening[:-overlap]
-                    closing_buffer = after_opening[-overlap:]
-                    if not before_closing:
-                        # 2.a. content = '<think></th'
-                        # NOTE: we're not covering the case where this is indeed a valid thinking part
-                        # like: '<think></th' + 'eres a snake in my boot</think>'
-                        yield from handle_invalid_opening_tag()  # RO4
+                        if end_tag_validation.content_after_closed:
+                            yield self._emit_text_start(
+                                content=end_tag_validation.content_after_closed,
+                                id=None,  # TODO should we reuse the id here?
+                            )
                         return
-
-                    # 2.b. content = '<think>content</th'
-                    yield from self._emit_thinking_start_from_text(  # RO5
-                        existing_part=existing_text_part,
-                        content=before_closing,
-                        vendor_part_id=vendor_part_id,
-                        closing_buffer=closing_buffer,
-                    )
+                    return  # this closes `if isinstance(existing_part.part, ThinkingPart):`
                 else:
-                    # 3.: '<think>content'
-                    yield from self._emit_thinking_start_from_text(  # RO6
-                        existing_part=existing_text_part,
-                        content=after_opening,
-                        vendor_part_id=vendor_part_id,
-                    )
-            else:
-                # constraint C2: we don't allow text before opening tags like 'pre<think>content'
-                yield from handle_invalid_opening_tag()  # RO7
-        elif combined_buffer in opening_tag:
-            # here we handle cases like '<thi', 'hink', and 'nk>'
-            if opening_tag.startswith(combined_buffer):
-                yield from _buffer_thinking()  # RO8
-            else:
-                # not a valid opening tag, flush the buffer as text
-                yield from handle_invalid_opening_tag()  # RO9
-        else:
-            # not a valid opening tag, flush the buffer as text
-            yield from handle_invalid_opening_tag()  # RO10
+                    existing_part = cast(_ExistingPart[TextPart], existing_part)
 
-    def _emit_thinking_start_from_text(
+                    if isinstance(partial_tag, PartialEndTag):
+                        # a TextPart will only be associated with a PartialEndTag when a PartialStartTag was completed without content
+                        end_tag_validation = partial_tag.validate_new_content(
+                            content, trim_whitespace=ignore_leading_whitespace
+                        )
+                        if end_tag_validation.content_before_closed:
+                            # there's content for a ThinkingPart, so we emit one
+                            new_thinking_part = ThinkingPart(content=end_tag_validation.content_before_closed)
+                            new_part_index = self._append_and_track_new_part(new_thinking_part, vendor_part_id)
+                            partial_tag.previous_part_index = new_part_index
+                            yield PartStartEvent(index=new_part_index, part=new_thinking_part)
+                        else:
+                            # there are two cases here:
+                            # 1. new_content is a partial closing a it got buffered
+                            # 2. new_content closes a thinking tag with no content -> empty thinking
+                            if partial_tag.is_complete:
+                                self._partial_tags_list.remove(partial_tag)
+                    else:
+                        if partial_tag is None:
+                            # no partial tag exists yet - create one for the start tag
+                            partial_tag = PartialStartTag(
+                                respective_tag=opening_tag,
+                                previous_part_index=existing_part.index,
+                            )
+                            self._append_partial_tag(partial_tag)
+
+                        start_tag_validation = partial_tag.validate_new_content(content)
+
+                        if start_tag_validation.flushed_buffer:
+                            yield self._emit_text_delta(
+                                text_part=existing_part.part,
+                                part_index=existing_part.index,
+                                content=start_tag_validation.flushed_buffer,
+                            )
+
+                        if not partial_tag.is_complete:
+                            return
+                        else:
+                            # completed a start tag - we now expect a closing tag
+                            self._partial_tags_list.remove(partial_tag)
+                            yield from self._handle_new_partial_end_tag(
+                                closing_tag=closing_tag,
+                                preceeding_partial_start_tag=partial_tag,
+                                start_tag_validation=start_tag_validation,
+                                vendor_part_id=vendor_part_id,
+                                ignore_leading_whitespace=ignore_leading_whitespace,
+                            )
+                    return
+                return  # this closes `if existing_part is not None:`
+            else:
+                existing_partial_tag = self._partial_tags_list[-1] if self._partial_tags_list else None
+                if existing_partial_tag is None:
+                    partial_tag = PartialStartTag(respective_tag=opening_tag)
+                    self._append_partial_tag(partial_tag)
+                    start_tag_validation = partial_tag.validate_new_content(content)
+
+                    if start_tag_validation.flushed_buffer:
+                        text_start_event = self._emit_text_start(
+                            content=start_tag_validation.flushed_buffer,
+                            id=id,
+                        )
+                        partial_tag.previous_part_index = text_start_event.index
+                        yield text_start_event
+                    else:
+                        if not partial_tag.is_complete:
+                            return
+                        else:
+                            # completed a start tag
+                            self._partial_tags_list.remove(partial_tag)
+                            yield from self._handle_new_partial_end_tag(
+                                closing_tag=closing_tag,
+                                preceeding_partial_start_tag=partial_tag,
+                                start_tag_validation=start_tag_validation,
+                                vendor_part_id=vendor_part_id,
+                                ignore_leading_whitespace=ignore_leading_whitespace,
+                            )
+                elif isinstance(existing_partial_tag, PartialStartTag):
+                    start_tag_validation = existing_partial_tag.validate_new_content(content)
+
+                    if start_tag_validation.flushed_buffer:
+                        new_text_part = TextPart(content=start_tag_validation.flushed_buffer, id=id)
+                        new_part_index = self._append_and_track_new_part(new_text_part, vendor_part_id)
+                        existing_partial_tag.previous_part_index = new_part_index
+                        yield self._emit_text_delta(
+                            text_part=new_text_part,
+                            part_index=new_part_index,
+                            content=start_tag_validation.flushed_buffer,
+                        )
+                    if not existing_partial_tag.is_complete:
+                        return
+                    else:
+                        # completed a start tag
+                        self._partial_tags_list.remove(existing_partial_tag)
+                        yield from self._handle_new_partial_end_tag(
+                            closing_tag=closing_tag,
+                            preceeding_partial_start_tag=existing_partial_tag,
+                            start_tag_validation=start_tag_validation,
+                            vendor_part_id=vendor_part_id,
+                            ignore_leading_whitespace=ignore_leading_whitespace,
+                        )
+                else:
+                    # existing_partial_tag is a PartialEndTag - this should only happen when a start tag was completed without content
+                    end_tag_validation = existing_partial_tag.validate_new_content(
+                        content, trim_whitespace=ignore_leading_whitespace
+                    )
+                    if end_tag_validation.content_before_closed:
+                        # there's content for a ThinkingPart, so we emit one
+                        new_thinking_part = ThinkingPart(content=end_tag_validation.content_before_closed)
+                        new_part_index = self._append_and_track_new_part(new_thinking_part, vendor_part_id)
+                        existing_partial_tag.previous_part_index = new_part_index
+                        yield PartStartEvent(index=new_part_index, part=new_thinking_part)
+
+                    if existing_partial_tag.is_complete:
+                        self._partial_tags_list.remove(existing_partial_tag)
+                        if end_tag_validation.content_after_closed:
+                            yield self._emit_text_start(
+                                content=end_tag_validation.content_after_closed,
+                                id=None,  # TODO should we reuse the id here?
+                            )
+                    return
+                return
+            return  # this closes `if thinking_tags:`
+
+        # no embedded thinking - handle as normal text part
+        if existing_part and isinstance(existing_part.part, TextPart):
+            existing_part = cast(_ExistingPart[TextPart], existing_part)
+            part_delta = TextPartDelta(content_delta=content)
+            self._parts[existing_part.index] = part_delta.apply(existing_part.part)
+            yield PartDeltaEvent(index=existing_part.index, delta=part_delta)
+
+        else:
+            new_text_part = TextPart(content=content, id=id)
+            new_part_index = self._append_and_track_new_part(new_text_part, vendor_part_id)
+            yield PartStartEvent(index=new_part_index, part=new_text_part)
+
+    def _handle_new_partial_end_tag(
         self,
         *,
-        existing_part: _ExistingPart[TextPart] | None,
-        content: str,
-        vendor_part_id: VendorId | None,
-        closing_buffer: str = '',
-    ) -> list[PartStartEvent | PartDeltaEvent]:
-        """Emit a ThinkingPart start event from text content.
+        closing_tag: str,
+        preceeding_partial_start_tag: PartialStartTag,
+        start_tag_validation: StartTagValidation,
+        vendor_part_id: VendorId,
+        ignore_leading_whitespace: bool,
+    ):
+        """Handle a new PartialEndTag following a completed PartialStartTag.
 
-        If `previous_part` is provided and its content is empty, the ThinkingPart
-        will replace that part in the parts list.
-
-        Otherwise, a new ThinkingPart will be appended and the tracked vendor_part_id will be overwritten to point to the new part index.
+        We call this function even if there's no content after the start tag.
+        That was we ensure we have a related PartialEndTag to track the closing of the new ThinkingPart.
         """
-        # There is no existing thinking part that should be updated, so create a new one
-        events: list[PartStartEvent | PartDeltaEvent] = []
-
-        thinking_part = ThinkingPart(content=content, closing_tag_buffer=closing_buffer)
-
-        if existing_part is not None and existing_part.part.content:
-            new_part_index = self._append_and_track_new_part(thinking_part, vendor_part_id)
-            if (
-                existing_part.part.potential_opening_tag_buffer
-            ):  # pragma: no cover - this can't happen by the current logic so it's more of a safeguard
-                raise RuntimeError(
-                    'The buffer of an existing TextPart should have been flushed before creating a ThinkingPart'
-                )
-        elif existing_part is not None and not existing_part.part.content:
-            # C2: we probably used an empty TextPart (that emitted no event) for buffering
-            # so instead of appending a new part, we replace that one
-            new_part_index = existing_part.index
-            self._parts[new_part_index] = thinking_part
+        partial_end_tag = PartialEndTag(
+            respective_tag=closing_tag,
+            previous_part_index=preceeding_partial_start_tag.previous_part_index,
+        )
+        self._append_partial_tag(partial_end_tag)
+        end_tag_validation = partial_end_tag.validate_new_content(
+            start_tag_validation.thinking_content,
+            trim_whitespace=ignore_leading_whitespace,
+        )
+        if not end_tag_validation.content_before_closed:
+            # there's no content for a ThinkingPart, so it's either buffering a closing tag or empty thinking
+            if partial_end_tag.is_complete:
+                # is an empty thinking part
+                self._partial_tags_list.remove(partial_end_tag)
+            # in both cases we return without emitting an event
+            return
         else:
-            new_part_index = self._append_and_track_new_part(thinking_part, vendor_part_id)
-
-        if vendor_part_id is not None:
-            self._vendor_id_to_part_index[vendor_part_id] = new_part_index
-
-        events.append(PartStartEvent(index=new_part_index, part=thinking_part))
-        return events
+            # there's content for a ThinkingPart, so we emit one
+            new_thinking_part = ThinkingPart(content=end_tag_validation.content_before_closed)
+            new_part_index = self._append_and_track_new_part(new_thinking_part, vendor_part_id)
+            partial_end_tag.previous_part_index = new_part_index
+            yield PartStartEvent(index=new_part_index, part=new_thinking_part)
+            if partial_end_tag.is_complete:
+                self._stop_tracking_vendor_id(vendor_part_id)
+                self._partial_tags_list.remove(partial_end_tag)
+                if end_tag_validation.content_after_closed:
+                    yield self._emit_text_start(
+                        content=end_tag_validation.content_after_closed,
+                        id=None,  # TODO should we reuse the id here?
+                    )
+            return
 
     def final_flush(self) -> Generator[ModelResponseStreamEvent, None, None]:
         """Emit any buffered content from the last part in the manager.
@@ -540,21 +594,35 @@ class ModelResponsePartsManager:
         to ensure any buffered content is flushed when the stream ends.
         """
         # finalize only flushes the buffered content of the last part
-        if len(self._parts) == 0:
+        last_part_index = len(self._parts) - 1
+        if last_part_index == -1:
             return
 
-        part = self._parts[-1]
+        part = self._parts[last_part_index]
+        partial_tag = self._get_partial_by_part_index(last_part_index)
 
-        if isinstance(part, TextPart) and part.potential_opening_tag_buffer:
+        if isinstance(part, TextPart) and partial_tag is not None:
             # Flush any buffered potential opening tag as text
-            buffered_content = part.potential_opening_tag_buffer
-            part.potential_opening_tag_buffer = ''
+            buffered_content = partial_tag.buffer
+            partial_tag.buffer = ''
 
-            last_part_index = len(self._parts) - 1
             if part.content:
                 text_delta = TextPartDelta(content_delta=buffered_content)
                 self._parts[last_part_index] = text_delta.apply(part)
                 yield PartDeltaEvent(index=last_part_index, delta=text_delta)
+            else:
+                updated_part = replace(part, content=buffered_content)
+                self._parts[last_part_index] = updated_part
+                yield PartStartEvent(index=last_part_index, part=updated_part)
+        elif isinstance(part, ThinkingPart) and partial_tag is not None:
+            # Flush any buffered closing tag content as thinking
+            buffered_content = partial_tag.buffer
+            partial_tag.buffer = ''
+
+            if part.content:
+                thinking_delta = ThinkingPartDelta(content_delta=buffered_content, provider_name=part.provider_name)
+                self._parts[last_part_index] = thinking_delta.apply(part)
+                yield PartDeltaEvent(index=last_part_index, delta=thinking_delta)
             else:
                 updated_part = replace(part, content=buffered_content)
                 self._parts[last_part_index] = updated_part
@@ -601,11 +669,11 @@ class ModelResponsePartsManager:
                     existing_thinking_part_and_index = latest_part, part_index
         else:
             # Otherwise, attempt to look up an existing ThinkingPart by vendor_part_id
-            maybe_part, part_index = self._get_part_and_index_by_vendor_id(vendor_part_id)
+            existing_part, part_index = self._get_part_and_index_by_vendor_id(vendor_part_id)
             if part_index is not None:
-                if not isinstance(maybe_part, ThinkingPart):
-                    raise UnexpectedModelBehavior(f'Cannot apply a thinking delta to {maybe_part=}')
-                existing_thinking_part_and_index = maybe_part, part_index
+                if not isinstance(existing_part, ThinkingPart):
+                    raise UnexpectedModelBehavior(f'Cannot apply a thinking delta to {existing_part=}')
+                existing_thinking_part_and_index = existing_part, part_index
 
         if existing_thinking_part_and_index is None:
             if content is not None or signature is not None:
@@ -675,11 +743,11 @@ class ModelResponsePartsManager:
                     existing_matching_part_and_index = latest_part, part_index
         else:
             # vendor_part_id is provided, so look up the corresponding part or delta
-            maybe_part, part_index = self._get_part_and_index_by_vendor_id(vendor_part_id)
+            existing_part, part_index = self._get_part_and_index_by_vendor_id(vendor_part_id)
             if part_index is not None:
-                if not isinstance(maybe_part, ToolCallPartDelta | ToolCallPart | BuiltinToolCallPart):
-                    raise UnexpectedModelBehavior(f'Cannot apply a tool call delta to {maybe_part=}')
-                existing_matching_part_and_index = maybe_part, part_index
+                if not isinstance(existing_part, ToolCallPartDelta | ToolCallPart | BuiltinToolCallPart):
+                    raise UnexpectedModelBehavior(f'Cannot apply a tool call delta to {existing_part=}')
+                existing_matching_part_and_index = existing_part, part_index
 
         if existing_matching_part_and_index is None:
             # No matching part/delta was found, so create a new ToolCallPartDelta (or ToolCallPart if fully formed)
