@@ -343,7 +343,7 @@ class GoogleModel(Model):
                 elif isinstance(tool, CodeExecutionTool):
                     tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
                 elif isinstance(tool, FileSearchTool):
-                    tools.append(ToolDict(file_search={'file_names': tool.vector_store_ids}))  # type: ignore[reportGeneralTypeIssues]
+                    tools.append(ToolDict(file_search={'file_search_store_names': tool.vector_store_ids}))  # type: ignore[reportGeneralTypeIssues]
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                     if not self.profile.supports_image_output:
                         raise UserError(
