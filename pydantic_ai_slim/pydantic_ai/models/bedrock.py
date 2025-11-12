@@ -22,7 +22,6 @@ from pydantic_ai import (
     DocumentUrl,
     FinishReason,
     ImageUrl,
-    ModelHTTPError,
     ModelMessage,
     ModelProfileSpec,
     ModelRequest,

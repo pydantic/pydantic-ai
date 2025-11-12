@@ -14,7 +14,6 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
-    ModelHTTPError,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
