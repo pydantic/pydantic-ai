@@ -63,7 +63,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             content='What is the capital of France?',
                             timestamp=datetime.datetime(...),
                         )
-                    ]
+                    ],
+                    run_id='...',
                 )
             ),
             CallToolsNode(
@@ -72,6 +73,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     usage=RequestUsage(input_tokens=56, output_tokens=7),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
+                    run_id='...',
                 )
             ),
             End(data=FinalResult(output='The capital of France is Paris.')),
@@ -240,7 +242,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                                     content='What is the capital of France?',
                                     timestamp=datetime.datetime(...),
                                 )
-                            ]
+                            ],
+                            run_id='...',
                         )
                     ),
                     CallToolsNode(
@@ -249,6 +252,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             usage=RequestUsage(input_tokens=56, output_tokens=7),
                             model_name='gpt-4o',
                             timestamp=datetime.datetime(...),
+                            run_id='...',
                         )
                     ),
                     End(data=FinalResult(output='The capital of France is Paris.')),
@@ -278,6 +282,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def usage(self) -> _usage.RunUsage:
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
         return self._graph_run.state.usage
+
+    @property
+    def run_id(self) -> str:
+        """The unique identifier for the agent run."""
+        return self._graph_run.state.run_id
 
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output
@@ -412,6 +421,11 @@ class AgentRunResult(Generic[OutputDataT]):
     def timestamp(self) -> datetime:
         """Return the timestamp of last response."""
         return self.response.timestamp
+
+    @property
+    def run_id(self) -> str:
+        """The unique identifier for the agent run."""
+        return self._state.run_id
 
 
 @dataclasses.dataclass(repr=False)

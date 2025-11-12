@@ -170,6 +170,7 @@ async def test_simple_completion(allow_model_requests: None, huggingface_api_key
             provider_name='huggingface',
             provider_details={'finish_reason': 'stop'},
             provider_response_id='chatcmpl-d445c0d473a84791af2acf356cc00df7',
+            run_id=IsStr(),
         )
     )
 
@@ -239,6 +240,7 @@ async def test_request_structured_response(
             provider_name='huggingface',
             provider_details={'finish_reason': 'stop'},
             provider_response_id='123',
+            run_id=IsStr(),
         )
     )
 
@@ -357,7 +359,8 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[
                     SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -373,6 +376,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_name='huggingface',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -382,7 +386,8 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -398,6 +403,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_name='huggingface',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -407,7 +413,8 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -416,6 +423,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_name='huggingface',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -630,7 +638,8 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                         ],
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello! How can I assist you with this image of a potato?')],
@@ -640,6 +649,7 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                 provider_name='huggingface',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-49aa100effab4ca28514d5ccc00d7944',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -699,6 +709,7 @@ async def test_hf_model_instructions(allow_model_requests: None, huggingface_api
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Paris')],
@@ -708,6 +719,7 @@ async def test_hf_model_instructions(allow_model_requests: None, huggingface_api
                 provider_name='huggingface',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-b3936940372c481b8d886e596dc75524',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -793,7 +805,10 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
     assert result.output == 'final-response'
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content='invalid-response')],
                 model_name='hf-model',
@@ -801,6 +816,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                 provider_name='huggingface',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -810,7 +826,8 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final-response')],
@@ -819,6 +836,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                 provider_name='huggingface',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -905,7 +923,10 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     IsInstance(ThinkingPart),
@@ -917,6 +938,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 provider_name='huggingface',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -936,7 +958,8 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -949,6 +972,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 provider_name='huggingface',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-35fdec1307634f94a39f7e26f52e12a7',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -975,7 +999,8 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -987,6 +1012,7 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
                 provider_name='huggingface',
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-357f347a3f5d4897b36a128fb4e4cf7b',
+                run_id=IsStr(),
             ),
         ]
     )

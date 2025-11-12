@@ -559,7 +559,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
                                 # For backwards compatibility, append a new ModelRequest using the tool returns and retries
                                 if parts:
-                                    messages.append(_messages.ModelRequest(parts))
+                                    messages.append(_messages.ModelRequest(parts, run_id=graph_ctx.state.run_id))
 
                                 await agent_run.next(_agent_graph.SetFinalResult(final_result))
 
@@ -1003,7 +1003,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 content='What is the capital of France?',
                                 timestamp=datetime.datetime(...),
                             )
-                        ]
+                        ],
+                        run_id='...',
                     )
                 ),
                 CallToolsNode(
@@ -1012,6 +1013,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         usage=RequestUsage(input_tokens=56, output_tokens=7),
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
+                        run_id='...',
                     )
                 ),
                 End(data=FinalResult(output='The capital of France is Paris.')),
