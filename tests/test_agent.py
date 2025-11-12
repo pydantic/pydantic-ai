@@ -3897,13 +3897,11 @@ def test_tool_return_part_binary_content_serialization():
 
     assert tool_return.model_response_object() == snapshot(
         {
-            'return_value': {
-                'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzgAAAAASUVORK5CYII=',
-                'media_type': 'image/png',
-                'vendor_metadata': None,
-                '_identifier': None,
-                'kind': 'binary',
-            }
+            'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzgAAAAASUVORK5CYII=',
+            'media_type': 'image/png',
+            'vendor_metadata': None,
+            '_identifier': None,
+            'kind': 'binary',
         }
     )
 
