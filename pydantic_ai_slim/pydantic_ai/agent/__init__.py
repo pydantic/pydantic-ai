@@ -575,7 +575,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             retries=0,
             run_step=0,
-            run_id=str(uuid.uuid4()),
         )
 
         # Merge model settings in order of precedence: run > agent > model
