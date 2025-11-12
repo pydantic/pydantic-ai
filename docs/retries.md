@@ -339,3 +339,17 @@ agent = Agent(model)
 - Use async transports for better concurrency when handling multiple requests
 
 For more advanced retry configurations, refer to the [tenacity documentation](https://tenacity.readthedocs.io/).
+
+## Provider-Specific Retry Behavior
+
+### AWS Bedrock
+
+The AWS Bedrock provider uses boto3's built-in retry mechanisms instead of httpx. To configure retries for Bedrock, use boto3's `Config`:
+
+```python
+from botocore.config import Config
+
+config = Config(retries={'max_attempts': 5, 'mode': 'adaptive'})
+```
+
+See [Bedrock: Configuring Retries](models/bedrock.md#configuring-retries) for complete examples.

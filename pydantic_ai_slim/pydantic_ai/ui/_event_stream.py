@@ -404,7 +404,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         Override this to inject custom events at the start of the request.
         """
-        return
+        return  # pragma: lax no cover
         yield  # Make this an async generator
 
     async def after_request(self) -> AsyncIterator[EventT]:
@@ -412,7 +412,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         Override this to inject custom events at the end of the request.
         """
-        return
+        return  # pragma: lax no cover
         yield  # Make this an async generator
 
     async def before_response(self) -> AsyncIterator[EventT]:
@@ -420,7 +420,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         Override this to inject custom events at the start of the response.
         """
-        return
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def after_response(self) -> AsyncIterator[EventT]:
@@ -428,7 +428,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         Override this to inject custom events at the end of the response.
         """
-        return
+        return  # pragma: lax no cover
         yield  # Make this an async generator
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[EventT]:

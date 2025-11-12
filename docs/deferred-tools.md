@@ -143,15 +143,15 @@ print(result.all_messages())
     ModelRequest(
         parts=[
             ToolReturnPart(
-                tool_name='delete_file',
-                content='Deleting files is not allowed',
-                tool_call_id='delete_file',
-                timestamp=datetime.datetime(...),
-            ),
-            ToolReturnPart(
                 tool_name='update_file',
                 content="File '.env' updated: ''",
                 tool_call_id='update_file_dotenv',
+                timestamp=datetime.datetime(...),
+            ),
+            ToolReturnPart(
+                tool_name='delete_file',
+                content='Deleting files is not allowed',
+                tool_call_id='delete_file',
                 timestamp=datetime.datetime(...),
             ),
         ]

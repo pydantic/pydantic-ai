@@ -726,9 +726,9 @@ class _MCPServerHTTP(MCPServer):
             MemoryObjectReceiveStream[SessionMessage | Exception],
             MemoryObjectSendStream[SessionMessage],
         ]
-    ]:  # pragma: no cover
+    ]:
         if self.http_client and self.headers:
-            raise ValueError('`http_client` is mutually exclusive with `headers`.')
+            raise ValueError('`http_client` is mutually exclusive with `headers`.')  # pragma: no cover
 
         transport_client_partial = functools.partial(
             self._transport_client,
@@ -737,7 +737,7 @@ class _MCPServerHTTP(MCPServer):
             sse_read_timeout=self.read_timeout,
         )
 
-        if self.http_client is not None:
+        if self.http_client is not None:  # pragma: no cover
 
             def httpx_client_factory(
                 headers: dict[str, str] | None = None,
@@ -866,7 +866,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
 
     @property
     def _transport_client(self):
-        return streamablehttp_client  # pragma: no cover
+        return streamablehttp_client
 
     def __eq__(self, value: object, /) -> bool:
         return super().__eq__(value) and isinstance(value, MCPServerStreamableHTTP) and self.url == value.url

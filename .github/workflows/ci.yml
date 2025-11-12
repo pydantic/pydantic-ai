@@ -80,7 +80,7 @@ jobs:
       - run: make docs
 
       - run: make docs-insiders
-        if: github.event.pull_request.head.repo.full_name == github.repository || github.ref == 'refs/heads/main'
+        if: (github.event.pull_request.head.repo.full_name == github.repository || github.ref == 'refs/heads/main') && github.repository == 'pydantic/pydantic-ai'
         env:
           PPPR_TOKEN: ${{ secrets.PPPR_TOKEN }}
 
@@ -103,7 +103,7 @@ jobs:
   test-live:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
+    if: (github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push') && github.repository == 'pydantic/pydantic-ai'
     steps:
       - uses: actions/checkout@v4
 

@@ -158,8 +158,8 @@ def infer_provider(provider: str) -> Provider[Any]:
     if provider.startswith('gateway/'):
         from .gateway import gateway_provider
 
-        provider = provider.removeprefix('gateway/')
-        return gateway_provider(provider)
+        api_type = provider.removeprefix('gateway/')
+        return gateway_provider(api_type)
     elif provider in ('google-vertex', 'google-gla'):
         from .google import GoogleProvider
 

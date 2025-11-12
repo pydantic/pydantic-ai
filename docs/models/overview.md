@@ -86,6 +86,12 @@ You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to atte
 in sequence until one successfully returns a result. Under the hood, Pydantic AI automatically switches
 from one model to the next if the current model returns a 4xx or 5xx status code.
 
+!!! note
+
+   The provider SDKs on which Models are based (like OpenAI, Anthropic, etc.) often have built-in retry logic that can delay the `FallbackModel` from activating.
+
+    When using `FallbackModel`, it's recommended to disable provider SDK retries to ensure immediate fallback, for example by setting `max_retries=0` on a [custom OpenAI client](openai.md#custom-openai-client).
+
 In the following example, the agent first makes a request to the OpenAI model (which fails due to an invalid API key),
 and then falls back to the Anthropic model.
 

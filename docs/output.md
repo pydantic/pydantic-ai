@@ -470,6 +470,40 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
+#### Handling partial output in output validators {#partial-output}
+
+You can use the `partial_output` field on `RunContext` to handle validation differently for partial outputs during streaming (e.g. skip validation altogether).
+
+```python {title="partial_validation_streaming.py" line_length="120"}
+from pydantic_ai import Agent, ModelRetry, RunContext
+
+agent = Agent('openai:gpt-5')
+
+@agent.output_validator
+def validate_output(ctx: RunContext, output: str) -> str:
+    if ctx.partial_output:
+        return output
+    else:
+        if len(output) < 50:
+            raise ModelRetry('Output is too short.')
+        return output
+
+
+async def main():
+    async with agent.run_stream('Write a long story about a cat') as result:
+        async for message in result.stream_text():
+            print(message)
+            #> Once upon a
+            #> Once upon a time, there was
+            #> Once upon a time, there was a curious cat
+            #> Once upon a time, there was a curious cat named Whiskers who
+            #> Once upon a time, there was a curious cat named Whiskers who loved to explore
+            #> Once upon a time, there was a curious cat named Whiskers who loved to explore the world around
+            #> Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
 ## Image output
 
 Some models can generate images as part of their response, for example those that support the [Image Generation built-in tool](builtin-tools.md#image-generation-tool) and OpenAI models using the [Code Execution built-in tool](builtin-tools.md#code-execution-tool) when told to generate a chart.

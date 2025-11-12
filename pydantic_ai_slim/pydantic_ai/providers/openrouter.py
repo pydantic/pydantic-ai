@@ -82,6 +82,9 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
+    def __init__(self, *, http_client: httpx.AsyncClient) -> None: ...
+
+    @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
 
     def __init__(

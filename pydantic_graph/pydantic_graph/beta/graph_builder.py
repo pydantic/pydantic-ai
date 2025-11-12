@@ -658,6 +658,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         if validate_graph_structure:
             _validate_graph_structure(nodes, edges_by_source)
         parent_forks = _collect_dominating_forks(nodes, edges_by_source)
+        intermediate_join_nodes = _compute_intermediate_join_nodes(nodes, parent_forks)
 
         return Graph[StateT, DepsT, GraphInputT, GraphOutputT](
             name=self.name,
@@ -668,6 +669,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             nodes=nodes,
             edges_by_source=edges_by_source,
             parent_forks=parent_forks,
+            intermediate_join_nodes=intermediate_join_nodes,
             auto_instrument=self.auto_instrument,
         )
 
@@ -946,6 +948,40 @@ Join {join.id!r} in this graph has no dominating fork in this graph.""")
         dominating_forks[join.id] = dominating_fork
 
     return dominating_forks
+
+
+def _compute_intermediate_join_nodes(
+    nodes: dict[NodeID, AnyNode], parent_forks: dict[JoinID, ParentFork[NodeID]]
+) -> dict[JoinID, set[JoinID]]:
+    """Compute which joins have other joins as intermediate nodes.
+
+    A join J1 is an intermediate node of join J2 if J1 appears in J2's intermediate_nodes
+    (as computed relative to J2's parent fork).
+
+    This information is used to determine:
+    1. Which joins are "final" (have no other joins in their intermediate_nodes)
+    2. When selecting which reducer to proceed with when there are no active tasks
+
+    Args:
+        nodes: All nodes in the graph
+        parent_forks: Parent fork information for each join
+
+    Returns:
+        A mapping from each join to the set of joins that are intermediate to it
+    """
+    intermediate_join_nodes: dict[JoinID, set[JoinID]] = {}
+
+    for join_id, parent_fork in parent_forks.items():
+        intermediate_joins = set[JoinID]()
+        for intermediate_node_id in parent_fork.intermediate_nodes:
+            # Check if this intermediate node is also a join
+            intermediate_node = nodes.get(intermediate_node_id)
+            if isinstance(intermediate_node, Join):
+                # Add it regardless of whether it has the same parent fork
+                intermediate_joins.add(JoinID(intermediate_node_id))
+        intermediate_join_nodes[join_id] = intermediate_joins
+
+    return intermediate_join_nodes
 
 
 def _replace_placeholder_node_ids(nodes: dict[NodeID, AnyNode], edges_by_source: dict[NodeID, list[Path]]):

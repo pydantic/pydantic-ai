@@ -522,6 +522,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Where do I live?': 'You live in Mexico City.',
     'Tell me about the pydantic/pydantic-ai repo.': 'The pydantic/pydantic-ai repo is a Python agent framework for building Generative AI applications.',
     'What do I have on my calendar today?': "You're going to spend all day playing with Pydantic AI.",
+    'Write a long story about a cat': 'Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...',
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -858,7 +859,7 @@ async def model_logic(  # noqa: C901
                 )
             ]
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file':
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'delete_file':
         return ModelResponse(
             parts=[
                 TextPart(

@@ -92,6 +92,13 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             run_id=self.run_input.run_id,
         )
 
+    async def before_response(self) -> AsyncIterator[BaseEvent]:
+        # Prevent parts from a subsequent response being tied to parts from an earlier response.
+        # See https://github.com/pydantic/pydantic-ai/issues/3316
+        self.new_message_id()
+        return
+        yield  # Make this an async generator
+
     async def after_stream(self) -> AsyncIterator[BaseEvent]:
         if not self._error:
             yield RunFinishedEvent(
@@ -167,9 +174,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         self, part: ToolCallPart | BuiltinToolCallPart, tool_call_id: str | None = None
     ) -> AsyncIterator[BaseEvent]:
         tool_call_id = tool_call_id or part.tool_call_id
-        message_id = self.message_id or self.new_message_id()
+        parent_message_id = self.message_id
 
-        yield ToolCallStartEvent(tool_call_id=tool_call_id, tool_call_name=part.tool_name, parent_message_id=message_id)
+        yield ToolCallStartEvent(
+            tool_call_id=tool_call_id, tool_call_name=part.tool_name, parent_message_id=parent_message_id
+        )
         if part.args:
             yield ToolCallArgsEvent(tool_call_id=tool_call_id, delta=part.args_as_json_str())
 
