@@ -4,7 +4,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        ZGQ5YWNhZjAtNjM4Mi00NjI5LTkwMWMtOGY4MWY1Yjc5OGYz
+        ZWIzNTA0MWYtOTNhZi00YTFmLTk3YjEtMzE0MTFiNjA4ZjU5
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -14,7 +14,7 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.does-not-exist-model-v1%3A0/converse-stream
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.does-not-exist-model-v1%3A0/converse
   response:
     headers:
       connection:

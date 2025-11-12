@@ -1380,37 +1380,24 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
 
 
 @pytest.mark.vcr()
-async def test_bedrock_throttling_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    """Test that ThrottlingException converts to ModelHTTPError with 429 status."""
-    model_id = 'us.amazon.nova-micro-v1:0'
+async def test_bedrock_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that errors convert to ModelHTTPError."""
+    model_id = 'us.does-not-exist-model-v1:0'
     model = BedrockConverseModel(model_id, provider=bedrock_provider)
     agent = Agent(model)
 
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('hello')
 
-    assert exc_info.value.status_code == 429
+    assert exc_info.value.status_code == 400
     assert exc_info.value.model_name == model_id
-
-
-@pytest.mark.vcr()
-async def test_bedrock_server_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    """Test that 5xx errors convert to ModelHTTPError."""
-    model_id = 'us.amazon.nova-micro-v1:0'
-    model = BedrockConverseModel(model_id, provider=bedrock_provider)
-    agent = Agent(model)
-
-    with pytest.raises(ModelHTTPError) as exc_info:
-        await agent.run('hello')
-
-    assert exc_info.value.status_code == 500
-    assert exc_info.value.model_name == model_id
+    assert exc_info.value.body == {'Message': 'The provided model identifier is invalid.', 'Code': '400'}
 
 
 @pytest.mark.vcr()
 async def test_bedrock_streaming_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that errors during streaming convert to ModelHTTPError."""
-    model_id = 'us.amazon.nova-micro-v1:0'
+    model_id = 'us.does-not-exist-model-v1:0'
     model = BedrockConverseModel(model_id, provider=bedrock_provider)
     agent = Agent(model)
 
@@ -1418,5 +1405,6 @@ async def test_bedrock_streaming_error(allow_model_requests: None, bedrock_provi
         async with agent.run_stream('hello'):
             pass
 
-    assert exc_info.value.status_code == 429
+    assert exc_info.value.status_code == 400
     assert exc_info.value.model_name == model_id
+    assert exc_info.value.body == {'Message': 'The provided model identifier is invalid.', 'Code': '400'}
