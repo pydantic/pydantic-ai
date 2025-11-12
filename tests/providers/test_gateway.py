@@ -34,15 +34,19 @@ pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
 
 @pytest.mark.parametrize(
-    'provider_name, provider_cls',
-    [('openai', OpenAIProvider), ('openai-chat', OpenAIProvider), ('openai-responses', OpenAIProvider)],
+    'provider_name, provider_cls, route',
+    [
+        ('openai', OpenAIProvider, 'openai'),
+        ('openai-chat', OpenAIProvider, 'openai'),
+        ('openai-responses', OpenAIProvider, 'openai-responses'),
+    ],
 )
 def test_init_with_base_url(
-    provider_name: Literal['openai', 'openai-chat', 'openai-responses'], provider_cls: type[Provider[Any]]
+    provider_name: Literal['openai', 'openai-chat', 'openai-responses'], provider_cls: type[Provider[Any]], route: str
 ):
     provider = gateway_provider(provider_name, base_url='https://example.com/', api_key='foobar')
     assert isinstance(provider, provider_cls)
-    assert provider.base_url == 'https://example.com/openai/'
+    assert provider.base_url == f'https://example.com/{route}/'
     assert provider.client.api_key == 'foobar'
 
 
@@ -86,7 +90,7 @@ def vcr_config():
     [
         ('openai', OpenAIProvider, 'openai'),
         ('openai-chat', OpenAIProvider, 'openai'),
-        ('openai-responses', OpenAIProvider, 'openai'),
+        ('openai-responses', OpenAIProvider, 'openai-responses'),
         ('groq', GroqProvider, 'groq'),
         ('google-vertex', GoogleProvider, 'google-vertex'),
         ('anthropic', AnthropicProvider, 'anthropic'),
