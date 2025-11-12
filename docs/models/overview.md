@@ -5,6 +5,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [OpenAI](openai.md)
 * [Anthropic](anthropic.md)
 * [Gemini](google.md) (via two different APIs: Generative Language API and VertexAI API)
+* [Grok](grok.md)
 * [Groq](groq.md)
 * [Mistral](mistral.md)
 * [Cohere](cohere.md)
