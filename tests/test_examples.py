@@ -859,7 +859,7 @@ async def model_logic(  # noqa: C901
                 )
             ]
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file':
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'delete_file':
         return ModelResponse(
             parts=[
                 TextPart(

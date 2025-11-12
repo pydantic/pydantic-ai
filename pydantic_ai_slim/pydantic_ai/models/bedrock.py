@@ -226,7 +226,7 @@ class BedrockConverseModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider('gateway/bedrock' if provider == 'gateway' else provider)
+            provider = infer_provider('gateway/converse' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = cast('BedrockRuntimeClient', provider.client)
 
