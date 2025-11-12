@@ -16,11 +16,12 @@ DOCS_ROOT = Path(__file__).parent.parent
 
 def on_page_markdown(markdown: str, page: Page, config: Config, files: Files) -> str:
     """Called on each file after it is read and before it is converted to HTML."""
-    markdown = inject_snippets(markdown, (DOCS_ROOT / page.file.src_uri).parent)
+    relative_path_root = (DOCS_ROOT / page.file.src_uri).parent
+    markdown = inject_snippets(markdown, relative_path_root)
     markdown = replace_uv_python_run(markdown)
     markdown = render_examples(markdown)
     markdown = render_video(markdown)
-    markdown = create_gateway_toggle(markdown)
+    markdown = create_gateway_toggle(markdown, relative_path_root)
     return markdown
 
 
@@ -119,13 +120,13 @@ def sub_cf_video(m: re.Match[str]) -> str:
 """
 
 
-def create_gateway_toggle(markdown: str) -> str:
+def create_gateway_toggle(markdown: str, relative_path_root: Path) -> str:
     """Transform Python code blocks with Agent() calls to show both Pydantic AI and Gateway versions."""
     # Pattern matches Python code blocks with or without attributes, and optional annotation definitions after
     # Annotation definitions are numbered list items like "1. Some text" that follow the code block
     return re.sub(
-        r'```python(?:\s+\{([^}]*)\})?\n(.*?)\n```(\n\n(?:\d+\..+(?:\n(?:   .+|\n))*)+)?',
-        transform_gateway_code_block,
+        r'```py(?:thon)?(?: *\{?([^}\n]*)\}?)?\n(.*?)\n```(\n\n(?:\d+\..+?\n)+?\n)?',
+        lambda m: transform_gateway_code_block(m, relative_path_root),
         markdown,
         flags=re.MULTILINE | re.DOTALL,
     )
@@ -135,7 +136,7 @@ def create_gateway_toggle(markdown: str) -> str:
 GATEWAY_MODELS = ('anthropic', 'openai', 'openai-responses', 'openai-chat', 'bedrock', 'google-vertex', 'groq')
 
 
-def transform_gateway_code_block(m: re.Match[str]) -> str:
+def transform_gateway_code_block(m: re.Match[str], relative_path_root: Path) -> str:
     """Transform a single code block to show both versions if it contains Agent() calls."""
     attrs = m.group(1) or ''
     code = m.group(2)
@@ -184,7 +185,17 @@ def transform_gateway_code_block(m: re.Match[str]) -> str:
     )
 
     # Build attributes string
+    docs_path = DOCS_ROOT / 'gateway'
+    relative_path = docs_path.relative_to(relative_path_root, walk_up=True)
+    link = f"<a href='{relative_path}' style='float: right;'>Learn about Gateway</a>"
+
     attrs_str = f' {{{attrs}}}' if attrs else ''
+
+    if 'title="' in attrs:
+        gateway_attrs = attrs.replace('title="', f'title="{link} ', 1)
+    else:
+        gateway_attrs = attrs + f' title="{link}"'
+    gateway_attrs_str = f' {{{gateway_attrs}}}'
 
     # Indent code lines for proper markdown formatting within tabs
     # Always add 4 spaces to every line (even empty ones) to preserve annotations
@@ -197,18 +208,18 @@ def transform_gateway_code_block(m: re.Match[str]) -> str:
     # Indent annotation definitions if present (need to be inside tabs for Material to work)
     indented_annotations = ''
     if annotations:
-        # Remove leading newlines and indent each line with 4 spaces
+        # Remove surrounding newlines and indent each line with 4 spaces
         annotation_lines = annotations.strip().split('\n')
-        indented_annotations = '\n\n' + '\n'.join('    ' + line for line in annotation_lines)
+        indented_annotations = '\n\n' + '\n'.join('    ' + line for line in annotation_lines) + '\n\n'
 
     return f"""\
-=== "Pydantic AI Gateway"
+=== "With Pydantic AI Gateway"
 
-    ```python{attrs_str}
+    ```python{gateway_attrs_str}
 {indented_gateway_code}
     ```{indented_annotations}
 
-=== "Pydantic AI"
+=== "Directly to Provider API"
 
     ```python{attrs_str}
 {indented_code}
