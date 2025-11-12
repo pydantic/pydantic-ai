@@ -25,7 +25,7 @@ GATEWAY_BASE_URL = 'https://gateway.pydantic.dev/proxy'
 
 @overload
 def gateway_provider(
-    upstream_provider: Literal['openai', 'openai-chat', 'openai-responses'],
+    upstream_provider: Literal['openai', 'openai-chat', 'openai-responses', 'chat', 'responses'],
     /,
     *,
     route: str | None = None,
@@ -61,7 +61,7 @@ def gateway_provider(
 
 @overload
 def gateway_provider(
-    upstream_provider: Literal['bedrock'],
+    upstream_provider: Literal['bedrock', 'converse'],
     /,
     *,
     route: str | None = None,
@@ -72,7 +72,7 @@ def gateway_provider(
 
 @overload
 def gateway_provider(
-    upstream_provider: Literal['gemini'],
+    upstream_provider: Literal['gemini', 'google-vertex'],
     /,
     *,
     route: str | None = None,
@@ -93,7 +93,20 @@ def gateway_provider(
 ) -> Provider[Any]: ...
 
 
-UpstreamProvider = Literal['openai', 'openai-chat', 'openai-responses', 'groq', 'anthropic', 'bedrock', 'google-vertex']
+UpstreamProvider = Literal[
+    'openai',
+    'groq',
+    'anthropic',
+    'bedrock',
+    'google-vertex',
+    # Those are only API formats, but we still support them for convenience.
+    'openai-chat',
+    'openai-responses',
+    'chat',
+    'responses',
+    'converse',
+    'gemini',
+]
 
 
 def gateway_provider(
@@ -132,14 +145,11 @@ def gateway_provider(
 
     if route is None:
         # Use the implied providerId as the default route.
-        if upstream_provider in ('openai', 'openai-chat', 'openai-responses'):
-            route = 'openai'
-        else:
-            route = upstream_provider
+        route = normalize_gateway_provider(upstream_provider)
 
     base_url = _merge_url_path(base_url, route)
 
-    if upstream_provider in ('openai', 'openai-chat', 'openai-responses'):
+    if upstream_provider in ('openai', 'openai-chat', 'openai-responses', 'chat', 'responses'):
         from .openai import OpenAIProvider
 
         return OpenAIProvider(api_key=api_key, base_url=base_url, http_client=http_client)
@@ -155,7 +165,7 @@ def gateway_provider(
         return AnthropicProvider(
             anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
         )
-    elif upstream_provider == 'bedrock':
+    elif upstream_provider in ('bedrock', 'converse'):
         from .bedrock import BedrockProvider
 
         return BedrockProvider(
@@ -163,7 +173,7 @@ def gateway_provider(
             base_url=base_url,
             region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
-    elif upstream_provider == 'google-vertex':
+    elif upstream_provider in ('google-vertex', 'gemini'):
         from .google import GoogleProvider
 
         return GoogleProvider(vertexai=True, api_key=api_key, base_url=base_url, http_client=http_client)
@@ -200,3 +210,20 @@ def _merge_url_path(base_url: str, path: str) -> str:
         path: The path to merge.
     """
     return base_url.rstrip('/') + '/' + path.lstrip('/')
+
+
+def normalize_gateway_provider(provider: str) -> str:
+    """Normalize a gateway provider name.
+
+    Args:
+        provider: The provider name to normalize.
+    """
+    if provider in ('openai', 'openai-chat', 'chat'):
+        return 'openai'
+    elif provider in ('openai-responses', 'responses'):
+        return 'openai-responses'
+    elif provider in ('gemini', 'google-vertex'):
+        return 'google-vertex'
+    elif provider in ('bedrock', 'converse'):
+        return 'bedrock'
+    return provider
