@@ -140,7 +140,8 @@ async def test_url_input(
                         content=['What is the main content of this URL?', Is(url)],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(expected_output))],
@@ -149,6 +150,7 @@ async def test_url_input(
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -177,7 +179,8 @@ async def test_url_input_force_download(allow_model_requests: None) -> None:  # 
                         content=['What is the main content of this URL?', Is(video_url)],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(output))],
@@ -186,6 +189,7 @@ async def test_url_input_force_download(allow_model_requests: None) -> None:  # 
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                run_id=IsStr(),
             ),
         ]
     )
