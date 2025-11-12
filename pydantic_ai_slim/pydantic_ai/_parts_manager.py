@@ -48,12 +48,12 @@ Because many vendors have streaming APIs that may produce not-fully-formed tool 
 this includes ToolCallPartDelta's in addition to the more fully-formed ModelResponsePart's.
 """
 
-TPart = TypeVar('TPart', bound=ModelResponsePart)
+PartT = TypeVar('PartT', bound=ModelResponsePart)
 
 
 @dataclass
-class _ExistingPart(Generic[TPart]):
-    part: TPart
+class _ExistingPart(Generic[PartT]):
+    part: PartT
     index: int
     found_by: Literal['vendor_part_id', 'latest_part']
 
@@ -86,10 +86,10 @@ class ModelResponsePartsManager:
     """Tracks the vendor part IDs of parts to their indices in the `_parts` list.
 
     Not all parts arrive with vendor part IDs, so the length of the tracker doesn't mirror the length of the _parts.
-    ThinkingParts that are created via the `handle_text_delta` will stop being tracked once their closing tag is seen.
+    `ThinkingPart`s that are created via the `handle_text_delta` will stop being tracked once their closing tag is seen.
     """
 
-    def append_and_track_new_part(self, part: ManagedPart, vendor_part_id: VendorId | None) -> int:
+    def _append_and_track_new_part(self, part: ManagedPart, vendor_part_id: VendorId | None) -> int:
         """Append a new part to the manager and track it by vendor part ID if provided.
 
         Will overwrite any existing mapping for the given vendor part ID.
@@ -100,7 +100,7 @@ class ModelResponsePartsManager:
         self._parts.append(part)
         return new_part_index
 
-    def stop_tracking_vendor_id(self, vendor_part_id: VendorId) -> None:
+    def _stop_tracking_vendor_id(self, vendor_part_id: VendorId) -> None:
         """Stop tracking the given vendor part ID.
 
         This is useful when a part is considered complete and should no longer be updated.
@@ -109,6 +109,13 @@ class ModelResponsePartsManager:
             vendor_part_id: The vendor part ID to stop tracking.
         """
         self._vendor_id_to_part_index.pop(vendor_part_id, None)
+
+    def _get_part_and_index_by_vendor_id(self, vendor_part_id: VendorId) -> tuple[ManagedPart | None, int | None]:
+        """Get a part by its vendor part ID."""
+        part_index = self._vendor_id_to_part_index.get(vendor_part_id)
+        if part_index is not None:
+            return self._parts[part_index], part_index
+        return None, None
 
     def get_parts(self) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
@@ -129,38 +136,38 @@ class ModelResponsePartsManager:
     ) -> Sequence[ModelResponseStreamEvent]:
         """Handle incoming text content, creating or updating a TextPart in the manager as appropriate.
 
-        This function also handles what we'll call "loose thinking", which is the generation of
-        ThinkingParts via explicit thinking tags embedded in the text content.
-        Activating loose thinking requires:
-        - `thinking_tags` to be provided, which is a tuple of (opening_tag, closing_tag)
-        - and a valid vendor_part_id to track ThinkingParts by.
+        This function also handles what we'll call "embedded thinking", which is the generation of
+        `ThinkingPart`s via explicit thinking tags embedded in the text content.
+        Activating embedded thinking requires:
+        - `thinking_tags` to be provided,
+        - and a valid `vendor_part_id` to track `ThinkingPart`s by.
 
-        Loose thinking is handled by:
-        - `_handle_text_with_thinking_closing`
-        - `_handle_text_with_thinking_opening`
-
-        Loose thinking will be processed under the following constraints:
-        - C1: Thinking tags are only processed if `thinking_tags` is provided.
+        ### Embedded thinking will be processed under the following constraints:
+        - C1: Thinking tags are only processed when `thinking_tags` is provided, which is a tuple of `(opening_tag, closing_tag)`.
         - C2: Opening thinking tags are only recognized at the start of a content chunk.
         - C3.0: Closing thinking tags are recognized anywhere within a content chunk.
             - C3.1: Any text following a closing thinking tag in the same content chunk is treated as a new TextPart.
             - this could in theory be supported by calling the with_thinking_*` handlers in a while loop
                 and having them return any content after a closing tag to be re-processed.
-        - C4: Existing ThinkingParts are only updated if a `vendor_part_id` is provided.
-            - the reason to require it is that ThinkingParts can also be produced via `handle_thinking_delta`,
+        - C4: `ThinkingPart`s created via **embedded thinking** are only updated if a `vendor_part_id` is provided.
+            - the reason to is that `ThinkingPart`s can also be produced via `handle_thinking_delta`,
             - so we may wrongly append to a latest_part = ThinkingPart that was created that way,
-            - this shouldn't happen because in practice models generate thinking one way or the other, not both.
-                - and the user would also explicitly ask for loose thinking by providing `thinking_tags`,
-                - but it may cause bugginess, for instance when thinking about cases with mixed models.
+            - this shouldn't happen because in practice models generate `ThinkingPart`s one way or the other, not both.
+                - and the user would also explicitly ask for embedded thinking by providing `thinking_tags`,
+                - but it may cause bugginess, for instance in cases with mixed models.
 
-        Supported edge cases of loose thinking:
+        ### Supported edge cases of embedded thinking:
         - Thinking tags may arrive split across multiple content chunks. E.g., '<thi' in one chunk and 'nk>' in the next.
         - EC1: Opening tags are buffered in the potential_opening_tag_buffer of a TextPart until fully formed.
-        - Closing tags are buffered in the ThinkingPart until fully formed.
+        - Closing tags are buffered in the `ThinkingPart` until fully formed.
         - Partial Opening and Closing tags without adjacent content won't emit an event.
         - EC2: No event is emitted for opening tags until they are fully formed and there is content following them.
             - This is called 'delayed thinking'
-        - No event is emitted for closing tags that complete a ThinkingPart without any adjacent content.
+        - No event is emitted for closing tags that complete a `ThinkingPart` without any adjacent content.
+
+        ### Embedded thinking is handled by:
+        - `_handle_text_with_thinking_closing`
+        - `_handle_text_with_thinking_opening`
 
         Args:
             vendor_part_id: The ID the vendor uses to identify this piece
@@ -179,7 +186,7 @@ class ModelResponsePartsManager:
         Raises:
             UnexpectedModelBehavior: If attempting to apply text content to a part that is not a TextPart.
         """
-        potential_part: _ExistingPart[TextPart] | _ExistingPart[ThinkingPart] | None = None
+        existing_part: _ExistingPart[TextPart] | _ExistingPart[ThinkingPart] | None = None
 
         if vendor_part_id is None:
             # If the vendor_part_id is None, check if the latest part is a TextPart to update
@@ -187,82 +194,76 @@ class ModelResponsePartsManager:
                 part_index = len(self._parts) - 1
                 latest_part = self._parts[part_index]
                 if isinstance(latest_part, TextPart):
-                    potential_part = _ExistingPart(part=latest_part, index=part_index, found_by='latest_part')
-                    # ✅ vendor_part_id and ✅ potential_part is a TextPart
+                    existing_part = _ExistingPart(part=latest_part, index=part_index, found_by='latest_part')
                 else:
                     # NOTE that the latest part could be a ThinkingPart but
-                    #   -> C4: we require ThinkingParts come from/with vendor_part_id's
-                    # ❌ vendor_part_id is None + ❌ potential_part is None -> new part!
+                    #   -> C4: we require `ThinkingPart`s come from/with vendor_part_id's
                     pass
             else:
-                # ❌ vendor_part_id is None + ❌ potential_part is None -> new part!
                 pass
         else:
             # Otherwise, attempt to look up an existing TextPart by vendor_part_id
-            part_index = self._vendor_id_to_part_index.get(vendor_part_id)
+            maybe_part, part_index = self._get_part_and_index_by_vendor_id(vendor_part_id)
             if part_index is not None:
-                existing_part = self._parts[part_index]
-                if isinstance(existing_part, ThinkingPart):
-                    potential_part = _ExistingPart(part=existing_part, index=part_index, found_by='vendor_part_id')
-                elif isinstance(existing_part, TextPart):
-                    potential_part = _ExistingPart(part=existing_part, index=part_index, found_by='vendor_part_id')
+                if isinstance(maybe_part, ThinkingPart):
+                    existing_part = _ExistingPart(part=maybe_part, index=part_index, found_by='vendor_part_id')
+                elif isinstance(maybe_part, TextPart):
+                    existing_part = _ExistingPart(part=maybe_part, index=part_index, found_by='vendor_part_id')
                 else:
-                    raise UnexpectedModelBehavior(f'Cannot apply a text delta to {existing_part=}')
-                # ✅ vendor_part_id and ✅ potential_part ❔ can be either TextPart or ThinkingPart ❔
+                    raise UnexpectedModelBehavior(f'Cannot apply a text delta to {maybe_part=}')
             else:
-                # ✅ vendor_part_id but ❌ potential_part is None -> new part!
                 pass
 
-        if potential_part is None:
+        if existing_part is None:
             # This is a workaround for models that emit `<think>\n</think>\n\n` or an empty text part ahead of tool calls (e.g. Ollama + Qwen3),
             # which we don't want to end up treating as a final result when using `run_stream` with `str` a valid `output_type`.
             if ignore_leading_whitespace and (len(content) == 0 or content.isspace()):
                 return []  # ReturnText 1 (RT1)
 
         def handle_as_text_part() -> list[PartDeltaEvent | PartStartEvent]:
-            if potential_part and isinstance(potential_part.part, TextPart):
-                has_buffer = bool(potential_part.part.potential_opening_tag_buffer)
-                combined_buffer = potential_part.part.potential_opening_tag_buffer + content
-                potential_part.part.potential_opening_tag_buffer = ''
+            if existing_part and isinstance(existing_part.part, TextPart):
+                has_buffer = bool(existing_part.part.potential_opening_tag_buffer)
+                combined_buffer = existing_part.part.potential_opening_tag_buffer + content
+                existing_part.part.potential_opening_tag_buffer = ''
 
                 # Emit Delta if: part has content OR was created without buffering (already emitted Start)
                 # Emit Start if: part has no content AND was created with buffering (delayed emission)
-                if potential_part.part.content or not has_buffer:
+                if existing_part.part.content or not has_buffer:
                     part_delta = TextPartDelta(content_delta=combined_buffer)
-                    self._parts[potential_part.index] = part_delta.apply(potential_part.part)
-                    return [PartDeltaEvent(index=potential_part.index, delta=part_delta)]
+                    self._parts[existing_part.index] = part_delta.apply(existing_part.part)
+                    return [PartDeltaEvent(index=existing_part.index, delta=part_delta)]
                 else:
                     # This is the delayed emission case - part was created with a buffer, no content
-                    potential_part.part.content = combined_buffer
-                    self._parts[potential_part.index] = potential_part.part
-                    return [PartStartEvent(index=potential_part.index, part=potential_part.part)]
+                    existing_part.part.content = combined_buffer
+                    self._parts[existing_part.index] = existing_part.part
+                    return [PartStartEvent(index=existing_part.index, part=existing_part.part)]
             else:
                 new_text_part = TextPart(content=content, id=id)
-                new_part_index = self.append_and_track_new_part(new_text_part, vendor_part_id)
+                new_part_index = self._append_and_track_new_part(new_text_part, vendor_part_id)
                 return [PartStartEvent(index=new_part_index, part=new_text_part)]
 
         if thinking_tags:
-            # handle loose thinking
-            if potential_part is not None and isinstance(potential_part.part, ThinkingPart):
+            # handle embedded thinking
+            if existing_part is not None and isinstance(existing_part.part, ThinkingPart):
                 if is_empty_thinking(
-                    potential_part.part, content, thinking_tags
+                    existing_part.part, content, thinking_tags
                 ):  # pragma: no cover - don't have a test case for this yet
                     # TODO discuss how to handle empty thinking
                     #  this applies to non-empty, whitespace-only thinking as well
                     #  -> for now we just untrack it
-                    self.stop_tracking_vendor_id(vendor_part_id)
+                    self._stop_tracking_vendor_id(vendor_part_id)
                     return []  # RT2
 
-                potential_part = cast(_ExistingPart[ThinkingPart], potential_part)
-                if potential_part.found_by == 'vendor_part_id':
+                existing_part = cast(_ExistingPart[ThinkingPart], existing_part)
+                if existing_part.found_by == 'vendor_part_id':
                     # if there's an existing thinking part found by vendor_part_id, handle it directly
-                    combined_buffer = potential_part.part.closing_tag_buffer + content
-                    potential_part.part.closing_tag_buffer = ''
+                    combined_buffer = existing_part.part.closing_tag_buffer + content
+                    existing_part.part.closing_tag_buffer = ''
 
                     closing_events = list(
                         self._handle_text_with_thinking_closing(
-                            thinking_part=potential_part.part,
-                            part_index=potential_part.index,
+                            thinking_part=existing_part.part,
+                            part_index=existing_part.index,
                             thinking_tags=thinking_tags,
                             vendor_part_id=vendor_part_id,
                             combined_buffer=combined_buffer,
@@ -274,11 +275,11 @@ class ModelResponsePartsManager:
                     # it will be ignored and a new TextPart will be created instead
                     pass
             else:
-                if potential_part is not None and isinstance(potential_part.part, ThinkingPart):
+                if existing_part is not None and isinstance(existing_part.part, ThinkingPart):
                     # Unhandled branch 2: extension of the above
                     pass
                 else:
-                    text_part = cast(_ExistingPart[TextPart] | None, potential_part)
+                    text_part = cast(_ExistingPart[TextPart] | None, existing_part)
                     # we discarded this is a ThinkingPart above
                     events = list(
                         self._handle_text_with_thinking_opening(
@@ -317,11 +318,11 @@ class ModelResponsePartsManager:
                     content=before_closing,
                 )
 
-            self.stop_tracking_vendor_id(vendor_part_id)
+            self._stop_tracking_vendor_id(vendor_part_id)
 
             if after_closing:
                 new_text_part = TextPart(content=after_closing, id=None)
-                new_text_part_index = self.append_and_track_new_part(new_text_part, vendor_part_id)
+                new_text_part_index = self._append_and_track_new_part(new_text_part, vendor_part_id)
                 yield PartStartEvent(index=new_text_part_index, part=new_text_part)
 
         elif (overlap := suffix_prefix_overlap(combined_buffer, closing_tag)) > 0:
@@ -409,7 +410,7 @@ class ModelResponsePartsManager:
                 # EC1: create a new TextPart to hold the potential opening tag in the buffer
                 # we don't emit an event until we determine exactly what this part is
                 new_text_part = TextPart(content='', id=id, potential_opening_tag_buffer=combined_buffer)
-                self.append_and_track_new_part(new_text_part, vendor_part_id)
+                self._append_and_track_new_part(new_text_part, vendor_part_id)
                 return []
 
         if opening_tag in combined_buffer:
@@ -443,12 +444,12 @@ class ModelResponsePartsManager:
                         # 1.b. '<think>content</think>more content'
                         # NOTE follows constraint C3.1: anything after the closing tag is treated as text
                         new_text_part = TextPart(content=after_closing, id=None)
-                        new_text_part_index = self.append_and_track_new_part(new_text_part, vendor_part_id)
+                        new_text_part_index = self._append_and_track_new_part(new_text_part, vendor_part_id)
                         yield PartStartEvent(index=new_text_part_index, part=new_text_part)
                     else:
                         # 1.c. '<think>content</think>'
                         # if there was no content after closing, the thinking tag closed cleanly
-                        self.stop_tracking_vendor_id(vendor_part_id)
+                        self._stop_tracking_vendor_id(vendor_part_id)
 
                     return  # RO3
                 elif (overlap := suffix_prefix_overlap(after_opening, closing_tag)) > 0:
@@ -511,7 +512,7 @@ class ModelResponsePartsManager:
         thinking_part = ThinkingPart(content=content, closing_tag_buffer=closing_buffer)
 
         if existing_part is not None and existing_part.part.content:
-            new_part_index = self.append_and_track_new_part(thinking_part, vendor_part_id)
+            new_part_index = self._append_and_track_new_part(thinking_part, vendor_part_id)
             if (
                 existing_part.part.potential_opening_tag_buffer
             ):  # pragma: no cover - this can't happen by the current logic so it's more of a safeguard
@@ -524,7 +525,7 @@ class ModelResponsePartsManager:
             new_part_index = existing_part.index
             self._parts[new_part_index] = thinking_part
         else:
-            new_part_index = self.append_and_track_new_part(thinking_part, vendor_part_id)
+            new_part_index = self._append_and_track_new_part(thinking_part, vendor_part_id)
 
         if vendor_part_id is not None:
             self._vendor_id_to_part_index[vendor_part_id] = new_part_index
@@ -600,18 +601,17 @@ class ModelResponsePartsManager:
                     existing_thinking_part_and_index = latest_part, part_index
         else:
             # Otherwise, attempt to look up an existing ThinkingPart by vendor_part_id
-            part_index = self._vendor_id_to_part_index.get(vendor_part_id)
+            maybe_part, part_index = self._get_part_and_index_by_vendor_id(vendor_part_id)
             if part_index is not None:
-                existing_part = self._parts[part_index]
-                if not isinstance(existing_part, ThinkingPart):
-                    raise UnexpectedModelBehavior(f'Cannot apply a thinking delta to {existing_part=}')
-                existing_thinking_part_and_index = existing_part, part_index
+                if not isinstance(maybe_part, ThinkingPart):
+                    raise UnexpectedModelBehavior(f'Cannot apply a thinking delta to {maybe_part=}')
+                existing_thinking_part_and_index = maybe_part, part_index
 
         if existing_thinking_part_and_index is None:
             if content is not None or signature is not None:
                 # There is no existing thinking part that should be updated, so create a new one
                 part = ThinkingPart(content=content or '', id=id, signature=signature, provider_name=provider_name)
-                new_part_index = self.append_and_track_new_part(part, vendor_part_id)
+                new_part_index = self._append_and_track_new_part(part, vendor_part_id)
                 yield PartStartEvent(index=new_part_index, part=part)
             else:
                 raise UnexpectedModelBehavior('Cannot create a ThinkingPart with no content or signature')
@@ -675,18 +675,17 @@ class ModelResponsePartsManager:
                     existing_matching_part_and_index = latest_part, part_index
         else:
             # vendor_part_id is provided, so look up the corresponding part or delta
-            part_index = self._vendor_id_to_part_index.get(vendor_part_id)
+            maybe_part, part_index = self._get_part_and_index_by_vendor_id(vendor_part_id)
             if part_index is not None:
-                existing_part = self._parts[part_index]
-                if not isinstance(existing_part, ToolCallPartDelta | ToolCallPart | BuiltinToolCallPart):
-                    raise UnexpectedModelBehavior(f'Cannot apply a tool call delta to {existing_part=}')
-                existing_matching_part_and_index = existing_part, part_index
+                if not isinstance(maybe_part, ToolCallPartDelta | ToolCallPart | BuiltinToolCallPart):
+                    raise UnexpectedModelBehavior(f'Cannot apply a tool call delta to {maybe_part=}')
+                existing_matching_part_and_index = maybe_part, part_index
 
         if existing_matching_part_and_index is None:
             # No matching part/delta was found, so create a new ToolCallPartDelta (or ToolCallPart if fully formed)
             delta = ToolCallPartDelta(tool_name_delta=tool_name, args_delta=args, tool_call_id=tool_call_id)
             part = delta.as_part() or delta
-            new_part_index = self.append_and_track_new_part(part, vendor_part_id)
+            new_part_index = self._append_and_track_new_part(part, vendor_part_id)
             # Only emit a PartStartEvent if we have enough information to produce a full ToolCallPart
             if isinstance(part, ToolCallPart | BuiltinToolCallPart):
                 return PartStartEvent(index=new_part_index, part=part)
@@ -739,17 +738,15 @@ class ModelResponsePartsManager:
         )
         if vendor_part_id is None:
             # vendor_part_id is None, so we unconditionally append a new ToolCallPart to the end of the list
-            new_part_index = len(self._parts)
-            self._parts.append(new_part)
+            new_part_index = self._append_and_track_new_part(new_part, vendor_part_id)
         else:
             # vendor_part_id is provided, so find and overwrite or create a new ToolCallPart.
-            maybe_part_index = self._vendor_id_to_part_index.get(vendor_part_id)
-            if maybe_part_index is not None and isinstance(self._parts[maybe_part_index], ToolCallPart):
-                new_part_index = maybe_part_index
+            maybe_part, part_index = self._get_part_and_index_by_vendor_id(vendor_part_id)
+            if part_index is not None and isinstance(maybe_part, ToolCallPart):
+                new_part_index = part_index
                 self._parts[new_part_index] = new_part
             else:
-                new_part_index = len(self._parts)
-                self._parts.append(new_part)
+                new_part_index = self._append_and_track_new_part(new_part, vendor_part_id)
             self._vendor_id_to_part_index[vendor_part_id] = new_part_index
         return PartStartEvent(index=new_part_index, part=new_part)
 
@@ -772,16 +769,14 @@ class ModelResponsePartsManager:
         """
         if vendor_part_id is None:
             # vendor_part_id is None, so we unconditionally append a new part to the end of the list
-            new_part_index = len(self._parts)
-            self._parts.append(part)
+            new_part_index = self._append_and_track_new_part(part, vendor_part_id)
         else:
             # vendor_part_id is provided, so find and overwrite or create a new part.
-            maybe_part_index = self._vendor_id_to_part_index.get(vendor_part_id)
-            if maybe_part_index is not None and isinstance(self._parts[maybe_part_index], type(part)):
-                new_part_index = maybe_part_index
+            maybe_part, part_index = self._get_part_and_index_by_vendor_id(vendor_part_id)
+            if part_index is not None and isinstance(maybe_part, type(part)):
+                new_part_index = part_index
                 self._parts[new_part_index] = part
             else:
-                new_part_index = len(self._parts)
-                self._parts.append(part)
+                new_part_index = self._append_and_track_new_part(part, vendor_part_id)
             self._vendor_id_to_part_index[vendor_part_id] = new_part_index
         return PartStartEvent(index=new_part_index, part=part)
