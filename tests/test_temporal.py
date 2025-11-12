@@ -31,6 +31,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     RunContext,
+    RunUsage,
     TextPart,
     TextPartDelta,
     ToolCallPart,
@@ -44,6 +45,7 @@ from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import Model, cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -63,6 +65,7 @@ try:
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
+    from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
@@ -1814,6 +1817,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                         )
                     ],
                     instructions='Just call tools without asking for confirmation.',
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1844,6 +1848,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1861,6 +1866,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                         ),
                     ],
                     instructions='Just call tools without asking for confirmation.',
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1884,6 +1890,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -1933,7 +1940,8 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             content='What is the weather in CDMX?',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1959,6 +1967,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1968,7 +1977,8 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1994,6 +2004,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -2003,7 +2014,8 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The weather in Mexico City is currently sunny.')],
@@ -2023,6 +2035,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -2152,3 +2165,18 @@ async def test_web_search_agent_run_in_workflow(allow_model_requests: None, clie
         assert output == snapshot(
             'Severe floods and landslides across Veracruz, Hidalgo, and Puebla have cut off hundreds of communities and left dozens dead and many missing, prompting a major federal emergency response. ([apnews.com](https://apnews.com/article/5d036e18057361281e984b44402d3b1b?utm_source=openai))'
         )
+
+
+def test_temporal_run_context_preserves_run_id():
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-123',
+    )
+
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    assert serialized['run_id'] == 'run-123'
+
+    reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+    assert reconstructed.run_id == 'run-123'
