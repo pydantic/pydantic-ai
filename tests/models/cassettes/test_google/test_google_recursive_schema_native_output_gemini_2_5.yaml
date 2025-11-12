@@ -1,6 +1,6 @@
 interactions:
 - request:
-    body: grant_type=%5B%27refresh_token%27%5D&client_id=%5B%2732555940559.apps.googleusercontent.com%27%5D&client_secret=%5B%27scrubbed%27%5D&refresh_token=%5B%27scrubbed%27%5D
+    body: grant_type=%5B%27refresh_token%27%5D&client_id=%5B%27scrubbed%27%5D&client_secret=%5B%27scrubbed%27%5D&refresh_token=%5B%27scrubbed%27%5D
     headers:
       accept:
       - '*/*'
