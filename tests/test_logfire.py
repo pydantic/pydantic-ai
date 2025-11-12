@@ -692,7 +692,10 @@ def test_instructions_with_structured_output(
                         'id': 0,
                         'name': 'agent run',
                         'message': 'my_agent run',
-                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 2, 'name': 'running tool', 'message': 'running tool: output tool'},
+                        ],
                     }
                 ]
             )
@@ -703,7 +706,10 @@ def test_instructions_with_structured_output(
                         'id': 0,
                         'name': 'invoke_agent my_agent',
                         'message': 'my_agent run',
-                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 2, 'name': 'execute_tool output tool', 'message': 'running tool: output tool'},
+                        ],
                     }
                 ]
             )
@@ -900,7 +906,10 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                     'id': 0,
                     'name': 'agent run',
                     'message': 'my_agent run',
-                    'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                    'children': [
+                        {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                        {'id': 2, 'name': 'running tool', 'message': 'running tool: output tool'},
+                    ],
                 }
             ]
         )
@@ -911,7 +920,10 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                     'id': 0,
                     'name': 'invoke_agent my_agent',
                     'message': 'my_agent run',
-                    'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                    'children': [
+                        {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                        {'id': 2, 'name': 'execute_tool output tool', 'message': 'running tool: output tool'},
+                    ],
                 }
             ]
         )
@@ -1381,8 +1393,15 @@ def test_logfire_output_function_v2_v3(
                         {'id': 1, 'name': 'chat function:call_tool:', 'message': 'chat function:call_tool:'},
                         {
                             'id': 2,
-                            'name': 'running output function',
-                            'message': 'running output function: final_result',
+                            'name': 'running tool',
+                            'message': 'running tool: output tool',
+                            'children': [
+                                {
+                                    'id': 3,
+                                    'name': 'running output function',
+                                    'message': 'running output function: final_result',
+                                }
+                            ],
                         },
                     ],
                 }
@@ -1428,8 +1447,15 @@ def test_logfire_output_function_v2_v3(
                         {'id': 1, 'name': 'chat function:call_tool:', 'message': 'chat function:call_tool:'},
                         {
                             'id': 2,
-                            'name': 'execute_tool final_result',
-                            'message': 'running output function: final_result',
+                            'name': 'execute_tool output tool',
+                            'message': 'running tool: output tool',
+                            'children': [
+                                {
+                                    'id': 3,
+                                    'name': 'execute_tool final_result',
+                                    'message': 'running output function: final_result',
+                                }
+                            ],
                         },
                     ],
                 }
@@ -2336,7 +2362,10 @@ def test_static_function_instructions_in_agent_run_span(
                         'id': 0,
                         'name': 'agent run',
                         'message': 'my_agent run',
-                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 2, 'name': 'running tool', 'message': 'running tool: output tool'},
+                        ],
                     }
                 ]
             )
@@ -2347,7 +2376,10 @@ def test_static_function_instructions_in_agent_run_span(
                         'id': 0,
                         'name': 'invoke_agent my_agent',
                         'message': 'my_agent run',
-                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 2, 'name': 'execute_tool output tool', 'message': 'running tool: output tool'},
+                        ],
                     }
                 ]
             )
@@ -2589,6 +2621,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
                                 'children': [{'id': 3, 'name': 'running tool', 'message': 'running tool: my_tool'}],
                             },
                             {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 5, 'name': 'running tool', 'message': 'running tool: output tool'},
                         ],
                     }
                 ]
@@ -2611,6 +2644,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
                                 ],
                             },
                             {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 5, 'name': 'execute_tool output tool', 'message': 'running tool: output tool'},
                         ],
                     }
                 ]
@@ -2877,7 +2911,10 @@ def test_function_instructions_with_history_in_agent_run_span(
                         'id': 0,
                         'name': 'agent run',
                         'message': 'my_agent run',
-                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 2, 'name': 'running tool', 'message': 'running tool: output tool'},
+                        ],
                     }
                 ]
             )
@@ -2888,7 +2925,10 @@ def test_function_instructions_with_history_in_agent_run_span(
                         'id': 0,
                         'name': 'invoke_agent my_agent',
                         'message': 'my_agent run',
-                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 2, 'name': 'execute_tool output tool', 'message': 'running tool: output tool'},
+                        ],
                     }
                 ]
             )
