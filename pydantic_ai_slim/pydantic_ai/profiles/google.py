@@ -36,12 +36,6 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
         schema.pop('discriminator', None)
         schema.pop('examples', None)
 
-        # Gemini only supports string enums, so we need to convert any enum values to strings.
-        # Pydantic will take care of transforming the transformed string values to the correct type.
-        if enum := schema.get('enum'):
-            schema['type'] = 'string'
-            schema['enum'] = [str(val) for val in enum]
-
         type_ = schema.get('type')
         if type_ == 'string' and (fmt := schema.pop('format', None)):
             description = schema.get('description')

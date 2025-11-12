@@ -1,0 +1,69 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '556'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Create a simple tree with root "A" and two children "B" and "C"
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          $defs:
+            TreeNode:
+              description: A node in a tree structure.
+              properties:
+                children:
+                  default: []
+                  items:
+                    $ref: '#/$defs/TreeNode'
+                  type: array
+                value:
+                  type: string
+              required:
+              - value
+              title: TreeNode
+              type: object
+          $ref: '#/$defs/TreeNode'
+          title: TreeNode
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '200'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=211
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      error:
+        code: 500
+        message: An internal error has occurred. Please retry or report in https://developers.generativeai.google/guide/troubleshooting
+        status: INTERNAL
+    status:
+      code: 500
+      message: Internal Server Error
+version: 1
