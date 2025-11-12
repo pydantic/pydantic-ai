@@ -11,7 +11,7 @@ For questions and feedback, contact us on [Slack](https://logfire.pydantic.dev/d
 
 ## Documentation Integration
 
-To help you get started with [Pydantic AI Gateway](https://gateway.pydantic.dev), most code examples throughout the Pydantic AI docs include a "Pydantic AI Gateway" tab alongside the standard "Pydantic AI" tab. This allows you to see how to adapt examples for Gateway usage by simply switching tabs.
+To help you get started with [Pydantic AI Gateway](https://gateway.pydantic.dev), most code examples throughout the Pydantic AI docs include a "Pydantic AI Gateway" tab alongside the standard Pydantic AI call string named here "Direct to Provider API" tab. This allows you to see how to adapt examples for Gateway usage by simply switching tabs.
 
 The main difference is that when using Gateway, model strings use the `gateway/` prefix.
 
@@ -64,13 +64,13 @@ To use different models, change the model string `gateway/<api_type>:<model_name
 
 Examples of providers and models that can be used are:
 
-| **Provider** | **Provider ID** | **Example Model** |
-| --- | --- | --- |
-| OpenAI | `openai` | `gateway/openai:gpt-4.1` |
-| Anthropic | `anthropic` | `gateway/anthropic:claude-sonnet-4-5` |
-| Google Vertex | `google-vertex`  | `gateway/google-vertex:gemini-2.5-flash` |
-| Groq | `groq`  | `gateway/groq:openai/gpt-oss-120b` |
-| AWS Bedrock | `bedrock`  | `gateway/bedrock:amazon.nova-micro-v1:0` |
+| **Provider** | **API Type**    | **Example Model**                        |
+| --- |-----------------|------------------------------------------|
+| OpenAI | `openai`        | `gateway/openai:gpt-5`                   |
+| Anthropic | `anthropic`     | `gateway/anthropic:claude-sonnet-4-5`    |
+| Google Vertex | `google-vertex` | `gateway/google-vertex:gemini-2.5-flash` |
+| Groq | `groq`          | `gateway/groq:openai/gpt-oss-120b`       |
+| AWS Bedrock | `bedrock`       | `gateway/bedrock:amazon.nova-micro-v1:0` |
 
 ## Pydantic AI
 Before you start, update to the latest version of `pydantic-ai`:
@@ -95,10 +95,10 @@ export PYDANTIC_AI_GATEWAY_API_KEY="YOUR_PAIG_TOKEN"
 
 You can access multiple models with the same API key, as shown in the code snippet below.
 
-```python {title="hello_world.py" test="skip"}
+```python {title="hello_world.py"}
 from pydantic_ai import Agent
 
-agent = Agent('gateway/chat:gpt-5')
+agent = Agent('gateway/openai:gpt-5')
 
 result = agent.run_sync('Where does "hello world" come from?')
 print(result.output)
@@ -135,7 +135,7 @@ Launch Claude Code by typing `claude`. All requests will now route through the P
     )
 
     response = client.chat.completions.create(
-        model='gpt-4o',
+        model='gpt-5',
         messages=[{'role': 'user', 'content': 'Hello world'}],
     )
     print(response.choices[0].message.content)
@@ -153,7 +153,7 @@ Launch Claude Code by typing `claude`. All requests will now route through the P
 
     response = client.messages.create(
         max_tokens=1000,
-        model='claude-3-haiku-20240307',
+        model='claude-sonnet-4-5',
         messages=[{'role': 'user', 'content': 'Hello world'}],
     )
     print(response.content[0].text)
