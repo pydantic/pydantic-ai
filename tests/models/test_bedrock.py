@@ -14,6 +14,7 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    ModelHTTPError,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
@@ -1376,3 +1377,34 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
             PartEndEvent(index=1, part=TextPart(content='Hello! How can I help you today?')),
         ]
     )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that errors convert to ModelHTTPError."""
+    model_id = 'us.does-not-exist-model-v1:0'
+    model = BedrockConverseModel(model_id, provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('hello')
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.model_name == model_id
+    assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
+
+
+@pytest.mark.vcr()
+async def test_bedrock_streaming_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that errors during streaming convert to ModelHTTPError."""
+    model_id = 'us.does-not-exist-model-v1:0'
+    model = BedrockConverseModel(model_id, provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with agent.run_stream('hello'):
+            pass
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.model_name == model_id
+    assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
