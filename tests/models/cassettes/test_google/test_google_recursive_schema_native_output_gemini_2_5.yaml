@@ -9,7 +9,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '234'
+      - '137'
       content-type:
       - application/x-www-form-urlencoded
     method: POST
@@ -86,7 +86,7 @@ interactions:
         responseMimeType: application/json
         responseModalities:
         - TEXT
-    uri: https://aiplatform.googleapis.com/v1beta1/projects/ck-nest-prod/locations/global/publishers/google/models/gemini-2.5-flash:generateContent
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
