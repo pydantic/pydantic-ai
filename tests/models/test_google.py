@@ -3121,14 +3121,15 @@ async def test_google_recursive_schema_native_output(allow_model_requests: None,
 
 
 async def test_google_recursive_schema_native_output_gemini_2_5(
-    allow_model_requests: None, google_provider: GoogleProvider
-):
-    """Test recursive schemas with $ref and $defs using gemini-2.5-flash.
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
+    """Test recursive schemas with $ref and $defs using gemini-2.5-flash on Vertex AI.
 
-    NOTE: This test consistently returns a 500 Internal Server Error from Google's API
-    as of 2025-11-12. This needs to be investigated and resolved before merging.
+    NOTE: Recursive schemas with gemini-2.5-flash FAIL on GLA (500 error) but PASS on Vertex AI.
+    This test uses vertex_provider to demonstrate the feature works on Vertex AI.
+    The GLA issue needs to be reported to Google.
     """
-    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    m = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
 
     class TreeNode(BaseModel):
         """A node in a tree structure."""
