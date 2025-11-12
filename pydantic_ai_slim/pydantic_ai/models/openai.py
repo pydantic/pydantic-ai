@@ -1071,7 +1071,6 @@ class OpenAIResponsesModel(Model):
                 # Pydantic AI doesn't yet support the `codex-mini-latest` LocalShell built-in tool
                 pass
             elif isinstance(item, responses.ResponseFileSearchToolCall):  # pragma: no cover
-                # File Search Tool handling - requires actual OpenAI API responses with file_search_call
                 call_part, return_part = _map_file_search_tool_call(item, self.system)
                 items.append(call_part)
                 items.append(return_part)
@@ -1270,7 +1269,6 @@ class OpenAIResponsesModel(Model):
                     )
                 tools.append(web_search_tool)
             elif isinstance(tool, FileSearchTool):  # pragma: no cover
-                # File Search Tool configuration - tested via initialization tests
                 file_search_tool = responses.FileSearchToolParam(
                     type='file_search', vector_store_ids=tool.vector_store_ids
                 )
@@ -1483,12 +1481,10 @@ class OpenAIResponsesModel(Model):
                                 )
                                 openai_messages.append(web_search_item)
                             elif (  # pragma: no cover
-                                # File Search Tool - requires actual file_search responses in message history
                                 item.tool_name == FileSearchTool.kind
                                 and item.tool_call_id
                                 and (args := item.args_as_dict())
                             ):
-                                # The cast is necessary because of incomplete OpenAI SDK types for FileSearchToolCall
                                 file_search_item = cast(
                                     responses.ResponseFileSearchToolCallParam,
                                     {
@@ -1559,7 +1555,6 @@ class OpenAIResponsesModel(Model):
                             ):
                                 web_search_item['status'] = status
                             elif (  # pragma: no cover
-                                # File Search Tool status update - only called from API-dependent paths
                                 item.tool_name == FileSearchTool.kind
                                 and file_search_item is not None
                                 and isinstance(item.content, dict)  # pyright: ignore[reportUnknownMemberType]
@@ -1881,7 +1876,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                     )
                 elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):  # pragma: no cover
-                    # File Search Tool streaming - requires actual OpenAI streaming responses
                     call_part, _ = _map_file_search_tool_call(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(
                         vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
@@ -1963,7 +1957,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
                 elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):  # pragma: no cover
-                    # File Search Tool streaming response handling - requires actual OpenAI streaming responses
                     call_part, return_part = _map_file_search_tool_call(chunk.item, self.provider_name)
 
                     maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -2270,7 +2263,6 @@ def _map_web_search_tool_call(
 
 
 def _map_file_search_tool_call(  # pragma: no cover
-    # File Search Tool mapping - only called from API-dependent response processing paths
     item: responses.ResponseFileSearchToolCall,
     provider_name: str,
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
@@ -2280,7 +2272,6 @@ def _map_file_search_tool_call(  # pragma: no cover
         'status': item.status,
     }
 
-    # The OpenAI SDK has incomplete types for FileSearchToolCall.action
     if action := item.action:  # type: ignore[reportAttributeAccessIssue]
         args = action.model_dump(mode='json')  # type: ignore[reportUnknownMemberType]
 

@@ -343,11 +343,6 @@ class GoogleModel(Model):
                 elif isinstance(tool, CodeExecutionTool):
                     tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
                 elif isinstance(tool, FileSearchTool):  # pragma: no cover
-                    # File Search Tool for Gemini API - tested via initialization tests
-                    # The file_search tool uses file resource names (vector_store_ids) to search through uploaded files
-                    # Note: This requires files to be uploaded via the Files API first
-                    # The structure below is based on the Gemini File Search Tool announcement (Nov 2025)
-                    # and may require adjustment when the official google-genai SDK is updated
                     tools.append(ToolDict(file_search={'file_names': tool.vector_store_ids}))  # type: ignore[reportGeneralTypeIssues]
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                     if not self.profile.supports_image_output:
