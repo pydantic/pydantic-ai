@@ -23,12 +23,20 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import TypeAliasType, deprecated
 
 from . import _otel_messages, _utils
+from ._model_request_parameters import ModelRequestParameters
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
+from .settings import ModelSettings
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
+
+    ModelRequestParametersField = ModelRequestParameters | None
+    ModelSettingsField = ModelSettings | None
+else:  # pragma: no cover
+    ModelRequestParametersField = Any
+    ModelSettingsField = Any
 
 _mime_types = MimeTypes()
 # Replicate what is being done in `mimetypes.init()`
@@ -1085,6 +1093,22 @@ class ModelRequest:
 
     instructions: str | None = None
     """The instructions for the model."""
+
+    model_request_parameters: Annotated[ModelRequestParametersField, pydantic.Field(exclude=True, repr=False)] = field(
+        default=None, repr=False
+    )
+    """Full request parameters captured for this request.
+
+    Available for introspection during a run. This field is excluded from serialization.
+    """
+
+    model_settings: Annotated[ModelSettingsField, pydantic.Field(exclude=True, repr=False)] = field(
+        default=None, repr=False
+    )
+    """Effective model settings that were applied to this request.
+
+    Available for introspection during a run. This field is excluded from serialization.
+    """
 
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""

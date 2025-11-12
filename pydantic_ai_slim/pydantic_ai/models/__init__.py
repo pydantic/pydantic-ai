@@ -19,9 +19,9 @@ from typing import Any, Generic, Literal, TypeVar, get_args, overload
 import httpx
 from typing_extensions import TypeAliasType, TypedDict
 
-from .. import _utils
 from .._json_schema import JsonSchemaTransformer
-from .._output import OutputObjectDefinition, StructuredTextOutputSchema
+from .._model_request_parameters import ModelRequestParameters
+from .._output import OutputObjectDefinition
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from ..builtin_tools import AbstractBuiltinTool
@@ -45,7 +45,6 @@ from ..messages import (
     ToolCallPart,
     VideoUrl,
 )
-from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, merge_model_settings
@@ -601,33 +600,6 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
         'together',
     ],
 )
-
-
-@dataclass(repr=False, kw_only=True)
-class ModelRequestParameters:
-    """Configuration for an agent's request to a model, specifically related to tools and output handling."""
-
-    function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
-    builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list[AbstractBuiltinTool])
-
-    output_mode: OutputMode = 'text'
-    output_object: OutputObjectDefinition | None = None
-    output_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
-    prompted_output_template: str | None = None
-    allow_text_output: bool = True
-    allow_image_output: bool = False
-
-    @cached_property
-    def tool_defs(self) -> dict[str, ToolDefinition]:
-        return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
-
-    @cached_property
-    def prompted_output_instructions(self) -> str | None:
-        if self.prompted_output_template and self.output_object:
-            return StructuredTextOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
-        return None
-
-    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 class Model(ABC):
