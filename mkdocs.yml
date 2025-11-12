@@ -312,7 +312,7 @@ plugins:
               - griffe_warnings_deprecated:
                   kind: warning
                   title: Deprecated
-          import:
+          inventories:
             - url: https://logfire.pydantic.dev/docs/objects.inv
             - url: https://docs.python.org/3/objects.inv
             - url: https://docs.pydantic.dev/latest/objects.inv
