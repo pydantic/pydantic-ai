@@ -22,6 +22,11 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
     Gemini supports [a subset of OpenAPI v3.0.3](https://ai.google.dev/gemini-api/docs/function-calling#function_declarations).
     """
 
+    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+        # prefer_inlined_defs defaults to False (native $ref/$defs support)
+        # simplify_nullable_unions defaults to False (Google now supports type: 'null' natively per Nov 2025 announcement)
+        super().__init__(schema, strict=strict)
+
     def transform(self, schema: JsonSchema) -> JsonSchema:
         # Remove properties not supported by Gemini
         schema.pop('$schema', None)
