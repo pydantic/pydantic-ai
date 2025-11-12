@@ -621,13 +621,11 @@ async def test_text_document_url_input(allow_model_requests: None, bedrock_provi
     text_document_url = DocumentUrl(url='https://example-files.online-convert.com/document/txt/example.txt')
 
     result = await agent.run(['What is the main content on this document?', text_document_url])
-    assert result.output == snapshot(
-        """\
+    assert result.output == snapshot("""\
 Based on the text in the <document_content> tag, the main content of this document appears to be:
 
 An example text describing the use of "John Doe" as a placeholder name in legal cases, hospitals, and other contexts where a party's real identity is unknown or needs to be withheld. It provides background on how "John Doe" and "Jane Doe" are commonly used in the United States and Canada for this purpose, in contrast to other English speaking countries that use names like "Joe Bloggs". The text gives examples of using John/Jane Doe for legal cases, unidentified corpses, and as generic names on forms. It also mentions how "Baby Doe" and "Precious Doe" are used for unidentified children.\
-"""
-    )
+""")
 
 
 @pytest.mark.vcr()
@@ -638,8 +636,7 @@ async def test_text_as_binary_content_input(allow_model_requests: None, bedrock_
     text_content = BinaryContent(data=b'This is a test document.', media_type='text/plain')
 
     result = await agent.run(['What is the main content on this document?', text_content])
-    assert result.output == snapshot(
-        """\
+    assert result.output == snapshot("""\
 The document you're referring to appears to be a test document, which means its primary purpose is likely to serve as an example or a placeholder rather than containing substantive content. Test documents are commonly used for various purposes such as:
 
 1. **Software Testing**: To verify that a system can correctly handle, display, or process documents.
@@ -648,8 +645,7 @@ The document you're referring to appears to be a test document, which means its 
 4. **Placeholders**: To fill space in a system or application where real content will eventually be placed.
 
 Since this is a test document, it probably doesn't contain any meaningful or specific information beyond what is necessary to serve its testing purpose. If you have specific questions about the format, structure, or any particular element within the document, feel free to ask!\
-"""
-    )
+""")
 
 
 @pytest.mark.vcr()
@@ -1198,13 +1194,11 @@ async def test_bedrock_anthropic_tool_with_thinking(allow_model_requests: None, 
         return 'Mexico'
 
     result = await agent.run('What is the largest city in the user country?')
-    assert result.output == snapshot(
-        """\
+    assert result.output == snapshot("""\
 Based on your location in Mexico, the largest city is Mexico City (Ciudad de México). It's not only the capital but also the most populous city in Mexico with a metropolitan area population of over 21 million people, making it one of the largest urban agglomerations in the world.
 
 Mexico City is an important cultural, financial, and political center for the country and has a rich history dating back to the Aztec empire when it was known as Tenochtitlán.\
-"""
-    )
+""")
 
 
 async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: BedrockProvider):
