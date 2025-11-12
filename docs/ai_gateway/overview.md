@@ -25,7 +25,7 @@ The main difference is that when using Gateway, model strings use the `gateway/`
 - **Open source with self-hosting**: PAIG's core is [open source](https://github.com/pydantic/pydantic-ai-gateway/) (under [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.en.html)), allowing self-hosting with file-based configuration, instead of using the managed service.
 - **Enterprise ready**: Includes SSO (with OIDC support), granular permissions, and flexible deployment options. Deploy to your Cloudflare account, or run on-premises with our [consulting support](https://pydantic.dev/contact).
 
-```python {title="hello_word.py"}
+```python {title="hello_world.py"}
 from pydantic_ai import Agent
 
 agent = Agent('gateway/chat:gpt-4.1')
