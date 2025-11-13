@@ -1095,7 +1095,7 @@ class ModelRequest:
     """The instructions for the model."""
 
     model_request_parameters: Annotated[ModelRequestParametersField, pydantic.Field(exclude=True, repr=False)] = field(
-        default=None, repr=False
+        default=None, repr=False, compare=False
     )
     """Full request parameters captured for this request.
 
@@ -1103,7 +1103,7 @@ class ModelRequest:
     """
 
     model_settings: Annotated[ModelSettingsField, pydantic.Field(exclude=True, repr=False)] = field(
-        default=None, repr=False
+        default=None, repr=False, compare=False
     )
     """Effective model settings that were applied to this request.
 
