@@ -1515,17 +1515,10 @@ def test_load_mcp_servers_with_env_vars(tmp_path: Path, monkeypatch: pytest.Monk
     assert server.id == 'my_server'
     assert server.tool_prefix == 'my_server'
 
-    # Test with environment variables in URL
-    monkeypatch.setenv('SERVER_HOST', 'example.com')
-    monkeypatch.setenv('SERVER_PORT', '8080')
-    config.write_text('{"mcpServers": {"web_server": {"url": "https://${SERVER_HOST}:${SERVER_PORT}/mcp"}}}')
 
-    servers = load_mcp_servers(config)
-
-    assert len(servers) == 1
-    server = servers[0]
-    assert isinstance(server, MCPServerStreamableHTTP)
-    assert server.url == 'https://example.com:8080/mcp'
+def test_load_mcp_servers_env_var_in_env_dict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Test environment variable expansion in env dict."""
+    config = tmp_path / 'mcp.json'
 
     # Test with environment variables in env dict
     monkeypatch.setenv('API_KEY', 'secret123')
@@ -1540,6 +1533,23 @@ def test_load_mcp_servers_with_env_vars(tmp_path: Path, monkeypatch: pytest.Monk
     server = servers[0]
     assert isinstance(server, MCPServerStdio)
     assert server.env == {'API_KEY': 'secret123'}
+
+
+def test_load_mcp_servers_env_var_expansion_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Test environment variable expansion in URL."""
+    config = tmp_path / 'mcp.json'
+
+    # Test with environment variables in URL
+    monkeypatch.setenv('SERVER_HOST', 'example.com')
+    monkeypatch.setenv('SERVER_PORT', '8080')
+    config.write_text('{"mcpServers": {"web_server": {"url": "https://${SERVER_HOST}:${SERVER_PORT}/mcp"}}}')
+
+    servers = load_mcp_servers(config)
+
+    assert len(servers) == 1
+    server = servers[0]
+    assert isinstance(server, MCPServerStreamableHTTP)
+    assert server.url == 'https://example.com:8080/mcp'
 
 
 def test_load_mcp_servers_undefined_env_var(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
