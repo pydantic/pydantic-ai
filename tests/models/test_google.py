@@ -3600,6 +3600,31 @@ async def test_google_image_generation_tool(allow_model_requests: None, google_p
         await agent.run('Generate an image of an axolotl.')
 
 
+async def test_google_image_generation_tool_aspect_ratio(google_provider: GoogleProvider) -> None:
+    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9')])
+
+    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools is None
+    assert image_config == {'aspect_ratio': '16:9'}
+
+
+async def test_google_image_generation_tool_aspect_ratio_conflict(google_provider: GoogleProvider) -> None:
+    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
+    params = ModelRequestParameters(
+        builtin_tools=[
+            ImageGenerationTool(aspect_ratio='16:9'),
+            ImageGenerationTool(aspect_ratio='1:1'),
+        ]
+    )
+
+    with pytest.raises(
+        UserError,
+        match='Multiple `ImageGenerationTool` instances with different `aspect_ratio` values are not supported.',
+    ):
+        model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash-image', provider=vertex_provider)
 
