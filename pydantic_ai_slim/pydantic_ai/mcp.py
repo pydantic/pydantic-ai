@@ -939,8 +939,8 @@ class MCPServerConfig(BaseModel):
 def _expand_env_vars(value: Any) -> Any:
     """Recursively expand environment variables in a JSON structure.
 
-    Environment variables can be referenced using ${VAR_NAME} syntax,
-    or ${VAR_NAME:-default} syntax to provide a default value if the variable is not set.
+    Environment variables can be referenced using `${VAR_NAME}` syntax,
+    or `${VAR_NAME:-default}` syntax to provide a default value if the variable is not set.
 
     Args:
         value: The value to expand (can be str, dict, list, or other JSON types).
