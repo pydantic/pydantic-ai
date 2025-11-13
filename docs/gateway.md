@@ -41,34 +41,35 @@ print(result.output)
 The first known use of "hello, world" was in a 1974 textbook about the C programming language.
 """
 ```
-# Quick Start
+
+## Quick Start
 
 This section contains instructions on how to set up your account and run your app with Pydantic AI Gateway credentials.
 
-## Create an account
+### Create an account
 
 Using your  GitHub or Google account, sign in at [gateway.pydantic.dev](https://gateway.pydantic.dev).
 Choose a name for your organization (or accept the default). You will automatically be assigned the Admin role.
 
 A default project will be created for you. You can choose to use it, or create a new one on the [Projects](https://gateway.pydantic.dev/admin/projects) page.
 
-## Add **Providers**
+### Add **Providers**
 There are two ways to use Providers in the Pydantic AI Gateway: you can bring your own key (BYOK) or buy inference through the platform.
 
-### Bringing your own API key (BYOK)
+#### Bringing your own API key (BYOK)
 
 On the [Providers](https://gateway.pydantic.dev/admin/providers) page, fill in the form to add a provider. Paste your API key into the form under Credentials, and make sure to **select the Project that will be associated to this provider**. It is possible to add multiple keys from the same provider.
 
-### Use Built-in Providers
+#### Use Built-in Providers
 Go to the Billing page, add a payment method, and purchase $15 in credits to activate built-in providers. This gives you single-key access to all available models from OpenAI, Anthropic, Google Vertex, AWS Bedrock, and Groq.
 
-## Grant access to your team
+### Grant access to your team
 On the [Users](https://gateway.pydantic.dev/admin/users) page, create an invitation and share the URL with your team to allow them to access the project.
 
-## Create Gateway project keys
+### Create Gateway project keys
 On the Keys page, Admins can create project keys which are not affected by spending limits. Users can only create personal keys, that will inherit spending caps from both User and Project levels, whichever is more restrictive.
 
-# Usage
+## Usage
 After setting up your account with the instructions above, you will be able to make an AI model request with the Pydantic AI Gateway.
 The code snippets below show how you can use PAIG with different frameworks and SDKs.
 You can add `gateway/` as prefix on every known provider that
@@ -85,7 +86,7 @@ Examples of providers and models that can be used are:
 | Groq | `groq`          | `gateway/groq:openai/gpt-oss-120b`       |
 | AWS Bedrock | `bedrock`       | `gateway/bedrock:amazon.nova-micro-v1:0` |
 
-## Pydantic AI
+### Pydantic AI
 Before you start, make sure you are on version 1.16 or later of `pydantic-ai`. To update to the latest version run:
 
 === "uv"
@@ -121,7 +122,7 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 ```
 
 
-## Claude Code
+### Claude Code
 Before you start, log out of Claude Code using `/logout`.
 
 Set your gateway credentials as environment variables:
@@ -135,9 +136,9 @@ Replace `YOUR_PAIG_TOKEN` with the API key from the Keys page.
 
 Launch Claude Code by typing `claude`. All requests will now route through the Pydantic AI Gateway.
 
-## SDKs
+### SDKs
 
-### OpenAI SDK
+#### OpenAI SDK
 
 ```python {title="openai_sdk.py" test="skip"}
 import openai
@@ -155,7 +156,7 @@ print(response.choices[0].message.content)
 #> Hello user
 ```
 
-### Anthropic SDK
+#### Anthropic SDK
 
 ```python {title="anthropic_sdk.py" test="skip"}
 import anthropic
