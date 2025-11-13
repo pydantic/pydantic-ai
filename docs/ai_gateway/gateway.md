@@ -7,7 +7,8 @@
 
 Sign up at [gateway.pydantic.dev](https://gateway.pydantic.dev/).
 
-For questions and feedback, contact us on [Slack](https://logfire.pydantic.dev/docs/join-slack/).
+!!! question
+    For questions and feedback, contact us on [Slack](https://logfire.pydantic.dev/docs/join-slack/).
 
 ## Documentation Integration
 
