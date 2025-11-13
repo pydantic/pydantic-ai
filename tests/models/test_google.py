@@ -3297,6 +3297,27 @@ async def test_google_integer_enum_native_output(allow_model_requests: None, goo
     assert isinstance(result.output.priority.value, int)
 
 
+async def test_google_prefix_items_native_output(allow_model_requests: None, google_provider: GoogleProvider):
+    """Test prefixItems (tuple types) work natively without conversion to items."""
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    class Coordinate(BaseModel):
+        """A 2D coordinate with latitude and longitude."""
+
+        point: tuple[float, float]  # This generates prefixItems in JSON schema
+
+    agent = Agent(m, output_type=NativeOutput(Coordinate))
+
+    result = await agent.run('Give me coordinates for New York City: latitude 40.7128, longitude -74.0060')
+    assert len(result.output.point) == snapshot(2)
+    # Verify both values are floats
+    assert isinstance(result.output.point[0], float)
+    assert isinstance(result.output.point[1], float)
+    # Rough check for NYC coordinates (latitude ~40, longitude ~-74)
+    assert 40 <= result.output.point[0] <= 41
+    assert -75 <= result.output.point[1] <= -73
+
+
 def test_google_process_response_filters_empty_text_parts(google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-pro', provider=google_provider)
     response = _generate_response_with_texts(response_id='resp-123', texts=['', 'first', '', 'second'])
