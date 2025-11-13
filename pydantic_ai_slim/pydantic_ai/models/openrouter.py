@@ -24,7 +24,7 @@ from . import ModelRequestParameters
 
 try:
     from openai import APIError
-    from openai.types import chat
+    from openai.types import chat, completion_usage
     from openai.types.chat import chat_completion, chat_completion_chunk
 
     from .openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIStreamedResponse
@@ -220,6 +220,12 @@ class WebPlugin(TypedDict, total=False):
 OpenRouterPlugin = WebPlugin
 
 
+class OpenRouterUsageConfig(TypedDict, total=False):
+    """Configuration for OpenRouter usage."""
+
+    include: bool
+
+
 class OpenRouterModelSettings(ModelSettings, total=False):
     """Settings used for an OpenRouter model request."""
 
@@ -254,6 +260,16 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     """
 
     openrouter_plugins: list[OpenRouterPlugin]
+    """To enable plugins in the request.
+
+    Plugins are tools that can be used to extend the functionality of the model. [See more](https://openrouter.ai/docs/features/web-search)
+    """
+
+    openrouter_usage: OpenRouterUsageConfig
+    """To control the usage of the model.
+
+    The usage config object consolidates settings for enabling detailed usage information. [See more](https://openrouter.ai/docs/use-cases/usage-accounting)
+    """
 
 
 class OpenRouterError(BaseModel):
@@ -357,6 +373,30 @@ class OpenRouterChoice(chat_completion.Choice):
     """A wrapped chat completion message with OpenRouter specific attributes."""
 
 
+class OpenRouterCostDetails(BaseModel):
+    """OpenRouter specific cost details."""
+
+    upstream_inference_cost: int | None = None
+
+
+class OpenRouterCompletionTokenDetails(completion_usage.CompletionTokensDetails):
+    """Wraps OpenAI completion token details with OpenRouter specific attributes."""
+
+    image_tokens: int | None = None
+
+
+class OpenRouterUsage(completion_usage.CompletionUsage):
+    """Wraps OpenAI completion usage with OpenRouter specific attributes."""
+
+    cost: float | None = None
+
+    cost_details: OpenRouterCostDetails | None = None
+
+    is_byok: bool | None = None
+
+    completion_tokens_details: OpenRouterCompletionTokenDetails | None = None  # type: ignore[reportIncompatibleVariableOverride]
+
+
 class OpenRouterChatCompletion(chat.ChatCompletion):
     """Wraps OpenAI chat completion with OpenRouter specific attributes."""
 
@@ -368,6 +408,9 @@ class OpenRouterChatCompletion(chat.ChatCompletion):
 
     error: OpenRouterError | None = None
     """OpenRouter specific error attribute."""
+
+    usage: OpenRouterUsage | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenRouter specific usage attribute."""
 
 
 def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSettings) -> OpenAIChatModelSettings:
@@ -389,6 +432,8 @@ def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSetti
         extra_body['preset'] = preset
     if transforms := model_settings.pop('openrouter_transforms', None):
         extra_body['transforms'] = transforms
+    if usage := model_settings.pop('openrouter_usage', None):
+        extra_body['usage'] = usage
 
     model_settings['extra_body'] = extra_body
 
@@ -401,30 +446,40 @@ def _map_usage(
     provider_url: str,
     model: str,
 ) -> RequestUsage:
+    assert isinstance(response, OpenRouterChatCompletion) or isinstance(response, OpenRouterChatCompletionChunk)
+    builder = RequestUsage()
+
     response_usage = response.usage
     if response_usage is None:
-        return RequestUsage()
+        return builder
 
-    usage_data = response_usage.model_dump(exclude_none=True)
-    details = {
-        k: v
-        for k, v in usage_data.items()
-        if k not in {'prompt_tokens', 'completion_tokens', 'input_tokens', 'output_tokens', 'total_tokens'}
-        if isinstance(v, int)
-    }
-    response_data = dict(model=model, usage=usage_data)
+    builder.input_tokens = response_usage.prompt_tokens
+    builder.output_tokens = response_usage.completion_tokens
 
-    if response_usage.completion_tokens_details is not None:  # pragma: lax no cover
-        details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
+    if prompt_token_details := response_usage.prompt_tokens_details:
+        if cached_tokens := prompt_token_details.cached_tokens:
+            builder.cache_read_tokens = cached_tokens
 
-    return RequestUsage.extract(
-        response_data,
-        provider=provider,
-        provider_url=provider_url,
-        provider_fallback='openai',
-        api_flavor='chat',
-        details=details,
-    )
+        if audio_tokens := prompt_token_details.audio_tokens:  # pragma: lax no cover
+            builder.input_audio_tokens = audio_tokens
+
+        if video_tokens := prompt_token_details.video_tokens:  # pragma: lax no cover
+            builder.details['input_video_tokens'] = video_tokens
+
+    if completion_token_details := response_usage.completion_tokens_details:
+        if reasoning_tokens := completion_token_details.reasoning_tokens:
+            builder.details['reasoning_tokens'] = reasoning_tokens
+
+        if image_tokens := completion_token_details.image_tokens:  # pragma: lax no cover
+            builder.details['output_image_tokens'] = image_tokens
+
+    if (is_byok := response_usage.is_byok) is not None:
+        builder.details['is_byok'] = is_byok
+
+    if cost := response_usage.cost:
+        builder.details['cost'] = int(cost * 1000000)  # convert to microcost
+
+    return builder
 
 
 class OpenRouterModel(OpenAIChatModel):
@@ -525,6 +580,10 @@ class OpenRouterModel(OpenAIChatModel):
         return OpenRouterStreamedResponse
 
     @override
+    def _map_usage(self, response: chat.ChatCompletion) -> RequestUsage:
+        return _map_usage(response, self._provider.name, self._provider.base_url, self._model_name)
+
+    @override
     def _map_finish_reason(  # type: ignore[reportIncompatibleMethodOverride]
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error']
     ) -> FinishReason | None:
@@ -565,6 +624,9 @@ class OpenRouterChatCompletionChunk(chat.ChatCompletionChunk):
 
     choices: list[OpenRouterChunkChoice]  # type: ignore[reportIncompatibleVariableOverride]
     """A list of chat completion chunk choices modified with OpenRouter specific attributes."""
+
+    usage: OpenRouterUsage | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    """Usage statistics for the completion request."""
 
 
 @dataclass

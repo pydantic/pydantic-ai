@@ -4,7 +4,7 @@ import base64
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -62,8 +62,9 @@ try:
         ChatCompletionContentPartInputAudioParam,
         ChatCompletionContentPartParam,
         ChatCompletionContentPartTextParam,
+        chat_completion,
+        chat_completion_chunk,
     )
-    from openai.types.chat.chat_completion_chunk import Choice
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
@@ -543,28 +544,7 @@ class OpenAIChatModel(Model):
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
         """
-        choice = response.choices[0]
-        provider_details: dict[str, Any] = {}
-
-        # Add logprobs to vendor_details if available
-        if choice.logprobs is not None and choice.logprobs.content:
-            # Convert logprobs to a serializable format
-            provider_details['logprobs'] = [
-                {
-                    'token': lp.token,
-                    'bytes': lp.bytes,
-                    'logprob': lp.logprob,
-                    'top_logprobs': [
-                        {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
-                    ],
-                }
-                for lp in choice.logprobs.content
-            ]
-
-        raw_finish_reason = choice.finish_reason
-        provider_details['finish_reason'] = raw_finish_reason
-
-        return provider_details
+        return _map_provider_details(response.choices[0])
 
     def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -618,7 +598,7 @@ class OpenAIChatModel(Model):
 
         return ModelResponse(
             parts=items,
-            usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
+            usage=self._map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
             provider_details=self._process_provider_details(response),
@@ -679,6 +659,9 @@ class OpenAIChatModel(Model):
         This method may be overridden by subclasses of `OpenAIChatModel` to provide their own `StreamedResponse` type.
         """
         return OpenAIStreamedResponse
+
+    def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
+        return _map_usage(response, self._provider.name, self._provider.base_url, self._model_name)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
@@ -1767,7 +1750,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             for event in self._map_part_delta(choice):
                 yield event
 
-    def _validate_response(self):
+    def _validate_response(self) -> AsyncIterable[ChatCompletionChunk]:
         """Hook that validates incoming chunks.
 
         This method may be overridden by subclasses of `OpenAIStreamedResponse` to apply custom chunk validations.
@@ -1776,7 +1759,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         """
         return self._response
 
-    def _map_part_delta(self, choice: Choice):
+    def _map_part_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that determines the sequence of mappings that will be called to produce events.
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
@@ -1785,7 +1768,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             self._map_thinking_delta(choice), self._map_text_delta(choice), self._map_tool_call_delta(choice)
         )
 
-    def _map_thinking_delta(self, choice: Choice):
+    def _map_thinking_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps thinking delta content to events.
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
@@ -1811,7 +1794,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                 provider_name=self.provider_name,
             )
 
-    def _map_text_delta(self, choice: Choice):
+    def _map_text_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps text delta content to events.
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
@@ -1831,7 +1814,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                     maybe_event.part.provider_name = self.provider_name
                 yield maybe_event
 
-    def _map_tool_call_delta(self, choice: Choice):
+    def _map_tool_call_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps tool call delta content to events.
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the mapping.
@@ -1851,11 +1834,9 @@ class OpenAIStreamedResponse(StreamedResponse):
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the provider details.
         """
-        choice = chunk.choices[0]
-        if raw_finish_reason := choice.finish_reason:
-            return {'finish_reason': raw_finish_reason}
+        return _map_provider_details(chunk.choices[0])
 
-    def _map_usage(self, response: ChatCompletionChunk):
+    def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self._model_name)
 
     def _map_finish_reason(
@@ -2177,7 +2158,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     UserWarning,
                 )
 
-    def _map_usage(self, response: responses.Response):
+    def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self._model_name)
 
     @property
@@ -2235,6 +2216,32 @@ def _map_usage(
         api_flavor=api_flavor,
         details=details,
     )
+
+
+def _map_provider_details(
+    choice: chat_completion_chunk.Choice | chat_completion.Choice,
+) -> dict[str, Any]:
+    provider_details: dict[str, Any] = {}
+
+    # Add logprobs to vendor_details if available
+    if choice.logprobs is not None and choice.logprobs.content:
+        # Convert logprobs to a serializable format
+        provider_details['logprobs'] = [
+            {
+                'token': lp.token,
+                'bytes': lp.bytes,
+                'logprob': lp.logprob,
+                'top_logprobs': [
+                    {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+                ],
+            }
+            for lp in choice.logprobs.content
+        ]
+
+    if raw_finish_reason := choice.finish_reason:
+        provider_details['finish_reason'] = raw_finish_reason
+
+    return provider_details
 
 
 def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:

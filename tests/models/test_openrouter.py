@@ -12,6 +12,7 @@ from pydantic_ai import (
     ModelRequest,
     PartEndEvent,
     PartStartEvent,
+    RunUsage,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -255,6 +256,31 @@ async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_a
         await agent.run('Tell me a joke.')
     assert str(exc_info.value) == snapshot(
         "status_code: 429, model_name: google/gemini-2.0-flash-exp:free, body: {'code': 429, 'message': 'Provider returned error', 'metadata': {'provider_name': 'Google', 'raw': 'google/gemini-2.0-flash-exp:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations'}}"
+    )
+
+
+async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-5-mini', provider=provider)
+    agent = Agent(model, instructions='Be helpful.', retries=1)
+
+    result = await agent.run('Tell me about Venus')
+
+    assert result.usage() == snapshot(
+        RunUsage(input_tokens=17, output_tokens=1515, details={'reasoning_tokens': 704}, requests=1)
+    )
+
+    settings = OpenRouterModelSettings(openrouter_usage={'include': True})
+
+    result = await agent.run('Tell me about Mars', model_settings=settings)
+
+    assert result.usage() == snapshot(
+        RunUsage(
+            input_tokens=17,
+            output_tokens=2177,
+            details={'cost': 4358, 'is_byok': 0, 'reasoning_tokens': 960},
+            requests=1,
+        )
     )
 
 
