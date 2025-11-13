@@ -234,6 +234,7 @@ theme:
     - navigation.sections
     - navigation.tracking
     - toc.follow
+    - announce.dismiss
   logo: "img/logo-white.svg"
   favicon: "favicon.ico"
 
