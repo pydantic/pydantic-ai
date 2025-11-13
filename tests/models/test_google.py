@@ -3203,8 +3203,95 @@ def _generate_response_with_texts(response_id: str, texts: list[str]) -> Generat
     )
 
 
+async def test_google_model_file_search_tool(allow_model_requests: None, google_provider: GoogleProvider):
+    """Integration test for FileSearchTool with Google."""
+    from pydantic_ai.builtin_tools import FileSearchTool
+
+    client = google_provider.client
+    
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        f.write('Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.')
+        test_file_path = f.name
+    
+    try:
+        store = await client.aio.file_search_stores.create(
+            display_name='test-file-search-store'
+        )
+        
+        with open(test_file_path, 'rb') as f:
+            await client.aio.file_search_stores.upload_to_file_search_store(
+                file_search_store=store.name,
+                file=f,
+                config={'mime_type': 'text/plain'}
+            )
+        
+        import asyncio
+        await asyncio.sleep(3)
+        
+        model = GoogleModel('gemini-2.5-pro', provider=google_provider)
+        agent = Agent(model=model, builtin_tools=[FileSearchTool(vector_store_ids=[store.name])])
+        
+        result = await agent.run('What is the capital of France according to my files?')
+        
+        assert 'Paris' in result.output or 'paris' in result.output.lower()
+        
+    finally:
+        import os
+        os.unlink(test_file_path)
+        if 'store' in locals():
+            await client.aio.file_search_stores.delete(name=store.name)
+
+
+async def test_google_model_file_search_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):
+    """Integration test for FileSearchTool streaming with Google."""
+    from pydantic_ai.builtin_tools import FileSearchTool
+
+    client = google_provider.client
+    
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        f.write('The Louvre Museum is located in Paris, France. It houses the Mona Lisa.')
+        test_file_path = f.name
+    
+    try:
+        store = await client.aio.file_search_stores.create(
+            display_name='test-file-search-stream'
+        )
+        
+        with open(test_file_path, 'rb') as f:
+            await client.aio.file_search_stores.upload_to_file_search_store(
+                file_search_store=store.name,
+                file=f,
+                config={'mime_type': 'text/plain'}
+            )
+        
+        import asyncio
+        await asyncio.sleep(3)
+        
+        model = GoogleModel('gemini-2.5-pro', provider=google_provider)
+        agent = Agent(model=model, builtin_tools=[FileSearchTool(vector_store_ids=[store.name])])
+        
+        events = []
+        async with agent.iter(user_prompt='Where is the Louvre Museum according to my files?') as agent_run:
+            async for node in agent_run:
+                if Agent.is_model_request_node(node):
+                    async with node.stream(agent_run.ctx) as stream:
+                        async for event in stream:
+                            events.append(event)
+        
+        assert len(events) > 0
+        output = ''.join(str(e.part.content) if hasattr(e, 'part') and hasattr(e.part, 'content') else '' for e in events)
+        assert 'Paris' in output or 'France' in output or 'Louvre' in output or 'paris' in output.lower()
+        
+    finally:
+        import os
+        os.unlink(test_file_path)
+        if 'store' in locals():
+            await client.aio.file_search_stores.delete(name=store.name)
+
+
 # Unit tests below validate the FileSearchTool parsing logic.
-# Integration tests require setting up file search stores via the Google API.
 
 
 def test_map_file_search_grounding_metadata():
