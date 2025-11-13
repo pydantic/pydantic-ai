@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import replace
 from typing import Any, cast
 
@@ -7,21 +8,20 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
-from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
-from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
-from pydantic_ai.messages import (
+from pydantic_ai import (
     BinaryContent,
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
+    BinaryImage,
     BuiltinToolCallPart,
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
     DocumentUrl,
+    FilePart,
     FinalResultEvent,
+    ImageGenerationTool,
     ImageUrl,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
     TextPart,
@@ -31,15 +31,25 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UnexpectedModelBehavior,
     UserPromptPart,
+    capture_run_messages,
 )
+from pydantic_ai.agent import Agent
+from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
+from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
+from pydantic_ai.messages import (
+    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
+    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+)
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsDatetime, IsStr, TestEnv, try_import
-from .mock_openai import MockOpenAIResponses, response_message
+from ..conftest import IsBytes, IsDatetime, IsStr, TestEnv, try_import
+from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
@@ -69,6 +79,8 @@ def test_openai_responses_model(env: TestEnv):
     model = OpenAIResponsesModel('gpt-4o')
     assert model.model_name == 'gpt-4o'
     assert model.system == 'openai'
+    assert model.base_url == 'https://api.openai.com/v1/'
+    assert model.client.api_key == 'test'
 
 
 async def test_openai_responses_model_simple_response(allow_model_requests: None, openai_api_key: str):
@@ -76,6 +88,40 @@ async def test_openai_responses_model_simple_response(allow_model_requests: None
     agent = Agent(model=model)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
+
+
+async def test_openai_responses_image_detail_vendor_metadata(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    image_url = ImageUrl('https://example.com/image.png', vendor_metadata={'detail': 'high'})
+    binary_image = BinaryContent(b'\x89PNG', media_type='image/png', vendor_metadata={'detail': 'high'})
+
+    result = await agent.run(['Describe these inputs.', image_url, binary_image])
+    assert result.output == 'done'
+
+    response_kwargs = get_mock_responses_kwargs(mock_client)
+    image_parts = [
+        item
+        for message in response_kwargs[0]['input']
+        if message.get('role') == 'user'
+        for item in message['content']
+        if item['type'] == 'input_image'
+    ]
+    assert image_parts
+    assert all(part['detail'] == 'high' for part in image_parts)
 
 
 async def test_openai_responses_model_simple_response_with_tool_call(allow_model_requests: None, openai_api_key: str):
@@ -201,7 +247,8 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         content='What is the location of Londos and London?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -209,11 +256,13 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         tool_name='get_location',
                         args='{"loc_name":"Londos"}',
                         tool_call_id=IsStr(),
+                        id='fc_67e547c540648191bc7505ac667e023f0ae6111e84dd5c08',
                     ),
                     ToolCallPart(
                         tool_name='get_location',
                         args='{"loc_name":"London"}',
                         tool_call_id=IsStr(),
+                        id='fc_67e547c55c3081919da7a3f7fe81a1030ae6111e84dd5c08',
                     ),
                 ],
                 usage=RequestUsage(details={'reasoning_tokens': 0}),
@@ -223,6 +272,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_67e547c48c9481918c5c4394464ce0c60ae6111e84dd5c08',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -238,7 +288,8 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -258,6 +309,7 @@ For **London**, it's located at approximately latitude 51° N and longitude 0° 
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_67e547c5a2f08191802a1f43620f348503a2086afed73b47',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -283,10 +335,18 @@ async def test_image_as_binary_content_tool_response(
                         content=['What fruit is in the image you can get from the get_image tool?'],
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_image',
+                        args='{}',
+                        tool_call_id=IsStr(),
+                        id='fc_681134d47cf48191b3f62e4d28b6c3820fe7a5a4e2123dc3',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=40, output_tokens=11, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -294,13 +354,14 @@ async def test_image_as_binary_content_tool_response(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_681134d3aa3481919ca581a267db1e510fe7a5a4e2123dc3',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file 1c8566',
-                        tool_call_id='call_FLm3B1f8QAan0KpbUXhNY8bA|fc_681134d47cf48191b3f62e4d28b6c3820fe7a5a4e2123dc3',
+                        tool_call_id='call_FLm3B1f8QAan0KpbUXhNY8bA',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -310,7 +371,8 @@ async def test_image_as_binary_content_tool_response(
                         ],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -326,6 +388,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_681134d53c48819198ce7b89db78dffd02cbfeaababb040c',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -457,7 +520,8 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         content='Give me the top 3 news in the world today',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -604,6 +668,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0e3d55e9502941380068c4aa9a62f48195a373978ed720ac63',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -620,6 +685,7 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -635,6 +701,7 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_67f3fdfd9fa08191a3d5825db81b8df6003bc73febb56d77',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -655,6 +722,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     )
                 ],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -697,6 +765,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_028829e50fbcad090068c9c82e1e0081958ddc581008b39428',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -713,6 +782,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     )
                 ],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -755,6 +825,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_028829e50fbcad090068c9c83b9fb88195b6b84a32e1fc83c0',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -781,6 +852,7 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                     )
                 ],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -823,6 +895,7 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0b385a0fdc82fd920068c4aaf3ced88197a88711e356b032c4',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -850,6 +923,7 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                     )
                 ],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -892,6 +966,7 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0b4f29854724a3120068c4ab0b660081919707b95b47552782',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -926,6 +1001,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     )
                 ],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -974,6 +1050,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_00a60507bf41223d0068c9d2fbf93481a0ba2a7796ae2cab4c',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -989,6 +1066,16 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     provider_name='openai',
                 ),
             ),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='',
+                    id='rs_00a60507bf41223d0068c9d2fc927081a088e0b920cdfe3866',
+                    signature='gAAAAABoydMADQ6HaJB8mYQXlwd-4MrCfzmKqMHXUnSAXWV3huK1UrU1h3Do3pbK4bcD4BAvNiHTH-Pn27MGZDP_53IhKj_vB0egVf6Z_Y2uFPtzmyasYtTzrTkGSfAMR0xfI4wJk99aatk3UyLPNE7EO_vWYzN6CSX5ifJNNcmY3ArW1A7XnmsnMSBys05PsWqLMHZOUFuBvM2W37QUW6QOfBXZy0TamoO5UknNUfZb_TwvSnMEDpa-lXyDn4VuzfxreEGVHGdSyz5oLN0nBr3KwHIfxMRZIf9gi9-hKCnxX7i-ZktNIfTgd_WEmNKlaPO-qjKHPlO_XPKbEfpBdMv5b2P9BIC20ZG3m6qnEc4OqafWZa1iC2szi4eKOEa6neh2ltVLsLS3MlurF4sO-EHQT4O9t-zJ-738mZsOgjsI9rTrLm_aTAJrntSSWRLcP6PI6_ILHyeAl_aN4svtnwQJZhv4_Qf62q70SZQ5fSfqoqfO1YHLcXq6Op99iH3CfAhOjH-NcgThFLpT4-VLYABl8wiWBTsWzdndZoPmvMLEOaEGJOcM6_922FC0Q-fUio3psm_pLcElaG-XIkyn4oNuk6OJQonFE-Bm6WS_1I9sMF0ncSD4gH1Ey-5y2Ayxi3Kb3XWjFvs1RKW17KFXj8sthF3vY5WHUeRKA14WtN-cHsi4lXBFYJmn2FiD3CmV-_4ErzXH8sIMJrDDsqfCoiSbHwih25INTTIj7KAPL2QtIpU6A8zbzQIK-GOKqb0n4wGeOIyf7J4C2-5jhmlF2a6HUApFXZsRcD8e3X1WqSjdTdnRu_0GzDuHhPghRQJ3DHfGwDvoZy6UK55zb2MaxpNyMHT149sMwUWkCVg0BruxnOUfziuURWhT-VJWzv5mr3Z765TFB1PfHJhznKPFiZN0MTStVtqKQlOe8nkwLevCgZY4oT1Mysg7YJhcWtkquKILXe-y6luJBHzUy_aFAgFliUbcrOhkoBk5olAbSz8Y4sSz5vWugYA1kwlIofnRm4sPcvoIXgUD_SGGI3QNsQyRWQEhf7G5mNRrxmLhZZLXAcBAzkw10nEjRfew2Fri7bdvyzJ1OS_af9fHmeqCZG5ievKIX6keUkIYQo_qm4FQFkXZSl9lMHsUSF-di4F6ws31vM0zVLMmH52u12Z3SZhvAFzIV5Vtyt_IfrMV3ANMqVF4SmS4k2qUlv1KuPQVgqGCVHvfeE1oSyYgYF6oFX8ThXNB79wxvi4Oo8fWEZLzZMFH9QEr2c7sOWHYWk-wUMP1auXTQNExEVz22pBxueZGZhRyLdpcA12v8o6vJkVuBj-2eR8GRI7P6InJdQAO9TIBhM7NtJU2NUpeP_84js3RTBVktqBT74nWPaHIddGMSfW2aGmFJovvshhxGMLtN_6XMh4wRKW0IE_-Rfbhk8_-xHKI5McYI048N_TMYOS8KqPPAmGVklRGqPZ5xXMNvQEVweThDTYTo3NoAsS0fN2yMmSwrjRYBHsgYMtil4pd6ddp8dvF_XSJUkW0nF8t6ciI_k47sug3gyw4usqspWxY9Hwbzb4OFzzrgtO_7Ll6lFFFUx2oHy8AO9sJ97Y3Fg6luuew7ZRDzA_4XMrT7mNW6YuT-o2DunaZw-jvQezNHjPN2WhaTS7fkisyhFSFTMBYE-H4psfj_sizutv-LjwbumTcX2mnYE9SZhVr8dL0c7sgwHP1831RxTSSl3ql_obE3ICDooyuM8PYE56Jx0HOOGbEeJd3w91SzNHPG_3SQfXszrZlw4BGWrEUHBbtVY2ZEnsyGNAx6vKO8lz9D-6yZ618foDJSH-Ilk56a5rhr0beWjSd9mYMsr3zpVz6HcpTLYGEgHfPxpT2eaYaC1H_znw7y1eMKamwudYmtz_azX5LrOtwc0p-pXH-kdoNe248pSz9qsmHcXA41fuj2weKQNrmBcghwtfM95B060tnmebJ_B_KkLXL4cNF-hZqi0wAHrHYrZ_WM0Dy90AFH-b7iiWuWz5M1EhZXo179iEdybM-1PgccFJ0zvOqODl7FNxSgWVyNS1k9R42aZx2PzFAfAbBtJ-KVMhUayAvGLNmi35EAT0G6FK65VBEe7A6zPFqzrrAiG8dy3Z0I0253WzIblHPNMpmxI_ca5tIx3u8Za6Nu9rx8mi0CY2jsRSKnqb7RZvLuB78Uj32lb_9jbq5_gL9_y7Bt7U7i7FospyqMFzEYQLvdyrtfNrfY0rB4zr4Mo0tDn_4YOD_d_nP5axUh9_ruqXZ_d3eVdNmlITjQZj8ALe1EfidP8a-Dl62t6STVv8d2y8v9-jy3J7wReLJbJ6gDDnygJllY7NrIVXSjR45FXiCDnpaRonu--I_0b_LRJFOoJUJX0S9YMaXAkKyHSEj-UWjiuk8cIBNcXxwlxnqqNMezvvV113MAOEbfHygDnphzjzZQxteAVbSy0ucGDR2FPi30d6z51NxGnXNS_sM7wnjBMNp4Li0hhttOp6PgvDKPSMAcgUtKLFKE8iWQAvERoUVxw5Et20hNTNXf_0sXOyh0bF0URPGDxSYz9uZI6-nlwVlo1aobdEnn7STSq2_tuTDIrQyfBGZzhv8OB0H3cj9mBs=',
+                    provider_name='openai',
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
             PartStartEvent(
                 index=1,
                 part=BuiltinToolCallPart(
@@ -996,6 +1083,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                     provider_name='openai',
                 ),
+                previous_part_kind='thinking',
             ),
             PartDeltaEvent(
                 index=1,
@@ -1004,15 +1092,26 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                 ),
             ),
+            PartEndEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'weather: San Francisco, CA', 'type': 'search'},
+                    tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
+                    provider_name='openai',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
             PartStartEvent(
                 index=2,
                 part=BuiltinToolReturnPart(
                     tool_name='web_search',
-                    content={'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}], 'status': 'completed'},
+                    content={'status': 'completed', 'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}]},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=3,
@@ -1022,10 +1121,22 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     signature='gAAAAABoydMLww_4DcIPiCy5zW1t-Dtx57JodsdP9YkyDCvY9r0nBfoD-bwcBl8FfcFxRuq5nK5ndf90J6Xdxmvl9kGVbCUYSFaOd-kWeE4tgwXM8BwwE3jVs6ZMG3BdiWyXS3alnUO5jcE6kuXeun1LufAdZ6rWtJl3zSmqPycnTh9zoQ4cBBxLDq_qcVS1fgU4WjsWgjCZw6ZWRPWwZk8hywmU7ykCLH7SXItM4oH1m_GCEounJAS8YR4ajUh5KAdN6a1wngfGnXhYdzov98yiNLP6Nrkgr--K4vMTTqWXLTcR6fbWgkijanIeKmfSErCjMT6k5TrAbkFx0rgblHbdQii7zj8seV1BWZse92_k4sltxfc5Ocpyho1YSHhgxyGL7g442xMUEibjPCv6kwPMcW9yGu9wPMWsfPYCXpBbG6kQibQPNFJ_bEubwBRaqdSDq93Aqr1YkTYBja7Tewn8UfzZ8YYaGe5y_K4ZD47lfvDp019dOdXmOuZGC1ECRrMqKzSFYVG1CFY1VhjGdPmzobDoMcpZcLn25s1pg6lnNqNQwOk_IA4MvUcCU5HHD5YjmFkEy5-i_iRoDVu5coK0zyEMvPJ_h10y_ByszcfzS9e0ht5CSilckkFdxTBkZ5epp0YIg1e-PrZ790P-I35Ucquam9OXyULV1Y5bn9ohZa93Tv0JZRxUeTDG72_28xRj8tkJaBAZjoCC7VICw39KVmz-ZkuVN6IIX1WdNzyC4d808-2Tz4UZaU42-wxEWDnSDMD7iZu1Bi9fKKwAYBJt_OcEsJwpW63ZaUSG2PVFfm7a3wRcSMxMTUTTJB7L1Keu1hmNepif5tavn3P35nSq28D_IJyAqAgX7ZyROk2bJqjzSE4A0MddqAoBFFqKBi68n49KH09vDtDXIoh8jVWuIgowgVGr8pN3kuhLI9cir4Pr_WES0tPD7yWHPTzrD7OIJCfQbr_4Y4dEza4ixNi0RTADWzMUZBfr7bvwIsgvg6ZNuQlx_d71Go5VDsT2KI8H8AldiRvNWoLyYTFGyK9Kot97YsS5sEmSYgNAH48NU7pgnM0jNDQU1G39nTNFEjL_ziDwjDT5g3jm4S_gbQfwx-XFT3Pv-JYR-E71AqR--Lg71OsASq49rrlULfl5OENfiT-NB6x8MqnfUI6NpcCsOWLp8XfRbgqmZFutLIi43pcnxEe3cXHLWGF77qJXP6dFb-G5Ide7n9tAOoEgfsVu7hCDPEQ_xrIYRdc2DzDPUMCtXBai24E0AnQF8kxsEtlDW_YmAgGNTl9Gx0tFSGdDuUCsNx__c7v-_LOMWycXUKmH3iEr_su83oGIMapNp2PnLccN4iOxspdZQq0C6WBaR6SrdnGzK-0KwRPRoyKDLNWS8zfluR5bIgKlqd3Sbv_7eL-WO4LQXMvdKP3KS-DBt1HbA-gmyFW03iX2smPQbtVmRLWi1vG329R_07-tHMJSO9OQy6_6aiyO8Rgpbl_CHa1Q9BEkI2csonayDJRPvEXBPuk9-NPUP4VLNPB7npWBLlAqes5ZmhagnC7srTL0fFiLGLJiAxWo1f0BBiIlXjwqHdlgBjTw0KryCnEU8Ic8ATzrqEXXhs-FTBCcWInf3Bt5bzUhy20g7cTtYP-VCbsku-lXQ6wceWrfQVFtjKKICD8I4g9QusAIAvgCUm7J2rR3TLkzwOKngdTFPGQrQ1TYzlkA7q_Ew1uZpaPRckMaEioZYC6Sv_B0rgW0nyBJ0GLrB3AUN60hDrOFntyFHp0FM-Zh1SY-GKGBwZwVetOzM0ZAJ-NreFg1XVgyLTYDNjUrYJjRhr_JARsZ5t0pU4_yI6dPqM5jKO5_k4UpZspfQon6d2-NlWX0EDmz6G4CMTx0TScehYHrQZtPzpVnivc8h_pmXV3jO5GLzNeLWoB70SDPTETo1Of4txiEUaC2komu5B7MN9aR4c7VBOTv1NIjoiZcrd1HFACzZ7r1qAE-G38j1f1YhfZ0_TiMmtfR1cqjAKcFkyRM7rZMyMvvnsH7NFq59gFgWZt0dy0aAdw03XWXFNT67lrw58OYC3NcVozH4SKlmleu7TfjHNWSnJVjJ66riLn9DZWVxPeTk4zuISZn0yyaoXcdW8OMn_mJ9vP-8L1wElMyxKbtBRz-0cW7MshmJ3YXmHWDKbnqETSbDMtqcN_QyRJovopwlptJ8VzL7biuURRFw-l63Kc9vKP72Z-QWOUIPLB4q4nX4yb-IV0mkWFxIUlfv5Cze2anf7zDFyGzeU9xG0onfhJE4HFKcoUT8MzfrHZ0dDZtnEYeL5Xem3GuHpwEVGCxRE_J1joTmJfeWxSVnr2Vey9gaPmXCyRrdKS75v9xSXJFfHvcOO8Qp35Dzk-yFqL3dSOJfOEwDZbEf6QnV7VU1EhJvW4XmRS-wsRLMLCYcLrOx96NHEwb2h2l6gNfbCVJoQrMhMg68qBPnoSYLhML2ho7hWkSNZFy61yX5I-oEJV5XdtjFcBkyurmUD6uYTkJSqXyxLexQiPbT-uv49Yp9cAfFBG23sC9lUQ=',
                     provider_name='openai',
                 ),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartEndEvent(
+                index=3,
+                part=ThinkingPart(
+                    content='',
+                    id='rs_00a60507bf41223d0068c9d300b23481a0b77a03d911213220',
+                    signature='gAAAAABoydMLww_4DcIPiCy5zW1t-Dtx57JodsdP9YkyDCvY9r0nBfoD-bwcBl8FfcFxRuq5nK5ndf90J6Xdxmvl9kGVbCUYSFaOd-kWeE4tgwXM8BwwE3jVs6ZMG3BdiWyXS3alnUO5jcE6kuXeun1LufAdZ6rWtJl3zSmqPycnTh9zoQ4cBBxLDq_qcVS1fgU4WjsWgjCZw6ZWRPWwZk8hywmU7ykCLH7SXItM4oH1m_GCEounJAS8YR4ajUh5KAdN6a1wngfGnXhYdzov98yiNLP6Nrkgr--K4vMTTqWXLTcR6fbWgkijanIeKmfSErCjMT6k5TrAbkFx0rgblHbdQii7zj8seV1BWZse92_k4sltxfc5Ocpyho1YSHhgxyGL7g442xMUEibjPCv6kwPMcW9yGu9wPMWsfPYCXpBbG6kQibQPNFJ_bEubwBRaqdSDq93Aqr1YkTYBja7Tewn8UfzZ8YYaGe5y_K4ZD47lfvDp019dOdXmOuZGC1ECRrMqKzSFYVG1CFY1VhjGdPmzobDoMcpZcLn25s1pg6lnNqNQwOk_IA4MvUcCU5HHD5YjmFkEy5-i_iRoDVu5coK0zyEMvPJ_h10y_ByszcfzS9e0ht5CSilckkFdxTBkZ5epp0YIg1e-PrZ790P-I35Ucquam9OXyULV1Y5bn9ohZa93Tv0JZRxUeTDG72_28xRj8tkJaBAZjoCC7VICw39KVmz-ZkuVN6IIX1WdNzyC4d808-2Tz4UZaU42-wxEWDnSDMD7iZu1Bi9fKKwAYBJt_OcEsJwpW63ZaUSG2PVFfm7a3wRcSMxMTUTTJB7L1Keu1hmNepif5tavn3P35nSq28D_IJyAqAgX7ZyROk2bJqjzSE4A0MddqAoBFFqKBi68n49KH09vDtDXIoh8jVWuIgowgVGr8pN3kuhLI9cir4Pr_WES0tPD7yWHPTzrD7OIJCfQbr_4Y4dEza4ixNi0RTADWzMUZBfr7bvwIsgvg6ZNuQlx_d71Go5VDsT2KI8H8AldiRvNWoLyYTFGyK9Kot97YsS5sEmSYgNAH48NU7pgnM0jNDQU1G39nTNFEjL_ziDwjDT5g3jm4S_gbQfwx-XFT3Pv-JYR-E71AqR--Lg71OsASq49rrlULfl5OENfiT-NB6x8MqnfUI6NpcCsOWLp8XfRbgqmZFutLIi43pcnxEe3cXHLWGF77qJXP6dFb-G5Ide7n9tAOoEgfsVu7hCDPEQ_xrIYRdc2DzDPUMCtXBai24E0AnQF8kxsEtlDW_YmAgGNTl9Gx0tFSGdDuUCsNx__c7v-_LOMWycXUKmH3iEr_su83oGIMapNp2PnLccN4iOxspdZQq0C6WBaR6SrdnGzK-0KwRPRoyKDLNWS8zfluR5bIgKlqd3Sbv_7eL-WO4LQXMvdKP3KS-DBt1HbA-gmyFW03iX2smPQbtVmRLWi1vG329R_07-tHMJSO9OQy6_6aiyO8Rgpbl_CHa1Q9BEkI2csonayDJRPvEXBPuk9-NPUP4VLNPB7npWBLlAqes5ZmhagnC7srTL0fFiLGLJiAxWo1f0BBiIlXjwqHdlgBjTw0KryCnEU8Ic8ATzrqEXXhs-FTBCcWInf3Bt5bzUhy20g7cTtYP-VCbsku-lXQ6wceWrfQVFtjKKICD8I4g9QusAIAvgCUm7J2rR3TLkzwOKngdTFPGQrQ1TYzlkA7q_Ew1uZpaPRckMaEioZYC6Sv_B0rgW0nyBJ0GLrB3AUN60hDrOFntyFHp0FM-Zh1SY-GKGBwZwVetOzM0ZAJ-NreFg1XVgyLTYDNjUrYJjRhr_JARsZ5t0pU4_yI6dPqM5jKO5_k4UpZspfQon6d2-NlWX0EDmz6G4CMTx0TScehYHrQZtPzpVnivc8h_pmXV3jO5GLzNeLWoB70SDPTETo1Of4txiEUaC2komu5B7MN9aR4c7VBOTv1NIjoiZcrd1HFACzZ7r1qAE-G38j1f1YhfZ0_TiMmtfR1cqjAKcFkyRM7rZMyMvvnsH7NFq59gFgWZt0dy0aAdw03XWXFNT67lrw58OYC3NcVozH4SKlmleu7TfjHNWSnJVjJ66riLn9DZWVxPeTk4zuISZn0yyaoXcdW8OMn_mJ9vP-8L1wElMyxKbtBRz-0cW7MshmJ3YXmHWDKbnqETSbDMtqcN_QyRJovopwlptJ8VzL7biuURRFw-l63Kc9vKP72Z-QWOUIPLB4q4nX4yb-IV0mkWFxIUlfv5Cze2anf7zDFyGzeU9xG0onfhJE4HFKcoUT8MzfrHZ0dDZtnEYeL5Xem3GuHpwEVGCxRE_J1joTmJfeWxSVnr2Vey9gaPmXCyRrdKS75v9xSXJFfHvcOO8Qp35Dzk-yFqL3dSOJfOEwDZbEf6QnV7VU1EhJvW4XmRS-wsRLMLCYcLrOx96NHEwb2h2l6gNfbCVJoQrMhMg68qBPnoSYLhML2ho7hWkSNZFy61yX5I-oEJV5XdtjFcBkyurmUD6uYTkJSqXyxLexQiPbT-uv49Yp9cAfFBG23sC9lUQ=',
+                    provider_name='openai',
+                ),
+                next_part_kind='text',
             ),
             PartStartEvent(
                 index=4,
                 part=TextPart(content='San Francisco', id='msg_00a60507bf41223d0068c9d30b055481a0b0ee28a021919c94'),
+                previous_part_kind='thinking',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' weather')),
@@ -1071,6 +1182,13 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' for the')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' cooler evening')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='. ')),
+            PartEndEvent(
+                index=4,
+                part=TextPart(
+                    content='San Francisco weather today (Tuesday, September 16, 2025): Mostly sunny and pleasant. Current conditions around 71°F; expected high near 73°F and low around 58°F. A light jacket is useful for the cooler evening. ',
+                    id='msg_00a60507bf41223d0068c9d30b055481a0b0ee28a021919c94',
+                ),
+            ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
@@ -1102,6 +1220,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     )
                 ],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1150,6 +1269,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_00a60507bf41223d0068c9d31574d881a090c232646860a771',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1206,6 +1326,14 @@ async def test_reasoning_model_with_temperature(allow_model_requests: None, open
 
 
 @pytest.mark.vcr()
+async def test_gpt5_pro(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-5-pro', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+    result = await agent.run('What is the capital of Mexico?')
+    assert result.output == snapshot('Mexico City (Ciudad de México).')
+
+
+@pytest.mark.vcr()
 async def test_tool_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1230,10 +1358,18 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args='{}',
+                        tool_call_id=IsStr(),
+                        id='fc_68477f0bb8e4819cba6d781e174d77f8001fd29e2d5573f7',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=62, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1241,23 +1377,26 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0b40a8819cb8d55594bc2c232a001fd29e2d5573f7',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_ZWkVhdUjupo528U9dqgFeRkH|fc_68477f0bb8e4819cba6d781e174d77f8001fd29e2d5573f7',
+                        tool_call_id='call_ZWkVhdUjupo528U9dqgFeRkH',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
                         args='{"city":"Mexico City","country":"Mexico"}',
-                        tool_call_id='call_iFBd0zULhSZRR908DfH73VwN|fc_68477f0c91cc819e8024e7e633f0f09401dc81d4bc91f560',
+                        tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
+                        id='fc_68477f0c91cc819e8024e7e633f0f09401dc81d4bc91f560',
                     )
                 ],
                 usage=RequestUsage(input_tokens=85, output_tokens=20, details={'reasoning_tokens': 0}),
@@ -1267,16 +1406,18 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0bfda8819ea65458cd7cc389b801dc81d4bc91f560',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='call_iFBd0zULhSZRR908DfH73VwN|fc_68477f0c91cc819e8024e7e633f0f09401dc81d4bc91f560',
+                        tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1306,14 +1447,16 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='get_user_country',
                         args='{}',
-                        tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr|fc_68477f0dff5c819ea17a1ffbaea621e00356a60c98816d6a',
+                        tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr',
+                        id='fc_68477f0dff5c819ea17a1ffbaea621e00356a60c98816d6a',
                     )
                 ],
                 usage=RequestUsage(input_tokens=36, output_tokens=12, details={'reasoning_tokens': 0}),
@@ -1323,16 +1466,18 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0d9494819ea4f123bba707c9ee0356a60c98816d6a',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr|fc_68477f0dff5c819ea17a1ffbaea621e00356a60c98816d6a',
+                        tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1348,6 +1493,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0e2b28819d9c828ef4ee526d6a03434b607c02582d',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1380,10 +1526,18 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args='{}',
+                        tool_call_id=IsStr(),
+                        id='fc_68477f0fa7c081a19a525f7c6f180f310b8591d9001d2329',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=66, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1391,16 +1545,18 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0f220081a1a621d6bcdc7f31a50b8591d9001d2329',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_tTAThu8l2S9hNky2krdwijGP|fc_68477f0fa7c081a19a525f7c6f180f310b8591d9001d2329',
+                        tool_call_id='call_tTAThu8l2S9hNky2krdwijGP',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1416,6 +1572,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0fde708192989000a62809c6e5020197534e39cc1f',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1450,10 +1607,18 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args='{}',
+                        tool_call_id=IsStr(),
+                        id='fc_68477f1168a081a3981e847cd94275080dd57d732903c563',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=153, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1461,16 +1626,18 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f10f2d081a39b3438f413b3bafc0dd57d732903c563',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_UaLahjOtaM2tTyYZLxTCbOaP|fc_68477f1168a081a3981e847cd94275080dd57d732903c563',
+                        tool_call_id='call_UaLahjOtaM2tTyYZLxTCbOaP',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1486,6 +1653,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f119830819da162aa6e10552035061ad97e2eef7871',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1517,16 +1685,17 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args='{}',
+                        tool_call_id=IsStr(),
+                        id='fc_68482f1b0ff081a1b37b9170ee740d1e02f8ef7f2fb42b50',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=107, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1534,23 +1703,18 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68482f12d63881a1830201ed101ecfbf02f8ef7f2fb42b50',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_FrlL4M0CbAy8Dhv4VqF1Shom|fc_68482f1b0ff081a1b37b9170ee740d1e02f8ef7f2fb42b50',
+                        tool_call_id='call_FrlL4M0CbAy8Dhv4VqF1Shom',
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1566,6 +1730,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68482f1b556081918d64c9088a470bf0044fdb7d019d4115',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1601,16 +1766,17 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args='{}',
+                        tool_call_id=IsStr(),
+                        id='fc_68482f2889d481a199caa61de7ccb62c08e79646fe74d5ee',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=283, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1618,23 +1784,18 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68482f1d38e081a1ac828acda978aa6b08e79646fe74d5ee',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_my4OyoVXRT0m7bLWmsxcaCQI|fc_68482f2889d481a199caa61de7ccb62c08e79646fe74d5ee',
+                        tool_call_id='call_my4OyoVXRT0m7bLWmsxcaCQI',
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1650,6 +1811,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68482f28c1b081a1ae73cbbee012ee4906b4ab2d00d03024',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1737,7 +1899,7 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
             parts=[
                 TextPart(content='Open sesame! What would you like to unlock?'),
             ],
-            model_name='claude-3-5-sonnet-latest',
+            model_name='claude-sonnet-4-5',
             provider_name='anthropic',
             provider_response_id='msg_01XUQuedGz9gusk4xZm4gWJj',
         ),
@@ -1759,7 +1921,7 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
             ModelResponse(
                 parts=[TextPart(content='Open sesame! What would you like to unlock?')],
                 usage=RequestUsage(),
-                model_name='claude-3-5-sonnet-latest',
+                model_name='claude-sonnet-4-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_response_id='msg_01XUQuedGz9gusk4xZm4gWJj',
@@ -1848,7 +2010,8 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
                         content='What is 2+2?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='4', id='123')],
@@ -1857,6 +2020,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_response_id='123',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1874,7 +2038,10 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ThinkingPart(
@@ -1900,6 +2067,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42c902794819cb9335264c342f65407460311b0c8d3de',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1916,7 +2084,8 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1942,6 +2111,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42cb3d520819c9d28b07036e9059507460311b0c8d3de',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1966,7 +2136,8 @@ async def test_openai_responses_thinking_part_from_other_model(
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1993,6 +2164,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_0114iHK2ditgTf1N8FWomc4E',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2014,7 +2186,8 @@ async def test_openai_responses_thinking_part_from_other_model(
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2038,6 +2211,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42ce277ac8193ba08881bcefabaf70ad492c7955fc6fc',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2065,7 +2239,8 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2099,6 +2274,7 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42d0fb418819dbfa579f69406b49508fbf9b1584184ff',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2142,6 +2318,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                     )
                 ],
                 instructions="You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update it as you make progress against the user's prompt",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2158,7 +2335,8 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                     ToolCallPart(
                         tool_name='update_plan',
                         args=IsStr(),
-                        tool_call_id='call_gL7JE6GDeGGsFubqO2XGytyO|fc_68c42d3e9e4881968b15fbb8253f58540e8bc41441c948f6',
+                        tool_call_id='call_gL7JE6GDeGGsFubqO2XGytyO',
+                        id='fc_68c42d3e9e4881968b15fbb8253f58540e8bc41441c948f6',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=124, output_tokens=1926, details={'reasoning_tokens': 1792}),
@@ -2168,17 +2346,19 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42d28772c819684459966ee2201ed0e8bc41441c948f6',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='update_plan',
                         content='plan updated',
-                        tool_call_id='call_gL7JE6GDeGGsFubqO2XGytyO|fc_68c42d3e9e4881968b15fbb8253f58540e8bc41441c948f6',
+                        tool_call_id='call_gL7JE6GDeGGsFubqO2XGytyO',
                         timestamp=IsDatetime(),
                     )
                 ],
                 instructions="You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update it as you make progress against the user's prompt",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr(), id='msg_68c42d408eec8196ae1c5883e07c093e0e8bc41441c948f6')],
@@ -2191,6 +2371,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42d3fd6a08196bce23d6be960ff8a0e8bc41441c948f6',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2227,7 +2408,8 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
                         content='What is 2+2?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2238,11 +2420,16 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_response_id='123',
+                run_id=IsStr(),
             ),
         ]
     )
 
-    _, openai_messages = await model._map_messages(result.all_messages(), model_settings=model.settings or {})  # type: ignore[reportPrivateUsage]
+    _, openai_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
+        result.all_messages(),
+        model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+        model_request_parameters=ModelRequestParameters(),
+    )
     assert openai_messages == snapshot(
         [
             {'role': 'user', 'content': 'What is 2+2?'},
@@ -2294,7 +2481,8 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
                         content='What is 2+2?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2308,11 +2496,16 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_response_id='123',
+                run_id=IsStr(),
             ),
         ]
     )
 
-    _, openai_messages = await model._map_messages(result.all_messages(), model_settings=model.settings or {})  # type: ignore[reportPrivateUsage]
+    _, openai_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
+        result.all_messages(),
+        model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+        model_request_parameters=ModelRequestParameters(),
+    )
     assert openai_messages == snapshot(
         [
             {'role': 'user', 'content': 'What is 2+2?'},
@@ -2353,7 +2546,8 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                         content='What is the meaning of life?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2372,6 +2566,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42ddf9bbc8194aa7b97304dd909cb0202c9ad459e0d23',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2404,7 +2599,8 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                         content='Anything to add?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2423,6 +2619,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42de4afcc819f995a1c59fe87c9d5051f82c608a83beb',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2441,243 +2638,107 @@ async def test_openai_responses_thinking_with_code_execution_tool(allow_model_re
     )
     agent = Agent(model=m, builtin_tools=[CodeExecutionTool()])
 
-    result = await agent.run(user_prompt="what's 123456 to the power of 123?")
+    result = await agent.run(user_prompt='what is 65465-6544 * 65464-6+1.02255')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content="what's 123456 to the power of 123?",
+                        content='what is 65465-6544 * 65464-6+1.02255',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_0cccbe0ca95f935e0068c4986ab048819f9c0f1478f3a295c2',
-                        signature=IsStr(),
+                        id='rs_68cdba57390881a3b7ef1d2de5c8499709b7445677780c8f',
+                        signature='gAAAAABozbpoKwjspVdWvC2skgCFSKx1Fiw9QGDrOxixFaC8O5gPVmC35FfE2jaedsn0zsHctrsl2LvPt7ELnOB3N20bvDGcDHkYzjSOLpf1jl2IAtQrkPWuLPOb6h8mIPL-Z1wNrngsmuoaKP0rrAcGwDwKzq8hxpLQbjvpRib-bbaVQ0SX7KHDpbOuEam3bIEiNSCNsA1Ot54R091vvwInnCCDMWVj-9u2fn7xtNzRGjHorkAt9mOhOBIVgZNZHnWb4RQ-PaYccgi44-gtwOK_2rhI9Qo0JiCBJ9PDdblms0EzBE7vfAWrCvnb_jKiEmKf2x9BBv3GMydsgnTCJdbBf6UVaMUnth1GvnDuJBdV12ecNT2LhOF2JNs3QjlbdDx661cnNoCDpNhXpdH3bL0Gncl7VApVY3iT2vRw4AJCU9U4xVdHeWb5GYz-sgkTgjbgEGg_RiU42taKsdm6B2gvc5_Pqf4g6WTdq-BNCwOjXQ4DatQBiJkgV5kyg4PqUqr35AD05wiSwz6reIsdnxDEqtWv4gBJWfGj4I96YqkL9YEuIBKORJ7ArZnjE5PSv6TIhqW-X9mmQTGkXl8emxpbdsNfow3QEd_l8rQEo4fHiFOGwU-uuPCikx7v6vDsE-w_fiZTFkM0X4iwFb6NXvOxKSdigfUgDfeCySwfmxtMx67QuoRA4xbfSHI9cctr-guZwMIIsMmKnTT-qGp-0F4UiyRQdgz2pF1bRUjkPml2rsleHQISztdSsiOGC2jozXNHwmf1b5z6KxymO8gvlImvLZ4tgseYpnAP8p_QZzMjIU7Y7Z2NQMDASr9hvv3tVjVCphqz1RH-h4gifjZJexwK9BR9O98u63X03f01NqgimS_dZHZUeC9voUb7_khNizA9-dS-fpYUduqvxZt-KZ7Q9gx7kFIH3wJvF-Gef55lwy4JNb8svu1wSna3EaQWTBeZOPHD3qbMXWVT5Yf5yrz7KvSemiWKqofYIInNaRLTtXLAOqq4VXP3dmgyEmAZIUfbh3IZtQ1uYwaV2hQoF-0YgM7JLPNDBwX8cRZtlyzFstnDsL_QLArf0bA8FMFNPuqPfyKFvXcGTgzquaUzngzNaoGo7k6kPHWLoSsWbvY3WvzYg4CO04sphuuSHh9TZRBy6LXCdxaMHIZDY_qVB1Cf-_dmDW6Eqr9_xodcTMBqs6RHlttLwFMMiul4aE_hUgNFlzOX7oVbisIS2Sm36GTuKE4zrbkvsA==',
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
                         args={
+                            'container_id': 'cntr_68cdba56addc81918f656db25fd0a6800d6da575ea4fee9b',
                             'code': """\
-n = pow(123456, 123)
-len_str = len(str(n))
-len_str, str(n)[:50], str(n)[-50:]\
+# compute the value
+65465 - 6544 * 65464 - 6 + 1.02255
 """,
-                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
                         },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c4986ed690819f9dbd272c4c70a011',
+                        tool_call_id='ci_68cdba5af39881a393a01eebb253854e09b7445677780c8f',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content={
-                            'outputs': [
-                                dict(
-                                    logs="""\
-(627,
- '18030210630404480750814092786593857280734268863855',
- '29749134489643622579100908331839817426366854332416')\
-""",
-                                    type='logs',
-                                )
-                            ],
-                            'status': 'completed',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c4986ed690819f9dbd272c4c70a011',
+                        content={'status': 'completed', 'logs': ['-428330955.97745']},
+                        tool_call_id='ci_68cdba5af39881a393a01eebb253854e09b7445677780c8f',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_0cccbe0ca95f935e0068c498746e68819fbcaef179058df3cc',
-                        signature=IsStr(),
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args={
-                            'code': """\
-str_n = str(n)
-str_n[:200]\
-""",
-                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c49877936c819fbcd8ce718f5bc31a',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='code_execution',
-                        content={
-                            'outputs': [
-                                dict(
-                                    logs="'18030210630404480750814092786593857280734268863855968048844015985795850236081373250219782696986322573087163043641979475893207435038036769764981462654292660266470727587426920177774391231319751632369022'",
-                                    type='logs',
-                                )
-                            ],
-                            'status': 'completed',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c49877936c819fbcd8ce718f5bc31a',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
-                    ThinkingPart(
-                        content='',
-                        id='rs_0cccbe0ca95f935e0068c49877a260819faa558e81b74d00a3',
-                        signature=IsStr(),
+                        id='rs_68cdba63843881a3a9c585d83e4df9f309b7445677780c8f',
+                        signature='gAAAAABozbpoJefk0Fp1xqQzY6ego00t7KnH2ohbIw-rR9ZgaEAQs3n0Fubka6xbgRxzb1og6Xup1BuT8hQKMS-NHFxYsYXw4b6KeSbCd5oySVO53bsITEVk0A6tgjGssDJc1xSct1ORo-nCNV24MCNZvL9MKFeGQHP-jRypOZ9Vhepje87kFWTpw9lP9j54fZJdRIBGA9G_goI9m1cPztFUufcUxtLsgorsM053oxh8yWiEccAbvBaGXRlPWSoZYktbKrWeBVwiRt2ul-jRV43Z3chB32bEM1l9sIWG1xnvLE3OY6HuAy5s3bB-bnk78dibx5yx_iA36zGOvRkfiF0okXZoYiMNzJz3U7rTSsKlYoMtCKgnYGFdrh0D8RPj4VtxnRr-zAMJSSZQCm7ZipNSMS0PpN1wri14KktSkIGZGLhPBJpzPf9AjzaBBi2ZcUM347BtOfEohPdLBn8R6Cz-WxmoA-jH9qsyO-bPzwtRkv28H5G6836IxU2a402Hl0ZQ0Q-kPb5iqhvNmyvEQr6sEY_FN6ogkxwS-UEdDs0QlvJmgGfOfhMpdxfi5hr-PtElPg7j5_OwA7pXtuEI8mADy2VEqicuZzIpo6d-P72-Wd8sapjo-bC3DLcJVudFF09bJA0UirrxwC-zJZlmOLZKG8OqXKBE4GLfiLn48bYa5FC8a_QznrX8iAV6qPoqyqXANXuBtBClmzTHQU5A3lUgwSgtJo6X_0wZqw0O4lQ1iQQrkt7ZLeT7Ef6QVLyh9ZVaMZqVGrmHbphZK5N1u8b4woZYJKe0J57SrNihO8Slu8jZ71dmXjB4NAPjm0ZN6pVaZNLUajSxolJfmkBuF1BCcMYMVJyvV7Kk9guTCtntLZjN4XVOJWRU8Db5BjL17ciWWHGPlQBMxMdYFZOinwCHLIRrtdVxz4Na2BODjl0-taYJHbKd-_5up5nysUPc4imgNawbN2mNwjhdc1Qv919Q9Cz-he9i3j6lKYnEkgJvKF2RDY6-XAI=',
                         provider_name='openai',
                     ),
                     TextPart(
                         content="""\
-123456^123 equals:
-1803021063040448075081409278659385728073426886385596804884401598579585023608137325021978269698632257308716304364197947589320743503803676976498146265429266026647072758742692017777439123131975163236902290188202654590011462134235078832526827852273018210815142998256983234516628795109978467862737585124291404312560193679040132194219142159564780429384029784135632838235232349153620928650701305446902198201185265537637166663065255873102180259349606640396746581577358565927727487182715643033427374054356948524185042601095118624154879402247254855530736695404690558487305849085262939429771481280865270916688165704128104324472168440830911119701969936\
+Using standard order of operations (multiplication before addition/subtraction):
+
+65465 - 6544 * 65464 - 6 + 1.02255 = -428,330,955.97745
+
+If you intended different grouping with parentheses, let me know.\
 """,
-                        id='msg_0cccbe0ca95f935e0068c49877dd4c819fb0949326ca53a0cb',
+                        id='msg_68cdba6652ac81a3a58625883261465809b7445677780c8f',
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2629, cache_read_tokens=2304, output_tokens=354, details={'reasoning_tokens': 128}
+                    input_tokens=1493, cache_read_tokens=1280, output_tokens=125, details={'reasoning_tokens': 64}
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_0cccbe0ca95f935e0068c498673f08819f9ca3a5ffea0f8f34',
+                provider_response_id='resp_68cdba511c7081a389e67b16621029c609b7445677780c8f',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
 
     messages = result.all_messages()
-    result = await agent.run(user_prompt='how about to the power of 124?', message_history=messages)
+    result = await agent.run(user_prompt='how about 2 to the power of 8?', message_history=messages)
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='how about to the power of 124?',
+                        content='how about 2 to the power of 8?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_0cccbe0ca95f935e0068c4987dfd64819fbd3984a1d0b6ae8a',
-                        signature=IsStr(),
+                        id='rs_68cdba6c100481a394047de63f3e175009b7445677780c8f',
+                        signature='gAAAAABozbpuOXVfjIYw7Gw6uSeadpkyaqMU1Frav7mTaf9LP8p8YuC8CWR9fYa02yZ5oYr1mqmYraD8ViOE33zqO2HBCdiWpOkVdNX-s4SGuPPB7ewyM7bDD4XbaSzo-Q5I6MgZmvVGWDGodqa3MfSKKNcGyD4aEfryQRLi4ObvHE5yuOqRo8FzGXMqe_pFdnvJXXD7njyfUofhWNvQPsLVLQFA_g_e7WKXtJJf_2JY183oi7-jNQ6rD9wGhM81HWSv0sTSBIHMpcE44rvlVQMFuh_rOPVUHUhT7vED7fYtrMoaPl46yDBc148T3MfXTnS-zm163zBOa34Yy_VXjyXw04a8Ig32y72bJY7-PRpZdBaeqD3BLvXfMuY4C911Z7FSxVze36mUxVO62g0uqV4PRw9qFA9mG37KF2j0ZsRzfyAClK1tu5omrYpenVKuRlrOO6JFtgyyE9OtLJxqvRNRKgULe2-cOQlo5S74t9lSMgcSGQFqF4JKG0A4XbzlliIcvC3puEzObHz-jArn_2BVUL_OPqx9ohJ9ZxAkXYgf0IRNYiKF4fOwKufYa5scL1kx2VAmsmEv5Yp5YcWlriB9L9Mpg3IguNBmq9DeJPiEQBtlnuOpSNEaNMTZQl4jTHVLgA5eRoCSbDdqGtQWgQB5wa7eH085HktejdxFeG7g-Fc1neHocRoGARxwhwcTT0U-re2ooJp99c0ujZtym-LiflSQUICi59VMAO8dNBE3CqXhG6S_ZicUmAvguo1iGKaKElMBv1Tv5qWcs41eAQkhRPBXQXoBD6MtBLBK1M-7jhidVrco0uTFhHBUTqx3jTGzE15YUJAwR69WvIOuZOvJdcBNObYWF9k84j0bZjJfRRbJG0C7XbU=',
                         provider_name='openai',
                     ),
-                    BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args={
-                            'code': """\
-n = pow(123456, 124)
-str_n = str(n)
-len(str_n)\
-""",
-                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c498806d50819f81b64eebd0a9afb5',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='code_execution',
-                        content={'outputs': [dict(logs='632', type='logs')], 'status': 'completed'},
-                        tool_call_id='ci_0cccbe0ca95f935e0068c498806d50819f81b64eebd0a9afb5',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args={
-                            'code': 'str_n[:200]',
-                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c49880a0fc819f9b7df3346d75008a',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='code_execution',
-                        content={
-                            'outputs': [
-                                dict(
-                                    logs="'22259376835872155755725046390617312444503298968562023914380868375424124867456620159791334926391434395830488007158642181758718171000558674481055514534483546658574101450333778574673152438538112575257499'",
-                                    type='logs',
-                                )
-                            ],
-                            'status': 'completed',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c49880a0fc819f9b7df3346d75008a',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args={
-                            'code': 'str_n[-200:]',
-                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c498829764819fa5d652f285f51fb4',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='code_execution',
-                        content={
-                            'outputs': [
-                                dict(
-                                    logs="'67296874992296948890272517148532094528812086889630338972525614076265743359820638354575643811422961497469318295177638226345664642985187040350404616587909147553443069125481739015616500189546368462749696'",
-                                    type='logs',
-                                )
-                            ],
-                            'status': 'completed',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c498829764819fa5d652f285f51fb4',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args={'code': 'str_n', 'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb'},
-                        tool_call_id='ci_0cccbe0ca95f935e0068c498850e30819f925c0f879f69541b',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='code_execution',
-                        content={
-                            'outputs': [
-                                dict(
-                                    logs="'22259376835872155755725046390617312444503298968562023914380868375424124867456620159791334926391434395830488007158642181758718171000558674481055514534483546658574101450333778574673152438538112575257499957691072558869631827866367698332298176634455912721514439215697282609503998798205923943259906494776122169432383635142770936484489945914800519238574614164957266189867725276688514819945285124592421478579353115389025899375605896015758767296874992296948890272517148532094528812086889630338972525614076265743359820638354575643811422961497469318295177638226345664642985187040350404616587909147553443069125481739015616500189546368462749696'",
-                                    type='logs',
-                                )
-                            ],
-                            'status': 'completed',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c498850e30819f925c0f879f69541b',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
-                    TextPart(
-                        content="""\
-123456^124 equals:
-22259376835872155755725046390617312444503298968562023914380868375424124867456620159791334926391434395830488007158642181758718171000558674481055514534483546658574101450333778574673152438538112575257499957691072558869631827866367698332298176634455912721514439215697282609503998798205923943259906494776122169432383635142770936484489945914800519238574614164957266189867725276688514819945285124592421478579353115389025899375605896015758767296874992296948890272517148532094528812086889630338972525614076265743359820638354575643811422961497469318295177638226345664642985187040350404616587909147553443069125481739015616500189546368462749696\
-""",
-                        id='msg_0cccbe0ca95f935e0068c49886b928819f942185e7cf43c579',
-                    ),
+                    TextPart(content='256', id='msg_68cdba6e02c881a3802ed88715e0be4709b7445677780c8f'),
                 ],
-                usage=RequestUsage(
-                    input_tokens=5973, cache_read_tokens=5120, output_tokens=221, details={'reasoning_tokens': 0}
-                ),
+                usage=RequestUsage(input_tokens=793, output_tokens=7, details={'reasoning_tokens': 0}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_0cccbe0ca95f935e0068c4987bea4c819fbd0d975202557b61',
+                provider_response_id='resp_68cdba6a610481a3b4533f345bea8a7b09b7445677780c8f',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2711,7 +2772,8 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                         content="what's 123456 to the power of 123?",
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2774,6 +2836,7 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c35098e6fc819e80fb94b25b7d031b0f2d670b80edc507',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2891,6 +2954,16 @@ I\
                     provider_name='openai',
                 ),
             ),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content=IsStr(),
+                    id='rs_68c3509b2ee0819eba32735182d275ad0f2d670b80edc507',
+                    signature='gAAAAABow1CfwMTF6GjgPzWVr8oKbF3qM2qnldMGM_sXMoJ2SSXHrcL4lsIK69rnKn43STNM_YZ3f5AcwxF4oThzCOPl1g9-u4GGFd5sISVWJYruCukTVDPaEEzdmJqCU1JMSIZvlvqo7b5PsUGyQU5ldX4KXDq8zs4NmRyLIJe-34SCmDG3BYVWR_O-CtcjH0tF9e3XnJ5T9TvxioDEGbASqXMKx5XB9P_b1ser8P9WIQk6hxZ8YX-FAmWSt-sad-zScdeTmyPcakDb7Z4NVcXmL_I-hoQYH_lu-HPFVwcXU8R7yeXU-7YF3vZBE84cmFuv25lftyojbdGq2A7uxGJZBPMCoUBDGBNG2_7mVvKyGz_ZZ6vXIO0GVDhHdW4Y012pkoDfLp6B-B9CGvANOH3ORlcbhB8aT9qN5bY773wW44JIxRU3umkmNzwF7lkbmuMCbGybHYSzqtkOrMIRgqxaXOx3bGbsreM4kGwgD3EXWqQ1PVye_K7gRkToVQpfpID5iuH4jJZDkvNjjJI09JR2yqlR6QkQayVg2x1y8VHXoMYjNdQdZeP62AguqYbgrlBRcjaUnw78KcWscQHaNsg0MfxL_5Q-pZR1OPVsFppHRTzrVK8458d05yEhDmun345oI9ScBrtXFRdHXPy0dQaayfjxM9H0grPrIogMw_zz4jAcFqWxE_C7GPMnNIJ_uEAhkPOetpNb-izd-iY4pGYKs8pmCB5czrAlKC1MXTnowrlWcwf5_kuD5SzWlzlWOoKWCeBDOZuKTDVJKXh_QCtQfftomQazDFCiCSgaQMuP7GaPcDuS1jdQoMQBcFfKuWoq-3eQBOCiEOAERH81zR4hz1x02T_910jGreSpfgxSqt4Td0pDDSmlEV6CwaUDQvrPc67d8_Wtx8YKv4eBH544_p1k9T8tHo3Q7xvgE37ZCdd_AVhC2ed1b5oUI95tM570HAVugFilcHJICa1RbFzIlRkNgI4k2JvsVWtD5_h3x6ZaEFTomwIXlochYgsegh8RJIRRCNKO9ebsvTrkdl8n1mb3hLrz7puwCkRFyUkxYBGT9zUjuKrjp_IjTvvov29v6pwYHg2Xd0nAfLP4WWWPBLNx3oV1-yOfXStRGHMZTB6iN9d0Bxi2QS7dk-rPPXml5HxrSo1TG06EdBXQ1VgrkWIxG1TF97-gK9oWWT9S5aaYKZAOdaqDvi7qO8I-4VwExtIq4Do3BHnWrgKNHfyuAobQK4H_CFMElYibJHwA9t-UGujMic07AxS-2XjXaCtjf7LnW_aXE2rQDqzHiTiLmTqT6jYHP0WHGSqFTOFkNmzqy6uVfU-TbdT91zDBeesc8XpzCXWBVKqxEzuQGdJrYk6ieZaxL76Kjs4jyo838LMJCXzhcF8enukz_llnoxAV59hTDAn0MUQvstGlDX0ToI7C8Oc0NZfZU5Pi4gs8u0He_Nw5UsoV7sA-jk4M45sFt6g3u00kJFP3gIcdvOzHcRK5z3Sfb9JF0bnvIYSbUFUidEJxSOAcRlxofOJPnkPtWCYiiv3zSVxZXX77-wtc8yrOYFzH1k_8P6CDpcfzOW7Yl1Tajgcm20nygmPlFtXF3RNFPztW1V5GwQHc99FvT4ZAex3fQ_UBDKyXnyGoySgpZbHQIvhzUhDEGm77EiYw5FoF6JgnHGGUCbfXr2EudtpbGW8MRHop2ytonb8Hq7w10yQSginBbH_w3bwtd7cwgDKcp6wIPotjpEC-N1YDsRqhPuqxVA==',
+                    provider_name='openai',
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
             PartStartEvent(
                 index=1,
                 part=BuiltinToolCallPart(
@@ -2898,6 +2971,7 @@ I\
                     tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
                     provider_name='openai',
                 ),
+                previous_part_kind='thinking',
             ),
             PartDeltaEvent(
                 index=1,
@@ -2996,6 +3070,16 @@ I\
                     args_delta='"}', tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507'
                 ),
             ),
+            PartEndEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"n = pow(123456, 123)\\nlen(str(n))"}',
+                    tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
+                    provider_name='openai',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
             PartStartEvent(
                 index=2,
                 part=BuiltinToolReturnPart(
@@ -3005,6 +3089,7 @@ I\
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=3,
@@ -3013,6 +3098,7 @@ I\
                     tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
                     provider_name='openai',
                 ),
+                previous_part_kind='builtin-tool-return',
             ),
             PartDeltaEvent(
                 index=3,
@@ -3099,6 +3185,16 @@ I\
                     args_delta='"}', tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507'
                 ),
             ),
+            PartEndEvent(
+                index=3,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"str(n)[:100], str(n)[-100:]"}',
+                    tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
+                    provider_name='openai',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
             PartStartEvent(
                 index=4,
                 part=BuiltinToolReturnPart(
@@ -3108,6 +3204,7 @@ I\
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=5,
@@ -3116,6 +3213,7 @@ I\
                     tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
                     provider_name='openai',
                 ),
+                previous_part_kind='builtin-tool-return',
             ),
             PartDeltaEvent(
                 index=5,
@@ -3136,6 +3234,16 @@ I\
                     args_delta='"}', tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507'
                 ),
             ),
+            PartEndEvent(
+                index=5,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"n"}',
+                    tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
+                    provider_name='openai',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
             PartStartEvent(
                 index=6,
                 part=BuiltinToolReturnPart(
@@ -3145,9 +3253,12 @@ I\
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
-                index=7, part=TextPart(content='123', id='msg_68c350a75ddc819ea5406470460be7850f2d670b80edc507')
+                index=7,
+                part=TextPart(content='123', id='msg_68c350a75ddc819ea5406470460be7850f2d670b80edc507'),
+                previous_part_kind='builtin-tool-return',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='456')),
@@ -3364,6 +3475,16 @@ I\
             PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='854')),
             PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='332')),
             PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='416')),
+            PartEndEvent(
+                index=7,
+                part=TextPart(
+                    content="""\
+123456^123 equals:
+180302106304044807508140927865938572807342688638559680488440159857958502360813732502197826969863225730871630436419794758932074350380367697649814626542926602664707275874269201777743912313197516323690221274713845895457748735309484337191373255527928271785206382967998984330482105350942229970677054940838210936952303939401656756127607778599667243702814072746219431942293005416411635076021296045493305133645615566590735965652587934290425473827719935012870093575987789431818047013404691795773170405764614646054949298846184678296813625595333311611385251735244505448443050050547161779229749134489643622579100908331839817426366854332416\
+""",
+                    id='msg_68c350a75ddc819ea5406470460be7850f2d670b80edc507',
+                ),
+            ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
@@ -3471,14 +3592,16 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                         content='What is the meaning of life?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='get_meaning_of_life',
                         args='{}',
-                        tool_call_id='call_3WCunBU7lCG1HHaLmnnRJn8I|fc_68cc4fa649ac8195b0c6c239cd2c14470548824120ffcf74',
+                        tool_call_id='call_3WCunBU7lCG1HHaLmnnRJn8I',
+                        id='fc_68cc4fa649ac8195b0c6c239cd2c14470548824120ffcf74',
                     )
                 ],
                 usage=RequestUsage(input_tokens=36, output_tokens=15, details={'reasoning_tokens': 0}),
@@ -3488,16 +3611,18 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cc4fa5603481958e2143685133fe530548824120ffcf74',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_meaning_of_life',
                         content=42,
-                        tool_call_id='call_3WCunBU7lCG1HHaLmnnRJn8I|fc_68cc4fa649ac8195b0c6c239cd2c14470548824120ffcf74',
+                        tool_call_id='call_3WCunBU7lCG1HHaLmnnRJn8I',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3517,11 +3642,16 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cc4fa6a8a881a187b0fe1603057bff0307c6d4d2ee5985',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
 
-    _, openai_messages = await model._map_messages(messages, model_settings=model.settings or {})  # type: ignore[reportPrivateUsage]
+    _, openai_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
+        messages,
+        model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+        model_request_parameters=ModelRequestParameters(),
+    )
     assert openai_messages == snapshot(
         [
             {'role': 'user', 'content': 'What is the meaning of life?'},
@@ -3551,13 +3681,19 @@ async def test_openai_responses_code_execution_return_image(allow_model_requests
         settings=OpenAIResponsesModelSettings(openai_include_code_execution_outputs=True),
     )
 
-    ad_hoc_agent = Agent(
-        model=model,
-        builtin_tools=[CodeExecutionTool()],
-    )
+    agent = Agent(model=model, builtin_tools=[CodeExecutionTool()], output_type=BinaryImage)
 
-    result = await ad_hoc_agent.run('Create a chart of y=x^2 for x=-5 to 5')
-    assert result.all_messages() == snapshot(
+    result = await agent.run('Create a chart of y=x^2 for x=-5 to 5')
+    assert result.output == snapshot(
+        BinaryImage(
+            data=IsBytes(),
+            media_type='image/png',
+            _identifier='653a61',
+            identifier='653a61',
+        )
+    )
+    messages = result.all_messages()
+    assert messages == snapshot(
         [
             ModelRequest(
                 parts=[
@@ -3565,77 +3701,3744 @@ async def test_openai_responses_code_execution_return_image(allow_model_requests
                         content='Create a chart of y=x^2 for x=-5 to 5',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     ThinkingPart(
                         content='',
-                        id='rs_68cc849a4420819dbd821ade7e9b5d5a07865e46140d854a',
+                        id='rs_68cdc38812288190889becf32c2934990187028ba77f15f7',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
                         args={
-                            'container_id': 'cntr_68cc8499e0c48191841feeb7f14a9d2e066423ab27e58f8e',
+                            'container_id': 'cntr_68cdc387531c81938b4bee78c36acb820dbd09bdba403548',
                             'code': """\
-# Create and display a chart of y = x^2 for x from -5 to 5\r
 import numpy as np\r
 import matplotlib.pyplot as plt\r
 \r
-# Generate data\r
-x = np.linspace(-5, 5, 1000)\r
+# Data\r
+x = np.arange(-5, 6, 1)\r
 y = x**2\r
 \r
 # Plot\r
 plt.figure(figsize=(6, 4))\r
-plt.plot(x, y, color='royalblue', linewidth=2, label='y = x^2')\r
-plt.title('y = x^2 for x in [-5, 5]')\r
+plt.plot(x, y, marker='o')\r
+plt.title('y = x^2 for x = -5 to 5')\r
 plt.xlabel('x')\r
 plt.ylabel('y')\r
-plt.grid(True, linestyle='--', alpha=0.5)\r
-plt.legend()\r
+plt.grid(True, linestyle='--', alpha=0.6)\r
+plt.xticks(x)\r
+plt.tight_layout()\r
 \r
 # Save and show\r
-outfile = '/mnt/data/y_equals_x_squared.png'\r
-plt.savefig(outfile, dpi=150, bbox_inches='tight')\r
+plt.savefig('/mnt/data/y_equals_x_squared.png', dpi=200)\r
 plt.show()\r
 \r
-outfile\
+'/mnt/data/y_equals_x_squared.png'\
 """,
                         },
-                        tool_call_id='ci_68cc84a053e4819d8645e13ae9f7612a07865e46140d854a',
+                        tool_call_id='ci_68cdc39029a481909399d54b0a3637a10187028ba77f15f7',
                         provider_name='openai',
+                    ),
+                    FilePart(
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            _identifier='653a61',
+                            identifier='653a61',
+                        ),
+                        id='ci_68cdc39029a481909399d54b0a3637a10187028ba77f15f7',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content={
-                            'status': 'completed',
-                            'outputs': [
-                                {
-                                    'type': 'image',
-                                    'url': IsStr(),
-                                },
-                                {'logs': "'/mnt/data/y_equals_x_squared.png'", 'type': 'logs'},
-                            ],
-                        },
-                        tool_call_id='ci_68cc84a053e4819d8645e13ae9f7612a07865e46140d854a',
+                        content={'status': 'completed', 'logs': ["'/mnt/data/y_equals_x_squared.png'"]},
+                        tool_call_id='ci_68cdc39029a481909399d54b0a3637a10187028ba77f15f7',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     TextPart(
                         content=IsStr(),
-                        id='msg_68cc84a90fec819d8c303b35ee0d948c07865e46140d854a',
+                        id='msg_68cdc398d3bc8190bbcf78c0293a4ca60187028ba77f15f7',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=2966, output_tokens=676, details={'reasoning_tokens': 448}),
+                usage=RequestUsage(
+                    input_tokens=2973, cache_read_tokens=1920, output_tokens=707, details={'reasoning_tokens': 512}
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68cc84978d4c819dad1933fa64334bcb07865e46140d854a',
+                provider_response_id='resp_68cdc382bc98819083a5b47ec92e077b0187028ba77f15f7',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
+        ]
+    )
+
+    result = await agent.run('Style it more futuristically.', message_history=messages)
+    assert result.output == snapshot(
+        BinaryImage(
+            data=IsBytes(),
+            media_type='image/png',
+            _identifier='81863d',
+            identifier='81863d',
+        )
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Style it more futuristically.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_68cdc39f6aa48190b5aece25d55f80720187028ba77f15f7',
+                        signature='gAAAAABozcPV8NxzVAMDdbpqK7_ltYa5_uAVsbnSW9OMWGRwlnwasaLvuaC4XlgGmC2MHbiPrccJ8zYuu0QoQm7jB6KgimG9Ax3vwoFGqMnfVjMAzoy_oJVadn0Odh3sKGifc11yVMmIkvrl0OcPYwJFlxlt2JhPkKotUDHY0P2LziSsMnQB_KaVdyYQxfcVbwrJJnB9wm2QbA3zNZogWepoXGrHXL1mBRR3J7DLdKGfMF_7gQC5fgEtb3G4Xhvk8_XNgCCZel48bqgzWvNUyaVPb4TpbibAuZnKnCNsFll6a9htGu9Ljol004p_aboehEyIp6zAm_1xyTDiJdcmfPfUiNgDLzWSKf-TwGFd-jRoJ3Aiw1_QY-xi1ozFu2oIeXb2oaZJL4h3ENrrMgYod3Wiprr99FfZw9IRN4ApagGJBnWYqW0O75d-e8jUMJS8zFJH0jtCl0jvuuGmM5vBAV4EpRLTcNGOZyoRpfqHwWfZYIi_u_ajs_A6NdqhzYvxYE-FAE1aJ89HxhnQNjRqkQFQnB8sYeoPOLBKIKAWYi3RziNE8klgSPC250QotupFaskTgPVkzbYe9ZtRZ9IHPeWdEHikb2RP-o1LVVO_zFMJdC6l4TwEToqRG8LaZOgSfkxS8eylTw7ROI2p8IBSmMkbkjvEkpmIic0FSx23Ew_Q-Y6DPa9isxGZcMMS0kOPKSPSML2MGoVq5L3-zIVj6ZBcFOMSaV5ytTlH-tKqBP9fejMyujwQFl5iXawuSjVjpnd2VL83o-xKbm6lEgsyXY1vynlS2hT52OYUY3MMvGSCeW5d7xwsVReO0O1EJqKS0lLh8thEMpJvar9dMgg-9ZCgZ1wGkJlpANf2moQlOWXKPXcbBa2kU0OW2WEffr4ecqg1QwPoMFLmR4HDL-KknuWjutF5bo8FW0CAWmxObxiHeDWIJYpS4KIIwp9DoLdJDWlg8FpD6WbBjKQN6xYmewHaTLWbZQw8zMGBcnhAkkyVopjrbM_6rvrH4ew05mPjPRrq9ODdHBqDYEn1kWj9MBDR-nhhLrci_6GImd64HZXYo0OufgcbxNu5mcAOsN3ww13ui8CTQVsPJO20XHc4jfwZ2Yr4iEIYLGdp0Xgv8EjIkJNA1xPeWn9COgCRrRSVLoF6qsgZwt9IRRGGEbH6kvznO_Y7BTTqufsORG6WNKc_8DDlrczoZVy0d6rI1zgqjXSeMuEP9LBG-bJKAvoAGDPXod8ShlqGX3Eb9CmBTZtTOJZYdgAlsZHx9BZ6zHlrJDjSDhc8xvdUAn9G3JvTI3b5JWSNX0eEerZ4c0FVqlpR-mSG201qnFghtoGHTLJhlIf9Ir8Daio_AYxUTRarQbcKnJuyKHPOz1u0PX2zS0xegO-IZhFbzNaB8qwQgeBiHfP-1dP9mkttqIRMt-hMt9NMHXoGIvFxgQ-xUVw7GRWx-ffKY7nPAbZD8kwVP3i4jTVj8phhwQcDy9UmbaPjm4LBgJkfdwNfSpm3g_ePK4aLa_l7iF2WSSfy2wObb7VatDzYDcNRG0ZTMGsiHy8yzZAcec18rG7uE6QCKx32G8NI5YvcN1kbnrZEuoKTBuSb2B_ZAhvED9HxbG8mH4ZEHHioVuH3_-b2TesVUAbORab_-rG9CU6qyy_eAqP54FYiXXSWtBWNo4baVdqCzgSCiNxgpxx64WPw8y2M1bOMoV6KPGwDOjcNwbO9nQwztqTWPW0Ot_Llf0HV0p-RPC1Uy8uBB5flhJ3p5uqxCPV3kDRzXgjh28EaBEkaSw_6SZkJNvwbD_7VihlHGaO89TwlqSIYUT_gc72NZKRrj4f-Y-0NwxjaSVVGuWCoeG-TMjG6uXpSozo2J47_x_a0lr4KCT8NDYlksajyuPUbYhC7jhQ9uJakmAc7ay_VHn_LYlAWRdAA7wYvqw7aYIuSIYg2OfL6NlggCpBnhsUPEXmMRHcfj1Ctc1aeUjBcpLFVmTZ82lB0FdcKRe3bBsKRckbdKalehoK0NJtrWqNQQH7xPrS-r7or_oOWhA4EDIkRUOG9eZhdsvTXBUamxGwutJ97SdDkgppVC4M7DMK2ZGGBzQsE-JMilERvFQ8JqwVWPxExWmE_-H2-bYe-T-CguCin-mTqhLYswHVtXjtruoHBmDs2SdnkD3intwSpqxsltscCfRaoRYWTCTbchCdbctSEIc39ECpc5tL1Gnav0bwSkMYkxyaRVBiYBbmIG9JftkKIYtdZ_Ddjmq8k29QflqrcigahsVLZPye3dxVTuviqbQjRd2SPMv8RxgSebgm5RZZIpP4WposryghYZFvuA1WImRzsImnAJI9J-8dv6IhHpHsWOw9K-Neg8GlnDU1mGHUElMUbqHiLojmXqPGfhBI3iSR0Ugs7ErpeRUrSk3il2o3rysG1Fn7ePuP5qNJUt2NyBUxf3TExMOwG_zqvpIPr2V_ARr3PsfeD0IcY83Bh428S8KPzc7ASOjT9dGQtVVrdjSxHi8o5ANxGx6z3bHC5dJvDCXg8a7FIJHAd5CUqJxrBi-K4p21jf1BNqgO5JAJO1JrvtdTk4GOVe8YEfhxmGWW9oeuRg8crsIWCCCoxr2XJKgPCj2TTPkBDZ1O3Yw3_nuWaBU5sB09uEB5lTKMd0OfSHbPF4c50RWAFgQB-tHjIUss3oEcAUaZHC77r6sIYoAEBlU8Dgly983fFD0HCqtpIpKS_B_K1fTXYpWRM3uUZpPKEgbfw1Kiqp5cweKTeRKNvjlau6VxhPyVi66xPdHUCC_BcX1eeFe-zcxe6fczcJWqGZGtYyVS_S_GlWZcdA6AHvGU6c4KjG0oU_9q-pdHSRtpnrhqFu2L884m64A_HsFU71Dj34AxhmXO1Am-zSL3j9nEPPUe6lJSGyhHU9k8ApDadWagvlODdXYWaWiMCXGXcYtl_iUAm24IJozlLJ1IW9HW6RoTfKrxwQwND3pX9CLNewuPV776pVtRjvUMbLaYg8nzOu1eNT2IW9dUdzc7wqOjiT1gHuVd6RzJyTCWJb9yPwDTkB_NKkjfUPmJ9Id924xtxy6H0eDYRq-SqsSSEklr6KJc88PV35QqvaMUW1dt_tGynHgYy9PXlWXQLKw-Xphku3FS_R4BLUhJbXDsMOQq332yhizP3qQ7vjEmPm8KB4DMIWBNn_D9xFuDuTCMNPAA9AGYWgC39-L4wPbpBHpqWjDwMzijFpm0CEViPD9ghyyV8syT1uLscxJVVDlBx90u_qWLSzMnFrVWmZ60OyWa9EqG44ZU8ELLHlEDRO_yHuTVpSafCLeDe5baOG2mI6tZnDBmm_ysbYdaC2N_zNBK9rhx7g7BNLQPevl0vtZm7GVLYXiVaO5ZinHxeTyJ6dRU5b0HmSw8r7EpdgORfjUuMkUfWPwhXgTU8SbvjTZg1gJowyNDYCvacrgnmnpBG9BgNjsfWlGTwz19AcEP_GjCWRWoE-uE_5fIyq5eFEefCBUKU0Ejs0IB-Re5h8bbdc6bNV3Tnx4UfGDU6FbQrJmPzrw5wp_wCeVYjtNGRbO2MKr_m52km5xMpVMMHtthVbQ9Zsa9F9zB6Dkr-R4F7o0dITMhG3qaREHKc8mXIGoHND-WSGPZLntB43JmRIWwjlJNstv7VlVc-dU89oh6Z1biH9B88SENI1ao2wMQV-BB17E6cmfzm1JsSR-HkzSf3yoUJWwvIu4CaR4jeMZohuoNqfGvQWIJSfyyUNzq5uY5__04QUmNcRVspOTH4EOHAoXLfCV3VI7fodj4FppiIuIXKwS3N03-Qt4sQ__XQWuyDdORvhRJeCvYcK5kkyOQILcABxDItxLmk8AgdT0Hz0BAo_u1U71srS-T8a8O0-fXWsJAHxDg_rJn0LUm6zq2vXNl8zmOKwEayyb0YySbMRxI-LwLyOXGRDyAVvm_7KKJu1HHqMntLyY2G1xowFpwMVLYXlGxDbsSpE-g5kFnHWhj13FiekLxaFgMRNsMA-r5_rWbEjRa6H328FKsUJcYe9qsp2LlzdJmYZDTIMgzxupFwQ-R5F6QjWOudMBsRszb4YqnOPJ8P9YnY2WYd0B7srb5Gh7T6r6mcCl-HAb2z9QDeXOc2Lu7ujuSvGj7_Gk7PkZH-LzoAEaGG9Z-7IVJlV_hOBPif3GlJUSUhTlIwWxn75gOyoOFuMak-rQqkb0SaL5anfXS_NUTVgSh5G5JQIoykLxbVlGiyeq0M_oEvTw2wMZcWT2hhaudcQ6L912pntcD-WF2tfppgp6sN5-cq-D8Y39N5Txvs-wo-H7-vYKPozTNUKCfnzgXfvt5fOi3RBR4MZU3eHT8OZ7d1d3otho_4GVMNIFa6mxjW1BC_J42Hn27-vrNDLZI_BXdF1t2CCq9VeRwxIW1R9vadd04HzAXyhap95BAYacmbULR6BkX97TvY3hv5cMiaQFkzxg-tf-nGC_VCknvwKxu4ocoB14p9w5TPSKcJz4J26XvyQbi6AdaXbOk625ajB_clv3VJvXYz7DgvWZd408tMykYQLMEyv5lnS7qwQokeM4ilIXwM7EugiakhfefTM9ZdxaWVcvQdqGerx98wlhifCSv0FqFRpJdkqgHmV1qzrAjPDEKT5HJOjsvs5hb7gKBqHR-bYlgS94pvDUpPArQXYcGYGum6vFsCAJypefMTF3D7Zhu4hhWQQv-DzSmfcZOxSeVJFrgVeqJnIbZPtd59HCBXNIRXJa42wUYE4szNli8wKWX0rYSIhiX-ig2YYZz3ZoBE1KDOpzheuk9OMYg7tQG2UlmVq27ggaKJ2gEGuVv-GI7uD7vKxPQ97QwCf38gWKU95CjMEBm_EvmLs9eubNpSpz8Yoek8hWWgrCXUSwRsYnF-lGdG0nIkCClvzqqAGOjyPxG4qfrCXJ-4rVc4DQiJUj71_I0EAhOgxb5WYBt4a7C1aUxC__qeOTAecof-UjzNlUPTo91JgOh5xvZkRkgGFNsq1OFqOcRrrKV8U8brizYkIhDjzjwCIzScSYvEfY4S6st-oJBv5fwTqwICSs59hf6WR8GXsPFR4v3UtF0Rkt-Nrek-X6V7BCui1M5HeFRN7lcTYs1Qw2bIwu4Td5PIkZ16oHdCk9u5pEZce-n_MIwj2Yoq_Lq1BBY9f1rpG9IuaycwabFnd2MOj89-xdgC197DAij5WjZjXahooyAl0Mt3p9MrHCit7LYbxqd_dGBOmg9YRfGPhsoZ17oAmHyg_gvpooOsu21T_06ynhvySjOG0yUcphquvtHJWqQdcT6BBX0X-kGE4nA41VdMhepLhDRDXtR4HJ1m_dPFpkHeAAFIefjt5Kb782TDLFE3KuHFWqSU2K2UmlY12P21dpRvyUNz8ss_AA3rl5jFpcnC2IyJNDIZbqdJPd2z0SNlwNyBq7Vl6poenR-j2X3xzIGlCDQ9zRgs50wdWtZ3ZRWLVWMrVkhkddoVKuh1W9rlwsvxmlZbOeRk_Uh0BymAa0-4-n0jI4_-O8jqpL-YzL1Y191brY4ywLUrQXpln41UK76pxc34FojI1Nymw523SNYxAHSlpj01gNmcjPrBTFxQ9SDY7AlrSFwJia_KvWnsZ53qt6fiDHV7p62KzlG_rpz_dQSQoj-z1hZBoUxi4nqzeCIzPcB_3JqeqD6x1O-Vh3uk-6NxN_qCE8cRsizB5vV-Ur-4tqau6LIrdfIB3Db12vpgiCmD_BD4xCxOijDn-97edRZw__xYfhx9_MBEB6gYl1ZBtLJfxDN54N5UION2tiZ2U8THD_h4d8-c26H7NQv44kYppbaseMckhpVOBDh52P5gxWFwp4VGqAIkZ7KU10qAD6M3GTFx7vGth8cT8YS1s2gPDW-WcVQGlAF94gT-FE6vzAjxwRJ4m7B1rJZfYReDvMrAoLroayOVmfB8pOKVQLQEF5dUmlzAIIpeh1NAiTg4n3FXW7OXQhzhU8bmo0e2FuSEOUVimGw9Nk_Wor3kQFp-9kj_iazSC4p5VURnyY_lAirPfyw4nskpZzCjSg_EAU8Au5vvOqrdDEPjrbeT8ks0wi2rsB0AxQxhgf6jUWzp0apeZOIl9dJFH_OnyJfvwrV4YHpee3174WKYhOJIOy2-8FJbMw1MpQtVV49yWmZsIyjRNj2uLbqY7jWBo2UEeOVW5n1tdk5zAVF-RFPKyh9150MnJz_RQtgoNdUD4iLBwlHYHVGLyH4a3GJmOJP6ZC-A-8RiUjvhu5co0yC8M83aVFjLe-yob3sNgJQgdVJnEOfPz4-1DVORoDgIRrRBcZQZqvkZwADFUkyy9jy5oXdEJ5XzthnizbrOZkHk6sQsNXrP4Uadqo9w99uy7TUh62l5AMWBFcaaQhuAuFkUZCavIqoO-2k4oXIDoTeBYzbyo_HH6caMk0D0_zgEg_5i-NhT3EUPdoCBNmjbOKmN2wzf6kqEyc8-nunjfq6HOjC6B6SE6VgOVJgBrhB4cBto4CxO45eqeuCi_WCjRtSS43Bh0QFZi6xK8rRjItyQRIfBpomETElbng3mAmBLPNb_7CzfsBdhBhJQLKu9KZ__uL3YVGtrCaLcOsfwP7BXRNQJH0yN_JWfMZH3y3B8z1O__xGhR63ugExWJZyUn55KAEiODbX35_PcftWXjslq-wzsK4J2fO_HFNU8Pi4egk6ibvCUDFRUelukaAy_YHdb0VTSB6XCymTo96jK0HGjG8FaVwvQaesaUE-e0_JpdMXN3KstKFeTlDUx1o3Ny93-VxLB5rkOSd6cRjEnFRA7Q6HnturEjwPAeJjR2Ll5dsisVrdjqHMbSfSObkpd2dZ0T3LP4-_ug7qRJF60DJTjTPpx7YxeARzuwiu02TlVW0J0PrdXT8EpISHneKc1VWhtRcdD0R0spuAMzJLwELaOemihL1TJSIMBqFikbpulZCZ1k1kA_5D7I5c7pOF1g4uYBW-gJNTenfC9wYmDJAOCcnwk1W4=',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'container_id': 'cntr_68cdc387531c81938b4bee78c36acb820dbd09bdba403548',
+                            'code': """\
+import numpy as np\r
+import matplotlib.pyplot as plt\r
+import matplotlib.patheffects as pe\r
+\r
+# Data\r
+x_smooth = np.linspace(-5, 5, 501)\r
+y_smooth = x_smooth**2\r
+x_int = np.arange(-5, 6, 1)\r
+y_int = x_int**2\r
+\r
+# Futuristic styling parameters\r
+bg_color = '#0b0f14'          # deep space blue-black\r
+grid_color = '#00bcd4'        # cyan\r
+neon_cyan = '#00e5ff'\r
+neon_magenta = '#ff2bd6'\r
+accent = '#8a2be2'            # electric purple\r
+\r
+plt.style.use('dark_background')\r
+plt.rcParams.update({\r
+    'font.family': 'DejaVu Sans Mono',\r
+    'axes.edgecolor': neon_cyan,\r
+    'xtick.color': '#a7ffff',\r
+    'ytick.color': '#a7ffff',\r
+    'axes.labelcolor': '#a7ffff'\r
+})\r
+\r
+fig, ax = plt.subplots(figsize=(8, 5), dpi=200)\r
+fig.patch.set_facecolor(bg_color)\r
+ax.set_facecolor(bg_color)\r
+\r
+# Neon glow effect: draw the curve multiple times with increasing linewidth and decreasing alpha\r
+for lw, alpha in [(12, 0.06), (9, 0.09), (6, 0.14), (4, 0.22)]:\r
+    ax.plot(x_smooth, y_smooth, color=neon_cyan, linewidth=lw, alpha=alpha, solid_capstyle='round')\r
+\r
+# Main crisp curve\r
+ax.plot(x_smooth, y_smooth, color=neon_cyan, linewidth=2.5)\r
+\r
+# Glowing integer markers\r
+ax.scatter(x_int, y_int, s=220, color=neon_magenta, alpha=0.10, zorder=3)\r
+ax.scatter(x_int, y_int, s=60, color=neon_magenta, edgecolor='white', linewidth=0.6, zorder=4)\r
+\r
+# Grid and spines\r
+ax.grid(True, which='major', linestyle=':', linewidth=0.8, color=grid_color, alpha=0.25)\r
+for spine in ax.spines.values():\r
+    spine.set_linewidth(1.2)\r
+\r
+# Labels and title with subtle glow\r
+title_text = ax.set_title('y = x^2  •  x ∈ [-5, 5]', fontsize=16, color=neon_cyan, pad=12)\r
+title_text.set_path_effects([pe.withStroke(linewidth=3, foreground=accent, alpha=0.35)])\r
+\r
+ax.set_xlabel('x', fontsize=12)\r
+ax.set_ylabel('y', fontsize=12)\r
+\r
+# Ticks\r
+ax.set_xticks(x_int)\r
+ax.set_yticks(range(0, 26, 5))\r
+\r
+# Subtle techy footer\r
+footer = ax.text(0.98, -0.15, 'generated • neon-grid',\r
+                 transform=ax.transAxes, ha='right', va='top',\r
+                 color='#7fdfff', fontsize=9, alpha=0.6)\r
+footer.set_path_effects([pe.withStroke(linewidth=2, foreground=bg_color, alpha=0.9)])\r
+\r
+plt.tight_layout()\r
+\r
+# Save and show\r
+out_path = '/mnt/data/y_equals_x_squared_futuristic.png'\r
+plt.savefig(out_path, facecolor=fig.get_facecolor(), dpi=200, bbox_inches='tight')\r
+plt.show()\r
+\r
+out_path\
+""",
+                        },
+                        tool_call_id='ci_68cdc3be6f3481908f64d8f0a71dc6bb0187028ba77f15f7',
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            _identifier='81863d',
+                            identifier='81863d',
+                        ),
+                        id='ci_68cdc3be6f3481908f64d8f0a71dc6bb0187028ba77f15f7',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'status': 'completed',
+                            'logs': [
+                                """\
+/tmp/ipykernel_11/962152713.py:40: UserWarning: You passed a edgecolor/edgecolors ('white') for an unfilled marker ('x').  Matplotlib is ignoring the edgecolor in favor of the facecolor.  This behavior may change in the future.
+  ax.scatter(x_int, y_int, s=60, color=neon_magenta, edgecolor='white', linewidth=0.6, zorder=4)
+""",
+                                "'/mnt/data/y_equals_x_squared_futuristic.png'",
+                            ],
+                        },
+                        tool_call_id='ci_68cdc3be6f3481908f64d8f0a71dc6bb0187028ba77f15f7',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content="""\
+I gave the chart a neon, futuristic look with a dark theme, glowing curve, and cyber-style markers and grid.
+
+Download the image: [y_equals_x_squared_futuristic.png](sandbox:/mnt/data/y_equals_x_squared_futuristic.png)
+
+If you want different colors or a holographic gradient background, tell me your preferred palette.\
+""",
+                        id='msg_68cdc3d0303c8190b2a86413acbedbe60187028ba77f15f7',
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=4614, cache_read_tokens=1792, output_tokens=1844, details={'reasoning_tokens': 1024}
+                ),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68cdc39da72481909e0512fef9d646240187028ba77f15f7',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_code_execution_return_image_stream(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=OpenAIProvider(api_key=openai_api_key),
+        settings=OpenAIResponsesModelSettings(openai_include_code_execution_outputs=True),
+    )
+
+    agent = Agent(model=model, builtin_tools=[CodeExecutionTool()], output_type=BinaryImage)
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='Create a chart of y=x^2 for x=-5 to 5') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.output == snapshot(
+        BinaryImage(
+            data=IsBytes(),
+            media_type='image/png',
+            _identifier='df0d78',
+            identifier='df0d78',
+        )
+    )
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Create a chart of y=x^2 for x=-5 to 5',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_06c1a26fd89d07f20068dd936ae09c8197b90141e9bf8c36b1',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args="{\"container_id\":\"cntr_68dd936a4cfc81908bdd4f2a2f542b5c0a0e691ad2bfd833\",\"code\":\"import numpy as np\\r\\nimport matplotlib.pyplot as plt\\r\\n\\r\\n# Data\\r\\nx = np.linspace(-5, 5, 1001)\\r\\ny = x**2\\r\\n\\r\\n# Plot\\r\\nfig, ax = plt.subplots(figsize=(6, 4))\\r\\nax.plot(x, y, label='y = x^2', color='#1f77b4')\\r\\nxi = np.arange(-5, 6)\\r\\nyi = xi**2\\r\\nax.scatter(xi, yi, color='#d62728', s=30, zorder=3, label='integer points')\\r\\n\\r\\nax.set_xlabel('x')\\r\\nax.set_ylabel('y')\\r\\nax.set_title('Parabola y = x^2 for x in [-5, 5]')\\r\\nax.grid(True, alpha=0.3)\\r\\nax.set_xlim(-5, 5)\\r\\nax.set_ylim(0, 26)\\r\\nax.legend()\\r\\n\\r\\nplt.tight_layout()\\r\\n\\r\\n# Save image\\r\\nout_path = '/mnt/data/y_eq_x_squared_plot.png'\\r\\nfig.savefig(out_path, dpi=200)\\r\\n\\r\\nout_path\"}",
+                        tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            _identifier='df0d78',
+                            identifier='df0d78',
+                        ),
+                        id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
+                        tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=2772, output_tokens=1166, details={'reasoning_tokens': 896}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_06c1a26fd89d07f20068dd9367869c819788cb28e6f19eff9b',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='',
+                    id='rs_06c1a26fd89d07f20068dd936ae09c8197b90141e9bf8c36b1',
+                    signature=IsStr(),
+                    provider_name='openai',
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='',
+                    id='rs_06c1a26fd89d07f20068dd936ae09c8197b90141e9bf8c36b1',
+                    signature='gAAAAABo3ZN28TIB2hESP9n7FpWJJ4vj1KEPIVHYTNh64J3S9rOSRfmmTK_uSNB79wwlv3ur6X9Yl9sPe6moHK4nud8jgeScuOeCDq70JGXZ6xH_NBdiDWzeMis1WIDsyJrADdADGQRhjb8sXi6lz3nNvjeqXD-oZJkxTJ9FeJsCNNPBHX-ZYRIYZ7vGKLPfmi5qNS7V6VVGvwEWOBwW75ptObu5E8g2TqhPlUzsVoZsIZiczRXq6zQpDtMPAtv6Mz8puaq-o65P5-vZMywmEjyi0Dd2M9ozUfhWfhpEhCsAiItesA802-TSBQCKeP62riRAMJvfD3PEGLYL9d_7mUvJYSsiOADU0K6wfI6y8bRL-UaWUvn60KfPvqfBFm9-hwP1NS77OKoZABIuGz5sc3BuAh6ebKrJkfNHq7W0BA09S2gt3wLPzflpVl-wJ74L9UGnaKpmG3XRFogff_SNgDhO0_Cb4-1PYJi2NpqnCwTG2c8EFxXiP4trdynbpgRD5hKDj65FU46cBjR0g00bCShqwsseAzw_lAxbawcjF0zmAyz68Km2jCRKHRGgeMpbT-YQWs04IizKYsWfF-8pXX2vwSqk3Kb51OysuPN0K3gihF9v2tPnK2qFzkvNics__CDabCmafEKQlLp6TDRc5RY4ZcSHNwUM_dybJStzoH6qed1GQNt05wBhDZg39N7pJ8_dG7wXCSGHY5CRORZm19UGTd9DoZMzr8JmtxmRgJoKCHW_gavpt4__zifPVxqLUWj6GBaQRT8pR_Tym27HcsC0GbHLR1nel9hC6RzydTU5y7LWY_NoGUE4WZX5rHe5t73lFNSMwd9-6i9Qlj60_rBZ5z9oTAl_Ksywgo68AG7dFdSeI3VLnOyzhqeePn0ywaMp3HqO-FIXW3fjqtM2XMMMMn2Cje5rZhJ9JNmMqnxpltITkVdHMo7Yr1WFTkwLByEOb3M4LCq5B3dM1s1pVmqWAc9YNjpB7Fbi6fG90EAYFNEM4ubOE7y2d5E4hco0MbEKg-Fh0ubh1I2Y1kthZFEmPQLm6fFaljJKPtYojEZZ2cZ7sN3UaVg8Zpf3A7WS9kM2--lL5LuBnVDebf8Xrzv9dTmJvOtwWzJsY4RxWdnzfl_ZokHmg_HDNbeZpHsVI0gqHGr7YTlFJ0NUXW9mzZMx9e_VTrrf34XwRue3xVCqzsspRMjMIlAoDp0Rp0L2tJWAbKs_btqVpqjz8p-64CzSRq65BmSP6i86G0cJ9WLSD3gL3wR-Zt2HyvUvecHVmgKhXgY3F-RchYRO7TarJgyZY5bP2EEpHUwSWx4uWjYfzXMGYn8gNwgwl89qog-inK88qSG0DbqJQPwYNuRjS7Mu01O6eV39Zu7Njsn2io-kPc5HLRrbbhN7qCSki8yPWE_7yPtbIKlwWKOlEYx8_SGgE7waBFRem7ElsE9wvCX5KknilmN5_d9L4Sos0oT5NHAhApvVVDcygz9VGYBAmWfMOynDnOiTIpsAdjHmuZG7GJNAtUEYx7U7pNqbD2FJMIeN0L-3uqhxisRzeX64JZkVHWYL8HjeC1zHiUMZXKW1KXIvIU2_BCtqay22FtBskeMXZAReKhv3eX2oQlWL2Ps9VOk2imzjqBbFLzJgDq0iFoaHdOXGqo54GYZIxfWi10uo65s-3gOGmqPPE02FHEMjK7VHFjMh91FPhh8TmpWjOfa9QEcpEHSZJ6ipUMTVfRHHHshB6Sb74x-Jfr6Ioq2RnWd3E32GpE3kd1poqOssBi5jCqsA86tIMt0m8p_CDu_ANvMNKTiGTQdejm2rUhccpdbp8uLBPnqWxyGOCTlREglHPeh2EzjEMbtIaFp2NhHE6UlJ_nw40CDa5PA7C4lgUkn-4KtPy6rSaMu0mWM4vPO-5ksdtB3E5PkCdIB8j7htbhZH_MTv9RL7loDNkRVlJRSBiAC_qCGgVPyP4l1w4imdey-_HuVCKBD2vaXUz2l2efn-jLSlhty5vBOR-kr0EsU02_NYZtOKgBR1zIslAlnhM8lTxJWH4osSXHa4fIx9O9tyALjvxhooYww_Die_8iCH4u5cF53z3mvoK3Knzeada3jglwQyL3_uUQegcFKpvZwVAcguVMvrsbNgdR9VeKmYq8U7yBvziP-_vpj1UZcf3QxlNK_oOgDg9lxP3vsSKzxliW422svFDiyPkWPh1DWmry1xBD4Pldemf8OEvgSHSDAlegWoBnfOHljDcPf6kT0PaC-jHrKn8t1cQgWk1-1oxiW4zKIlKGoRvmo4lCcUfqGXb5EPuZM1qRFWxv4roAVoxdLV0Pz53L_Q-grQWvbKH_Rl6Dw1BysU55Klt8vn_XBL5Zw_UlbT9FrszDRjJ56F7zElzqVYunI5uJaPWTwQyO-4dvM94CqiUU59iFkfZqaSulYktZrgZeXe0lw59ecQnL_pR2xwkialTgDoqtPksIjTuWVzkiW9hIL5t9sHyCdJ9nqmwZRZU-JuTPXswmrJEJ23GhvtH9kWsswLd0qvmY5mV3cwr7hlFNWEf8_5e3LoCa9uHQgIa0uquekJ3St9dLOXpkcRv74nCpxkcjems_2ZC71DRU63NILFjKC5ffsUPOZ4NfevDMUDbYHdeyVV6E2f-_1yMYCWI_sws69fWQkWUIv33hk7Gm55NaNgLD4RYCUBTO7v1FtEZiVYAU5ab7NvvnTJ3FaEHo9G9eTzN1I_MmPzqlYX539YF_DDedh0ThnSoJl7PYD-7LhRRG1215KmsTWbqDGmtTsHePAVRSh464XHgiZ6cNPNogtMl4ym6r6nsMbzFP2krBR1f-u0tHfQFxAeLyBWij01Z1WBz4GBh3bpdLrB85AlvFeY7R46PPydAHxwwanYVyxpS0UmS7Y2S37EVRdFzai1izvoy3-wA05YKcnRiUKR-oMcLf-BmB3HHZnY77YOuqQBUZNI7OR8B6lvTARQuoJbK26ONmXEsH-VoBJR7C-hNiXMVh1jHfhuaBAj6Dg9g1Vs2kGxfoJUXB5dlFmR42mnyGcT96N8ZAIdIoQSrBzai6bQbuvOb3OAcG2lEhOZHZiwFRCzpHMfu5dctZ_wcTUhYZwgOcBNIo4WELyjv0Yx22AHSHcrUzFezOwibs-heUF_ciKWkGv9OaabaAGTaTVncfCnS7rOcD3Xum89EAVegpYiQzK0DZ_VKooPoddgHs6diYOEn4iJyvE54vaVi72NAy0Tf9poRlidKaM009FImefEtZqwD1MmaeVbjcClv5Xwyh-KCQ2hCZmrnJ2P_e0bWIsE0MAJOK8iU6Q3zxbntbZAQAKZHqqauT8kkRYxk6oBicV5BS-whqDN_GoNZrnRLTNkjk1a8mnqg_kucvC1mCQRbvP367DYqZGuAd2EQWVLSBQibHoVIUcYAFbsfRHfsQ-uiZVZsjZ-xGM-ZcTzCJ6p-hFi9IQXKqOioM_xzRl4TSY-AEbGja_RY0puxi8BeZXvSxx8eYsJ0TRtIIQwloZzKpbx1OwyK-Ibfj01PU5NIurJL10PKXcnc7ImXN-b_p8wfzEVN12lSbQ8m-Rs0tx32jfvviXyHtWYfHuNqP0eL3Xjuka6FGnuDOeOAIzy4xj1vqhXd8UN2tiFOObl4Rza5pKzF-0IcEsKX36v4iN8oYxOoCxCxLwvFw3znYiAKe6CVky4e46LxZOI3bGM6MSrypwblPMA2gC_ogfMiYViJe8gsgld9UvgQaFfj0EEgfc0BWfxVw2i6Yv3OcH3T1jaHnCVgvcDpTXI4-ZeeWKl6fhH9ukYAG4-Y2mGiJhxJ7cjSg8CwU0KDmNRwoXGB2FT0bKWovkcFYM5ueMbXFTZ4FFcgfWcOzXFZka82HFB_iqD1XvOYMFQNiz3jdtuOr8o66rtCVAjJnuoTQDmbSrWPU0-utUMJx-4QAlZM8hdtXGfNBp0JRxctMZdxR4BAzF7JH_ETYi3itZkgDLEs9JBdty6gUiM0NdR6F_7mxsHCik3rpb5bauJKP89gV03mnBQuSUQTauNxdzXqw55SPDAHMBWg8QwyffzWwmyTAjl_R1QiFsTOv31U-HditYAeYMhLAP0mIs97T0inLsTUri1s2b1s7j6-I-NLXuT4VKiBO8lqVicTbQdQwiXehHQsi18e0H6T9XM0xBQK2t1dd4Jz2oLUGroSB3XuNbcaaxsffqRQgk43KIMEw9VsUA3FOTEpdM_xYIYEFM_-ApjDQJ15JyMRspfmu7HDdd-ybcXZ-C8WASJUPV8tFEfP4xgUcZeu-mExkryebbdMExq78yj7GlwWaeqBYfEXsvG6FIOqL9iFVcc3iIelrly0oM_xJmLOB_CCkGylDmHLxZZydf5v0RDh0KOXd7J-QYepcALXYoXmToj2JPrJPkaznH-2tI5xwp_M-mktoYNOhWrOepFjceXDSF5G5ILomGd9mHLnkq514ayZJCeE437I2geH4s6upgSAaqc07IVvdU3WjorhBw9fvefI5NnYwMiUSk_LC-JiQZDJ0bMLttvwKDx0TmOnMDJqxDr06_MWXn3i0zLQlAjItS2foksr6EMeK2InZznVZtgjcbD0exqZuzjCAqKz4PLQl62xyuJx8trJe0uHbQk-NweJthN5xcj41kJTcDuXbA1bA9HerCBWMX0RW3RXAKTvltGaqyMyUsJ_uOb40D0m56SqOmxnyA-mauiV2R11KC5Hh7YSS587NxkWUx2t7G9uio6WgWyx-HvhXYVi8wejyZw51z70YEa-aUDS2G_N0e6BV2B6dMGyd3lzTkMY6Ncs127IwQmXkV4VGL0stfchFf7rhXc1CZmFm7NZOMQPgb3_Heb39gZfMa4EYUVLuvfSpuM8wHZcQa57_uj6wmGp7NBBVpcgTee9ADvJXxjlmAj6gm9TiCl_GYbBLCdoTRAgsgsy1r4WijYr2sA_zch6EbDpTjQy6ER5GINZ4zi0VDy9avZcxhGmOEHYvKzcLB5PANOAW-8FLFHGgDWvf0cEMCD0UpSLAJVIX6rMjMJC3N_cgWmmv_zbllaW-vDVNFPyZOW32zU-l7r46_5IuF9Vc5choUlWOGLADSnXReau9WC4rfGF05CAvLe5Q0dex4K14SHJTEJuBWhGTaaXzONQSGtU9LJexoI1ijcnz9X59VvXxFX0oHmLvgTAim6nN96X5kllHFvrdDjMOiZKQTXtodUI-3ZcjfA5booJk7tnFeni0H2L1sqvpGy8JDlfl0fds8hST0vtXscfD5jDC-i6btLnRgpOpRDQMebCkqRlisZScBXb0nxoHK7CHtnQy4aCQq4oCBgMXdbwHOnbBygBSAg-HCpK53YoT-R5NUdESGmGCX5uJ0qlmGaXSshFbNW_NpQItJIrD7NW3VmqfWvSB1VL-nyVLOmc_wPmUhY7dSGArYKYQFKL4cBOSfHHHuftrRXy356_mTcDeFsHzqH3RXPaXhiad_lmQ9Bcw0OD_BotHvYfvVCaETpweH3eHl3RPBiUHlc5Da4nprHbXrvQL675qwVLiwLwOvPULU4VdGU-jIfSMkRUbJhSt349C1poj4aM-aD3s5iJy-3YDRYzmqMmFFr9CoKMah6hmn6n0oKSwg0YpLOc9JRDhBfp87_NNsWdRkpNw_DC7OaIF6VNxc6o2t9jExqmAiAbyRSkW2x-UiZl6kbB3uqffgAYWNylgJDZ-UPQNki30zURQFl1anKa8xhIGOgH7piVerG2LO8X7pFxa3DlYxFm37HC6irFtBwsFbvNGicua6MfUD3dV2MhE9x-sOlG9O08DKObUwBTpTzfAe-P_jGWHnyOsLXbaiV_cwxgWkEw9rKuFpI1SPuPrdO8_iSYdH36TqIREPLVbRcSJvHrsWP2Bf-Bb04SIonHV4Olu9KEYWVCOltRx7JFjp3eVQZLAGwjtxG_vDlublMpybM6TZdg1UYaCU4ZqLKss3iWO3wBNwC2usITNSjaiiLSH96fOHpAyXMhhodFDS9X-frLB46hilqE3PwoIyiR5R1dAdM7oiWa5qD6KH_dISw5H-uO6ZrUFo6i14E4RcCtRBBKALvVnApLxA_lcpnFR9_TZkstK-6klIEiSttNhxhHhv36XJw_J6jUTHnxRBr4JyXLL3-NmDZy8mplsbS4OXl7gg0vuIOBBHarKFvCEdvZv8ikxbDeftTz2je9mrCNCAHKTeNQWKf7Q7HFfPcza_BwhSqrd64DndvGVkfLlYBrbVSZp5nxPF13qBWIw9bbXTU5z8Wna72Lh4HqL-cUDsKbKBpst1VuBgaA7Va',
+                    provider_name='openai',
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                    provider_name='openai',
+                ),
+                previous_part_kind='thinking',
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='{"container_id":"cntr_68dd936a4cfc81908bdd4f2a2f542b5c0a0e691ad2bfd833","code":"',
+                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='import', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' numpy', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' as', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' np', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='import', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' matplotlib', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.pyplot', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' as', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' plt', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='\\r\\n\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='#', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' Data', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' =', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' np', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.linspace', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(-', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='5', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' ', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='5', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' ', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='100', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='1', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=')\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='y', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' =', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='**', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='2', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='\\r\\n\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='#', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' Plot', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='fig', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' =', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' plt', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.subplots', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(figsize', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='=(', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='6', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' ', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='4', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='))\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.plot', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' y', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' label', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="='", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='y', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' =', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='^', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='2', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="',", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' color', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="='#", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='1', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='f', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='77', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='b', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='4', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="')\\r\\n", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='xi', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' =', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' np', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.arange', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(-', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='5', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' ', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='6', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=')\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='yi', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' =', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' xi', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='**', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='2', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.scatter', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='i', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' yi', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' color', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="='#", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='d', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='627', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='28', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="',", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' s', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='=', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='30', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' z', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='order', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='=', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='3', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' label', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="='", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='integer', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' points', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="')\\r\\n\\r\\n", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.set', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_xlabel', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="('", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="')\\r\\n", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.set', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_ylabel', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="('", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='y', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="')\\r\\n", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.set', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_title', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="('", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='Par', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ab', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ola', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' y', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' =', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='^', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='2', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' for', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' in', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' [-', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='5', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' ', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='5', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=']', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="')\\r\\n", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.grid', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(True', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' alpha', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='=', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='0', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='3', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=')\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.set', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_xlim', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(-', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='5', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' ', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='5', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=')\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.set', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_ylim', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='0', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' ', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='26', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=')\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ax', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.legend', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='()\\r\\n\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='plt', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.tight', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_layout', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='()\\r\\n\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='#', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' Save', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' image', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='out', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_path', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' =', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=" '/", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='mnt', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='/data', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='/y', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_eq', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_x', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_squared', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_plot', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.png', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta="'\\r\\n", tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='fig', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='.savefig', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='(out', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_path', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=',', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=' dpi', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='=', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='200', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta=')\\r\\n\\r\\n', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='out', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='_path', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='"}', tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7'
+                ),
+            ),
+            PartEndEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args="{\"container_id\":\"cntr_68dd936a4cfc81908bdd4f2a2f542b5c0a0e691ad2bfd833\",\"code\":\"import numpy as np\\r\\nimport matplotlib.pyplot as plt\\r\\n\\r\\n# Data\\r\\nx = np.linspace(-5, 5, 1001)\\r\\ny = x**2\\r\\n\\r\\n# Plot\\r\\nfig, ax = plt.subplots(figsize=(6, 4))\\r\\nax.plot(x, y, label='y = x^2', color='#1f77b4')\\r\\nxi = np.arange(-5, 6)\\r\\nyi = xi**2\\r\\nax.scatter(xi, yi, color='#d62728', s=30, zorder=3, label='integer points')\\r\\n\\r\\nax.set_xlabel('x')\\r\\nax.set_ylabel('y')\\r\\nax.set_title('Parabola y = x^2 for x in [-5, 5]')\\r\\nax.grid(True, alpha=0.3)\\r\\nax.set_xlim(-5, 5)\\r\\nax.set_ylim(0, 26)\\r\\nax.legend()\\r\\n\\r\\nplt.tight_layout()\\r\\n\\r\\n# Save image\\r\\nout_path = '/mnt/data/y_eq_x_squared_plot.png'\\r\\nfig.savefig(out_path, dpi=200)\\r\\n\\r\\nout_path\"}",
+                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                    provider_name='openai',
+                ),
+                next_part_kind='file',
+            ),
+            PartStartEvent(
+                index=2,
+                part=FilePart(
+                    content=BinaryImage(data=IsBytes(), media_type='image/png', _identifier='df0d78'),
+                    id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartStartEvent(
+                index=3,
+                part=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
+                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                ),
+                previous_part_kind='file',
+            ),
+            PartStartEvent(
+                index=4,
+                part=TextPart(content='Here', id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4'),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' chart')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' y')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' =')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' x')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='^')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='2')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' for')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' x')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' from')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' -')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='5')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' to')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='5')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='  \n')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='Download')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' image')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=':')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' [')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='Download')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' chart')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='](')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='sandbox')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=':/')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='mnt')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='/data')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='/y')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='_eq')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='_x')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='_squared')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='_plot')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.png')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=')')),
+            PartEndEvent(
+                index=4,
+                part=TextPart(
+                    content=IsStr(),
+                    id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4',
+                ),
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args="{\"container_id\":\"cntr_68dd936a4cfc81908bdd4f2a2f542b5c0a0e691ad2bfd833\",\"code\":\"import numpy as np\\r\\nimport matplotlib.pyplot as plt\\r\\n\\r\\n# Data\\r\\nx = np.linspace(-5, 5, 1001)\\r\\ny = x**2\\r\\n\\r\\n# Plot\\r\\nfig, ax = plt.subplots(figsize=(6, 4))\\r\\nax.plot(x, y, label='y = x^2', color='#1f77b4')\\r\\nxi = np.arange(-5, 6)\\r\\nyi = xi**2\\r\\nax.scatter(xi, yi, color='#d62728', s=30, zorder=3, label='integer points')\\r\\n\\r\\nax.set_xlabel('x')\\r\\nax.set_ylabel('y')\\r\\nax.set_title('Parabola y = x^2 for x in [-5, 5]')\\r\\nax.grid(True, alpha=0.3)\\r\\nax.set_xlim(-5, 5)\\r\\nax.set_ylim(0, 26)\\r\\nax.legend()\\r\\n\\r\\nplt.tight_layout()\\r\\n\\r\\n# Save image\\r\\nout_path = '/mnt/data/y_eq_x_squared_plot.png'\\r\\nfig.savefig(out_path, dpi=200)\\r\\n\\r\\nout_path\"}",
+                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                    provider_name='openai',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
+                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                )
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_image_generation(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, output_type=BinaryImage)
+
+    result = await agent.run('Generate an image of an axolotl.')
+    messages = result.all_messages()
+
+    assert result.output == snapshot(
+        BinaryImage(
+            data=IsBytes(),
+            media_type='image/png',
+            identifier='68b13f',
+        )
+    )
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of an axolotl.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_68cdc3d72da88191a5af3bc08ac54aad08537600f5445fc6',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_68cdc3ed36dc8191b543d16151961f8e08537600f5445fc6',
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='68b13f',
+                        ),
+                        id='ig_68cdc3ed36dc8191b543d16151961f8e08537600f5445fc6',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1536x1024',
+                            'revised_prompt': IsStr(),
+                        },
+                        tool_call_id='ig_68cdc3ed36dc8191b543d16151961f8e08537600f5445fc6',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(content='', id='msg_68cdc42eae2c81918eeacdbceb60d7fa08537600f5445fc6'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2746,
+                    cache_read_tokens=1664,
+                    output_tokens=1106,
+                    details={'reasoning_tokens': 960},
+                ),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    result = await agent.run('Now give it a sombrero.', message_history=messages)
+    assert result.output == snapshot(
+        BinaryImage(
+            data=IsBytes(),
+            media_type='image/png',
+            identifier='2b4fea',
+        )
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Now give it a sombrero.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_68cdc4311c948191a7fb4cb3e04f12f508537600f5445fc6',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='2b4fea',
+                        ),
+                        id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1536x1024',
+                            'revised_prompt': IsStr(),
+                        },
+                        tool_call_id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(content='', id='msg_68cdc4c5951c8191ace8044f1e89571508537600f5445fc6'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2804,
+                    cache_read_tokens=1280,
+                    output_tokens=792,
+                    details={'reasoning_tokens': 576},
+                ),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_image_generation_stream(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, output_type=BinaryImage)
+
+    async with agent.run_stream('Generate an image of an axolotl') as result:
+        assert await result.get_output() == snapshot(
+            BinaryImage(
+                data=IsBytes(),
+                media_type='image/png',
+                identifier='be46a2',
+            )
+        )
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='Generate an image of an axolotl.') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.output == snapshot(
+        BinaryImage(
+            data=IsBytes(),
+            media_type='image/png',
+            identifier='69eaa4',
+        )
+    )
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of an axolotl.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_00d13c4dbac420df0068dd91a321d8819faab4a11031f79355',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='69eaa4',
+                        ),
+                        id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1536',
+                            'revised_prompt': IsStr(),
+                        },
+                        tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=1588,
+                    output_tokens=1114,
+                    details={'reasoning_tokens': 960},
+                ),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='',
+                    id='rs_00d13c4dbac420df0068dd91a321d8819faab4a11031f79355',
+                    signature=IsStr(),
+                    provider_name='openai',
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='',
+                    id='rs_00d13c4dbac420df0068dd91a321d8819faab4a11031f79355',
+                    signature='gAAAAABo3ZGveBi351h31WQM2aG_dbN1N74J4X3Lf1SbUrUhElKaT5odbh4N1liwG5Hjip3Ci1illQSsd4n035fOOIV3sZzAMvV3ypncux4WDBpQ9NbeuFMNSyNOPTxJLg4j66UbW2ptw3u1VP3j0vCHvV5MoDhErheYZsWKhYVtkUNkKSVLWkS_yK0pOltSwHfRy3tbrkxnqD99BuVbCjV1nWSzTAmJLicBtjDaH0NjjD_vMyFiUe83-eZRs-Q_6njWasZNCmTcOq4zlpFoJ_AGeaTbaLIC1OwDV3sNT7pXvo7YI7jmsYEhHAKa8BjZmMjzBPLDRu9TMWtXMnO6nyVYqMxsyQPdNmP-BDNfr_8Rmo_uI5egfE0qRKgAc5MrOGd1fSgtUqeKah3kbLMyCD0_-jWmVInb2Y4LfPcX0iOeTGum2IRKwy6G1tdY8C_gEOnIGAUKOT2sEF98Ythy9auV27BCbcjfCBJlH0rOir_OiQjUIXZqqY0My1kVENBbXj2-VIFIqG-CcxCldFG2Mq0NGo86h1igQIFmLItXLPTS_QnaWADSD9La8JWpg8CuWg-yB3UqYaG5_f2Cl5jRDQdIYavTBvD-lp54y8aEnGA6HksQaCtB7jHX0ZM0pqYu7LvLjeHxAJWsnF4NN0HPz3d307muS0TtrXUxqeZFdTNoqdBOxfuJ2-Ym_LmeubnEzh5wHAguJKZ6S_jcEFM3Jdb1R8Gk9dv2y7BUz1hKSFF7peXc9Ear00JjPHAlR1x0ECqONTSD9Kda80pQlDSh05ITKQ2viOy1jmCsWeSsll6EJPcGEMfAcZ1UMgHYX3sBa5Oz3DS28Ur8yk-I62nUWbcj8n7IsZmZL0CWc2qgCtj2TzFZaVEx8iumUKpU0hmML_kF3JPH2Ie8nB1ko18HZV7A_-n9XGDZzwsfPD9pu4P-fb68KNqU_qQBfe8msYvuFuljC-0kyGrQIQH2X6stwEkyme1TuJfxIZ2t2q2l02gEUVN8LN8qX98hp7DBxXepgdKvqWVOM7icvtW0mPACf1b4izSDqEgqhqx4tNsjixoHcM9M8awzss_y2_jZ3V7gY3pbPgwWKHyyTUzA1ogPfMkjxxUrVLNyHRPmnklUeQdV-vytip3BzNOq4yTUz7jVFrudSDcr_KM6Ie806OkgKF81l-W-40qzx6bGg2DAcZf5hfbTzk-ho51sRBwDp7RJrx2SXSBGXA3ArYzgq-2iat368uDLiQhhbunzKm3_6CFWggpbUO8Kp3FP7-k4Z4CRbHkg8WVT0HhH6w0ysoi-P6_ZH-IKI7XG-GT1kq4yje3qlfRUT0-0_LPsr8LyM6AbOYj4NiWHP3XJ2qa978VVOLJQtY-qG3VX9kMq13C-uU8PDOsOEidYZl2gqFtXhxkXivwACbLMnvzJayXJRev1QkoNxIg1Stl9II4D_ndHfNYeAvMvOnSNafoCOmMzCBp1klovMP_31YvR2B3af1TYanbbHoJt2UR1GRR_Aqr7G6RukNkXAl63LPlDQSYm5BB6zD9iNX9hJ8MSZ1IFIcbM0L32tAWsyKKAEWyr9MGckicDa_hES9adeXuunqqKhUctd94J1dsXLiWCGIet57YIUj5WoF_FQ6D6FY9rB00KhCDlHr1Ot5NCMmn6y-u6TYJUhpl7elEErYGXaGPhUtKUSbAIzOXzBIAKb_MiMVvo6a2VYwsxwZV14X8TYkKw_Y7w5Wt6JA_wTOoen7Cc0eFyc7FZA4NjIMkIUOXymtjzOSkFJz1eMBqp9diET9VYKGsn6GxviD8jWM6-RCWcFurewcn4d6TeTclAt7G_LZrJ9bZtMVlieSJT-3vWr9qVt8OGBUJEJRVOzpr5FBnEceqK8s7D_s8EZwTaGwyAuuaZThy2PNWJhpE4c0UeKgh0ec36Q0ZRN8DF8Khne8Epe1rehOrsfeyFFRuQ5CDGdHimhtOAIbDyg_5PPCp8fgiU4R9xqtizCVTR4ej1VPIClmebUErOl3TN-IyoSc8rv--Vi0ATn69Q8tSPweI07KVEzRJpDtxbnGcbbilPN5_liJcQrLMf5ikaWBoq42s6FXDjr-ASD0h7IlNGHxnN8q__iO6jA9-2PTywI2bbBJsie2L7OaGGehO5zv_rWv_6rbk4HLVcQafi2nC5w1GNeDaXWSz0RjiTfXxjBh98302CQxiM-e1Lvt1Pe6Mqv-pAgXlFrSHDrqw8s4NSS2YpLDTUIOcOx8UutAJOgVpyZm2sQcvtOsGsSUBIyNI_4huseO9EuXF4TUQ-yzQRsimtXaDa6VId0y6qG7dWxTP30SWZkft2iW2_Nz_56MiioY7xACIjzo4s2aGLM352ufd4nEeU-K3UQd5hvhdIWUZn6KTyCUnqgChyIlB0Sto24VwIIj74DYisSiu-d8EYsVr5gZaQ_NaW4T7M_ZB0TJ0ptlU0X_h8uLu0ro2Vc_s7D8nkIKSzhGuuHO4lOjvZ-qLsPxG-pBa6jGvv1hOyng_x99icZ0oM7G7FmDl7SjP1pdLiZAA1hMPPU9b8Uk0j8hb4AFtfoXSfwZBQ8sYlT0_QmcSBgGxfZKXv4RcFSnAEGDNUn1V-P2uNoj06MOwzroZVjTuzVy284Hqe-08Gtt_bvZDmfsHonbEw5DrthsP9SzoC62hc6pcVs_ApQE5LwHgODxT-oejDppixNCr--hJ1IYVj4rRsHsmBv33H5kJP0rwmkdJ-I8rLj66jLf_Qu_OEh02dJqf3XSYsG7io3XCVjA-d-jUhLJSqcPS_3y5thCtWUcG_ucT64ADWdtOH0EkmzN0o7HmOJ48pkGhttNScjXlQUmOdkeBV55dTdXAzAyjKZsxP5ZK1F9m_1TMWDJX6nT4rRFrzv3PQByEyc3Rje7ZUdGa3Qky1-T5uhu1dk4ty_I92CbMDCM-jGZorhg5MX10B_zZ03DFrYTrdcDILS5i_BSOlGT8Du4aSMvwvUC5FLOYQFQdM_ZNIRIGhOSWsvObmVYh0j70YKqitDudSIm1V_Yw6qsW3ZPpLDgBju176FVDJJBn1Wx-DeQ6FrYtOjFHctqJN-2mjWQi_7lAzKbTLsB-9c4iZ4_efWXsHncmAeqvt0gvglQHDhY6cM4yZurpHkrE-lb5-vDLYamv-Du7Cs0pAaynEcbT-f3_F_WOgoXFy2WYOTt2KkSQZnW6ZPHzl3gfVOsHfAkWalMJ6vXa8FuoYfMmgZJpqtee5J6AxJaUea8xQ0VlVwuXmcK8EOPcwF1pWg8w5_SweA9jZ0fh5PaFW-BNlzGDmhRR-8Up0TCUTsdnZN7bABJBlxeQ5GEcwOjgT0UBF0_zXZo5fbk34TSDoEgfdQydVLlOGda8McmvsnNzDSq77a-Vj_8BeVacM1PPG9rp9F_-PQgpM7_7YsNoWMXha4b4_H58q7vPOvMK1zxRzNrq-sm9QhQ1LkzPgt158Gf2IPq8D3rh9YCmJvg1Ju7roShfnVdV_UO73MLnDhoqaUZEdq10723KFpescGNTRpsuWDE8qBiu58rbOzjmpy7nJfuOtfrv_qSjaFRTkShLV5PW2neHjNLlvQlWy-q3yjJXq-2zM-iRehbFIxI3ATcCq-SgThDeQ1qnTg9G0Jtsx3qBNZtCIi8x1oVsyavVJcqvo36UC-IXaXA1vpjuwER1dcZ999sP9MUnXcMTO9ba-GM3dslKvDtuZ5b8x_u7eCJfawzUPItU8iwISYKDWW8wTNOS8Iukujq3-IDOEFqmCOAlkdv6-AWNc7ZVOmyvvgDCpSN5nSkjpJhWI5kP13FJtJNHkNtP4RQkhRhwRh2ei308TvNgT8YSaa4E_BJ-QWQ_9PMNBsfAYSGIl1VaQinZF0qdvNhRIlonuZMV58aEEzsLk6hS7CGlbFwBMwAzZ5Q6PANavXDFiPGeIadxTE4r-iZLQ3CdvJWUiUv3AL3lzYraXX8BGDpEVAAIqoRYZEpR2QgIUui5b3gkCSlG-YdKqJ4HZ_6VCFqpywKsgPCX_c8pVD_6eJhgt9o5Vc0ARsfc1IG_XC-nFWOV4caiARMobX0y4qXDFulrAZInqBZ9Pq5MmbbhBmLLdT-y5fdPpB5UxsIHGqb3pip4ZaKS80IqAt8t7HPXSNza7zb1TwrjNlYcO_KhbLQBB0hMmKULnEJPWLDPKf_9NeAsN3U9AWyj1WpAKjSfpjjbXn37qpTMdgd-Js9-_FDaXDFH_aOYXI0GY1AMpvSSQzx_f6Erq4qyS5TAuAtXbvUm-iVJcHaZTIy7buGJqOUBb7BC1L33KpeQEZuCg6QyAdzn4bZUKvwjXuxNykpZA9LZWaFVdx2QfwCV_yqN2TTvLFmSj5SjldGwbBndjmtHs5kkDcV2mDlm3huEfbEJqf9sdxXaYhIfmUIkFDtYTpE1C0qSol-A6Yagtx_aNfWTL7F2lFI0OusuBwnDfkNow5mPsKqGMIqx5eJA2InLcpV7GTyCxT3BjVsggtSb1-4Zz2TYzBz7iYe8NPe-rxF6XWyHf1N0nyyCY8Y0_CqJS9OPFpsd53a6qY7xlhh1kwBOM8nJWb3OEJjMVspTUfwF90O8D9fDNS293vnG8SArU6d-1L4u0LalQbKXDRzcze8W8R3KWv1N0LXrWwfArPrO1WnpdEkJnbFfc1eUHqThJ39c7RAInK66VtNe5xtUVzuNZDfPKsIfD4Ms5xqMKEOWQt8RIciRapDo9aoWv5l-YCkuTrWp4pWP4b7eu9fizM5ZuzmRCj3Ecc7ZT2uvxe9sP045dqTH6lSeBNW1eW-pmb3oQ-g_mYL6SU60NmDp_mMa5HFuTdGSAAI9jP11k8KQUX6oGGGhx24w9seLaY98N_0v-cWsiNMQSnwR_SsGs6tPYqltHguz_azu0qsQuuXTQK9B06oEDR8tyb6CTqfX8pcumXIXC_DMFYfQ3pBK5R37G_oXTtX9srpw9vSulg4z52GhuvfT09ukMmdNGoIAS0551PjpZRz7-sI_nNTJQKpGgbhiH_zvA3U5hxue7fpAnQYXd6DYxR_y7QXSleoqQhZ2iVQW90Lwqp5MIDJaAx14bn27WBmQSLcuMpgnwpothMYFMmmNMdWYnGcQ0MIjhlOoykau7DRBFsLOKZ88y_9Pke7k9ISeTmArge2IdC1Ma7-GiJ90YVwwXDBSs9ssae8F1kWgyYV9rFxNbpF4uiWdQkVvASmW-QUNWzsHAtfuvrt-TR1SQ1Z-mMP_zF8mVjC14pAP5Z4pYkolLBinwy9V7DjcN0kymIM6fwpLt2h0LgfC1eLK3sutJcJJP9fFd8tTLIskEvUly-TeEct-syQebPxjxpxae7UPmqeDrOtvPi8-JWiHeIoJrUQnnw3ik2ULXvX1VFSnzDcKBAs_xZzdtjRlCGZWD-hgPPRTmG-YWeyovXZDp5Wv06AEL-hJlk4z1ZEt3yA0H6Ni7zE8jQ0_c6zJCWk6YtPhFk0ARZfjjdYSOFwJvx6rIrteH39b5W1yE8X0bm_cdeA1Q6TluBBkwv-9liCSOGT4ctzwaK3-cb0b4ko_apEEtpYkevu2ulqZoFi1S9g1joFZ5ooBLpxYGntuXXbALvq-zZniOJOtTdbpgsFQPS6Ae9kWXddWChNeyv_CEdkwXCkM__ua4GiH_Ce9WlqCzDCEoCYFpr7PyJP3gNg9Q_vkiLQa9V9bc3VtA5z4cjWB3rU5X9fLDZ0xzwO9krtGmsK9r2gkENMMu5Yy5BxGo94n6wRef0eMY6_GTzi7QsRuQSqNQLa98UdN4QGDa2c_-uDpENkMya7_hgM1z_RyUGtqVgpCHrld-jfSIGLPUI6kKWUDZ3USldXuep47KNuO3-BEOP2QEAKgHVlS9g2viG5r6wdeMl7Njs6iMsjs1KnHaqHlfZww8egAuOxAJjFxUYPy5djKn8n5lgPdk9ISeMZfxW5LcP80kPQekLohUbHcJ_JC2rTI76ckZvwuEGDUQTwGHR0B7YonoiTVzrhOWeqndwk3EBp0cr2mIc8vsWANK1WechMxunFVn7RuwV926PZhqFrnoep4ytDP8h4nJ4Z5zr9cXQCDv624H3JdPUYBBoxJ_7-QDM0fpuFXuRArtuezy6PV0a21CHLFtNq3DCWp56o4xgGm8x_8r2NtKTXxSwUY4_5cBHWd80aXF84Z42ldtGkAXayyFsv5er4VvWTzjwfEc39qkUGDQ5feVJb3YhfsT2qFyUnhb167hdJIPkI8rud4vLu3e9eu6xNLcw-LEjHptgEtfxOqiAPrBZLfWgkhfpU-encYtxg9cing8f_bAkf4-sP1tEaczGkdkMD-0orT-aN46m-8Dyn82fQgQdvov6n7KIuQipYomIQ3mJh5mSl2BAGMFlvLY297s3dCkBD3pGbRb6AAqu-5l8yCCVtg7FvzUWoQ3gL8FcP2cK_fYoJf7Z2YbgTNI_5SHiaAb-qxWuIP8ICEsxCHJJWIOfL6UnBXXctp8B_TiSbOFfGFrQPTJDUvKPyN9_mzO4mzXlOXLXu2VRG9J4NMSYTJT6-Q269vzse4SGqnULEUnpm2zQz9b9W97ahoMFYfV8xaVeFZK5ZU8LpyaN6v4mOJuuHm_vZuVircckh7UVVEK67jvRMi5JcKv-hDQhy1EmSRNCiZ4WHmGi7wcLEcJaUVFBRi84nU50Gjjs2kTslgVAnR9MyGqL2N4xvTAjoi4o-SCvDIvgWDnRCHXSD6ghfQagEUVGldGzk3EKEQF7VO5KTdheZ9FDiSXaaJJKit9NnohzmxM651VFC-AW0Ghklj52C5yvHScmJrIpMv4IjFAKj7erMRDjvYJ0v0PZDE0guTvoUFHrZd6umnB68QFINJogoy5GeT1hUs87OjZVQzPrxZqO6rzJK9m3meI2dFvdbgyAdbUx7fJRAu4yf2LC4dh0QaS5z24wuND3y-jHEsOvjUyIklRGeoH8EdGTBI8ZJIYKXJ8Ow797VYFI3FBzKNiPxJH-VFjpw0aqTLXVrAvCxwVK3awVAoWpwWMHN5yT57TOn3kpAbnBdAXG80kwTuOAAagePIVGrzENRGWVPGhvBFi55TDrQFXyymCP6c5q01KY04VU0udmOSe2Bwd-jMk2pjT3CLHb95G4PUVgy-l-occtk0mNRX4k3P9ETjeyOuA05c2rzMDthoHcFUnMqofePnvVK3eliJjh1uoNOrbx1rJuGsDZFEGxUfkjc5z5BW9zVw5YS7mlXjACPSDgMgreTTygsKTL0xhvSPsmu18K-cGz19v8ho7ix5B1WmPDsL75qXEqKsiO0ry1Ka23z8c4omngareIMqyM6OANeslUhQ7M_4o-OSaHUKQ3kAmJ3c_iPpedZUCo8GALcrgifqgd_ckfBRBpYssZhFQkxPNKJZhncuoRkdjxeAzANinaBUCxZ-Bg5DRQI6GCHgzUiUFMIWEqi21FF5UEiq0G2PM7PTE-RRO7wu8qg==',
+                    provider_name='openai',
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='image_generation',
+                    tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                    provider_name='openai',
+                ),
+                previous_part_kind='thinking',
+            ),
+            PartEndEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='image_generation',
+                    tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                    provider_name='openai',
+                ),
+                next_part_kind='file',
+            ),
+            PartStartEvent(
+                index=2,
+                part=FilePart(
+                    content=BinaryImage(
+                        data=IsBytes(),
+                        media_type='image/png',
+                    ),
+                    id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartStartEvent(
+                index=2,
+                part=FilePart(
+                    content=BinaryImage(
+                        data=IsBytes(),
+                        media_type='image/png',
+                        identifier='69eaa4',
+                    ),
+                    id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                ),
+                previous_part_kind='file',
+            ),
+            PartStartEvent(
+                index=3,
+                part=BuiltinToolReturnPart(
+                    tool_name='image_generation',
+                    content={
+                        'status': 'completed',
+                        'background': 'opaque',
+                        'quality': 'high',
+                        'size': '1024x1536',
+                        'revised_prompt': IsStr(),
+                    },
+                    tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                ),
+                previous_part_kind='file',
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='image_generation',
+                    tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                    provider_name='openai',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='image_generation',
+                    content={
+                        'status': 'completed',
+                        'background': 'opaque',
+                        'quality': 'high',
+                        'size': '1024x1536',
+                        'revised_prompt': IsStr(),
+                    },
+                    tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                )
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_image_generation_tool_without_image_output(
+    allow_model_requests: None, openai_api_key: str
+):
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+
+    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()])
+
+    with capture_run_messages() as messages:
+        with pytest.raises(
+            UnexpectedModelBehavior, match=re.escape('Exceeded maximum retries (1) for output validation')
+        ):
+            await agent.run('Generate an image of an axolotl.')
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of an axolotl.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_68cdec207364819f94cc61029ed4e1d2079003437d26d0c0',
+                        signature='gAAAAABozexg98F3au1443vbazt85gDycVpBeC63gC3bUrFg_jpx3BYCksfaKwRkdFirkKpRHBYG1go0Kbzl_1w7ZqwT-BcPYX1Q7a--X9S-5OvU43ikr2kPbJgGhjWv1W37aLPKfIFOvt0VspdWlN3Diq6u67ktR0R0BXOFuSSv7WQmRAIl2JxiDzquSCb12Uc6i61LxNLpzalYk9lyW4Nm5c4czAsbUNv22AeTsB-nwWzO9NJyPfe6cVybz5gdShl8lKIvBsjHMonyiZqqzuSZakXSlbteA8yvZmOYO9XT1ruXNhCoFnq4pNuMHiZuOyCSIvASPUebLO9Q9uMv-t2aKku_4Xg4VsNUuQQpJfZ_gqYJyZFmANBTAcbMGBVotJS0V0ZkO9kyM9W99udKPuS-IzAkPCiHuBsjMaQzhM9xA2-uNm169O4P6TfqD65iCYAMLvwZbXauC6etI17If_731Oo0k4qcR5G7vruSd_Om-vwAGmb0u3_FNcI73bNw4WkhfGdUucfquaGIBkSm2_H63SOfLHOiLsnLIZT1QkEm2k2LP6O57WHAE3H1Rd1nKkw7GQcY-oQlF9_AGi_okM_nCNf7RXzfEocRYXlkSwoJT67TGV_rp1aSzhxKgzOzntDlcOT4FdyVY_0MMtxnBANZL2mBM8nvmqogWOnrJui-7qmFYP6DJj-GkoqPhi_gXlb9gTHtus_lQtLvJSXFhDlQDT40dPbU6T716Bp1TRQSAtj5s4aIhEupcAyoza4Vzko9WF0lrwyTKeU0Yh2nkrieKNqL9XbhknW9bp8dRMRM5-cG4WZHWgD5nLV4EP-8xcZc0ApwBLebiUhkX3MZ7phpS_ZpwnHxO8GDnvuPNT6pXbvvrUL-Vitwe-qWoodziaUetUcopfpGlBYnZb6_cJOVFUoJDxPxgOkLiUW0WSSe-NsU0XllTG75sVx6cciU7LbDJjkPU3yLOrJcwpE81Khsefm-yyk4BOMzPbhJKg9Lrs9pZmuhXa0-GdMP6fHks4UKYeR5pX7zTU36t4BUYFssq-p8QqSuXah64S50W644yvaJR52PzkjDhNtl_lBbLRsVvlimUz2vGuJfFrATSnw-pkuGEDznc5BfdjqNDxncVWpwu0u2HnfAXbzBBtgNFVvWUegjRhBAwqrlWdjhvTcfzp2xUAoaXcQdRmZUh9Cw1Ib3pvejHk8l56i2Gf5X0VrDVxj2av3LugJ0sDgahri96q_EfYVD6TEF5D1lz-GBFTWJ3CZgdICN1HM2ny8yNg60U7EWFNqN3Rn9wx1LnntWcKxmwLRfTWFr3k3-TTHGam9Nw41T8hSkpGmpDYM2LsOcqdGa6ZYlFEBstzvf8JmPtBxIlD-nFIAVLo0Y4lFmt29x8hi56Ybu3_xdwY63SMj0rydOF0bX1K1QXcIJrSY4joCesFCJ05vB9F39HNByztFA3cBvyZkwzpmif9juYOpM2qfZVtG8oCnaBU90u7lkIvfgRd2H8lH0pnVTLjSq885mjhxRad1pnD-0rIoPY7ppz-quELsMOVqNTZWW8mkCy6uKiWna-3m0THLNz0CNFCnIz5ZTmchoj0x1WewlSamGL6n_SnB0H_lIXq9RUZlwrd1ASQtiOnI94pBRHPXfQ3a4PfNyeZv9GOKHr4pR0uHATkCd-rldmWQ5kG6MbNjNMJChaCMuSwrJiBondTeGIZswsMwOfV5eHgoZwfzkTxD3xo91CLGsE77IDjp05mNYc_KMbEqSmnDWpPJzsHWAX5vahfVXsRFx1Jjw-D4d5PIU_Mx4mwjPLjTrWkd5Hl2uKWvjw0Hb55lHT8D3cGlvIjRnTGM6ndLGndeKjXobs0NBcmgDQNLpHMccHAbb2UVIdvx8cF3zhkc6FdKJ17TZGJQbzWSqkkKwNUCYuRrf6CeHoEZh2ErArmcj57QVdXeDREoSzHhu1XRBfgc-ey4WF2RMzJ47Y0LNxFHpLxEk4Tpg4jcMvfRRKv-8tIu5kZeVSBqZTac90ly9qDeb32mv131YXy9G1A4RCLhjCoxM9M5r8a3AnDIvoMCusPxAM5mHpLEdv8A_5mliza9hztzmDKIQq7sQAow_XafhRJfX0dOeOft6aLkLTaq3KHN1HE0xy9Fupg5ut_AUd8tIvst7Av6vHPiK7gR-rxgWNx2FmKKXhvcWqMeeqFwSyq_18Y4w3ibPc-l-oYXD5gEMAaXGa6WgyaeNBSHNup7HDYlm_WLK3UdH-5IuIMxkhLFgDFED7g9lFl5V0I4bmW8Vqg0AqmNC2hkADsr7mNjuYr3NOzGCTsE2Ed992VG_e3k2PqtHVegZ41jxZTbfqYRM_HYg2rOdnzNN_NV3w0hpKmV-F6UIrb8Sfpscdwa2kz9Zz2huG_QGzI6AyjoepNgOYYZ_Phq4JMtrjge8HcOGRR3z8_hV21N61o5Z9yBfwx5kSnAvPXuAgeuh2MIfB_koOrwbEryE4HJTSA9b2IAs3BS9cvAu36VHVYP7Cj-U3EZxaxRIqusjNHb3WIzswa4AXFfjK65aaCCizHwxTSdn53nlSe_f7y9pMnOV3o467Vtt-oR9dqz92pauT1MxXYdBD8o0q7iOgHsqdcHBDvQmWOlpag9W1sF5uEyzA9bxDGlKLA9xtvfwnC2Y3nv9i-haFaoknx8eQGsM_bzWC54o6VlhJiNeeRUuTNEAsoTXv13usbK6MtSXoGvWPNDkj0CJ4sluSWmOidGG6DW0bEj58HYCedg71EKyNcrxcN7JJFklv1ju6IVY4k6pLMPu6kbYdKzXaxFWkOmB27Qz0dgBbK7hHhHagJWjOKrHWNiOphce9SHf9xQP2U0uJRNKqNnqmKRZLBQ-QcwRUxzaFrDByG7nRV0ybRHpJvrRfCjq-FVF0b8JXudNY3D2gI4p7WJeBqk84bt5a00DzmTZap1cEYi8VYs6zwFRa-LTemxgq8jOaeR33x8I8tDBbnqJdOV_o88Mek2E0mXkKfl_3ZzPzajcjyNHYdfhNHfcB0Oeyk6w_TXnVxOJVHuoYUsXuB4gDDMENk2yubSUFjOUzuZhXXZ4CdE4bymK54tzj9qATV0c7k-YsRlfUk5fX0JRQF6iMMWl0VtVgi3HolN7S5K4Tbs9tB0ByOS5H5N0D2BjlDl-kmd9Yrn6-B7Dxz2rxCtj_TQneCyMzfb6edt8X17c-iLsOV-fZOP3mFTCcnI6HyMxaLQDENgPF12gW3mDZyX2gAd7iRFXCHzmTnVkUEBhlCoIbq5Dc5s0niA3Jq9MHvhtgcXaUusGqCxOtQ22_CWixDntwS3hQx1KxEUzYZxThNSv-f5ji56iiWOB9uVzv6XLPdGYkN5CgdKzqPsim6VWfz52q2TTSZFRuaMGZsJuEpprdcWpHcHiBZsk3Qa-giYazywLHxj3Ph_Kf7kByYuzspVpGX3bct_unkM8jQzg8AWkn0LuFIY8ScyzXAVECJbFiOv4HipzyoyYcpDiPmadV-qAG8ghpw90xwcvgrGnHm5pzHQaqZVPKWXrHnkaJFgQ7OyEpmX-U52R5t4PZCeWJA90zAnvmL7s5MFEDLzSlzXPFjzUo3T8XWz6p6tUksLsGdUUqILT7hYdWwCdDnUJYZvjysEVIkNPNx3lAGW_e82KYUZUjQqiQqsbu1meJkdZdvMPmOlVEGx9oFvTW8cZrZZfJ1EKNOPR_1eyGdh5ZOfxGU2sogpOST3U6dxdeUwpEdhl1dTaZA_chepczFdHI7aMoKSISbpNC7nNhKNfQIpBcwPLtAhlgCOQKuBRMJUPK7VcOpl_nhz3FKexgJ0X_hFqN5qygPtKITZ_Et5ME9k5tzelHVAiosKhWOLngFJzKZkYFavSYUOHemVmUo7licjeUTPAb0d6kKbqqrJ44ZP22gL-Rw0YZa7t0VM7LrD4jD_taPhqmZ28CCchPAfP6Umo6txaiXDusvPG7v-zUGh4XWQlV_5SBSQwvPHUfQHlogHH69jxfJYRD3F-lDIfKR9ta8RuCuCdd2VsBUUAWFaRuulGcLiQ1BFWZ2Fx7W6rXgW8QkufqX9sp0zgTK9fCPN0rPLLU27BUwn0EB3EZe4bDBYrm9xAxYCgoOOE28GMpZsznXXIVaAXvUGVTBnXks9ycNghOw35fsAniH64H8u7Yp45JH8BMb7sk4zHcW_An1TzmUxjq3_JdOo9kkzNEu_qs0Y9btf4M6NajoVWlttXT2RD8XPxIrASjFMv8fxYJG0OsVHJoKTnGFlHqy13dIDMtfOkT658EuGe_pHwp8B1zI1jjpPmMW2MG3TAlumFgy9T0iyw0V3dp6qCZCjavMPIJ2HD9V9TJYueufIptuN1_hZF-xESc1ENH6z_NtMBJmW0hwCU9a6UqZ-K3_ZsJ7EK7q06V53KOSzzaJUY7SgUAFgwfbqFpvqi8emyHMxxIFylw_E1iauYGssBb_tzY1fTWwk9n4h4A9bdKesz_JBNRuKmKyOeYOS2LdJGhp9VOsbTvJtJ3MvwXuiH9rgFTXzXbDgIHxSUnUkMo4mJhnWXiqENnfqc_oOgx6zkicwwX05Bjn_k4nj800fT4RkJTY81dXy54TbvqBgPR--nTkq-WJD0e8_9hjOrtD7c7_p08FhVGWl_d499ylunVccNQ51zfeP0uGt8uYK-S9fNN8ED5PJ5iBycLRU0uvyFdsZFS0DJ4N96xSrdkdPAZ5CjfIn4bawnCs8MrHg47sCgONAqrZ1WZTgyL8j8J0kdfVJTZoLRud4oFmM4t8nQsL1sxH322EWVaXsy9aWAMVWGcc2fesk4jVODZ4mfGtnvm-Q8ifjV7wqRa7s5uXv_-JFUawxNvHqMw2AvG1M0RJTIEnRkCKB_8CXNb4K-GRw12XtZs1KRED6j1yPzLwabcWNl2BpR9JCBmogxFFuPPLdevD2JWptQ3YwTQSIMridFriwY8g31iFMFrNub9Z356Vc9zyMvZ0sRBB4oK6iSy8Y39nU3512YdGpDmMTH-T5Cxy3pi1dphlbYHcar1Yl-n5gSS0_dezGILZbxfvGbxOAIL-AGwSE4JJpUFn6N0xRclaNTPDk9VkKpVktgJeWqkWFI1xdBUp0K9BQdNs6XsJsfMCaIE-ed9SbQpJRdc1S7m6lFKFZFvHujK1zplJemcpOrYIpsuTD8wzWJAxzWwtUoo0DXi0YQOrnFdo9PbcTscUGyNArCcGjOYiL5_oMwhJh5kg5L_OPLH3UhiLI_aHs4gT7nX__HHm_3GVOov7-kK_Rs5lGsZtFQ-yoau74FnzVn8N3YWMqWzCVbwGRBhvAm_fdI53h77CZeJm9yWZkWTzrc0Ua2HqA7KB-eZgCNx9Ox9n0Ilh42hdGLFSwOEF1oEHw63x4ZTENyAP7j7mHWnyVbqRVSZOlP6w8JquYAtS9hUJQb8GZs2MFuFcwTO8SX8gMWWVM3tGtpnz7UwqhcFMZHrJ0ehues8kdtrlqR2BWPYAquFhOQebvqhlYxieuLggwAIxudJr3PFYJrAgAxivKZlhKRSoa1HCFSp_4k_kuVp5AvfBMViLJ39pi_xHX8PnokEmi3_GZiz31hGjj1GgNg8HZCkQtQJcOjMA3YPE3kQHy76YIdxzL59EdWsfuHj9IhJ4J_PoHTg5k683yXkvcXsz_sOYj9j6eMNn3Krp-ZFmWbtmqpWuvKS7vmE2Wtq9RmzvkGPC0jeY6J_ndbyCCljLpFGbvSYC50ejEulcMSUw1ypHhHzoDzO1jFo1xBDfta1H_hAsLkmYKOseTZce6hHIZR5xUwWStmu0y3OoOeVT3cZXEErr7qPLxEzB6nTlSgzLRX-ncRCnnUy0f_pXWwBE9dE6w1Nq4Y9BuS2Ip9oZZvj-gRCxTmmJLL8RYd-G9EeiBSlf09kezq4plUsJwvvPqVlj5CVLk6DkEsTvAM5r8DK3FYnLUgf7hQI_EZ8P9VN_rrPTPa25y19MR1-XIsVGLrVPmyXcj_w6XLBxEc1J8qQ37NZCw_DRfS0_ZUUqSDNlIy-y-DsdLIVtXE-BzpUkgqx5ADmbsiFFj87rS7wE5Yi2-btSpkWdTjaBbsWBgN3sOvcZgFt-AQrCK8BMLENwFrkFicExianGcwm55IlO2iUvCNjz84ogzU0IYhzDbHGCZBzYaLNX4JIVeonOoQuKA6QGueCffX1MKQ8fDKVZQc11Pr9rwjPNR3xxAs0G4ykW0c3809YE60dLbP-AZ8Qm6vxvAmTzd3XlMFaC-KbBxskXtMJRJqxUd5jYx-YQMQiOA8wLytP8INXSHi2_lgMI8QivRHoKx4oAl-qTx_qz0Ut4iw192OVWoJqTjhwIE_NB1Um9GawsbM9gb8VgI69RTPmQi9obao9kkQEUU-NrNtDkumrltR9Q9fXFyRbKn5Hs0PHzC2yiRFa_IqGEqJeqz2CSBkdC5GauukZj2XumrXKKCIYV2vJ-42D6MUqD138clb-prSiOe4dA2-wrKPjaaWdpaMeAbLXbLkHuH4K5h6HOpYIVMu_JWdnzzDnvye0o8A8vrxFZsOSDeiHPcoDyN6-6KYQwOlKpjiswFVdoD_e3Aw9ge6YHDOggsKeyERzv46Hc2GwW_GWrwaWgXSv-lePsj94L1b17WG_y4oEKbNMAmE4A4EBH1aJI6_wEeySONFKhbyOIwUBcRKCoKT40dbGie7kW23rrzSTQHpjdd4NbAbNAGEtbAJbVwZbFC2RMwMWQbz8mmnMSdVw0VN6UVaCdUatYzATx-gk-lg_8ikyOhMwA_lXFI9pfnHIIqGmKHDJdrE4pdDBK5wVLB1H_CYqzUneygueeTUc_rHiMj7QdekTGh4KnA2lurqXemNemePYl621G_FqimReuPlTPmn88h-DvnmcVhTJEMCT2O6huU2_6yOlyulJw-mq6KMS_b3PSB3bgYmJEH7EM7ljv7lu0ZIqZm9xbpVTntP2s9jDBPMb95q8AnllIwH6uZEYdyiIDU9NQj9RIlR4RZ8Oi5b6n2IuKojvP6aK47npwKMvC4IOAMmGaE3_S2X0vFnpT1djiFPAjvklOEA8o0k91YV_z-QbWwVTd5fdRgaqXcqb3dLAuvnFq0bOpJMchlL9lrC02JW07Xi9Lw4EIoDsPBRr5s5DWLG8kLfpEv-YNZatryAbjbwMtJX0O9aNxLzG1bzyXVFwBb_HUgkotdbmlT7cXMMX8D4_xIQcDyjwo925uAVU3va121ddHt2JasKJc1vMyuOKXuDg5F3dYByqEQQH8zywgBi_IRtUx8aXNoNXobUf3LGaLc-3HqVTZby9Xv_Axm-s5jSqcEPL4WJX60rY28qx_lmajcmcVLY7irKovGmfEIlVeHYdMxDxZue2nHHHc7NmF7dGORg870x5iGUcqtmjvOx-NIqVShVQlalGOdIF3_u6r8xlvOL8xWJ6WLXKNaAFVtaoDdObEoR3stpG8iaaaGNcrRqIH7J86ntBUmQ8chIgOOvPz81W0Op5jbSc4d2e_qAAuvt6j_qElh9qsGNMVPoY9DlxqqrlJ3ojG_6yqlX_jP6NGSx31vxc-IgggbyeEm2BVt1v3dJv_Z1Kmt8PGa3--atQsH3cemYMbWcwX2mAdMCHLY7xQJs_X9OgDaPd25bGPHFJQVNM4cypyPSWXEDiR-xIqkB7NzTrSEGf82wSgIPRAo7k-CBpbBVvsuLre4zof8K5u7QH2jYFQA0-9YtDa_Uyc_JcErLU7AroB5ZZr7s_s9qx5w_wJxMNW1NLZJdOKUVryP6DJPqTNmly3PT88GaPUDdrcQa7NplSF1FcqFmzOlZc1Se_fSkgEcFKrX9M7_65bTgLbAvj-8bCTIxZp0-PcmoQO4mrkNkW2Vr1rfSuOH5_vqJCT7s9A-H77RjLseMxJ27YF_dEXOHjsEV0DPM_zfno9_Lb6gL0rqffxhKdM_xRhSsLg47PJlCgoZkL2xVTJfahwydAzbr4ZWbZ84WwprOimGLJBdcQgjHEhxx0_cT9tFpUKkUbpAlUYqm1e23JGUXKrS9kBqM68RjcBAiaAgeKMx_5pNU4RzuJqCARPYgqhsy50LxkN6DgIMiDglLxho4wUYHVVkez3XXPHmO8FJcRuuk85Z-7qDeExR-Dp8vHkAvSGuyuUKHdyaQdhigMm18qFzu5-L_m3-C7xEblO7KJBDtK9mDdaviyLU9bQA4i7lLgUUdkCClPjm7yDt3SgjDZKXpBeD_HEb134vjhc6EVJN0IK0bf-lSswaAPJYcGc9ArU_mch_F1w0X1ISwvFHWKLYBM1bUSCr7vLyX-j-sbwroVSJ53bTedlaUpoVhEjKxcksjSgnndvAeeHAwHV-HCkOH_zqhxp5aTO1vNXeNESG7WoSRLE1_6vF7ZzTGmpG3GIbuBexi0BUe95UwrAJpdtzWMrAiRNQ3LlB8JkPIqX_ZXmHsu1bo84_x1u-VWQZFNTOitRXyLdA9GtDqg2q7RUJLj1Axq6CzjcewoW380K7r95Kimr6RDUUkvi85SjekZuV8NNd328heZWNSdov9lzmJlCokX6N5VDpg-NIPvjJyaQtf6YZfYtOk7pp_koGxatbsxZTSVh_DwXz7K8VfC2mEhr_xdDPe9nKAPrU4r_J9zdtAkkzdJssMWhSCMTj8z3l1bbIzMt05ivwEGLZYqZ5Sy2-duQVd1wA0NfKB2HjfgSyYhX5wN4aDW15copsEtPTrxCLidwc75rLdoi5Ch1Jt74v5UzKh8mxDaGqjdWeHkDrHbVy5hDVk00n1TZ5UAzWCq3lge3717y0ECZX992BrkqjffUYe0dZUUJr_3GWKSS0AZHg5uI-1Tka_DGqF7mWwdz7XpafzU4siolRkGa3QYmB8LWqdbAnpvte-uSwxAiQm2LiFF9h4dOO8U_2gNsniQViwLkD0KTHnuk1_N94P6QsypEL2bcPWCvCw1SgMmgKBaXYpP8FIN1trlpqyk_0abqnq9GoeCI2AjAOkHI0LnNsM8lTwWNqh1b8YVco3or8J4dOPeVQ=',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='c51b7b',
+                        ),
+                        id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': IsStr(),
+                        },
+                        tool_call_id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(content='', id='msg_68cdec605234819fab332bfc0ba35a5d079003437d26d0c0'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2799, cache_read_tokens=2048, output_tokens=1390, details={'reasoning_tokens': 1216}
+                ),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68cdec1f3290819f99d9caba8703b251079003437d26d0c0',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text or call a tool.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_68cdec62725c819f92668a905ed1738d079003437d26d0c0',
+                        signature='gAAAAABozey1vHMbs_Q2Ou1f-stI__3zJS-qTasRefyc_eyOxqogM8UGbPpL8D6PLFHcypshJpa9SQli-qZRIyG4ioUDLsKpBwFbfjdIhps667-8st03DRTRP0ms2izupS0ae6QqY9qrsPSchrSF2o2PlJOWKZAFJ609S0hGX8VDtrU8nESfp78NQ5HgpgXksXQTxk3_xRmXES2AThlUD0LYykoVKRX-xOyPQsOK7aDEs1CIk3lG1meiXdtJxP1Jm9JQGLWk6kePWUgwnAs818LMVvjcj8GWzFjxKUQlI3S855vYngivkMqYqh4gOcDRGRWej4NRzRmhOK-2yrATl26qnpRwNA1YXkFtn1ojxEkXD99P8RIXNItH4KW19ALs7ZizQmQlKzd96eyPT16OSLqEIfHAXWEKwoB2vTM2ExvHK4il76X9XmgRDy_CI3HAPI-7M3787MJBEY3z9cBe2sIS_GtSk12_GXRBUREhu8wcc4920FxkufYegHd3FzKxBRjyxGpR-jLyI24ahOZRKvoXi4-n1v4umoD5OSMjYpMtr0ykwIBQyyqldi9KqHBpJCzB0wA3JyAn-4JvQsXwIeeAtq3bNSJFaaf9aLJ5OwMO9I6IIWGxoQ1mzqmCs5cVwwjeJLzEc0T5g2qWJdXxdYmjesvMj3pJtgIq3iR2105LydhUiKE-0VLVAQGg-lnjkCtj-muEqlko2_FCHQ7b_hA0VkOUIKOYUDHRtwgtaeNnUpiWk8L7GnBNHtVQ7_kHEGj00UIVC4CKiJqESXS1om73Xt1K1-bglZLfSKfjrAd6E3W51cKQXM7KOfmpRwP-9DThdeOBgjlmMFveru6NYl2ntiu7GF8JJAvjebF3Q6SR4AtFSp8zrZVjlduW3hzQtKaROHLBVgH1KaMST-Nfnkn4AHCbhYNGSZxg4J8M3hh-BLba-lM7o9d0cHsHSORXeuAg40qioVCZNCtIooo6fAdWSAULw-uGdAbRbrJq5nE-w_Lilyeb2mWnMwMbKBHjQO7Kwe92UHvve46vMkiSSX-wZYwthfbO9BM6_ha5BJOtwNggKuBXxqMVizL8WKdvdTVwzP1guDvuVgVoCYKl340jB_EE2V-L-YzbSdaxHi09Gi6E10MgdaSGhNqUJMZWXrezkT6pyRYYRIWhaaImIuQf6JybMUH5hHH8DDEKvofLnQmgPVccU6womuYosIgLOLPOetK6OEFlMsQPBn95hb6jY5vETMyhiVYAVxaeXgk5WA-NdYQ-F2q4kQQS6Ku858AaO9rXMYpkaJ0nIubIbdgQMaXzq6ha5Z0BaxrJhxCDqmHXA5-INBBqWDw0AgJcAlMM_a5ShZA4zVWu4ydzikq8PlnATLbFzOkL8WBhJGRyveKaSyknPfPCBvXu_1l-hwAyvFv2dWWBloD_IIJ3ID_qtjgT7epwC88qmQd5ICPMMdx4DjEu72hU-rTIz30ks970qi_dKVbgpsLAJbHeCCWXBJzJ3UKrC6sc7Kj3rhtelPNEJqFyuB_EJOVX4o7R0AZvkk3wWs3IZ2nE9TeuYckw-hHg35YsC43QSrbIZUbfonaN57ZbwyrnEwnhH3oYXaMiPqqywH0CsZYrO0QLuAeGJTknlpWHgLEVmz39-e3UZFb6WIGIfSFaZHAFpmQBiPjae-qudcbvvfmAgBHqt-Aq4D_06ySnELOtDWlFusZcmHQwG9b0OCDXt6KRTR_-49uuoPCoXlv2nKb2eFhXp1gp6m6WsH21XNaeLU4RF4PR6oRUh-TCLzyBtwCscukF_3gBvcTdwJ4io0Fu6YVtEJux_Ec1vCaQHlUVGtZR7JDVyE5lu1y-aZx0u4s6HheF0bHLYaFgqgOmaNNWwK_jldqp99ZhU7Qat8GcG8YLLEJ04WDIp6_i_Ri7OUf5xgTEkAxS9gOxeJ1EMKR2oB0pf7YJ18XkNqeA7zxXmufJNIbEmXOC3XQKiDY9-2UzTyqjzdZ4V2naUggs7DjAAntcHhVFLGOZgGeQ5FLJ9jfzFlpE8mAg95ZtVvPzYBNFaPoTynqUlukCH4eje_62w_u2TruBMSU3cOV5IqVTLMHu2uwxHWdA1zrVi32LMv8FEYZ8nPyyk_BdapV-SRGQKn1yjGml__I5ksVlqNWVC3BX4hkIxH9K1bO6HjWP2-cdRtTYtRNcOOGOZZv5RtKfpvzjIK5o6d45KDK-jp39_cY9Veyawzc4XwT7jkyL8U0YNsRTEjafcPONK7yWasrOIzNuUppBFdMyER_R8Q1bTMQp1sE-NoAN-0MqupZe1jltzga6i6KLWuOXtMm1_DeHHH3OPNq-kfVs19gbQD13R9kMNjgu8FbAWdoVreG24tKUVSf2nWKReXwxc3WiiODaYTew2ynZ3BUchm3eKebybh4lKoYCw6lLoclnD7smFkP4-72RfaTylVe_npaWU_kWIhxItYosjWGc_ScJhLFdwAOUaNijGNX0TmeMb3uaESw23E3Y0M2pAC_wVkaHvJEYv_nYebwYc6yON5oMFAnOmqaJ14d-LfhuATtTrqD8fGXTPi73rpN5IpA3fVklkyUuu0GWqvsRujNnEcN2nL43LPRwFvwYSeL_tXJoTpTxdgkwjEg4dJr6hImPIwk6Yu_a159LyNKIeZOSZbHi0gao7OeDiSM2_1zb_srjUXgiVPJ26r3GCz07dhcwqUS8lU6nx5q1ncCt9mjTgUG0qmVPzDjfRmeqOU1gPZhh2XQeiXp2AWB-_9M9vu2EiSeOO2gfYKeaFjVhBLbjOeKs9r0xt5JXpdx5IDB1JOfK_MSlKwjl2kOlNo7p3e7RIVB38MQoih95hSz5E6EyOoH2O6KAXLM3qhgcmXe-XJwQKOkA8rPRclgvN-hLSopl6mDGqg7dNKXZB6SQspQPiB4mx91Wwt62aMqWa7Ve-thQ6-oCq9IQTLT34xpCOpHWz4b8kSfr-WDg9cTDdvYIGEDGj_XlE6CK5PuxzezWGYvYggwVJC_65zkGHFBURkBCRHc7otAyxMTKMCTKZnYWUdUEGpTCBonYFPOlh_ApDPnh1h3feF1x8AEIoVkq_ADRKhKbs28y44LQGp9pe49LdsgKN7YT8_azHknz5frvCUQJu8aiP_TaFCAiZhUc0JSATHPv3q6ZsNoUzF8ZfeSWuI3ZpQyoyMq4wxcyH1sFNqtIHd_iS2U9AkEACp6q6FAohK_O7GaDr_T7VfeO3JuRL9icg82WtPOtgJ1o7oqZxa1lfypGkWAgX_KF5aytblSoxlwn-Zk84Mf_YlbJEBO2mUa0Me5uLhM183akeG4y06FR-ANXrsYxrGmhpIWfl90WAKEG4ExdaexgzQOKXedTLOKnIwDW0ZSAu6O-Eiddn2w5GBO93OGEGQwkXDddA9PB9--mdyHgJM1OvXFYIWtziDLZ5qHAUrUFpYUth9B9mV4TXXLeLqx25TO7DL9czT6cGPeYNSOR3HpNdw93Pbro_kDIk-4zrmhlLd-I6w1tSisK7veJE0Y9Svvf6VLky34iV0RlIw-Z976oPP3rVJpSIujNbuFm84V2EvHFkG1oaHoViDxp4QesbToOdhl8GfnHHuwPaT78C1rwucflil_XkLAi0PBv0uGYLWaaAVlhm_lNZc4CYd7qHcdgma8dL27kHwVUJctIzphtV4yAhL-06SY-kwR9snNogfzDSuuNTVHPofu0_B7qA9vjwf3jeE8WJUbq0HxPSIGMSvJ57uh2YzRPWnMJ2PmARWgHAYoWUsZknHyr7DlKqzV1kxrLmr40xk98D9-Qkkq3enbEazhNWXRTIGMuWQbM1FQB3VL8GX3Xa1TjujWQS8_nC9LTId1XzNWsSCNOg8gHXqvt5hAeJVZ9GMTFJREPCBk5ts9odm3N3bjK5KgA3pNahnOS0u_c2auAc1t9C_5xqxEnIRxE6R1lVHz7hDTebYMcpldFI8IEuToExCjUUpoW6FmpeJrv16hwzTqbX69oToXJ2YA4WYCerDob0BAMHKWDC0nqPJTp9wjq2OnC5YKmMKfJ7lKhVprYG14RKnJfOJdChRpWQH2iK1Hc12sCJBJT2Lvm138cQeRApo2uUTs1dpJ-faoPvb6H_Wg-9ys5JsZtrzUXVpj4ttC84M7dZnbdyEh64iOoUINTSG4yryVDfN7PokiuN3DHuuXlWG8hkWAP4uyZg6sXdeSBGfVOjmG7Tc0zNqxZFkCMo9XEaLk_Zz6X7fQPM-MQVkSrb_0-S7tNwcufe3Y0nEnKpM1WohnyojInkRUzPWLUcBukzYpwuXg3MxxayDLwfjfybNb3hO_aNF_5mLz8s40IotW2Oxa1eKfZO5igty32jA5ipXwPjJjBj5yVgmTESDPmYrPkJCdFUtJJpGRTRX30BbLAybWkhJWBGilR-f5wp7yHp1pAcLl8YIKi-Di35kCCG0qtTimMeyb6E9hQww06pdDKAuVuDmC-RhgG9-x6MlmeJgKeNu2VeANq5lIiAKuDEXz4cs-TBrC_PC4j7dnaIbvchVdxx9Regcqfa2XTeXsKJB8uGwHDBQ_qu6zyKJ2ANyqk8x7Vmmz3YNREGNgiiRQK-zDjU2ZRJN0DJnHxdFMYcmywKz0QOab4orE01eqaG_Zy3vr7fDLOMJOl_puAjLnF7xiVmj1UWC2FwoWngvCrGO-2wsHB7fnvJapv-NpIoW146QuSVwhMROuZ-5SmzQz4MlF-ARtdkEvCAO45BZTM-AnTlOiMqMXspKrHGCiwE_S4FStVdHT4D7m6Ha4q_BRD9nBYp9r0vP4QdsfsK0pegYawDfZ3U9Vuk0dRZp3Z2QBXDLuIs0-0ol7_liDeC64KCdL2zrDSQCXeSQGtDpBdbSDf5xkzQ1N_IStAz6dI_FLbLqRPfE9tf3AfA9k7j3BwN_K6eeVfRueVnf0VOXukHURPwMTVE9C8IdPA8OnwLBD-k1YT2aV3Aow6eC4Dwl7cW2FtQ_BuHcpjMfWuJFiUuw9L8bLCWSlJ3rYdX_MYv-9mY--9d3r49p5FHAoK-bJS5yxHg2Q6Eg6DrSC4dORU5p_fKxrPklgOJKbZoQyb96_dp2qkCVgPjN1naoHfhgqHp49MxalqSx9n-vd86NTSXNw22lnboj4qAsLg54P4RSayO-U6jvj09ZuGtLGrCvKPAgHl_xP4dtpdbOC8OJ3nwHNfxAgZr2P5JEaFHN3RuIQGH5gkwNEA2otd40YptNJvD6r4gasyBPNY15jeYYL18yFQobK60gnXQweT_JXTlnGgbvgoGw6rJ2nifXw_o6Q_uBDQE9MOCJiN0FoivBdcwk-NHU-nNg93U30q4zbGbJ96O0E2X2qRyoOaEhBKAqkHrQM-NGjX7aj1YJFCxIFtQ00OQjT0vhGng6-3cB01l44mGdDFV47PZLzcFrGx7iDaR1Oy2Na5rOLphgT1_zvVF2mCw10HYxOYwSDnm6uqo_kADX_HQAGxQx1xDZ9iaZZGD00hdoZp55kRPGt6uZ9ZEEXPWUpAV8mPUlu0DcK6rr948_btFuMWo9KrVneCiF4qxkk_Q56aFoRa_HQwEEuh3sp9PSCT9wIfBYSR3661Ox7C-25rHNkrdv7XC8ArnQ7xT04y9JYOF_XLxtOLlAzscUryz56Qk7lexv7Qqe80fTTSRNFseDNFCxLjWm6wAo_kpaTOOvFiPUxlYwcmW4hy-hW8zH_JRVPaBCCKR_s68yEEAVve-8q0ePzqcElS4Bt8cFyU2kqodDmzzh2HAFcrA_ScDciNbwKWeJublK97rkWmLCuPZwJcvKNT_FfgYU5OxtF6G2TVVhUcbVAhPQFFegVn_8hYkZ3mJFkZa8FYYNMSGn8nssR8F9RInU9PFLfBiI2_sDJKwfhgLZ9Lb4x2Idx1-XNh9pAFkCv4eRKCoQNrfxZ4VgD7L2UeLTiTBOsH117rSSF3Aq5kaLLV9yqXc7bB8ZVdvsQ64ET6Z3sNM6xk78phFYy-Dnl9sM73dX2qpUefxdItLtql4E_jwm-D2qRdGtdkm3FpQhYhTKgfm--H3hj64AfDQP-7WVykl508pb7Ultl6j9ne28UqtsV6LHaXX3Raq78sZZl7pmkgp3dSZlZXuo0zwyh0eR8aDp201EdOqbG6a8Vs7cHo2pjy_31ZrIGA_rZhFRN5uVohUvtPWCwwV3D6qq9XQRFK6GsiIMgO8oH8v2AB_qopEXWkStyn9HgA-UntHqncuVnnVrprWFYfWVuTDkJhTC1-i9ZgdA1eUvZVxl-I4SfmDG540HUVVRw-Kt15vS7K2vc1FDiQA91Iya8eMjVKOs96Cr--cngQ_zZw062ZqKp7avO0EOTamvz8Zi2a0XzdIH5dH0_9_kXE_T4U43Ud_29QMElOxJfxt-9p9lBNBjfEkUvBayPX2XWlePtoQL89QLg-Xwe7RaGu0hvUiROaArk47B_703dSKDll2V5eUKc5f0H7icWyqp8u5rnjQsafBu6RCWHr7YJ1Pk5TBaw1qQCvNA2Z_FVZWN18No61fV16DHyjoiHBBjTROCS7m7_3snv4SDkoiFvIswpEt7pbYtbXLp5t0EQOQkWQOITojrGYIUi9c23kdiXr3EoPsvSMKlJcDyag25wzVNfA-bfiMCkdHPqaaTFBqYqlwA0SI6bwHKhqFKdGkrJ5YIxgaFLsLwwiNMSBR2wWXSFRXz-HCMewHkVV4LpGxkzeihWXJUO3gXeJuVY1EGxB8U15BUtQQcAAe2Om9KZtOsS2kRtO7vZq62E8jl7bUbTmw0XTZ4eh3xg-IRiK1ynur6XqtZH1kNQFq7k60X-6cFwDS7eDGdzrgl-Kbl6VSzxpwxu5Lz-KIjV5gGBUcOjnIpRuwY_s',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_68cdec701280819fab216c216ff58efe079003437d26d0c0',
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='c9d559',
+                        ),
+                        id='ig_68cdec701280819fab216c216ff58efe079003437d26d0c0',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': IsStr(),
+                        },
+                        tool_call_id='ig_68cdec701280819fab216c216ff58efe079003437d26d0c0',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(content='', id='msg_68cdecb54530819f9e25118291f5d1fe079003437d26d0c0'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2858, cache_read_tokens=1920, output_tokens=1071, details={'reasoning_tokens': 896}
+                ),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68cdec61d0a0819fac14ed057a9946a1079003437d26d0c0',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_image_or_text_output(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, output_type=str | BinaryImage)
+
+    result = await agent.run('Tell me a two-sentence story about an axolotl.')
+    assert result.output == snapshot(IsStr())
+
+    result = await agent.run('Generate an image of an axolotl.')
+    assert result.output == snapshot(
+        BinaryImage(
+            data=IsBytes(),
+            media_type='image/png',
+            identifier='f77253',
+        )
+    )
+
+
+async def test_openai_responses_image_and_text_output(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()])
+
+    result = await agent.run('Tell me a two-sentence story about an axolotl with an illustration.')
+    assert result.output == snapshot(IsStr())
+    assert result.response.files == snapshot(
+        [
+            BinaryImage(
+                data=IsBytes(),
+                media_type='image/png',
+                identifier='fbb409',
+            )
+        ]
+    )
+
+
+async def test_openai_responses_image_generation_with_tool_output(allow_model_requests: None, openai_api_key: str):
+    class Animal(BaseModel):
+        species: str
+        name: str
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()], output_type=Animal)
+
+    result = await agent.run('Generate an image of an axolotl.')
+    assert result.output == snapshot(Animal(species='Axolotl', name='Axie'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of an axolotl.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_0360827931d9421b0068dd832972fc81a0a1d7b8703a3f8f9c',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='918a98',
+                        ),
+                        id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': IsStr(),
+                        },
+                        tool_call_id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(content='', id='msg_0360827931d9421b0068dd836f4de881a0ae6d58054d203eb2'),
+                ],
+                usage=RequestUsage(input_tokens=2253, output_tokens=1755, details={'reasoning_tokens': 1600}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0360827931d9421b0068dd8328c08c81a0ba854f245883906f',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text or include your response in a tool call.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_0360827931d9421b0068dd8371573081a09265815c4896c60f',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"species":"Axolotl","name":"Axie"}',
+                        tool_call_id='call_eE7MHM5WMJnMt5srV69NmBJk',
+                        id='fc_0360827931d9421b0068dd83918a8c81a08a765e558fd5e071',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=587, output_tokens=2587, details={'reasoning_tokens': 2560}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0360827931d9421b0068dd8370a70081a09d6de822ee43bbc4',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='call_eE7MHM5WMJnMt5srV69NmBJk',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_image_generation_with_native_output(allow_model_requests: None, openai_api_key: str):
+    class Animal(BaseModel):
+        species: str
+        name: str
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()], output_type=NativeOutput(Animal))
+
+    result = await agent.run('Generate an image of an axolotl.')
+    assert result.output == snapshot(Animal(species='Ambystoma mexicanum', name='Axolotl'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of an axolotl.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_09b7ce6df817433c0068dd840825f481a08746132be64b7dbc',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='4ed317',
+                        ),
+                        id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': IsStr(),
+                        },
+                        tool_call_id='ig_09b7ce6df817433c0068dd8418e65881a09a80011c41848b07',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content='{"species":"Ambystoma mexicanum","name":"Axolotl"}',
+                        id='msg_09b7ce6df817433c0068dd8455d66481a0a265a59089859b56',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1789, output_tokens=1312, details={'reasoning_tokens': 1152}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_09b7ce6df817433c0068dd8407c37881a0ad817ef3cc3a3600',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_image_generation_with_prompted_output(allow_model_requests: None, openai_api_key: str):
+    class Animal(BaseModel):
+        species: str
+        name: str
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()], output_type=PromptedOutput(Animal))
+
+    result = await agent.run('Generate an image of an axolotl.')
+    assert result.output == snapshot(Animal(species='axolotl', name='Axel'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of an axolotl.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_0d14a5e3c26c21180068dd8721f7e08190964fcca3611acaa8',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='958792',
+                        ),
+                        id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': IsStr(),
+                        },
+                        tool_call_id='ig_0d14a5e3c26c21180068dd87309a608190ab2d8c7af59983ed',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content='{"species":"axolotl","name":"Axel"}',
+                        id='msg_0d14a5e3c26c21180068dd8763b4508190bb7487109f73e1f4',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1812, output_tokens=1313, details={'reasoning_tokens': 1152}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0d14a5e3c26c21180068dd871d439081908dc36e63fab0cedf',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_image_generation_with_tools(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, output_type=BinaryImage)
+
+    @agent.tool_plain
+    async def get_animal() -> str:
+        return 'axolotl'
+
+    result = await agent.run('Generate an image of the animal returned by the get_animal tool.')
+    assert result.output == snapshot(
+        BinaryImage(
+            data=IsBytes(),
+            media_type='image/png',
+            identifier='160d47',
+        )
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of the animal returned by the get_animal tool.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_0481074da98340df0068dd88e41588819180570a0cf50d0e6e',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_animal',
+                        args='{}',
+                        tool_call_id='call_t76xO1K2zqrJkawkU3tur8vj',
+                        id='fc_0481074da98340df0068dd88f000688191afaf54f799b1dfaf',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=389, output_tokens=721, details={'reasoning_tokens': 704}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0481074da98340df0068dd88dceb1481918b1d167d99bc51cd',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_animal',
+                        content='axolotl',
+                        tool_call_id='call_t76xO1K2zqrJkawkU3tur8vj',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='160d47',
+                        ),
+                        id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': IsStr(),
+                        },
+                        tool_call_id='ig_0481074da98340df0068dd88fb39c0819182d36f882ee0904f',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(content='', id='msg_0481074da98340df0068dd8934b3f48191920fd2feb9de2332'),
+                ],
+                usage=RequestUsage(input_tokens=1294, output_tokens=65, details={'reasoning_tokens': 0}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0481074da98340df0068dd88f0ba04819185a168065ef28040',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_multiple_images(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, output_type=BinaryImage)
+
+    result = await agent.run('Generate two separate images of axolotls.')
+    # The first image is used as output
+    assert result.output == snapshot(
+        BinaryImage(
+            data=IsBytes(),
+            media_type='image/png',
+            identifier='2a8c51',
+        )
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate two separate images of axolotls.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_0b6169df6e16e9690068dd80d6daec8191ba71651890c0e1e1',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_0b6169df6e16e9690068dd80f7b070819189831dcc01b98a2a',
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='2a8c51',
+                        ),
+                        id='ig_0b6169df6e16e9690068dd80f7b070819189831dcc01b98a2a',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1024x1024',
+                            'revised_prompt': IsStr(),
+                        },
+                        tool_call_id='ig_0b6169df6e16e9690068dd80f7b070819189831dcc01b98a2a',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_0b6169df6e16e9690068dd8125f4448191bac6818b54114209',
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='dd7c41',
+                        ),
+                        id='ig_0b6169df6e16e9690068dd8125f4448191bac6818b54114209',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1536x1024',
+                            'revised_prompt': IsStr(),
+                        },
+                        tool_call_id='ig_0b6169df6e16e9690068dd8125f4448191bac6818b54114209',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(content='', id='msg_0b6169df6e16e9690068dd8163a99c8191ae96a95eaa8e6365'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2675,
+                    output_tokens=2157,
+                    details={'reasoning_tokens': 1984},
+                ),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0b6169df6e16e9690068dd80d64aec81919c65f238307673bb',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_image_generation_jpeg(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, builtin_tools=[ImageGenerationTool(output_format='jpeg')], output_type=BinaryImage)
+
+    result = await agent.run('Generate an image of axolotl.')
+
+    assert result.output == snapshot(
+        BinaryImage(
+            data=IsBytes(),
+            media_type='image/jpeg',
+            identifier='df8cd2',
+        )
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of axolotl.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_08acbdf1ae54befc0068dd9cee0698819791dc1b2461291dbe',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_08acbdf1ae54befc0068dd9d0347bc8197ad70005495e64e62',
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=BinaryImage(
+                            data=IsBytes(),
+                            media_type='image/jpeg',
+                            identifier='df8cd2',
+                        ),
+                        id='ig_08acbdf1ae54befc0068dd9d0347bc8197ad70005495e64e62',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={
+                            'status': 'completed',
+                            'background': 'opaque',
+                            'quality': 'high',
+                            'size': '1536x1024',
+                            'revised_prompt': IsStr(),
+                        },
+                        tool_call_id='ig_08acbdf1ae54befc0068dd9d0347bc8197ad70005495e64e62',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(content='', id='msg_08acbdf1ae54befc0068dd9d468248819786f55b61db3a9a60'),
+                ],
+                usage=RequestUsage(input_tokens=1889, output_tokens=1434, details={'reasoning_tokens': 1280}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_08acbdf1ae54befc0068dd9ced226c8197a2e974b29c565407',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_history_with_combined_tool_call_id(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=ToolOutput(CityLocation))
+
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content='What is the largest city in the user country?',
+                )
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='get_user_country',
+                    args='{}',
+                    tool_call_id='call_ZWkVhdUjupo528U9dqgFeRkH|fc_68477f0bb8e4819cba6d781e174d77f8001fd29e2d5573f7',
+                )
+            ],
+            model_name='gpt-4o-2024-08-06',
+            provider_name='openai',
+            provider_response_id='resp_68477f0b40a8819cb8d55594bc2c232a001fd29e2d5573f7',
+            finish_reason='stop',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_user_country',
+                    content='Mexico',
+                    tool_call_id='call_ZWkVhdUjupo528U9dqgFeRkH|fc_68477f0bb8e4819cba6d781e174d77f8001fd29e2d5573f7',
+                )
+            ]
+        ),
+    ]
+
+    result = await agent.run('What is the largest city in the user country?', message_history=messages)
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in the user country?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_001fd29e2d5573f70068ece2e816fc819c82755f049c987ea4',
+                        signature='gAAAAABo7OLt_-yMcMz15n_JkwU0selGH2vqiwJDNU86YIjY_jQLXid4usIFjjCppiyOnJjtU_C6e7jUIKnfZRBt1DHVFMGpAVvTBZBVdJhXl0ypGjkAj3Wv_3ecAG9oU3DoUMKrbwEMqL0LaSfNSN1qgCTt-RL2sgeEDgFeiOpX40BWgS8tVMfR4_qBxJcp8KeYvw5niPgwcMF3UPIEjHlaVpglJH2SzZtTOdxeFDfYbnvdWTMvwYFIc0jKOREG_-hZE4AznhHdSLV2-I5nGlxuxqaI4GQCk-Fp8Cvcy15_NYYP62ii50VlR6HPp_gQZEetwgC5pThsiuuG7-n1hGOnsj8gZyjSKsMe2KpzlYzhT7ighmArDVEx8Utvp1FXikqGkEzt4RTqqPInp9kuvqQTSyd8JZ6BEetRl1EuZXT7zXrzLwFN7Vm_gqixmf6mLXZUw6vg6LqGkhSh5fo6C7akPTwwJXjVJ37Dzfejo6RiVKOT-_9sdYCHW2kZ9XfQAmRQfB97UpSZ8QrVfaKy_uRIHLexs8QrQvKuw-uHDQBAL3OEmSTzHzCQ-q7b0FHr514Z29l9etavHNVdpeleWGo6VEtLWGQyblIdIBtf946YnQvr6NYIR8uATn9Z91rr8FsFJTpJh_v5iGA2f8rfPRu27nmw-q8XnPVc_FYCZDk08r_YhdEJZn1INBi8wYSWmpib8VxNpkFO7FFRuK-F8rh3MTpYgIOqPQYbf3LCRvKukTwv1b3mjSKVpHQSm_s6s7djdD-rLuc22-3_MLd0ii4_oOT8w51TQIM61LtonGvxUqf4oKHSUFCVnrWWiT-0ttdpwpJ_iB5frnEeY2mWyU1u7sd38BI3dOzoM82IFaIm98g9fa99bmoA7Z7gI60tzyF8YbJmWF-PCwyKHJ7B1MbCBonO36NmeEM-SplrR54fGykxTmwvtbYGhd5f0cdYzD0zulRDj-AhOd96rrUB_fIgoQGTXey8L_w0whcnVTWdG6is-rx8373Sz8ZRoE5RiLWW1mfHzVXxwslphx4BedRVF0tL-1YO7sg5MXhHCf6hpw8dOht-21NMrb1F1DQadFE_fhySFl-TgOD5BlhAuupLMsqcCIa4lcXP_loyA4ERP6WSdz2Bybz7_1eOiflfVodRrNqvr_DnL0NEXD_JkYTeIn84ziarFV7U7ZnkMvRiA_p1fWdbHTsE_8lu1rsf8fcJ1e76_6ycPkOc4TrOZw8gVRb7gIbMMVrv72BT_sFhW7GkXrzCQpQaeybmRw-bjFhkMMjMDYGXkA_H0q2Zfyh3zCOoa40hl2cqRWp7n1XuafmtKG_F8e9hyWox0q7AhZr5HOOaHz8r3O3-dmNl1KP52bqA8S72rLDslAOQlDupmAQgAmkm5ApYeYcEBredN78jHQ1pviUEI2-3qr4ClXZFHPa54AJ_q4HQ-EcKXEcYQglG21mSUy_tFQF-m4X46Qu8yYWcBVW4E0CG3wbvYx0BCdbc5RhIDkJo1elxLK8XS64lpFkCWy62xLVeMuVuCj8q84-Kk7tZ7gtMtLV9PHQCdbl3s2pAzMfuNIBJog6-HPmwha2n9T0Md5qF7OqCtnYWOWUfIMmQVcdW-ECGsQy9uIUmpsOjdtH31hrX3MUEhIOUB5xErLwfp-_s22ciAY_ap3JlYAiTKGlMCxKxTzK7wWEG_nYhDXC1Afj2z-tgvYhtn9MyDf2v0aIpDM9BoTOLEO-ButzylJ06pJlrJhpdvklvwJxUiuhlwy0bHNilb4Zv4QwnUv3DCrIeKe1ne90vEXe6YlDwSMeWJcz1DZIQBvVcNlN8q2y8Rae3lMWzsvD0YXrcXp02ckYoLSOQZgNYviGYLsgRgPGiIkncjSDt7WWV6td3l-zTrP6MT_hKigmg5F5_F6tS1bKb0jlQBZd0NP-_L_TPqMGRjCYG8johd6VyMiagslDjxG39Dh2wyTI19ZW7h_AOuOpnfkt2armqiq6iGfevA3malqkNakb6mFAS04J9O0butWVAw4yiPCEcLuDNAzzi_qrqLee4gkjh0NplvfGCaE6qqYms61GJbJC4wge6vjyTakurbqWEV3YoR3y_dn-0pjQ7TOx9kkruDwg0nZIV5O6yYxaulmbuvo3fs5CZb9ptZPD0MzGZj7CZU2MDCa4a4gr0McOx2MricxSzIu6emuRUzZuC6C1JxPRC00M0TrZNMIe_WVa9fXDLV1ULEAIMwMXzNT9zV6yiYQCwhkp30Wqde3W0LlIRpSbDuJXcvT8OCbXkdPNIScccdT9LvUQQ--hU2P45kisOev3TYn7yv-pdxM3u1KFNwuFxedSArMBPg7GDz1BOxDQRzv0mfwbf_CcoFbuyj7Tf4zWO46HVdHeRNbvIE--bnaSYD-UFaKknp8ZsBQQhBU_2TEca3fKwmg81-g7Vdb28QUZEuPzgE4ekxZejkKpiKqlLC5nJYgvXrqk2H35D51mYdzPs0ST05Mc41x9MFm_YOLxSFyA0yGAKVINmD5wT6kvRflPkgoksd2ryIvo4KMw3oZQKodv5By0mSJ8iX2vhTGylxiM8wj-ICyNuOsaRFrcMSpX7tZbXcDyysApdmx217BSADoQiNZBLngF7ptxc2QGyo3CwuDjaljwmSgL9KeGthd1RJFd826M287IPpCjLM4WRquCL_E0pQryNqOMn-ZEOCAlBjE37290EhkjKbhiGBEnHUvSbhoH4nL47AmunP_Q5aqh5173VfyoyaybuS3fXjQ5WO0kyFjMdD-a7C6PVdwToCTP-TljoF2YnQKCiqUGs9gNHS9mYhQSXzY4uuGlTHLfKB4JKS5_MQHvwI9zCbTvVG854fPuo_2mzSh-y8TSzBWPokhYWI_q095Sh6tOqDIJNMGyjI2GDFRSyKpKhIFCLyU2JEo9B6l91jPlir0XI8ZOQfBd9J0I4JIqnyoj40_1bF1zUDGc014bdGfxazxwlGph_ysKAP39wV7X9DBFS3ZmeSIn-r3s-sci0HmwnJUb2r03m40rFuNTV1cJMAFP7ZY7PQQQ0TtlO_al0uedaOWylLauap_eoRqc6xGJ2rSz1e7cOevksUlAqzK5xknYKHlsW970xuDGHKOZnKPg8O9nb2PKrcjwEQF5RFPc3l8TtOUXPhhvTERZFGoEuGuSuSp1cJhzba06yPnL-wE3CstYUm3jvkaUme6kKqM4tWBCQDg-_2PYf24xXYlmkIklylskqId826Y3pVVUd7e0vQO0POPeVYU1qwtTp7Ln-MhYEWexxptdNkVQ-kWx63w6HXF6_kefSxaf0UcvL8tOV73u7w_udle9MC_TXgwJZpoW2tSi5HETjQ_i28FAP2iJmclWOm3gP08cMiXvgpTpjzh6meBdvKepnifl_ivPzRnyjz3mYCZH-UJ4LmOHIonv-8arnckhCwHoFIpaIX7eSZyY0JcbBETKImtUwrlTSlbD8l02KDtqw2FJURtEWI5dC1sTS8c2HcyjXyQDA9A25a0M1yIgZyaadODGQ1zoa9xXB',
+                        provider_name='openai',
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"city":"Mexico City","country":"Mexico"}',
+                        tool_call_id='call_LIXPi261Xx3dGYzlDsOoyHGk',
+                        id='fc_001fd29e2d5573f70068ece2ecc140819c97ca83bd4647a717',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=103, output_tokens=409, details={'reasoning_tokens': 384}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_001fd29e2d5573f70068ece2e6dfbc819c96557f0de72802be',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='call_LIXPi261Xx3dGYzlDsOoyHGk',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel(
+        'o4-mini',
+        provider=OpenAIProvider(api_key=openai_api_key),
+    )
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        builtin_tools=[
+            MCPServerTool(
+                id='deepwiki',
+                url='https://mcp.deepwiki.com/mcp',
+                description='DeepWiki MCP server',
+                allowed_tools=['ask_question'],
+                headers={'custom-header-key': 'custom-header-value'},
+            ),
+        ],
+    )
+
+    result = await agent.run('Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='You are a helpful assistant.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:deepwiki',
+                        args={'action': 'list_tools'},
+                        tool_call_id='mcpl_0083938b3a28070e0068fabd81d51081a09d4b183ced693273',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:deepwiki',
+                        content={
+                            'tools': [
+                                {
+                                    'input_schema': {
+                                        'type': 'object',
+                                        'properties': {
+                                            'repoName': {
+                                                'type': 'string',
+                                                'description': 'GitHub repository: owner/repo (e.g. "facebook/react")',
+                                            },
+                                            'question': {
+                                                'type': 'string',
+                                                'description': 'The question to ask about the repository',
+                                            },
+                                        },
+                                        'required': ['repoName', 'question'],
+                                        'additionalProperties': False,
+                                        '$schema': 'http://json-schema.org/draft-07/schema#',
+                                    },
+                                    'name': 'ask_question',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Ask any question about a GitHub repository',
+                                }
+                            ],
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_0083938b3a28070e0068fabd81d51081a09d4b183ced693273',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='rs_0083938b3a28070e0068fabd84727c81a0a52c171d2568a947',
+                        signature='gAAAAABo-r2bs6ChS2NtAXH6S8ZWRHzygQvAZrQGsb5ziJKg6dINF9TQnq4llBquiZh-3Ngx2Ha4S-2_TLSbgcsglradULI8c8N2CnilghcqlLE90MXgHWzGfMDbmnRVpTW9iJsOnBn4ferQtNLIsXzfGWq4Ov0Bbvlw_fCm9pQsqOavcJ5Kop2lJ9Xqb__boYMcBCPq3FcNlfC3aia2wZkacS4qKZGqytqQP13EX3q6LwFVnAMIFuwn5XLrh4lFf-S5u8UIw3C6wvVIXEUatY6-awgHHJKXxWUxqRQPJegatMb8KE-QtuKQUfdvEE0ykdHtWqT7nnC3qTY67UaSCCvJ9SdXj-t806GVei9McSUe8riU3viHnfY0R0u9GIXsVnfVthIDRnX7KzpF5ot_CpCrgbCmD9Rj2AAos5pCdSzpc08G5auUuuMZfoiWANADTHHhO2OvflSEpmO8pb-QAYfMoK9exYVQ8Oig-Nj35unupcYy7A2bDCViXzqy32aw9QHmH7rErI4v72beWQxRVdX15Z7VS2c6L1dD7cU18K35CWqlSz9hEX5AcGqEEtIDVu1TdF3m1m2u4ooc4TjYpRecjYoG8Ib-vVKoX5C65a7G1cTbCo8dO0DYKGgM8jM7ZDubxbCcZ22Sxk58f8cer7WxHyp7WRo5-6zvMwMCk8uEY44RJmg-m0Oxl_6qxdr4Md80xZah_6tCCB62agQmYwCrR75_r93xOckQAK0R_37khvQD5gWVlE5Rg-01eUTboiPGqYmIsqWvOkziMGnxgKVw_yUf8swHU1ciWr7O1EdVPHLG7YXlVQTHTE_CX3uOsE2FoZnpS_MgpxGfjb76majV50h7mJ6ySVPF_3NF3RQXx64W08SW4eVFD8JJf0yChqXDmlwu2CDZN1n99xdaE9QbMODNEOmfTQOPhQ9g-4LhstNTKCCxWDh0qiv_dq2qAd0I9Gupoit33xGpb66mndc0nuuNFe8-16iC_KzQtHBNzgasgYK-r83KFVmiYK3Jxvz_2dfdwe0M1q7NLBvbnWc6k9LIf8iDUF6Q1J-cfC7SsncCbROtzIPlKpQwxhP-M09Xy3RVxlH9dcvuk3_qqEAartUQC8ZbuLRbhiq66eE1RvQzdNd2tsoBQ85cdNs57Penio7w9zILUf1JP5O8-zCe5GPC3W3EXTIEvHR-kiuxJvhcsySijpldGmuygRx05ARNOIT7VDCZvF23RfmnRduY1X1FAqb_i_aMStK7iyHr_2ohwOWLuklpyuoG0Y1ulvq1A9-hyCZ0mpvTEF6om2tAZ9_7h8W9ksiOkey0yA-6ze17MCjfnK2XcbqmSMgOngW1PrD81oKoheMnIeJdcWgF2mk8VDqmAwaDTxMxdnXkzK74rA43a4rWk3d2bUts8dAUkuYXTwJwKQw4LfXtu-mwwgJ6BkT_GiBcBJ6ulBuPsNZfpwPuxox6PS6KpzVTQ94cKNqSIIyFCD4xZsEvPALud09-gmAEDHxdnPjqLSi2U8xd0j-6XYKN0JtZ45kwEIRsOrFu-SYLz1OcYFKI5A5P-vYlzGx1WhEnoeUlyooJBhNj6ZBfj9f63SByxm7sgh260vf1t-4OGzVTIUKFluxkI4ubigLZ-g4q4dSwiEWXn50JFPrtuPs5VxsIIz_lXbh1SrKeQ647KdDSAQZFgEfzOOt3el5K97V1x7V7gEWCCgmqDIz3yZPpwD6qmUQKqlj_p8-OQrniamGULkXrmrgbNQVfV-Qw7Hg6ELw4aHF_IZME9Qnyn7peFhH6ai_YapuNF7FK-MBtPYoMaqBf05U2-uJAVUas3VuT_-pTyHvhtFmB7vc0-qgf_CtVNIXSPq2_vXdQdEwwCVPPwW6xWm-invrzhyQR_mf3OQqZT6_zOHIMPBJUaXcQKT0KTdoBZUDamAR-ECZl8r6wdLCn0HjAEwj3ifUCNMzQ7CZHUQG46rj61YyasNWO__4Ef4kTcApKgljosuABqP4HAdmkP5eEnX-6nutrL50iv-Mms_R-T7SKtmEEf9wihTu4Meb441cU9DI4WwSyiBSnsYdGy9FJKmHwP7HD0FmpmWkOrtROkQVMlMVKQFlKK8OBtxafHYsZkWDawbA1eetzMBzQ3PP8PSvva6SJWjbgURHVm5RjXV8Hk6toIBEDx9r9vAIczSp49eDCkQbzPkGAVilO3KLQpNx2itBbZzgE36uV0neZZsVs7aqafI4qCTQOLzYA8YFDKz92yhgdIzl5VPFLFNHqRS4duPRQImQ7vb6yKSxjDThiyQQUTPBX_EXUAAR7JHwJI1i8la3V',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:deepwiki',
+                        args={
+                            'action': 'call_tool',
+                            'tool_name': 'ask_question',
+                            'tool_args': {
+                                'repoName': 'pydantic/pydantic-ai',
+                                'question': 'Provide a brief summary of the repository, including purpose, main features, and status.',
+                            },
+                        },
+                        tool_call_id='mcp_0083938b3a28070e0068fabd88db5c81a08e56f163bbc6088b',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:deepwiki',
+                        content={
+                            'output': """\
+Pydantic AI is a Python agent framework designed to build production-grade applications using Generative AI, emphasizing an ergonomic developer experience and type-safety . It provides type-safe agents, a model-agnostic design supporting over 15 LLM providers, structured outputs with Pydantic validation, comprehensive observability, and production-ready tooling . The project is structured as a UV workspace monorepo, including core framework components, an evaluation system, a graph execution engine, examples, and a CLI tool .
+
+## Purpose <cite/>
+
+The primary purpose of Pydantic AI is to simplify the development of reliable AI applications by offering a robust framework that integrates type-safety and an intuitive developer experience . It aims to provide a unified approach to interacting with various LLM providers and managing complex agent workflows .
+
+## Main Features <cite/>
+
+### Type-Safe Agents <cite/>
+Pydantic AI agents are generic `Agent[Deps, Output]` for compile-time validation, utilizing `RunContext[Deps]` for dependency injection and Pydantic `output_type` for output validation  . This ensures that the inputs and outputs of agents are strictly typed and validated .
+
+### Model-Agnostic Design <cite/>
+The framework supports over 15 LLM providers through a unified `Model` interface, allowing developers to switch between different models without significant code changes  . Implementations for providers like OpenAI, Anthropic, and Google are available .
+
+### Structured Outputs <cite/>
+Pydantic AI leverages Pydantic for automatic validation and self-correction of structured outputs from LLMs . This is crucial for ensuring data integrity and reliability in AI applications .
+
+### Comprehensive Observability <cite/>
+The framework includes comprehensive observability features via OpenTelemetry and native Logfire integration . This allows for tracing agent runs, model requests, tool executions, and monitoring token usage and costs  .
+
+### Production-Ready Tooling <cite/>
+Pydantic AI offers an evaluation framework, durable execution capabilities, and protocol integrations .
+*   **Tool System**: Tools can be registered using the `@agent.tool` decorator, with automatic JSON schema generation from function signatures and docstrings .
+*   **Graph Execution**: The `pydantic_graph.Graph` module provides a graph-based state machine for orchestrating agent execution, using nodes like `UserPromptNode`, `ModelRequestNode`, and `CallToolsNode` .
+*   **Evaluation Framework**: The `pydantic-evals` package provides tools for creating datasets, running evaluators (e.g., `ExactMatch`, `LLMEvaluator`), and generating reports .
+*   **Integrations**: It integrates with various protocols and environments, including Model Context Protocol (MCP) for external tool servers, AG-UI for interactive frontends, and Temporal/DBOS for durable execution .
+
+## Status <cite/>
+The project is actively maintained and considered "Production/Stable"  . It supports Python versions 3.10 through 3.13  . The documentation is built using MkDocs and includes API references and examples  .
+
+## Notes <cite/>
+The repository is organized as a monorepo using `uv` for package management  . Key packages include `pydantic-ai-slim` (core framework), `pydantic-evals` (evaluation system), `pydantic-graph` (graph execution engine), `examples` (example applications), and `clai` (CLI tool) .
+
+Wiki pages you might want to explore:
+- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)
+
+View this search on DeepWiki: https://deepwiki.com/search/provide-a-brief-summary-of-the_a5712f6e-e928-4886-bcea-b9b75761aac5
+""",
+                            'error': None,
+                        },
+                        tool_call_id='mcp_0083938b3a28070e0068fabd88db5c81a08e56f163bbc6088b',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='rs_0083938b3a28070e0068fabd97008081a0ad1b2362bcb153c9',
+                        signature='gAAAAABo-r2bD-v0Y3pAlyAEK1Sb8qJJcJRKSRtYwymHwLNXY-SKCqd_Q5RbN0DLCclspuPCAasGLm1WM1Q2Y_3szaEEr_OJalXTVEfRvhCJE1iTgoz2Uyf7KttZ4W92hlYjE8cjgdo5tKtSVkNyzTs4JUHKRHoDMutL2KivjZKuK_4n-lo9paJC_jmz6RWO8wUoXo3_fGxjliOGnWyRXwEPmgAcEWNOSVgCgAEO3vXerXRPLie02HegWcLMtK6WORDHd02Kr86QSK3W30bnvU7glAFX6VhSSnR8G0ceAM-ImoomQ8obEDyedX1-pYDKPOa4pZ5iTjD24ABYOwz-0L7SNziQJLycwwsr11Fj0_Au9yJph8YkNb2nAyFeiNVCRjKul51B7dZgz-UZ9juWO2ffeI0GNtQTYzf46_Y1t0qykGW6w59xjmBHTKf5SiSe0pqWxZ6LOLoPx01rX2gLaKgNZZiERSbO0iwbA4tpxb9ur-qeFVv5tS7xy8KFYOa8SPrypvFWDoY6CjSwTS3ir0vyfpbJy-n6bcYP_pTwDZxy_1aVkciim8Tmm_9wYgI0uY5kcA9VYJuyc4cg7S7ykTUxMZz7xiLMf8FoXl1gHbVJrYriyZzh2poYTWlcCuSCiUaXhQKxcxMRrt_P7WANx0n68ENQ40HkoJ6rThvWUuwtmEYqZ0ldh3XSFtyNrqha4PQ5eg_DudlU_5CxyykuzWmi_o5MEW4_XW4b9vdXg1laqx4189_jEuV_JPGNeL3Ke4EbMbKHzsiaGePRZGgNutnlERagmU4VFTeoE5bN3oHlR_Au4PeQxdb7BuBmZRDDCnnIRd2NfSWb7bgfUozkA4S6rm_089OlRBeRVoLtA8zZZinNGtOZl7MtkLnoJVIWpF1rr7D_47eWSyyegUIIS2e5UKLJfCLkNgSlWPU9VquHEzSfqeHfzoN5ccoVwrvrHmeveTjI-wIJygdfuyti5cMgOOkAtLzjWmbs4CjmlWcbZKeidtDj5YpCSmYAGFuZze-cSbNjMv4th639dCu_jmRMze-l2Y5npbRwMqEJr7VLXghmLc1vhOsaQM3gxoF0CJJlmvtR4jxPqhE3694YRva6LS1WjR4oueM6zfpVeB2kC0hQgqaL6MiwtTRYFfuCzEHi18TwA5bqqkfgrDXedmjAzlEGSZFe2EBRlF_ZtagrVVTCagHQArnH3DkVQMEDCHCqDxA_PINR_997IxeNgGPsvazVdOOBef7sO4rvAWrC94nIlt7d4aViqbTNMW-W8rqjGFOqj1swrM0yoX5y6LY5oXPc3Mu35xeitn_paqtGPkvuH6WeGzAiNZFDoQkUdLkZ4SIH2lr4ZXmMI3nuTzCrwyshwcEu-hhVtGAEQEqVrIn8J75IzYTs1UGLBvhmcpHxCfG04MFNoVf-EPI4SgjNEgV61861TYshxCRrydVhaJmbLqYh8yzLYBHK6oIymv-BrIJ0LX222LwoGbSc0gMTMaudtthlFXrHdnswKf81ubhF7viiD3Y=',
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_0083938b3a28070e0068fabd989bb481a08c61416ab343ef49',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1207, output_tokens=535, details={'reasoning_tokens': 320}),
+                model_name='o4-mini-2025-04-16',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0083938b3a28070e0068fabd81970881a0a1195f2cab45bd04',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    messages = result.all_messages()
+    result = await agent.run('What packages does the repo contain?', message_history=messages)
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What packages does the repo contain?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='You are a helpful assistant.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_0083938b3a28070e0068fabd9de42881a08fbb49a65d0f9b06',
+                        signature='gAAAAABo-r2izZacxe_jVh_p3URhewxBJuyLNqkJOd0owsDPt9uCE7MXn06WHhO_mp6gLDAqcF1uhMhXCqwztJ1Nbpc0cEDAxUpUCUn2bKSgG6r8Snc_FPtKGgQWDsByvW_Nigx55CyPuNeDO_MiDgYee_WeUw7ASLPfiGOx_9YNc_BFYo1ngsb8CKZcJn3AoponMheLoxkVAPgOjMgteRVaQTr13MljTDUlBIZLIOhVbtIu_dI23saXPigbgwR4RhGn5mCHG_a9ILNkXDJUmGy5TKklIEi2HuJM3ZJ3gfoGYS3OONvzmU4AgMP2UrU17YKZAYKxUBKSpyAqigd4RJSYWzxBCoYzCTmiITwdZ6Cpsw1X9Wox_TQSGt5G2Xu0UY2TQZGRNNH8knJpWs-UQxBBV4L3alMwJuIeV-uzqeKr5fKO5rL_c9as-qQIW_EGQItjvR5z80Hi-S9VXthWCmtqZFIJkgLB5JfTYuFL86valsFVLzSavUIWJAG5qOcxag2mbZMwMRRNfvR__BBtoqBoeGIqveQAbIeZbG0ymw30PH1a2v1mmSrpkK6PB3AHYRDdpkezXLkbyGYgidyV2DAAtPaFplsubWCh_74UxmOuk4BH-9cWkE15mRUBrvtnbTb793RsPzOe7nPmkMpdgqa3nqc6RcQZ_M30lFLUViAbfpEpMVrCzz2cv1RklT1JUzpuVXBTKqQ4FxVCfnvzSgQ2INQ8K50E1X5w_7TAWhrHbNg6LetCa-4KWe9ps0GH6r1x9FWvGyVxSwa7SIdPq3sGpxjOydluPECbBOnHWFUB-3rI2DcUl4rGWYbv2FEFNeCH9Zr67uUvMc4Doi8nVMoeb1lJxFCrfziGhbEXY0FepH3zIzlj-_dXqLAL1qqhfCznT_xkDMVYg-D5gMu-_p3r2SirjJbeaz5UFmP-Dihd9v7jWgD6hx_Mq1uIdzIPE8ImGiDPR7PK64svkvwYg1Czdrc_7GmrKRuzsBL0720UXe19NQqCZfYvUJAjgbEqr3tuS_RkhuEQeeVORn88xkhkrGCEgBS0LHFpe4tcnUEXKnaYYRnoYtk5xo4EyOGVKR2yhF9ht2zrMTo83YuRAPcNT38Jk4gMtVhBaJw_GOfee-IWN_F258rpmU4p8sRV-1iSuQI3Arm4JBU66QuyjoY-KJmTcE9ft3Bfm9If3yG5W0RFRJrsVb--GjHmiiXDGWiR5Q8L1of_RnSD5QDEbXXxhn4dsDejtCXUaQXE9Ty-NvkvA7G6Ru8cMvIKqP2fXS9SmiW6ePJ2Znrlyafxx6L58pT26RF42h90BVrSldf6SjxQApK3AKZW6q8AkuJnYWTtkR9-qfIDl7W94BsgOFoEd-SDQGxWzGJV9YqAu6_SQKiNDQoZZHrJkRSOPEW_b3-BAdrpwL700I92Rye4-BdhlgeK1RwhT3w1Z-z1tvGZXJtPwdpPa3iIw2TIlesMbC1ZJ22iT3CB_r0lnlZhMtIH6o50l50UGfSDuv8HZ_RNgGnYEPqP3FW-o_VD_Yu_KBqGSA0Eb5xAJjl0vpin2vFGO1P4RdgI17eZXRsCp1KvkpWjbEQTWAvJz39yr7wFQ4BrPfgxUqMP0-ZI_h1DkdPBzWs1uKqHw-4qC77sZXgxgHGEIU1tfKosTy_fK4c-WAbdqIHNTh9VdlM1EdrUJQ4rs2rsUG8o9WXwnGTFchI9Ao64LiCFTFTiFL_dvKI4ZraNNXXprfPhxsdLBaNfgj2CIfUwBMJ9xMGmHKQKLtwZdHpQNVqi8DNm1qjvs3CxbSXGKtkl5K8UhJtI1g4OnEnbq3jDO8DGIyDl0NH-0bcCDqS2yAkh8I3IobzxTg16mqU3roXLQ4pGXnWbx26A_9zb4Y1jV7rzCq24VIfNJzMUtW4fVMYzlrp3X1l32I5hF3YP-tU2paD98xobgc2Cn2RWXd3OirrdjKAE088KhXYLZZY59y4LYRLC6MDMHSX0cbEXbBvl6mKmbaFig2_7ICiSa7rR_Ij6PpQRxIW7NfS7ZMu5w7TnhLJyg5nuwMI8A5pVxfy3gYg2L60wepuX7UUV0USaHNKi8qxbp4RJj4nO-GdE8TbLJtvPw-OzrH9Qiv7iDHVMHOe1CDPLD5IeGqmVB0tuLqlyASuIe3oPxTU7QdctyxHa1z-sO8nN6kpPnzmVmS6XK8bY-h5do28dkZvefomSquXwKeiVg9VAMWVziKLPWWg5iWp2x-spLkWcQsQle2T7xizyETaF1t6YbecXtSoVFmu90_o6ns07etU3RVK1YpQLgqUIJwwF3ZwP65MaWPwqDuWCuoQErlApdhRptxId67KE3UC4j8cAaGSoG0kXnws-jzpPyAg1GU8c-Gu_K0F-h-KFbHPMiWCrrQqzVfvoA2wLaQz3NPAqpq-kbFmrXRGkzLIeIvRVxck-sKkxQIcg3amSV5Dykl-lRCXGxlWNiFG_1SFrTSfp5VKyg7l1KjJzXUXHtqAErsPtMyhxaMmlh4An5a8NIaM9W6tafJrBXpUh85DfwZ8W92OAi1WOgoJIwWXSSeSuo6ECDstjVWW3OQQh9183jliwS7Bis3eu9jgAF3q8sYILBdwjrJRa6aAna2GirNwqZMEIg60kIlvmf1U6S2PgYaPm9UDzvMxjpzwjhXhzxHJitfU1tfl0vo-ATaTV8CxmKerNzy2AjlIZnjknG3xLyonCHbGbAe33QQTclb98y_vr5nA4WKlrls413o0a0f8GL8GjINCOd1RHVMjV',
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content="""\
+The monorepo is organized into these main packages:  \n\
+
+• pydantic-ai-slim\u2003– core agent framework (type-safe agents, model interface, tooling)  \n\
+• pydantic-evals\u2003\u2003– evaluation system (datasets, metrics, evaluators, reports)  \n\
+• pydantic-graph\u2003\u2003– graph-based execution engine (state-machine orchestration)  \n\
+• clai\u2003\u2003\u2003\u2003\u2003\u2003\u2003– CLI for scaffolding and running agents  \n\
+• examples\u2003\u2003\u2003\u2003– sample apps & demos showing real-world usage\
+""",
+                        id='msg_0083938b3a28070e0068fabda04de881a089010e6710637ab3',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1109, output_tokens=444, details={'reasoning_tokens': 320}),
+                model_name='o4-mini-2025-04-16',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0083938b3a28070e0068fabd9d414881a089cf24784f80e021',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_model_mcp_server_tool_stream(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('o4-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        builtin_tools=[
+            MCPServerTool(
+                id='deepwiki',
+                url='https://mcp.deepwiki.com/mcp',
+                allowed_tools=['ask_question', 'read_wiki_structure'],
+            ),
+        ],
+    )
+
+    event_parts: list[Any] = []
+
+    async with agent.iter(
+        user_prompt='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        if (
+                            isinstance(event, PartStartEvent)
+                            and isinstance(event.part, BuiltinToolCallPart | BuiltinToolReturnPart)
+                        ) or (isinstance(event, PartDeltaEvent) and isinstance(event.delta, ToolCallPartDelta)):
+                            event_parts.append(event)
+
+    assert agent_run.result is not None
+    messages = agent_run.result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='You are a helpful assistant.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:deepwiki',
+                        args={'action': 'list_tools'},
+                        tool_call_id='mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:deepwiki',
+                        content={
+                            'tools': [
+                                {
+                                    'input_schema': {
+                                        'type': 'object',
+                                        'properties': {
+                                            'repoName': {
+                                                'type': 'string',
+                                                'description': 'GitHub repository: owner/repo (e.g. "facebook/react")',
+                                            }
+                                        },
+                                        'required': ['repoName'],
+                                        'additionalProperties': False,
+                                        '$schema': 'http://json-schema.org/draft-07/schema#',
+                                    },
+                                    'name': 'read_wiki_structure',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Get a list of documentation topics for a GitHub repository',
+                                },
+                                {
+                                    'input_schema': {
+                                        'type': 'object',
+                                        'properties': {
+                                            'repoName': {
+                                                'type': 'string',
+                                                'description': 'GitHub repository: owner/repo (e.g. "facebook/react")',
+                                            },
+                                            'question': {
+                                                'type': 'string',
+                                                'description': 'The question to ask about the repository',
+                                            },
+                                        },
+                                        'required': ['repoName', 'question'],
+                                        'additionalProperties': False,
+                                        '$schema': 'http://json-schema.org/draft-07/schema#',
+                                    },
+                                    'name': 'ask_question',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Ask any question about a GitHub repository',
+                                },
+                            ],
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='rs_00b9cc7a23d047270068faa0e4cd5c819f8855c183ff0fe957',
+                        signature='gAAAAABo-qDma-ZMjX6meVDoCLYMqgkbQoEVzx_VFnmBFRLqsq37MiF7LP1HrMpqXqtrZ0R2Knb6lUiGSKhsOjOUAn9IFNUCuJx23cPLObF2CKt86wGLb7vccbCrp8bx-I6-kUtZASjlJx7_eJnvwyr24FLZlaDyGDuqRecGA8H4tXnQSAQTT9fJqy8h8dXvxvYzNj5rgOUWgRGn1NBph164KpiEzVWHADzZ_K0l4fX-DFHgtNFssPDYqOKLs_nU0XO8xaIZOgJ8QTf0XmHYF02GA_KciV6sIlSzVricQkwmu1XfJbjpME8XmRMIzlnLRqC8SAJs2kiaYnA8ObfI-s0RbRd3ztIUrzmAsdeo13ualD3tqC1w1_H6S5F47BB47IufTTbpwe_P6f5dLGpOzcrDPbtfHXv-aAW5YEsGyusXqxk51Wp7EONtADmPmVLJffFbRgnwfvPslbxxpNGfxNkN2pIs3U1FW7g1VvmxUfrF84LJpPKvs3xOaWXGorrPBY5nUyeRckhDFt6hGdS59VICmVy8lT4dL_LNswq7dVRS74HrrkfraXDDm2EhL2rtkwhiMqZtuYFsyIK2ys0lZuhNAkhtfgIoV8IwY6O4Y7iXbODxXUr48oZyvLdgV2J2TCcyqIbWClh3-q8MXMmP5wUJdrqajJ8lMVyhQt0UtMJKyk6EWY1DayGpSEW6t8vkqmuYdhyXQOstluONd31LqnEq58Sh8aHCzrypjcLfjDRo5Om1RlxIa-y8S-6rEIXahcJCX_juSg8uYHzDNJffYdBbcLSVQ5mAVl6OM9hE8gHs7SYqw-k-MCeoYsZwt3MqSV7piAu91SMZqB0gXrRDD67bdhmcLBYKmZYKNmLce60WkLH0eZMPSls-n2yyvmwflJA---IZQZOvYXpNUuS7FgMrh3c7n9oDVp15bUgJ8jDx6Mok4pq9E-MHxboblGUpMlFCJDH3NK_7_iHetcqC6Mp2Vc5KJ0OMpDFhCfT3Bvohsee5dUYZezxAkM67qg0BUFyQykulYLHoayemGxzi1YhiX1Of_PEfijmwV2qkUJodq5-LeBVIv8Nj0WgRO-1Y_QW3AWNfQ80Iy6AVa8j9YfsvQU1vwwE9qiAhzSIEeN1Pm2ub8PaRhVIFRgyMOLPVW7cDoNN8ibcOpX-k9p_SfKA9WSzSXuorAs80CTC9OwJibfcPzFVugnnBjBENExTQRfn4l7nWq-tUQNrT4UNGx-xdNeiSeEFCNZlH50Vr5dMaz5sjQQEw_lcTrvxKAV5Zs1mtDf6Kf29LkqhuUEdlMLEJwnAdz2IHLIy41zWLQctSnzBl9HB3mkw8eHZ1LdaRBQRFH4o7Rumhb3D1HdIqDLWeE3jkA6ZBAh2KadGx1u3AIIh4g3dHUS6UREkmzyRIuImbdTsoin1DrQbuYbaqZwIqU4TTIEmA8VeohMfff0rIL5yyFy7cfgGYurgAyMhARPGAAMAoTrR8ldWwymzPkGOJ_SQlzfNGV8weHOEYUl2BgQe57EDX4n1Uk294GIbvGR7eLRL_TLBUyHQErCaOCi8TkBNlLXIobw4ScN_jqqtURmC0mjRDVZeBi6hfrVShWChpQR8A2HxxHrcuHi2hi_2akgUea3zz6_zbUYVoIRdOa9DvZuN015E8ZSL-v_1_vOzUGvt0MuWPazjiRDWgpgcISYzT8N-Xzu_EbwO1OsaOFIeUqrD8mZ6MKOuBQts68og0DWo8KQaHmCaWi4O-c8-5fbB2q3H6oiIoZtSJIoowAmFGOwyWxn_OPS9svDgEaeFYEYhXZ5wZDphxoHkjJ703opxrWoEfQw==',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:deepwiki',
+                        args='{"action":"call_tool","tool_name":"ask_question","tool_args":{"repoName":"pydantic/pydantic-ai","question":"What is the pydantic/pydantic-ai repository about?"}}',
+                        tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:deepwiki',
+                        content={
+                            'error': None,
+                            'output': """\
+The `pydantic/pydantic-ai` repository is a Python agent framework designed to simplify the development of production-grade applications using Generative AI . It aims to bring the ergonomic developer experience and type-safety philosophy of Pydantic and FastAPI to AI agent development .
+
+## Core Purpose and Features
+
+The framework focuses on providing a robust and type-safe environment for building AI agents . Key features include:
+
+*   **Type-safe Agents**: Agents are generic `Agent[Deps, Output]` for compile-time validation, leveraging Pydantic for output validation and dependency injection .
+*   **Model-agnostic Design**: It supports over 15 LLM providers through a unified `Model` interface, allowing for easy switching between different models and providers  .
+*   **Structured Outputs**: Automatic Pydantic validation and reflection/self-correction ensure structured and reliable outputs from LLMs .
+*   **Comprehensive Observability**: Integration with OpenTelemetry and native Logfire provides real-time debugging, performance monitoring, and cost tracking  .
+*   **Production-ready Tooling**: This includes an evaluation framework (`pydantic-evals`), durable execution capabilities, and various protocol integrations like MCP, A2A, and AG-UI  .
+*   **Graph Support**: It provides a way to define graphs using type hints for complex applications .
+
+## Framework Architecture
+
+The framework is structured as a UV workspace monorepo, containing several packages .
+
+### Core Packages
+
+*   `pydantic-ai-slim`: Contains the core framework components such as `Agent`, `Model`, and tools .
+*   `pydantic-ai`: A meta-package that includes all optional extras .
+
+### Supporting Packages
+
+*   `pydantic-graph`: Provides the graph execution engine with `Graph` and `BaseNode` .
+*   `pydantic-evals`: An evaluation framework for datasets and evaluators .
+*   `examples`: Contains example applications .
+*   `clai`: Provides a CLI interface .
+
+## Agent Execution Flow
+
+The `Agent` class serves as the primary orchestrator . Agent execution is graph-based, utilizing a state machine from `pydantic_graph.Graph` . The execution involves three core node types:
+
+*   `UserPromptNode`: Processes user input and creates initial `ModelRequest` .
+*   `ModelRequestNode`: Calls `model.request()` or `model.request_stream()` and handles retries .
+*   `CallToolsNode`: Executes tool functions via `RunContext[Deps]` .
+
+The `Agent` provides methods like `run()`, `run_sync()`, and `run_stream()` for different execution scenarios .
+
+## Model Provider Support
+
+The framework offers a unified `Model` abstract base class for various LLM providers . This includes native support for providers like OpenAI, Anthropic, Google, Groq, Mistral, Cohere, and Bedrock . Additionally, many OpenAI-compatible providers can be used with `OpenAIChatModel` .
+
+## Tool System
+
+Tools are registered using the `@agent.tool` decorator . The system automatically generates JSON schemas from function signatures and docstrings, validates tool call arguments, and provides context injection via `RunContext[Deps]` .
+
+## Observability Integration
+
+Pydantic AI integrates with OpenTelemetry, allowing for instrumentation of agent runs, model requests, and tool executions . It has native integration with Pydantic Logfire for enhanced monitoring and visualization .
+
+## Evaluation Framework
+
+The `pydantic-evals` package provides a framework for systematically testing and evaluating AI systems . It supports defining datasets with `Case` objects and using various evaluators, including built-in and custom ones .
+
+## Integration Ecosystem
+
+Pydantic AI supports various integrations for development and production:
+
+*   **Model Context Protocol (MCP)**: For external tool server access .
+*   **AG-UI Protocol**: For interactive application frontends .
+*   **Agent2Agent (A2A)**: For multi-agent communication and workflows .
+*   **Temporal**: For durable workflow execution .
+*   **DBOS**: For database-backed execution and state persistence .
+
+## Notes
+
+The `CLAUDE.md` file provides guidance for Claude Code when working with the repository, including development commands and an overview of core components and design patterns . The `mkdocs.yml` file defines the structure and content of the project's documentation, including navigation, plugins, and watch directories for various packages  . The `docs/install.md` file details how to install the `pydantic-ai` package and its optional components, including a "slim" installation option for specific model dependencies .
+
+Wiki pages you might want to explore:
+- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)
+
+View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpydanticai_e234e9cf-d4aa-4c67-a257-56034816dd56
+""",
+                        },
+                        tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='rs_00b9cc7a23d047270068faa0f4ff54819f9fb9ff25bebe7f5f',
+                        signature='gAAAAABo-qD2WTMmhASwWVtFPlo7ILZP_OxHfRvHhda5gZeKL20cUyt0Np6wAHsJ6pyAsXCkLlKBVz3Vwm52JrJuUbqmw-zlXL19rbpvTPRMkiv_GdSfvmxKKNJvSm417OznBDVjsIAqmes2bMq03nRf6Pq2C0oUJnIbpbMwtWzs3jMQqUb0IwyopqXGhn3MWKctLPKZS89nyL4E9kJAx_TyWTQvME8bf8UrV8y2yrNz9odjSQQyZq5YXrlHzpOJjDTfLofVFjsEzM8J29SdLcWnqlv4djJ8xeMpP2ByXuHRnTEyNNuxpYJB7uQbYT0T_eLhwcLv2ZzDZ_hf2Msv7ZdyuPc7Yxc5YWlChB0iaHqQ_8UuMjIVurfgSIjSq2lTvJwdaA365-ZoBMpo4mG04jQDP3XM-0xEM6JTFWc4jZ1OjIXVpkjaXxdOOkYq3t3j8cqBQH69shFCEQr5tnM8jOEl3WHnkvaBg4xEMcd61hiLOKnWbQiYisbFucA8z5ZNbdohUZd-4ww0R8kSjIE5veiyT66gpIte0ItUnTyhIWy8SZYF9bnZGeS-2InDhv5UgjF2iXzgl6dmUrS-_ITgJkwu4Rdf9SBDJhji3_GUO9Za0sBKW8WohP142qY0Tbq4I6-7W1wJ3_gHJqiXVwDLcY90ODSyyC5_I3MgaALRC1wt55sHSeSsDjmNGmiH-m0snaqsI0JnAZwycnWCK17NamjQ9SxVM5tTqJgemkGFQNH1XhZPWvVj56mlj74KKbCJALQpdXD27C8LfdrlBd0v_zEmF1dh7e12I95fYeAlO51xOglBaMCgcMWSDHMGHsJBbJ04eVQSwYTl72rmkASTMaybD-aAm1m8qZnKU-f3xQradhs9l1x9eOfQDIsfWMr1aVMiZi59--VsrgYCbqBj7AGf8n6VNbQWkhO2etozwYZcdGIyiu4TaULX1Xp89Gb28M-tVkIrkQoHO_Z7wzKU1HRBViES1wRKUJ-Sa6wc8UP5orDxeOTFPUr7JL-qaj49cpKzvdlfuoIdbYwpsNvAg69sNbFI3w4jLxOT4yxS6thra1Bit6SY5wAEfrrjtzofLeg49aFqFVGIHeJ8kE3spc1rctpETkdHNyP9fEjZaM3mxR4yz0tPmEgUsd-sdw5BbOKDAVzwconmbeGBmf9KLXMEpRRH7-qSIWUscCi5qIdHXGYoQkStsNGrnhucn_hwqZCSti3Kbzfosud3zQPjW6NyuJCdeTxbDbsnrV7Lkge5j92pyxCHw9j0iuzofRW55_KToBtIvRoPr_37G_6d6TxK42mKqdbgk9GHrcXf27mXszCEzX-VfRVTxyc6JLfEy1iikdo-J2AzXPd4m3zE-zazBU3Z5ey596g8gxwXMkHakLrvwp4_-fQfcvs7sIH34xkEhz7BRdNok3Aqbu_zCt2np69jjHqfPQWZzAy1C-bmMuhAaItPYkkw-LgSu-YP6L89zNofK9Q_S3JwVsLN-fq-9OwhSjy_rQu22Gn4KD6saAu61QMXBPa6z0QJSFUZHJQ_megq1tENfB6wRVtQ0DdAvUwhUsMwx6yE9CT20bma4CloGW__aZuD9gikdQrQ1DCHOvTrfEpvHkl6-wuCImeNjsCvbRFAkx6Xgpc6fdbq4j6WyEVW_4VePNknFWYZ1cw795ka5uJMLc3hVughVlGwDbw60Q3utsjHPbu03pxPle5pdcVEYSQWa0WbFDCrF4ysK0lpmlF7',
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1401, output_tokens=480, details={'reasoning_tokens': 256}),
+                model_name='o4-mini-2025-04-16',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_00b9cc7a23d047270068faa0e25934819f9c3bfdec80065bc4',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:deepwiki',
+                    args={'action': 'list_tools'},
+                    tool_call_id='mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd',
+                    provider_name='openai',
+                ),
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolReturnPart(
+                    tool_name='mcp_server:deepwiki',
+                    content={
+                        'tools': [
+                            {
+                                'input_schema': {
+                                    'type': 'object',
+                                    'properties': {
+                                        'repoName': {
+                                            'type': 'string',
+                                            'description': 'GitHub repository: owner/repo (e.g. "facebook/react")',
+                                        }
+                                    },
+                                    'required': ['repoName'],
+                                    'additionalProperties': False,
+                                    '$schema': 'http://json-schema.org/draft-07/schema#',
+                                },
+                                'name': 'read_wiki_structure',
+                                'annotations': {'read_only': False},
+                                'description': 'Get a list of documentation topics for a GitHub repository',
+                            },
+                            {
+                                'input_schema': {
+                                    'type': 'object',
+                                    'properties': {
+                                        'repoName': {
+                                            'type': 'string',
+                                            'description': 'GitHub repository: owner/repo (e.g. "facebook/react")',
+                                        },
+                                        'question': {
+                                            'type': 'string',
+                                            'description': 'The question to ask about the repository',
+                                        },
+                                    },
+                                    'required': ['repoName', 'question'],
+                                    'additionalProperties': False,
+                                    '$schema': 'http://json-schema.org/draft-07/schema#',
+                                },
+                                'name': 'ask_question',
+                                'annotations': {'read_only': False},
+                                'description': 'Ask any question about a GitHub repository',
+                            },
+                        ],
+                        'error': None,
+                    },
+                    tool_call_id='mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=3,
+                part=BuiltinToolCallPart(
+                    tool_name='mcp_server:deepwiki',
+                    tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
+                    provider_name='openai',
+                ),
+                previous_part_kind='thinking',
+            ),
+            PartDeltaEvent(
+                index=3,
+                delta=ToolCallPartDelta(
+                    args_delta='{"action":"call_tool","tool_name":"ask_question","tool_args":',
+                    tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
+                ),
+            ),
+            PartDeltaEvent(
+                index=3,
+                delta=ToolCallPartDelta(
+                    args_delta='{"repoName":"pydantic/pydantic-ai","question":"What is the pydantic/pydantic-ai repository about?"}',
+                    tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
+                ),
+            ),
+            PartDeltaEvent(
+                index=3,
+                delta=ToolCallPartDelta(
+                    args_delta='}', tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac'
+                ),
+            ),
+            PartStartEvent(
+                index=4,
+                part=BuiltinToolReturnPart(
+                    tool_name='mcp_server:deepwiki',
+                    content={
+                        'error': None,
+                        'output': """\
+The `pydantic/pydantic-ai` repository is a Python agent framework designed to simplify the development of production-grade applications using Generative AI . It aims to bring the ergonomic developer experience and type-safety philosophy of Pydantic and FastAPI to AI agent development .
+
+## Core Purpose and Features
+
+The framework focuses on providing a robust and type-safe environment for building AI agents . Key features include:
+
+*   **Type-safe Agents**: Agents are generic `Agent[Deps, Output]` for compile-time validation, leveraging Pydantic for output validation and dependency injection .
+*   **Model-agnostic Design**: It supports over 15 LLM providers through a unified `Model` interface, allowing for easy switching between different models and providers  .
+*   **Structured Outputs**: Automatic Pydantic validation and reflection/self-correction ensure structured and reliable outputs from LLMs .
+*   **Comprehensive Observability**: Integration with OpenTelemetry and native Logfire provides real-time debugging, performance monitoring, and cost tracking  .
+*   **Production-ready Tooling**: This includes an evaluation framework (`pydantic-evals`), durable execution capabilities, and various protocol integrations like MCP, A2A, and AG-UI  .
+*   **Graph Support**: It provides a way to define graphs using type hints for complex applications .
+
+## Framework Architecture
+
+The framework is structured as a UV workspace monorepo, containing several packages .
+
+### Core Packages
+
+*   `pydantic-ai-slim`: Contains the core framework components such as `Agent`, `Model`, and tools .
+*   `pydantic-ai`: A meta-package that includes all optional extras .
+
+### Supporting Packages
+
+*   `pydantic-graph`: Provides the graph execution engine with `Graph` and `BaseNode` .
+*   `pydantic-evals`: An evaluation framework for datasets and evaluators .
+*   `examples`: Contains example applications .
+*   `clai`: Provides a CLI interface .
+
+## Agent Execution Flow
+
+The `Agent` class serves as the primary orchestrator . Agent execution is graph-based, utilizing a state machine from `pydantic_graph.Graph` . The execution involves three core node types:
+
+*   `UserPromptNode`: Processes user input and creates initial `ModelRequest` .
+*   `ModelRequestNode`: Calls `model.request()` or `model.request_stream()` and handles retries .
+*   `CallToolsNode`: Executes tool functions via `RunContext[Deps]` .
+
+The `Agent` provides methods like `run()`, `run_sync()`, and `run_stream()` for different execution scenarios .
+
+## Model Provider Support
+
+The framework offers a unified `Model` abstract base class for various LLM providers . This includes native support for providers like OpenAI, Anthropic, Google, Groq, Mistral, Cohere, and Bedrock . Additionally, many OpenAI-compatible providers can be used with `OpenAIChatModel` .
+
+## Tool System
+
+Tools are registered using the `@agent.tool` decorator . The system automatically generates JSON schemas from function signatures and docstrings, validates tool call arguments, and provides context injection via `RunContext[Deps]` .
+
+## Observability Integration
+
+Pydantic AI integrates with OpenTelemetry, allowing for instrumentation of agent runs, model requests, and tool executions . It has native integration with Pydantic Logfire for enhanced monitoring and visualization .
+
+## Evaluation Framework
+
+The `pydantic-evals` package provides a framework for systematically testing and evaluating AI systems . It supports defining datasets with `Case` objects and using various evaluators, including built-in and custom ones .
+
+## Integration Ecosystem
+
+Pydantic AI supports various integrations for development and production:
+
+*   **Model Context Protocol (MCP)**: For external tool server access .
+*   **AG-UI Protocol**: For interactive application frontends .
+*   **Agent2Agent (A2A)**: For multi-agent communication and workflows .
+*   **Temporal**: For durable workflow execution .
+*   **DBOS**: For database-backed execution and state persistence .
+
+## Notes
+
+The `CLAUDE.md` file provides guidance for Claude Code when working with the repository, including development commands and an overview of core components and design patterns . The `mkdocs.yml` file defines the structure and content of the project's documentation, including navigation, plugins, and watch directories for various packages  . The `docs/install.md` file details how to install the `pydantic-ai` package and its optional components, including a "slim" installation option for specific model dependencies .
+
+Wiki pages you might want to explore:
+- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)
+
+View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpydanticai_e234e9cf-d4aa-4c67-a257-56034816dd56
+""",
+                    },
+                    tool_call_id='mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel(
+        'o4-mini',
+        provider=OpenAIProvider(api_key=openai_api_key),
+    )
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        builtin_tools=[
+            MCPServerTool(
+                id='google_calendar',
+                url='x-openai-connector:connector_googlecalendar',
+                authorization_token='fake',
+                description='Google Calendar',
+                allowed_tools=['search_events'],
+            ),
+        ],
+    )
+
+    result = await agent.run('What do I have on my Google Calendar for today?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='What do I have on my Google Calendar for today?', timestamp=IsDatetime())
+                ],
+                instructions='You are a helpful assistant.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:google_calendar',
+                        args={'action': 'list_tools'},
+                        tool_call_id='mcpl_0558010cf1416a490068faa0f9679481a082dc4ac08889f104',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:google_calendar',
+                        content={
+                            'tools': [
+                                {
+                                    'input_schema': {
+                                        'properties': {
+                                            'calendar_id': {
+                                                'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                                'default': None,
+                                                'description': "The ID of the calendar to search. Default one is 'primary'",
+                                                'title': 'Calendar Id',
+                                            },
+                                            'max_results': {'default': 50, 'title': 'Max Results', 'type': 'integer'},
+                                            'next_page_token': {
+                                                'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                                'default': None,
+                                                'title': 'Next Page Token',
+                                            },
+                                            'query': {
+                                                'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                                'default': None,
+                                                'title': 'Query',
+                                            },
+                                            'time_max': {
+                                                'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                                'default': None,
+                                                'description': "Time in the ISO-8601 format. You can also use 'now' or leave null.",
+                                                'title': 'Time Max',
+                                            },
+                                            'time_min': {
+                                                'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                                'default': None,
+                                                'description': "Time in the ISO-8601 format. You can also use 'now' or leave null.",
+                                                'title': 'Time Min',
+                                            },
+                                            'timezone_str': {
+                                                'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                                                'default': None,
+                                                'description': "Timezone of the event. Default is 'America/Los_Angeles'",
+                                                'title': 'Timezone Str',
+                                            },
+                                        },
+                                        'title': 'search_events_input',
+                                        'type': 'object',
+                                    },
+                                    'name': 'search_events',
+                                    'annotations': {'read_only': True},
+                                    'description': 'Look up Google Calendar events using various filters.',
+                                }
+                            ],
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_0558010cf1416a490068faa0f9679481a082dc4ac08889f104',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='rs_0558010cf1416a490068faa0fb684081a0a0b70f55d8194bb5',
+                        signature='gAAAAABo-qEE669V-_c3vkQAeRtSj9pi72OLJweRJe4IRZkLcFfnuwdxSeJM5DVDLzb3LbfzU0ee6a4KAae0XsETU3hELT1hn3LZPwfFku5zl7CVgsc1DmYBf41Qki1EPHFyIlMj937K8TbppAAqMknfLHHwV1FLb8TapccSEhJbzGutqD3c2519P9f6XHKcuDa8d-sjyUejF0QuSjINFcjifJ8DiU40cL_-K6OJotlx6e0FqOivz6Nlj13QZxQ0I3FiiSi03mYKy240jYMpOpjXr7yPmEXLdCJdP5ycmTiJLxf4Bugww6u4F2uxy22978ACyFGSLHBiQyjczj_can7qKXAkMwYJKcGNjaNi8jG5iTIwsGswRjD1hvY-AGUotMFbPCszX3HW1M_ar-livaheiZauCfKV-Uc1ZeI3gijWEwtWQ0jye29FyQPCCpOBvT6RbUvFEpfqpwcMQuUhOyEfgzli2dpuOAgkSjCPE6ctoxjbYa62YzE-yrXAGc5_ptQy_2vw7t0k3jUzSo2Tv0aKnqvvKcj9SIilkZV4Nf-TL_d2E7d48bBJDlqbAv7fkhhd2YlkLqwdR1MqZtygcR1Jh8p2Y1pFAa4mSj7hh4M-zfSu--6dij2iKIbnKQ4DbXyGpMZXBAqTHMe9PPOwGxWKShlN5a5T89B04d_GwJYBDJx2ctecqZxDMjkTn3wVGl_5wuDnrEgd0I91vmAoYuWldR_h8M_FjDFiHefdbZjw1TxVKjkp6wk6zQiXCvvCZYJa9XkhytcllWvUI4C0gbxHrEzZRy9Vii3buqnbiIM9Qj0VPx-Q-FKM_usZBBmlvmk9PMQ8rH9vVT8dRFNQEj-aqudB5yUcTx8XaUFwYAts04OObGBqXoazYtxh6WvHwrf09pb_g0dwzE_rlcQdYxcFLOpYD-AentRAjOuIr4bLRM9BMERBxPvvPCxZ2Mva8YqV2TIOtxzMY08freim6du1IuYprO6CoejPaBdULhct-nsPubOdjLBikZt_bwumvmqGXnxI_uu51b9HtzPeDpWIjF6pi88bcsOk0qglA9GAu3wwX-iIdaV19VdVCO4KJjxiVrbTY1IVgWSdz98Alb_HzpXsoS6i2PRAjjsYOe4RBX3etxjsY07XXLlmXAM_vuYXc8Y6STxvBk4ST4OkaCvUk9DoZbVL5KmVcT6TaFpbVCOB_eHkHIvMjXc35kzxCdqEMG3FpRzL_UkY8pPridvq2z1Xw0al2KEBvdKPlInB8-zX5ANGeRkMGZ6ZfyX1zCIdYLe3wrC8xqr5nUZ-ueWmtqYLavSg8mQKphp4QyVaiwtbxEt5GEiVG7_LR754mGQYPdr9Shh3ECAp8wmSfDVO8MHaLmzgo3RXeqlqFldRjQzDHtCaGhjD9bHKF3yWF2LtH4gUN-Sf--86lcq7iwHDSDm656P_FBfYmE7rA0svH-m3hQoBhza4CKJ7s7f7ZymEhcHAfH7SPImZ3Y-kT_Sy1mbCCf3Yg8uitrpX7ukO6_bIANS_R4oiOPcuLixbWY0ZSyq8ERB5fa5EsIUm7PpGxbO96nmk5rPkewyB4gCtslwJI0Ye7zHtqrDBz1j1nsjIKsRCfFWlUdRF8J1JPiiBSvP8SraQ_94cnKBCsl34BGsVm-R1_ULbuyahBzSHq2Kwr0XQuNLdGChyLKS_FZVT58kbRFsvjZnbalAZ-k9alMeZ-pdWX5f9nSn3w7fz675zOxnBaqiZmoWHXFNOBVGH7gkz05ynJ2B8j_RpdRNJKXUN8pAvf595HGl2IPdaDhqoeS2_3jixO5mmxZuPEdzopoBFRarWud99mxH-mYxWJzKiA1pLNqj7SO93p2-jB-jtsCfZfk6bVEWpRRkIEz0XvxffFTVuGUCqpGS7FiFZc4pQU24pCrdpg2w3xeDSrmfHDAx2vUvv0iRBnQxTTWx2-de2TQQTpR5tjFNyOhYGVn1OXqkbkNtIUHdnNGA1QBCU0Qs0471Ss1CrxXIeeNVSTd00jiu4_ELk6nJYgSpmS8G_crrDza8mRLV5Yk0ItRrZj6pwKUOEaYeyM-RHyhrjf09yaf7Qc3sAozQF0aXFCQjSYiVb98DuGH28HLUxW9ulmSKKR4pYKlCOLNGm0h_gWCpSa0H1HXCgEoPn68HyaJogv_xH3k4ERYyJnxu8zVbVPMGoa9q9nNRQQ9Ks2AvxYRQeGFSCTACBmuookvHsO1zjYfHNuSCD7pCLRFE76KlmSiAX6l9LNOq_xe9Oos-1AvcZHkmVsuh-mjTVkBOjG6zmnHiNJirBpORs_UWL5lmlQBeaXgdHxcb4tHIn8XYXFkQiC4b4pw==',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:google_calendar',
+                        args={
+                            'action': 'call_tool',
+                            'tool_name': 'search_events',
+                            'tool_args': {
+                                'time_min': '2025-10-23T00:00:00',
+                                'time_max': '2025-10-23T23:59:59',
+                                'timezone_str': 'America/Los_Angeles',
+                                'max_results': 50,
+                                'query': None,
+                                'calendar_id': 'primary',
+                                'next_page_token': None,
+                            },
+                        },
+                        tool_call_id='mcp_0558010cf1416a490068faa0fdf64481a085a3e5b8f7d6559a',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:google_calendar',
+                        content={
+                            'output': None,
+                            'error': {
+                                'code': 500,
+                                'message': 'An unknown error occurred while executing the tool.',
+                                'type': 'http_error',
+                            },
+                        },
+                        tool_call_id='mcp_0558010cf1416a490068faa0fdf64481a085a3e5b8f7d6559a',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='rs_0558010cf1416a490068faa0ff5c9081a0b156a84d46e5d787',
+                        signature='gAAAAABo-qEE72KCH4RlulMdH6cOTaOQwFy4of4dPd8YlZ-zF9MIsPbumWO2qYlZdGjIIXDJTrlRh_5FJv2LtTmMbdbbECA20AzFMwE4pfNd2aNLC5RhcHKa4M9acC1wYKAddqEOPP7ETVNBj-GMx-tMT_CY8XnBLWvSwPpcfde9E--kSrfsgvRn1umqDsao4sLlAtV-9Gc6hmW1P9CSJDQbHWkdTKMV-cjQ-wZHFCly5kSdIW4OKluFuFRPkrXs7kVmlGnMr8-Q5Zuu1ZOFR9mPvpu2JdxAFohjioM-ftjeBuBWVJvOrIF4nV-yIVHVT-_psAZaPUUB5cyPAtqpoxxIV3iPKPU8DHctP03g_0R6pSWWHhggvO5PBw3zyPwtBwOrHBipc4nQEWEMxZxLH5SYJauTKwHNOx9NyCq8JUjZXM_v4xsGxNa4cAp7GuXqR2YyW2sx7syRUiDwtebh0xk_YOQtkv8tAjzCofmaz3n8FJ2nGSXkilaV5Q8LUNO-9-D2tsAaScDVMuLMMAHFNp_GPplWrmGES4mTCNtTXWyF1GLcQBw8dYYctV66Ocy2_zxyDoB7SsR5htlV77nJ6u1Hbp3tk26LutDrhAhe55xcki8iblHbXNY9MRzR1SS5Zk3-dv0ex4QOzC663NvS9aK3olQbKYko5TvM7Pq4MFYfaxwFTVFVEdaskoDJieVyikz0ZzBjTsItIwL-Q2BVN2F_P_wgCV5hyDclNMPEGTMxajxfIFv-oEunmHY1_RJavl47iXWS8H3JWAvp-9YYQdTS4Aa6m5zPndvHOvEV355UawLHRPctHFUS7rE7rYmcU6KQaqC96JRM0KRfXNIgYtNfw6cxgnyqGxzTF7qeeVzObOqoQmz59Rh0U9ti37vqHb8Ca43-q2Gx2KaVZFj7MBQK8UodfaDRIEuyMB3XNfckxCefwHs7FeAj5NuNDBrm0uDcwJjs2JfY2i54gAES8kAPLGJgRpq_qdjVXqpO6W0H9E1vBdRem7zLPYbA8OOo-KCkRW4AFCVbgCpgIvo4GDNvFOMksl-d8zgQU2qroUWJRu58j1bdaar7Zlfxk0UR33nROmJpXGb_R-RCNAN1ZxJTdEU_dVfyLCeuIXPsnO-FlfO8J6Un3WWPNLuN_bDS5RocniI_ms71qLsisJQiPTs-JDFl-eMM2Hk3QqSCC6OT0CLG9XMmI_zva9yp2joQ8HdGMddE3FDCbLejRrx8fV-9Nd0tZ7SYjFG78_fre8IfL0L67CK1JIPYzhgRZgCb-FFwUy-stR_BstIn0sRr_tDCoHdxuoVCh0dZfTY1p27xbKQ50svHxp1caNp3uze0wLXP9STNouFjFpdIHMsDRaGfO9R9mMmUsFcmBMK3aikuHTpebyL1CeZsIzH2cbZLPRx3pN2IqJ-5h6-cORHuMqf3ysEEFCjXnqmzvWPuBjYDsxnxA1awaGkYKsKhqchgakrfplOjdG5tSkklggBJA93iRaUWIR-4oV6HkkrnpdK1w7BL_VT8upqZmkpHZtZCDSgINk5S5hoYPLBTtS3dcCmQIbLvPXPuGzdAZxl0bhD4Rm3GPDFszaDoFK0Jszcjlaf4SJqyZABKEf71dDbi1as-2Qwr4fxBiQIOsF8ChbYo6Z2iFtUpBnbruFUIwB5QyKfWnwEZbOgf4UbIvIqNMkTzMc8tJgz6Ddqfih8VeNH3v8_84J6vHU0SVm_gvkgQ6P6N_6r5LwNdlAEff0hFwn-aTHWZ3s8MICckUZj97lKoZxAl91WlsKa0yrLw24dxvJ6bhZf0FsOitUJGd7vFPx0TxSobUkzE2RrbQ3hziPxw2Gins4aI6YG3M1gfumd3MgdH-fYBvZulJ9vmw0ZC1Dqh6BkCWHOFKsnpQvHmYuyTzUmnYuJf8N5j_b9XNw0krmxouOCPQClFmIOBLw8XPbe3xf0F5JP7BC0PpjlPT33A5Z6Za5zlA5O-DE_Wp0WG885-GaKtZI-zBZW3R0lc9A4s0HbxqA3lqH8leXOCe6WO46Z_iTQlALpTR-7oaHqzTegq0KSmEjCFO-jLSrVZnBOQ4ddTvLj4ASsQbj-o6TFUFVZAKSLI3FtWovHw02Gc_D0luFz9TbfaXM-EapEQYajkG0_b_nSCoPq0T9HSyvU4oCxXyQvhwIgzbijR-BheN6a_l6hiqZCw9L1c8MdPRtjpbHtEwWkpQ62s8XdydeJnV5vJYp9ezBbS_vWQ7Nz1siai6epJTdzDkRm-dudVhKzdohwg-FOQ-5gSrvoPS_MF4lZvah3iXY1g4uePO4eNDWGJ74YPybiy',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='mcp_server:google_calendar',
+                        args={
+                            'action': 'call_tool',
+                            'tool_name': 'search_events',
+                            'tool_args': {
+                                'time_min': '2025-10-23T00:00:00Z',
+                                'time_max': '2025-10-23T23:59:59Z',
+                                'timezone_str': None,
+                                'max_results': 50,
+                                'query': None,
+                                'calendar_id': 'primary',
+                                'next_page_token': None,
+                            },
+                        },
+                        tool_call_id='mcp_0558010cf1416a490068faa102400481a09fa35e84bc26c170',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='mcp_server:google_calendar',
+                        content={
+                            'output': None,
+                            'error': {
+                                'code': 500,
+                                'message': 'An unknown error occurred while executing the tool.',
+                                'type': 'http_error',
+                            },
+                        },
+                        tool_call_id='mcp_0558010cf1416a490068faa102400481a09fa35e84bc26c170',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='rs_0558010cf1416a490068faa102d89481a0b74cca04bcb8f127',
+                        signature='gAAAAABo-qEECuiSxfvrR92v1hkqyCTCWyfmpHSaW-vVouk5mOTIFDvaBZdVTFH8-dJfpwEG3MCejRKh9V-I8mrYAjhudVr1ayHo8UYOOU1cfVc6w3wsrkL8hXljjE-amiJhBSjvRc2nwwGtgYpDxOfWTqJkaUvFnMD6MrS4CwMrCBbDOLYZgM1cQbidtrrtpP7D5u42tR6coC_PCOqwPzDN4f0RggrxVxh0038p81VUmlkUeA2jWzRyFpeDGRjXFk84Og73rXAp7EWQv7TmzgVXBjCVwwzJNU8HCZ_gkwh5dvL94QxBx32lEmfOOKcqA3hN3FLwDqXlZ8f7jEqYInnpILQgX5XMdM9OrCyXmDCr_eIy00cjvxnTcXhCnZBOaKCKmTP74yUpGNdLbQcr4BalTiviNYEeCAhJyRo4KnhUZbBoT7MB5NULf-kqhRo1gEGKjWiLdV47PhR7Z8i4BK7zBceganMKpLtzIMW5a6JAujC4Z9FYxcpJZI_CD9NHsPr4SjKgIwv89d6BYo89-xfflF6ZUZBkuDUnL2-Nc9CKgGuKlcDunvYLr38pzA278OFYzh9T42u4SbS8KkSXKjGU3H8LfpMnBEZigriixLt5vj7qnWmZvCFarzxT4U4qqR1ITp5rkO6G9kYvBEfS7wu768mteDBgAajUaeOMQEfjJRErC4wfzbB89YCsXPJz0JE90QZ5LeiP5ZlVezTTaddG9JmiGsBCPckqUb1LWdpvekCfPkePF_uDMVWyJpQ4ZBzQsZx8sHf5spygsiQjlzTiriqwhoTcPuXoONoCr9HeFX1Qy8SGOm87siRPAD7FHJdDxbJwq8tOlMpx8MH1dqEY07lwoxZB0GQ9XbB7QJXfQR_27nkpqBYFkrbqChNJLO2x8gNFClbB0mgYQE1CRy64y6yOrG3CtS53RK5VGrF1GnqwuWdZ452VgShT5nAmPFRlRk1S9px4eMUTAozT0QAYrlHQC7b6I6K3m_Qe3kXGpnn_87i2eGG8mHmXG2FvFChkgf2OU7-LRy_Wl_u-ataICeoBwfngBFMppvUW6tJP009HK7mUE8P1KJntN3ExKLIBhmKhV6ziBpIi1bSTmd8leYqfSaf648c7-sVuDRx7DzxTp19l3fwVFa67GdiagZFs7xaU1HxMnMc3uy5VKWAH_qcv-Mga3VCTtTPpMTjvB95nsLeOFjS2FtpPvaP0N6o5kkkzW7cteWpOHhSX0z7AQA7CqgOCQLfLUc7ltVxnOH4WdHoeZFah_q_Ue6caf0kNo4YsTfbRDdzsW70o8P5Agr-Pgttg19vTDA_eBFur9GDKIRT0vYMWPpykwJBDTgJKOFW6uyNkqNWk_RAAvleE9pAyOoSmgomyrMcnnpdeYHNxeNxvTWFC3mcKSjJIB316wypPvaGTJyaK_pxJScD7CtLrIPkgwPpOsJnDySF6wGe-fGsUMt3zxJrc-S6fp24mYVfTRZbjUsP0fJgLmCohJiAtEg_xvlQ8sPyuLoLdOdossTQ7ufl0CwVn4f_ol4q__gpTvYVaoGsWl3QmHul5zj7OUAn7of6iBfCSlXbrauJvMyNYt4x_dLM8SXTRNPe-ZMDmER9DOw0KJXcUrpl6uw4TphKmUOK6KrxqshujXdN9VDgOwD7eKqIHpvC_6a2R6sS6ZHcebmh2o3bic-Hctomrbv03OQ==',
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_0558010cf1416a490068faa103e6c481a0930eda4f04bb3f2a',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1065, output_tokens=760, details={'reasoning_tokens': 576}),
+                model_name='o4-mini-2025-04-16',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_0558010cf1416a490068faa0f945bc81a0b6a6dfb7391030d5',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_requires_function_call_status_none(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=OpenAIProvider(api_key=openai_api_key),
+        profile=replace(openai_model_profile('gpt-5'), openai_responses_requires_function_call_status_none=True),
+    )
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_meaning_of_life() -> int:
+        return 42
+
+    result = await agent.run('What is the meaning of life?')
+    messages = result.all_messages()
+
+    _, openai_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
+        messages,
+        model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+        model_request_parameters=ModelRequestParameters(),
+    )
+    assert openai_messages == snapshot(
+        [
+            {'role': 'user', 'content': 'What is the meaning of life?'},
+            {
+                'id': 'rs_01d311e2633707df0068fbac0050ec81a2ad76fd9256abcaf7',
+                'summary': [],
+                'encrypted_content': 'gAAAAABo-6wE6H4S9A886ZkwXcvvHqZ6Vx5BtpYvvNAJV5Ijq7pz-mTBJxfdjilNSzBj0ruy7NOsMRMhWzNahRf-n3KDQ2x1p-PjVCHM5IAGqHqae8A-aAUn_FDRiTbAT5N5FXTrZ80DAtdDv17z2HlODmTTYRvBU2-rX7opysjc4rf7-rvy6j4cUcNbM0ntT5DH8UHxC9LCM_s7Cb2unEV0jaDt7NzFxgfWN2u24Avs2EnjPoxOjd6BR-PWHJk_7kGGkVBub8NU7ZOyHsci3T8DAq_eX38DgkHJBJCPT4EqvlNP-VjPdecYEFUCw5G_Pye6h55-77g8LjkrFO43f8p6wscQ0iM601i1Ugmqbzxyv1ogPIN-YuSk2tkCw-D7xBD7I4fum2AmvyN-fR58lWcn-Z0WTqACA4baTJiCtW5b7uVeAp8vm8-gWzFR5BdDHVdQqu1TAKVWl_1P8NauDtd5M24MjVZd6WC0WrbTDPY9i2gieMMjFek2M8aoQFO0CG7r3JHn2zxfFB3THWCpl4VqZAQp6Ok7rymeY0Oayj--OLpNMBXIYUWc51eyYeurwQ943BSkf-m6PPVKO8T5U__Bx-biCNCePSlFKp7V0Du6h7UgYoqqonH2S3Jrg87c6dk7VJ7ca2i8sZqhy0rG6Kb7ENDVvwkMOdpnaFgdWd3VINp6P8j69kBQg-qwWP-YHPC9LnsjT2j1ktMowVO97eOpV4j2BhiThxunmu_SOIAEbghmjJEkLuRxLxBUPFRIajke2CvvFeIuReJr53isPKOxOjVzsc6oG5ZeykDlfz_mfEap7AByPNY0987zwG58tGueNxXjdpd7NQFcn_6DKj60SvUg0sk49V_QrDY3cAhSRvZoEeqA8XR97pEe7CByYMl80b9fzgyahc4NCdUwK8es2ll-lsJwEx1ZGdC8cB45QOrTnw8tJAUsSM44rLKwAQY-KsuN4UygO99d1CQZEm2YWtnPAvA9I-EhY87UIDx0CpPsEyxxFu2GZCTy7ceSnpcmQbAFWXzfBSpM7k42xVV8G8IK_bHpoF1enF5Vbc37_L_aWd4AgzuAwF_RVyd8exVh3NVJtO3BqPv72kTukr2Fok3KEaSeU0whP_dxr-thP2exS0F2Jdn13ZtB_pqxwKVWEsvzdbN92Q9qs10BAgYs2SA4cq66semwRl-1n-dr7XJyZzPOEiA9TQYgUCw0ueIc0ciMOZ0Waaj094bKIylw_TD5Bu1diXpzbTma_AVO-NZn7INhAZN3guSme-zIUEMrh66w0VJP-DbDA-ecSD41eMRSadyV4g86wLL4NOBE5NwSiSkwd2xJ9NqG7YohFM8BlPdEV4zhmqHcIKpVwAitFItqnAaUSU42Aebdritt9oNVnpKCeeA4QQv_8W7rOXJlLfGXRJUBCrh3Rv7KCVC3yncAOIU8FWu3jyaAqhLrWHLW958wjF8ka7lw80YZbToPjIuiii0UXu2w3Tv5EGVdkhf05A3Yj6M_LXStns8iBMzcU4-mJ1649FnnImLnW5AeohoWPBB6WYhW9gfwjuxejTI3Q5R0mo9jUSP3_tFiawlC2zFgvkNFufC6Kry8-Burjf8l6rpAX7_sjtCu1AlAbI6PEFtxcKhNWHfQp4mUATR6P4k68jk_Kl-FpRBtNOf8YOlLGrKE-WbwCoIV7VAgK2CTZJOxaslxVZRCLObNrA3XuEtc3jo8pMzqx8GJWshIgmF4XiQcmgh65U_kjB07adlgnbCZvGUXdIIQiA2vqIWC6Qu8SSO20nOOR65hGXyIgf4aOolU0Ljbi4slXnJKjbcPaX5O3cXvKHbkVFwXmHK2Ymaqb6fZcap78_On8jLK_GRlw3jV18SLeOcJiG2LqtHzcUawY4K7bPDNY2QX89yL5d4qxRF577QgzalmdQDsKyC_N-wk',
+                'type': 'reasoning',
+            },
+            {
+                'name': 'get_meaning_of_life',
+                'arguments': '{}',
+                'call_id': 'call_cp3x6W9eeyMIryJUNhgMaP5w',
+                'type': 'function_call',
+                'status': None,
+                'id': 'fc_01d311e2633707df0068fbac038f1c81a29847e80d6a1a3f60',
+            },
+            {'type': 'function_call_output', 'call_id': 'call_cp3x6W9eeyMIryJUNhgMaP5w', 'output': '42'},
+            {
+                'role': 'assistant',
+                'id': 'msg_01d311e2633707df0068fbac094ff481a297b1f4fdafb6ebd9',
+                'content': [{'text': '42', 'type': 'output_text', 'annotations': []}],
+                'type': 'message',
+                'status': 'completed',
+            },
         ]
     )

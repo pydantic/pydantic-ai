@@ -6,9 +6,9 @@ from typing import overload
 import httpx
 from openai import AsyncOpenAI
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -80,6 +80,9 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
     @overload
     def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
+
+    @overload
+    def __init__(self, *, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...

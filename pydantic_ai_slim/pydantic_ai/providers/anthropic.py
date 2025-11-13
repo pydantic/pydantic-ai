@@ -5,14 +5,14 @@ from typing import TypeAlias, overload
 
 import httpx
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.providers import Provider
 
 try:
-    from anthropic import AsyncAnthropic, AsyncAnthropicBedrock
+    from anthropic import AsyncAnthropic, AsyncAnthropicBedrock, AsyncAnthropicVertex
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `anthropic` package to use the Anthropic provider, '
@@ -20,7 +20,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-AsyncAnthropicClient: TypeAlias = AsyncAnthropic | AsyncAnthropicBedrock
+AsyncAnthropicClient: TypeAlias = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicVertex
 
 
 class AnthropicProvider(Provider[AsyncAnthropicClient]):

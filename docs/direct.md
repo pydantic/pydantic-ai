@@ -16,12 +16,12 @@ The following functions are available:
 Here's a simple example demonstrating how to use the direct API to make a basic request:
 
 ```python title="direct_basic.py"
+from pydantic_ai import ModelRequest
 from pydantic_ai.direct import model_request_sync
-from pydantic_ai.messages import ModelRequest
 
 # Make a synchronous request to the model
 model_response = model_request_sync(
-    'anthropic:claude-3-5-haiku-latest',
+    'anthropic:claude-haiku-4-5',
     [ModelRequest.user_text_prompt('What is the capital of France?')]
 )
 
@@ -44,9 +44,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from pydantic_ai import ToolDefinition
+from pydantic_ai import ModelRequest, ToolDefinition
 from pydantic_ai.direct import model_request
-from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import ModelRequestParameters
 
 
@@ -61,7 +60,7 @@ class Divide(BaseModel):
 async def main():
     # Make a request to the model with tool access
     model_response = await model_request(
-        'openai:gpt-4.1-nano',
+        'openai:gpt-5-nano',
         [ModelRequest.user_text_prompt('What is 123 / 456?')],
         model_request_parameters=ModelRequestParameters(
             function_tools=[
@@ -85,7 +84,7 @@ async def main():
             )
         ],
         usage=RequestUsage(input_tokens=55, output_tokens=7),
-        model_name='gpt-4.1-nano',
+        model_name='gpt-5-nano',
         timestamp=datetime.datetime(...),
     )
     """
@@ -110,15 +109,15 @@ As with [agents][pydantic_ai.Agent], you can enable OpenTelemetry/Logfire instru
 ```python {title="direct_instrumented.py" hl_lines="1 6 7"}
 import logfire
 
+from pydantic_ai import ModelRequest
 from pydantic_ai.direct import model_request_sync
-from pydantic_ai.messages import ModelRequest
 
 logfire.configure()
 logfire.instrument_pydantic_ai()
 
 # Make a synchronous request to the model
 model_response = model_request_sync(
-    'anthropic:claude-3-5-haiku-latest',
+    'anthropic:claude-haiku-4-5',
     [ModelRequest.user_text_prompt('What is the capital of France?')],
 )
 
@@ -133,14 +132,14 @@ You can also enable OpenTelemetry on a per call basis:
 ```python {title="direct_instrumented.py" hl_lines="1 6 12"}
 import logfire
 
+from pydantic_ai import ModelRequest
 from pydantic_ai.direct import model_request_sync
-from pydantic_ai.messages import ModelRequest
 
 logfire.configure()
 
 # Make a synchronous request to the model
 model_response = model_request_sync(
-    'anthropic:claude-3-5-haiku-latest',
+    'anthropic:claude-haiku-4-5',
     [ModelRequest.user_text_prompt('What is the capital of France?')],
     instrument=True
 )

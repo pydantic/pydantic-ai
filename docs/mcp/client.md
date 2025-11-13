@@ -5,7 +5,7 @@ to use their tools.
 
 ## Install
 
-You need to either install [`pydantic-ai`](../install.md), or[`pydantic-ai-slim`](../install.md#slim-install) with the `mcp` optional group:
+You need to either install [`pydantic-ai`](../install.md), or [`pydantic-ai-slim`](../install.md#slim-install) with the `mcp` optional group:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[mcp]"
@@ -13,7 +13,7 @@ pip/uv-add "pydantic-ai-slim[mcp]"
 
 ## Usage
 
-Pydantic AI comes with two ways to connect to MCP servers:
+Pydantic AI comes with three ways to connect to MCP servers:
 
 - [`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] which connects to an MCP server using the [Streamable HTTP](https://modelcontextprotocol.io/introduction#streamable-http) transport
 - [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] which connects to an MCP server using the [HTTP SSE](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) transport
@@ -55,31 +55,29 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
 server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
-agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
+agent = Agent('openai:gpt-5', toolsets=[server])  # (2)!
 
 async def main():
-    async with agent:  # (3)!
-        result = await agent.run('What is 7 plus 5?')
+    result = await agent.run('What is 7 plus 5?')
     print(result.output)
     #> The answer is 12.
 ```
 
 1. Define the MCP server with the URL used to connect.
 2. Create an agent with the MCP server attached.
-3. Create a client session to connect to the server.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 **What's happening here?**
 
-- The model is receiving the prompt "how many days between 2000-01-01 and 2025-03-18?"
-- The model decides "Oh, I've got this `run_python_code` tool, that will be a good way to answer this question", and writes some python code to calculate the answer.
+- The model receives the prompt "What is 7 plus 5?"
+- The model decides "Oh, I've got this `add` tool, that will be a good way to answer this question"
 - The model returns a tool call
-- Pydantic AI sends the tool call to the MCP server using the SSE transport
-- The model is called again with the return value of running the code
+- Pydantic AI sends the tool call to the MCP server using the Streamable HTTP transport
+- The model is called again with the return value of running the `add` tool (12)
 - The model returns the final answer
 
-You can visualise this clearly, and even see the code that's run by adding three lines of code to instrument the example with [logfire](https://logfire.pydantic.dev/docs):
+You can visualise this clearly, and even see the tool call, by adding three lines of code to instrument the example with [logfire](https://logfire.pydantic.dev/docs):
 
 ```python {title="mcp_sse_client_logfire.py" test="skip"}
 import logfire
@@ -87,10 +85,6 @@ import logfire
 logfire.configure()
 logfire.instrument_pydantic_ai()
 ```
-
-Will display as follows:
-
-![Logfire run python code](../img/logfire-run-python-code.png)
 
 ### SSE Client
 
@@ -122,19 +116,17 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerSSE
 
 server = MCPServerSSE('http://localhost:3001/sse')  # (1)!
-agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
+agent = Agent('openai:gpt-5', toolsets=[server])  # (2)!
 
 
 async def main():
-    async with agent:  # (3)!
-        result = await agent.run('What is 7 plus 5?')
+    result = await agent.run('What is 7 plus 5?')
     print(result.output)
     #> The answer is 12.
 ```
 
 1. Define the MCP server with the URL used to connect.
 2. Create an agent with the MCP server attached.
-3. Create a client session to connect to the server.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -151,12 +143,11 @@ from pydantic_ai.mcp import MCPServerStdio
 server = MCPServerStdio(  # (1)!
     'uv', args=['run', 'mcp-run-python', 'stdio'], timeout=10
 )
-agent = Agent('openai:gpt-4o', toolsets=[server])
+agent = Agent('openai:gpt-5', toolsets=[server])
 
 
 async def main():
-    async with agent:
-        result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
+    result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
     print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```
@@ -209,17 +200,16 @@ servers = load_mcp_servers('mcp_config.json')
 agent = Agent('openai:gpt-5', toolsets=servers)
 
 async def main():
-    async with agent:
-        result = await agent.run('What is 7 plus 5?')
+    result = await agent.run('What is 7 plus 5?')
     print(result.output)
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-## Tool call customisation
+## Tool call customization
 
 The MCP servers provide the ability to set a `process_tool_call` which allows
-the customisation of tool call requests and their responses.
+the customization of tool call requests and their responses.
 
 A common use case for this is to inject metadata to the requests which the server
 call needs:
@@ -251,8 +241,7 @@ agent = Agent(
 
 
 async def main():
-    async with agent:
-        result = await agent.run('Echo with deps set to 42', deps=42)
+    result = await agent.run('Echo with deps set to 42', deps=42)
     print(result.output)
     #> {"echo_deps":{"echo":"This is an echo message","deps":42}}
 ```
@@ -315,7 +304,7 @@ calculator_server = MCPServerSSE(
 # Both servers might have a tool named 'get_data', but they'll be exposed as:
 # - 'weather_get_data'
 # - 'calc_get_data'
-agent = Agent('openai:gpt-4o', toolsets=[weather_server, calculator_server])
+agent = Agent('openai:gpt-5', toolsets=[weather_server, calculator_server])
 ```
 
 ## Tool metadata
@@ -357,11 +346,10 @@ server = MCPServerSSE(
     'http://localhost:3001/sse',
     http_client=http_client,  # (1)!
 )
-agent = Agent('openai:gpt-4o', toolsets=[server])
+agent = Agent('openai:gpt-5', toolsets=[server])
 
 async def main():
-    async with agent:
-        result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
+    result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
     print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```
@@ -454,13 +442,12 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
 server = MCPServerStdio('python', args=['generate_svg.py'])
-agent = Agent('openai:gpt-4o', toolsets=[server])
+agent = Agent('openai:gpt-5', toolsets=[server])
 
 
 async def main():
-    async with agent:
-        agent.set_mcp_sampling_model()
-        result = await agent.run('Create an image of a robot in a punk style.')
+    agent.set_mcp_sampling_model()
+    result = await agent.run('Create an image of a robot in a punk style.')
     print(result.output)
     #> Image file written to robot_punk.svg.
 ```
@@ -597,14 +584,13 @@ restaurant_server = MCPServerStdio(
 )
 
 # Create agent
-agent = Agent('openai:gpt-4o', toolsets=[restaurant_server])
+agent = Agent('openai:gpt-5', toolsets=[restaurant_server])
 
 
 async def main():
     """Run the agent to book a restaurant table."""
-    async with agent:
-        result = await agent.run('Book me a table')
-        print(f'\nResult: {result.output}')
+    result = await agent.run('Book me a table')
+    print(f'\nResult: {result.output}')
 
 
 if __name__ == '__main__':

@@ -10,6 +10,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [Cohere](cohere.md)
 * [Bedrock](bedrock.md)
 * [Hugging Face](huggingface.md)
+* [Outlines](outlines.md)
 
 ## OpenAI-compatible Providers
 
@@ -28,6 +29,8 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [GitHub Models](openai.md#github-models)
 - [Cerebras](openai.md#cerebras)
 - [LiteLLM](openai.md#litellm)
+- [Nebius AI Studio](openai.md#nebius-ai-studio)
+- [OVHcloud AI Endpoints](openai.md#ovhcloud-ai-endpoints)
 
 Pydantic AI also comes with [`TestModel`](../api/models/test.md) and [`FunctionModel`](../api/models/function.md)
 for testing and development.
@@ -44,8 +47,8 @@ Pydantic AI uses a few key terms to describe how it interacts with different LLM
   vendor-SDK-agnostic API, ensuring a single Pydantic AI agent is portable to different LLM vendors without
   any other code changes just by swapping out the Model it uses. Model classes are named
   roughly in the format `<VendorSdk>Model`, for example, we have `OpenAIChatModel`, `AnthropicModel`, `GoogleModel`,
-  etc. When using a Model class, you specify the actual LLM model name (e.g., `gpt-4o`,
-  `claude-3-5-sonnet-latest`, `gemini-1.5-flash`) as a parameter.
+  etc. When using a Model class, you specify the actual LLM model name (e.g., `gpt-5`,
+  `claude-sonnet-4-5`, `gemini-2.5-flash`) as a parameter.
 - **Provider**: This refers to provider-specific classes which handle the authentication and connections
   to an LLM vendor. Passing a non-default _Provider_ as a parameter to a Model is how you can ensure
   that your agent will make requests to a specific endpoint, or make use of a specific approach to
@@ -58,7 +61,7 @@ Pydantic AI uses a few key terms to describe how it interacts with different LLM
   and the same schema transformer needs to be used for Gemini models whether you're using `GoogleModel`
   with model name `gemini-2.5-pro-preview`, or `OpenAIChatModel` with `OpenRouterProvider` and model name `google/gemini-2.5-pro-preview`.
 
-When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted as `<provider>:<model>`, e.g. `openai:gpt-4o` or `openrouter:google/gemini-2.5-pro-preview`,
+When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted as `<provider>:<model>`, e.g. `openai:gpt-5` or `openrouter:google/gemini-2.5-pro-preview`,
 Pydantic AI will automatically select the appropriate model class, provider, and profile.
 If you want to use a different provider or profile, you can instantiate a model class directly and pass in `provider` and/or `profile` arguments.
 
@@ -83,6 +86,12 @@ You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to atte
 in sequence until one successfully returns a result. Under the hood, Pydantic AI automatically switches
 from one model to the next if the current model returns a 4xx or 5xx status code.
 
+!!! note
+
+   The provider SDKs on which Models are based (like OpenAI, Anthropic, etc.) often have built-in retry logic that can delay the `FallbackModel` from activating.
+
+    When using `FallbackModel`, it's recommended to disable provider SDK retries to ensure immediate fallback, for example by setting `max_retries=0` on a [custom OpenAI client](openai.md#custom-openai-client).
+
 In the following example, the agent first makes a request to the OpenAI model (which fails due to an invalid API key),
 and then falls back to the Anthropic model.
 
@@ -94,8 +103,8 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel
 
-openai_model = OpenAIChatModel('gpt-4o')
-anthropic_model = AnthropicModel('claude-3-5-sonnet-latest')
+openai_model = OpenAIChatModel('gpt-5')
+anthropic_model = AnthropicModel('claude-sonnet-4-5')
 fallback_model = FallbackModel(openai_model, anthropic_model)
 
 agent = Agent(fallback_model)
@@ -118,7 +127,7 @@ print(response.all_messages())
     ),
     ModelResponse(
         parts=[TextPart(content='Paris', part_kind='text')],
-        model_name='claude-3-5-sonnet-latest',
+        model_name='claude-sonnet-4-5',
         timestamp=datetime.datetime(...),
         kind='response',
         provider_response_id=None,
@@ -144,11 +153,11 @@ from pydantic_ai.models.openai import OpenAIChatModel
 
 # Configure each model with provider-specific optimal settings
 openai_model = OpenAIChatModel(
-    'gpt-4o',
+    'gpt-5',
     settings=ModelSettings(temperature=0.7, max_tokens=1000)  # Higher creativity for OpenAI
 )
 anthropic_model = AnthropicModel(
-    'claude-3-5-sonnet-latest',
+    'claude-sonnet-4-5',
     settings=ModelSettings(temperature=0.2, max_tokens=1000)  # Lower temperature for consistency
 )
 
@@ -176,8 +185,8 @@ contains all the exceptions encountered during the `run` execution.
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIChatModel
 
-    openai_model = OpenAIChatModel('gpt-4o')
-    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest')
+    openai_model = OpenAIChatModel('gpt-5')
+    anthropic_model = AnthropicModel('claude-sonnet-4-5')
     fallback_model = FallbackModel(openai_model, anthropic_model)
 
     agent = Agent(fallback_model)
@@ -208,8 +217,8 @@ contains all the exceptions encountered during the `run` execution.
             print(exc)
 
 
-    openai_model = OpenAIChatModel('gpt-4o')
-    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest')
+    openai_model = OpenAIChatModel('gpt-5')
+    anthropic_model = AnthropicModel('claude-sonnet-4-5')
     fallback_model = FallbackModel(openai_model, anthropic_model)
 
     agent = Agent(fallback_model)

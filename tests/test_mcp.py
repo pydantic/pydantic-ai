@@ -14,10 +14,7 @@ from inline_snapshot import snapshot
 from inline_snapshot.extra import raises
 from pydantic import AnyUrl
 
-from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
-from pydantic_ai.mcp import MCPServerStreamableHTTP, load_mcp_servers
-from pydantic_ai.messages import (
+from pydantic_ai import (
     BinaryContent,
     ModelRequest,
     ModelResponse,
@@ -28,6 +25,9 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.agent import Agent
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.mcp import MCPServerStreamableHTTP, load_mcp_servers
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
@@ -79,14 +79,14 @@ async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(17)
+        assert len(tools) == snapshot(18)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert isinstance(tools[0].description, str)
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
 
         # Test calling the temperature conversion tool
         result = await server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
-        assert result == snapshot('32.0')
+        assert result == snapshot(32.0)
 
 
 async def test_reentrant_context_manager():
@@ -132,7 +132,7 @@ async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
         result = await server.call_tool(
             'foo_celsius_to_fahrenheit', {'celsius': 0}, run_context, tools['foo_celsius_to_fahrenheit']
         )
-        assert result == snapshot('32.0')
+        assert result == snapshot(32.0)
 
 
 async def test_stdio_server_with_cwd(run_context: RunContext[int]):
@@ -140,7 +140,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.get_tools(run_context)
-        assert len(tools) == snapshot(17)
+        assert len(tools) == snapshot(18)
 
 
 async def test_process_tool_call(run_context: RunContext[int]) -> int:
@@ -208,7 +208,8 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                             content='What is 0 degrees Celsius in Fahrenheit?',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -234,16 +235,18 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlnvvqIPFofAtKqtQKMWZkgXhzlT',
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
                             tool_name='celsius_to_fahrenheit',
-                            content='32.0',
+                            content=32.0,
                             tool_call_id='call_QssdxTGkPblTYHmyVES1tKBj',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='0 degrees Celsius is equal to 32 degrees Fahrenheit.')],
@@ -263,6 +266,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRlnyjUo5wlyqvdNdM5I8vIWjo1qF',
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -312,10 +316,6 @@ async def test_log_level_unset(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     assert server.log_level is None
     async with server:
-        tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(17)
-        assert tools[13].name == 'get_log_level'
-
         result = await server.direct_call_tool('get_log_level', {})
         assert result == snapshot('unset')
 
@@ -342,7 +342,8 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                             content='What is the weather in Mexico City?',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -368,6 +369,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlo3e1Ud2lnvkddMilmwC7LAemiy',
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -377,7 +379,8 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                             tool_call_id='call_m9goNwaHBbU926w47V7RtWPt',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -401,6 +404,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRlo41LxqBYgGKWgGrQn67fQacOLp',
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -418,7 +422,8 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                             content='Get me the product name',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -444,6 +449,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRmhyweJVYonarb7s9ckIMSHf2vHo',
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -453,7 +459,8 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                             tool_call_id='call_LaiWltzI39sdquflqeuF0EyE',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The product name is "Pydantic AI".')],
@@ -473,6 +480,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRmhzqXFObpYwSzREMpJvX9kbDikR',
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -490,7 +498,8 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                             content='Get me the product name via get_product_name_link',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -516,6 +525,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BwdHSFe0EykAOpf0LWZzsWAodIQzb',
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -525,7 +535,8 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                             tool_call_id='call_qi5GtBeIEyT7Y3yJvVFIi062',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The product name is "Pydantic AI".')],
@@ -545,6 +556,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BwdHTIlBZWzXJPBR8VTOdC4O57ZQA',
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -564,7 +576,8 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                             content='Get me the image resource',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -590,6 +603,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlo7KYJVXuNZ5lLLdYcKZDsX2CHb',
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -600,7 +614,8 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                             timestamp=IsDatetime(),
                         ),
                         UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -624,6 +639,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloBGHh27w3fQKwxq4fX2cPuZJa9',
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -645,7 +661,8 @@ async def test_tool_returning_image_resource_link(
                             content='Get me the image resource via get_image_resource_link',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -671,6 +688,7 @@ async def test_tool_returning_image_resource_link(
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BwdHygYePH1mZgHo2Xxzib0Y7sId7',
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -681,7 +699,8 @@ async def test_tool_returning_image_resource_link(
                             timestamp=IsDatetime(),
                         ),
                         UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -705,6 +724,7 @@ async def test_tool_returning_image_resource_link(
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BwdI2D2r9dvqq3pbsA0qgwKDEdTtD',
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -720,7 +740,8 @@ async def test_tool_returning_audio_resource(
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content="What's the content of the audio resource?", timestamp=IsDatetime())]
+                    parts=[UserPromptPart(content="What's the content of the audio resource?", timestamp=IsDatetime())],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_audio_resource', args={}, tool_call_id=IsStr())],
@@ -733,6 +754,7 @@ async def test_tool_returning_audio_resource(
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -743,7 +765,8 @@ async def test_tool_returning_audio_resource(
                             timestamp=IsDatetime(),
                         ),
                         UserPromptPart(content=['This is file 2d36ae:', audio_content], timestamp=IsDatetime()),
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The audio resource contains a voice saying "Hello, my name is Marcelo."')],
@@ -759,6 +782,7 @@ async def test_tool_returning_audio_resource(
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -779,7 +803,8 @@ async def test_tool_returning_audio_resource_link(
                             content="What's the content of the audio resource via get_audio_resource_link?",
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -803,6 +828,7 @@ async def test_tool_returning_audio_resource_link(
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id='Pe_BaJGqOKSdz7IP0NqogA8',
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -819,7 +845,8 @@ async def test_tool_returning_audio_resource_link(
                             ],
                             timestamp=IsDatetime(),
                         ),
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='00:05')],
@@ -835,6 +862,7 @@ async def test_tool_returning_audio_resource_link(
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id='QO_BaLC6AozQz7IPh5Kj4Q4',
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -852,7 +880,8 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                             content='Get me an image',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -878,6 +907,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloGQJWIX0Qk7gtNzF4s2Fez0O29',
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -894,7 +924,8 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                             ],
                             timestamp=IsDatetime(),
                         ),
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Here is an image of a sliced kiwi on a white background.')],
@@ -914,6 +945,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloJHR654fSD0fcvLWZxtKtn0pag',
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -931,7 +963,8 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                             content='Get me a dict, respond on one line',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_dict', args='{}', tool_call_id='call_oqKviITBj8PwpQjGyUu4Zu5x')],
@@ -951,6 +984,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloOs7Bb2tq8wJyy9Rv7SQ7L65a7',
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -960,7 +994,8 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                             tool_call_id='call_oqKviITBj8PwpQjGyUu4Zu5x',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"foo":"bar","baz":123}')],
@@ -980,6 +1015,81 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloPczU1HSCWnreyo21DdNtdOM7L',
                     finish_reason='stop',
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+
+async def test_tool_returning_unstructured_dict(allow_model_requests: None, agent: Agent):
+    async with agent:
+        result = await agent.run('Get me an unstructured dict, respond on one line')
+        assert result.output == snapshot('{"foo":"bar","baz":123}')
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Get me an unstructured dict, respond on one line',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_unstructured_dict', args='{}', tool_call_id='call_R0n2R7S9vL2aZOX25T9jahTd'
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=343,
+                        output_tokens=12,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id='chatcmpl-CLbP82ODQMEznhobUKdq6Rjn9Aa12',
+                    finish_reason='tool_call',
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_unstructured_dict',
+                            content={'foo': 'bar', 'baz': 123},
+                            tool_call_id='call_R0n2R7S9vL2aZOX25T9jahTd',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"foo":"bar","baz":123}')],
+                    usage=RequestUsage(
+                        input_tokens=374,
+                        output_tokens=10,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
+                    provider_response_id='chatcmpl-CLbPAOYN3jPYdvYeD8JNOOXF5N554',
+                    finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -999,7 +1109,8 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             content='Get me an error, pass False as a value, unless the tool tells you otherwise',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1025,6 +1136,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloSNg7aGSp1rXDkhInjMIUHKd7A',
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1034,7 +1146,8 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             tool_call_id='call_rETXZWddAGZSHyVHAxptPGgc',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1060,6 +1173,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloTvSkFeX4DZKQLqfH9KbQkWlpt',
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1069,7 +1183,8 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             tool_call_id='call_4xGyvdghYKHN8x19KWkRtA5N',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1093,6 +1208,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloU3MhnqNEqujs28a3ofRbs7VPF',
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -1110,7 +1226,8 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                             content='Call the none tool and say Hello',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_none', args='{}', tool_call_id='call_mJTuQ2Cl5SaHPTJbIILEUhJC')],
@@ -1130,6 +1247,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloX2RokWc9j9PAXAuNXGR73WNqY',
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1139,7 +1257,8 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                             tool_call_id='call_mJTuQ2Cl5SaHPTJbIILEUhJC',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Hello! How can I assist you today?')],
@@ -1159,6 +1278,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloYWGujk8yE94gfVSsM1T1Ol2Ej',
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -1178,7 +1298,8 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                             content='Get me multiple items and summarize in one sentence',
                             timestamp=IsDatetime(),
                         )
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1204,6 +1325,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlobKLgm6vf79c9O8sloZaYx3coC',
                     finish_reason='tool_call',
+                    run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1225,7 +1347,8 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                             ],
                             timestamp=IsDatetime(),
                         ),
-                    ]
+                    ],
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1249,6 +1372,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloepWR5NJpTgSqFBGTSPeM1SWm8',
                     finish_reason='stop',
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -1277,9 +1401,9 @@ async def test_client_sampling(run_context: RunContext[int]):
         result = await server.direct_call_tool('use_sampling', {'foo': 'bar'})
         assert result == snapshot(
             {
-                'meta': None,
+                '_meta': None,
                 'role': 'assistant',
-                'content': {'type': 'text', 'text': 'sampling model response', 'annotations': None, 'meta': None},
+                'content': {'type': 'text', 'text': 'sampling model response', 'annotations': None, '_meta': None},
                 'model': 'test',
                 'stopReason': None,
             }
@@ -1400,13 +1524,18 @@ def test_load_mcp_servers(tmp_path: Path):
     config = tmp_path / 'mcp.json'
 
     config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/mcp"}}}')
-    assert load_mcp_servers(config) == snapshot([MCPServerStreamableHTTP(url='https://example.com/mcp')])
+    server = load_mcp_servers(config)[0]
+    assert server == MCPServerStreamableHTTP(url='https://example.com/mcp', id='potato', tool_prefix='potato')
 
     config.write_text('{"mcpServers": {"potato": {"command": "python", "args": ["-m", "tests.mcp_server"]}}}')
-    assert load_mcp_servers(config) == snapshot([MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'])])
+    server = load_mcp_servers(config)[0]
+    assert server == MCPServerStdio(
+        command='python', args=['-m', 'tests.mcp_server'], id='potato', tool_prefix='potato'
+    )
 
     config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/sse"}}}')
-    assert load_mcp_servers(config) == snapshot([MCPServerSSE(url='https://example.com/sse')])
+    server = load_mcp_servers(config)[0]
+    assert server == MCPServerSSE(url='https://example.com/sse', id='potato', tool_prefix='potato')
 
     with pytest.raises(FileNotFoundError):
         load_mcp_servers(tmp_path / 'does_not_exist.json')
@@ -1475,3 +1604,26 @@ async def test_mcp_server_access_client(mcp_server: MCPServerStdio):
                 ],
             }
         )
+
+
+async def test_server_info(mcp_server: MCPServerStdio) -> None:
+    with pytest.raises(
+        AttributeError, match='The `MCPServerStdio.server_info` is only instantiated after initialization.'
+    ):
+        mcp_server.server_info
+    async with mcp_server:
+        assert mcp_server.server_info is not None
+        assert mcp_server.server_info.name == 'Pydantic AI MCP Server'
+
+
+async def test_agent_run_stream_with_mcp_server_http(allow_model_requests: None, model: Model):
+    server = MCPServerStreamableHTTP(url='https://mcp.deepwiki.com/mcp', timeout=30)
+    agent = Agent(model, toolsets=[server], instructions='Be concise.')
+
+    # This should not raise an error.
+    # See https://github.com/pydantic/pydantic-ai/issues/2818#issuecomment-3476480829
+    async with agent.run_stream('Summarize the pydantic/pydantic-ai repo in one sentence') as result:
+        output = await result.get_output()
+    assert output == snapshot(
+        'The `pydantic/pydantic-ai` repository is a Python agent framework designed to facilitate the development of production-grade Generative AI applications and workflows with a focus on type-safety and an ergonomic developer experience.'
+    )

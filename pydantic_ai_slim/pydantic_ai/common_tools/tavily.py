@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import TypeAdapter
-from typing_extensions import TypedDict
+from typing_extensions import Any, TypedDict
 
 from pydantic_ai.tools import Tool
 
@@ -74,7 +74,7 @@ def tavily_search_tool(api_key: str):
 
             You can get one by signing up at [https://app.tavily.com/home](https://app.tavily.com/home).
     """
-    return Tool(
+    return Tool[Any](
         TavilySearchTool(client=AsyncTavilyClient(api_key)).__call__,
         name='tavily_search',
         description='Searches Tavily for the given query and returns the results.',

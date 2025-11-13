@@ -16,7 +16,6 @@ jobs:
     steps:
       - uses: astral-sh/setup-uv@v5
         with:
-          enable-cache: true
           python-version: "3.12"
 
       - uses: dawidd6/action-download-artifact@v6
@@ -41,11 +40,15 @@ jobs:
 
   deploy-docs-preview:
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.event == 'pull_request'
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.pull_requests[0] != null
     environment:
       name: deploy-docs-preview
 
     steps:
+      - run: echo "$GITHUB_EVENT_JSON"
+        env:
+          GITHUB_EVENT_JSON: ${{ toJSON(github.event) }}
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -54,10 +57,12 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
         with:
-          enable-cache: true
           python-version: "3.12"
+          enable-cache: true
+          cache-suffix: deploy-docs-preview
 
-      - uses: dawidd6/action-download-artifact@v6
+      - id: download-artifact
+        uses: dawidd6/action-download-artifact@v6
         with:
           workflow: ci.yml
           name: site
@@ -65,9 +70,11 @@ jobs:
           commit: ${{ github.event.workflow_run.head_sha }}
           allow_forks: true
           workflow_conclusion: completed
+          if_no_artifact_found: warn
 
       - uses: cloudflare/wrangler-action@v3
         id: deploy
+        if: steps.download-artifact.outputs.found_artifact == 'true'
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           environment: previews
@@ -77,12 +84,9 @@ jobs:
             --var GIT_COMMIT_SHA:${{ github.event.workflow_run.head_sha }}
             --var GIT_BRANCH:${{ github.event.workflow_run.head_branch }}
 
-      - run: echo "$GITHUB_EVENT_JSON"
-        env:
-          GITHUB_EVENT_JSON: ${{ toJSON(github.event) }}
-
       - name: Set preview URL
         run: uv run --no-project --with httpx .github/set_docs_pr_preview_url.py
+        if: steps.deploy.outcome == 'success'
         env:
           DEPLOY_OUTPUT: ${{ steps.deploy.outputs.command-output }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

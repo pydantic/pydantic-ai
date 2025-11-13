@@ -23,6 +23,7 @@ __all__ = (
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'ModelHTTPError',
+    'IncompleteToolCall',
     'FallbackExceptionGroup',
 )
 
@@ -42,6 +43,9 @@ class ModelRetry(Exception):
 
     def __eq__(self, other: Any) -> bool:
         return isinstance(other, self.__class__) and other.message == self.message
+
+    def __hash__(self) -> int:
+        return hash((self.__class__, self.message))
 
     @classmethod
     def __get_pydantic_core_schema__(cls, _: Any, __: Any) -> core_schema.CoreSchema:
@@ -158,7 +162,7 @@ class ModelHTTPError(AgentRunError):
         super().__init__(message)
 
 
-class FallbackExceptionGroup(ExceptionGroup):
+class FallbackExceptionGroup(ExceptionGroup[Any]):
     """A group of exceptions that can be raised when all fallback models fail."""
 
 
@@ -168,3 +172,7 @@ class ToolRetryError(Exception):
     def __init__(self, tool_retry: RetryPromptPart):
         self.tool_retry = tool_retry
         super().__init__()
+
+
+class IncompleteToolCall(UnexpectedModelBehavior):
+    """Error raised when a model stops due to token limit while emitting a tool call."""

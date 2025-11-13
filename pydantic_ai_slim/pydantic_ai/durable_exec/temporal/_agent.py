@@ -16,12 +16,16 @@ from temporalio.workflow import ActivityConfig
 from typing_extensions import Never
 
 from pydantic_ai import (
+    AbstractToolset,
+    AgentRunResultEvent,
     _utils,
     messages as _messages,
     models,
     usage as _usage,
 )
-from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, RunOutputDataT, WrapperAgent
+from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
+from pydantic_ai.agent.abstract import Instructions, RunOutputDataT
+from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -34,7 +38,6 @@ from pydantic_ai.tools import (
     Tool,
     ToolFuncEither,
 )
-from pydantic_ai.toolsets import AbstractToolset
 
 from ._model import TemporalModel
 from ._run_context import TemporalRunContext
@@ -257,15 +260,17 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -275,15 +280,17 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -292,15 +299,17 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
@@ -328,6 +337,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
@@ -335,6 +345,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
+            builtin_tools: Optional additional builtin tools for this run.
 
         Returns:
             The result of the run.
@@ -351,12 +362,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
                 model=model,
+                instructions=instructions,
                 deps=deps,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
                 usage=usage,
                 infer_name=infer_name,
                 toolsets=toolsets,
+                builtin_tools=builtin_tools,
                 event_stream_handler=event_stream_handler or self.event_stream_handler,
                 **_deprecated_kwargs,
             )
@@ -367,15 +380,17 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -385,15 +400,17 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -402,15 +419,17 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
@@ -437,6 +456,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
@@ -444,6 +464,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
+            builtin_tools: Optional additional builtin tools for this run.
 
         Returns:
             The result of the run.
@@ -459,12 +480,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             model=model,
+            instructions=instructions,
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
             usage=usage,
             infer_name=infer_name,
             toolsets=toolsets,
+            builtin_tools=builtin_tools,
             event_stream_handler=event_stream_handler,
             **_deprecated_kwargs,
         )
@@ -475,15 +498,17 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
@@ -493,15 +518,17 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
@@ -511,15 +538,17 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AsyncIterator[StreamedRunResult[AgentDepsT, Any]]:
@@ -544,12 +573,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
+            builtin_tools: Optional additional builtin tools for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
 
         Returns:
@@ -557,9 +588,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         """
         if workflow.in_workflow():
             raise UserError(
-                '`agent.run_stream()` cannot currently be used inside a Temporal workflow. '
-                'Set an `event_stream_handler` on the agent and use `agent.run()` instead. '
-                'Please file an issue if this is not sufficient for your use case.'
+                '`agent.run_stream()` cannot be used inside a Temporal workflow. '
+                'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             )
 
         async with super().run_stream(
@@ -568,6 +598,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             model=model,
+            instructions=instructions,
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
@@ -575,9 +606,141 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name=infer_name,
             toolsets=toolsets,
             event_stream_handler=event_stream_handler,
+            builtin_tools=builtin_tools,
             **_deprecated_kwargs,
         ) as result:
             yield result
+
+    @overload
+    def run_stream_events(
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
+
+    @overload
+    def run_stream_events(
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT],
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
+
+    def run_stream_events(
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+        """Run the agent with a user prompt in async mode and stream events from the run.
+
+        This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
+        uses the `event_stream_handler` kwarg to get a stream of events from the run.
+
+        Example:
+        ```python
+        from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent
+
+        agent = Agent('openai:gpt-4o')
+
+        async def main():
+            events: list[AgentStreamEvent | AgentRunResultEvent] = []
+            async for event in agent.run_stream_events('What is the capital of France?'):
+                events.append(event)
+            print(events)
+            '''
+            [
+                PartStartEvent(index=0, part=TextPart(content='The capital of ')),
+                FinalResultEvent(tool_name=None, tool_call_id=None),
+                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='France is Paris. ')),
+                PartEndEvent(
+                    index=0, part=TextPart(content='The capital of France is Paris. ')
+                ),
+                AgentRunResultEvent(
+                    result=AgentRunResult(output='The capital of France is Paris. ')
+                ),
+            ]
+            '''
+        ```
+
+        Arguments are the same as for [`self.run`][pydantic_ai.agent.AbstractAgent.run],
+        except that `event_stream_handler` is now allowed.
+
+        Args:
+            user_prompt: User input to start/continue the conversation.
+            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
+                output validators since output validators would expect an argument that matches the agent's output type.
+            message_history: History of the conversation so far.
+            deferred_tool_results: Optional results for deferred tool calls in the message history.
+            model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            instructions: Optional additional instructions to use for this run.
+            deps: Optional dependencies to use for this run.
+            model_settings: Optional settings to use for this model's request.
+            usage_limits: Optional limits on model request count or token usage.
+            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            toolsets: Optional additional toolsets for this run.
+            builtin_tools: Optional additional builtin tools for this run.
+
+        Returns:
+            An async iterable of stream events `AgentStreamEvent` and finally a `AgentRunResultEvent` with the final
+            run result.
+        """
+        if workflow.in_workflow():
+            raise UserError(
+                '`agent.run_stream_events()` cannot be used inside a Temporal workflow. '
+                'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+            )
+
+        return super().run_stream_events(
+            user_prompt,
+            output_type=output_type,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+            model=model,
+            instructions=instructions,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            builtin_tools=builtin_tools,
+        )
 
     @overload
     def iter(
@@ -585,14 +748,16 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
@@ -603,15 +768,17 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -621,15 +788,17 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
-        message_history: list[_messages.ModelMessage] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
+        instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -672,7 +841,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                                 content='What is the capital of France?',
                                 timestamp=datetime.datetime(...),
                             )
-                        ]
+                        ],
+                        run_id='...',
                     )
                 ),
                 CallToolsNode(
@@ -681,6 +851,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                         usage=RequestUsage(input_tokens=56, output_tokens=7),
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
+                        run_id='...',
                     )
                 ),
                 End(data=FinalResult(output='The capital of France is Paris.')),
@@ -697,12 +868,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
+            builtin_tools: Optional additional builtin tools for this run.
 
         Returns:
             The result of the run.
@@ -710,9 +883,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         if workflow.in_workflow():
             if not self._temporal_overrides_active.get():
                 raise UserError(
-                    '`agent.iter()` cannot currently be used inside a Temporal workflow. '
-                    'Set an `event_stream_handler` on the agent and use `agent.run()` instead. '
-                    'Please file an issue if this is not sufficient for your use case.'
+                    '`agent.iter()` cannot be used inside a Temporal workflow. '
+                    'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
                 )
 
             if model is not None:
@@ -730,12 +902,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             model=model,
+            instructions=instructions,
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
             usage=usage,
             infer_name=infer_name,
             toolsets=toolsets,
+            builtin_tools=builtin_tools,
             **_deprecated_kwargs,
         ) as run:
             yield run
@@ -744,21 +918,25 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def override(
         self,
         *,
+        name: str | _utils.Unset = _utils.UNSET,
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
-        """Context manager to temporarily override agent dependencies, model, toolsets, or tools.
+        """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
 
         Args:
+            name: The name to use instead of the name passed to the agent constructor and agent run.
             deps: The dependencies to use instead of the dependencies passed to the agent run.
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
+            instructions: The instructions to use instead of the instructions registered with the agent.
         """
         if workflow.in_workflow():
             if _utils.is_set(model):
@@ -774,5 +952,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'Tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
                 )
 
-        with super().override(deps=deps, model=model, toolsets=toolsets, tools=tools):
+        with super().override(
+            name=name,
+            deps=deps,
+            model=model,
+            toolsets=toolsets,
+            tools=tools,
+            instructions=instructions,
+        ):
             yield

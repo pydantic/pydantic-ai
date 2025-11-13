@@ -36,6 +36,17 @@ __all__ = [
     'TemporalWrapperToolset',
 ]
 
+# We need eagerly import the anyio backends or it will happens inside workflow code and temporal has issues
+# Note: It's difficult to add a test that covers this because pytest presumably does these imports itself
+# when you have a @pytest.mark.anyio somewhere.
+# I suppose we could add a test that runs a python script in a separate process, but I have not done that...
+import anyio._backends._asyncio  # pyright: ignore[reportUnusedImport]
+
+try:
+    import anyio._backends._trio  # noqa F401  # pyright: ignore[reportUnusedImport]
+except ImportError:
+    pass
+
 
 class PydanticAIPlugin(ClientPlugin, WorkerPlugin):
     """Temporal client and worker plugin for Pydantic AI."""
@@ -62,6 +73,10 @@ class PydanticAIPlugin(ClientPlugin, WorkerPlugin):
                     'logfire',
                     'rich',
                     'httpx',
+                    'anyio',
+                    'httpcore',
+                    # Used by fastmcp via py-key-value-aio
+                    'beartype',
                     # Imported inside `logfire._internal.json_encoder` when running `logfire.info` inside an activity with attributes to serialize
                     'attrs',
                     # Imported inside `logfire._internal.json_schema` when running `logfire.info` inside an activity with attributes to serialize

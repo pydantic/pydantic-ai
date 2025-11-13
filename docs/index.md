@@ -1,4 +1,4 @@
-# Introduction {.hide}
+# Pydantic AI {.hide}
 
 --8<-- "docs/.partials/index-header.html"
 
@@ -14,7 +14,7 @@ We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI
 [Pydantic Validation](https://docs.pydantic.dev/latest/) is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. _Why use the derivative when you can go straight to the source?_ :smiley:
 
 2. **Model-agnostic**:
-Supports virtually every [model](models/overview.md) and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel. If your favorite model or provider is not listed, you can easily implement a [custom model](models/overview.md#custom-models).
+Supports virtually every [model](models/overview.md) and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a [custom model](models/overview.md#custom-models).
 
 3. **Seamless Observability**:
 Tightly [integrates](logfire.md) with [Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can [use that too](logfire.md#alternative-observability-backends).
@@ -25,8 +25,8 @@ Designed to give your IDE or AI coding agent as much context as possible for aut
 5. **Powerful Evals**:
 Enables you to systematically test and [evaluate](evals.md) the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire.
 
-6. **MCP, A2A, and AG-UI**:
-Integrates the [Model Context Protocol](mcp/client.md), [Agent2Agent](a2a.md), and [AG-UI](ag-ui.md) standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication.
+6. **MCP, A2A, and UI**:
+Integrates the [Model Context Protocol](mcp/overview.md), [Agent2Agent](a2a.md), and various [UI event stream](ui/overview.md) standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication.
 
 7. **Human-in-the-Loop Tool Approval**:
 Easily lets you flag that certain tool calls [require approval](deferred-tools.md#human-in-the-loop-tool-approval) before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences.
@@ -201,7 +201,7 @@ logfire.instrument_asyncpg()  # (3)!
 ...
 
 support_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=SupportDependencies,
     output_type=SupportOutput,
     system_prompt=(

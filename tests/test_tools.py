@@ -13,26 +13,29 @@ from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, RunContext, Tool, UserError
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
+    ExternalToolset,
+    FunctionToolset,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PrefixedToolset,
     RetryPromptPart,
+    RunContext,
     TextPart,
+    Tool,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    UserError,
     UserPromptPart,
 )
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.toolsets.external import ExternalToolset
-from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.toolsets.prefixed import PrefixedToolset
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsStr
@@ -1362,13 +1365,15 @@ def test_tool_raises_approval_required():
                         content='Hello',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1378,13 +1383,15 @@ def test_tool_raises_approval_required():
                         tool_call_id='my_tool',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
                 usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1518,7 +1525,8 @@ def test_parallel_tool_return_with_deferred():
                         content='What do an apple, a banana, a pear and a grape cost? Also buy me a pear.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1533,6 +1541,7 @@ def test_parallel_tool_return_with_deferred():
                 usage=RequestUsage(input_tokens=68, output_tokens=35),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1570,7 +1579,8 @@ def test_parallel_tool_return_with_deferred():
                         content='The price of pear is 10.0.',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1608,7 +1618,8 @@ def test_parallel_tool_return_with_deferred():
                         content='What do an apple, a banana, a pear and a grape cost? Also buy me a pear.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1623,6 +1634,7 @@ def test_parallel_tool_return_with_deferred():
                 usage=RequestUsage(input_tokens=68, output_tokens=35),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1660,7 +1672,8 @@ def test_parallel_tool_return_with_deferred():
                         content='The price of pear is 10.0.',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1687,13 +1700,15 @@ def test_parallel_tool_return_with_deferred():
                         content='I bought a banana',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
                 usage=RequestUsage(input_tokens=137, output_tokens=36),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1725,13 +1740,15 @@ def test_parallel_tool_return_with_deferred():
                         content='I bought a banana',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
                 usage=RequestUsage(input_tokens=137, output_tokens=36),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1744,7 +1761,8 @@ def test_parallel_tool_return_with_deferred():
                         content='What do an apple, a banana, a pear and a grape cost? Also buy me a pear.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1759,6 +1777,7 @@ def test_parallel_tool_return_with_deferred():
                 usage=RequestUsage(input_tokens=68, output_tokens=35),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1847,7 +1866,7 @@ def test_deferred_tool_call_approved_fails():
         DeferredToolRequests(calls=[ToolCallPart(tool_name='foo', args={'x': 0}, tool_call_id='foo')])
     )
 
-    with pytest.raises(RuntimeError, match='Deferred tools cannot be called'):
+    with pytest.raises(RuntimeError, match='External tools cannot be called'):
         agent.run_sync(
             message_history=result.all_messages(),
             deferred_tool_results=DeferredToolResults(
@@ -1899,7 +1918,8 @@ async def test_approval_required_toolset():
                         content='foo',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1910,6 +1930,7 @@ async def test_approval_required_toolset():
                 usage=RequestUsage(input_tokens=51, output_tokens=12),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1919,7 +1940,8 @@ async def test_approval_required_toolset():
                         tool_call_id='bar',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1949,7 +1971,8 @@ async def test_approval_required_toolset():
                         content='foo',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1960,6 +1983,7 @@ async def test_approval_required_toolset():
                 usage=RequestUsage(input_tokens=51, output_tokens=12),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1969,7 +1993,8 @@ async def test_approval_required_toolset():
                         tool_call_id='bar',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1985,13 +2010,15 @@ async def test_approval_required_toolset():
                         tool_call_id='foo2',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
                 usage=RequestUsage(input_tokens=59, output_tokens=13),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2130,13 +2157,15 @@ def test_retry_tool_until_last_attempt():
                         content='Always fail!',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=52, output_tokens=2),
                 model_name='test',
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2146,13 +2175,15 @@ def test_retry_tool_until_last_attempt():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=62, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2162,13 +2193,15 @@ def test_retry_tool_until_last_attempt():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=72, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2178,13 +2211,15 @@ def test_retry_tool_until_last_attempt():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"always_fail":"I guess you never learn"}')],
                 usage=RequestUsage(input_tokens=77, output_tokens=14),
                 model_name='test',
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
         ]
     )

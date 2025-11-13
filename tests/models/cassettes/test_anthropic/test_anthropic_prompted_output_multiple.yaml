@@ -21,7 +21,7 @@ interactions:
         - text: What is the largest city in Mexico?
           type: text
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
       system: |+
         Always respond with a JSON object that's compatible with this schema:
@@ -48,7 +48,7 @@ interactions:
       - text: '{"result": {"kind": "CityLocation", "data": {"city": "Mexico City", "country": "Mexico"}}}'
         type: text
       id: msg_01N2PwwVQo2aBtt6UFhMDtEX
-      model: claude-3-5-sonnet-20241022
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
       stop_sequence: null

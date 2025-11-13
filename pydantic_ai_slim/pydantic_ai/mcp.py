@@ -112,6 +112,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     _client: ClientSession
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
+    _server_info: mcp_types.Implementation
 
     def __init__(
         self,
@@ -166,6 +167,10 @@ class MCPServer(AbstractToolset[Any], ABC):
     def id(self) -> str | None:
         return self._id
 
+    @id.setter
+    def id(self, value: str | None):
+        self._id = value
+
     @property
     def label(self) -> str:
         if self.id:
@@ -176,6 +181,15 @@ class MCPServer(AbstractToolset[Any], ABC):
     @property
     def tool_name_conflict_hint(self) -> str:
         return 'Set the `tool_prefix` attribute to avoid name conflicts.'
+
+    @property
+    def server_info(self) -> mcp_types.Implementation:
+        """Access the information send by the MCP server during initialization."""
+        if getattr(self, '_server_info', None) is None:
+            raise AttributeError(
+                f'The `{self.__class__.__name__}.server_info` is only instantiated after initialization.'
+            )
+        return self._server_info
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.
@@ -225,13 +239,27 @@ class MCPServer(AbstractToolset[Any], ABC):
             except McpError as e:
                 raise exceptions.ModelRetry(e.error.message)
 
-        content = [await self._map_tool_result_part(part) for part in result.content]
-
         if result.isError:
-            text = '\n'.join(str(part) for part in content)
-            raise exceptions.ModelRetry(text)
-        else:
-            return content[0] if len(content) == 1 else content
+            message: str | None = None
+            if result.content:  # pragma: no branch
+                text_parts = [part.text for part in result.content if isinstance(part, mcp_types.TextContent)]
+                message = '\n'.join(text_parts)
+
+            raise exceptions.ModelRetry(message or 'MCP tool call failed')
+
+        # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
+        # See https://github.com/modelcontextprotocol/python-sdk#structured-output
+        if (structured := result.structuredContent) and not any(
+            not isinstance(part, mcp_types.TextContent) for part in result.content
+        ):
+            # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want to use the raw value returned by the tool function.
+            # See https://github.com/modelcontextprotocol/python-sdk#structured-output
+            if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured:
+                return structured['result']
+            return structured
+
+        mapped = [await self._map_tool_result_part(part) for part in result.content]
+        return mapped[0] if len(mapped) == 1 else mapped
 
     async def call_tool(
         self,
@@ -298,8 +326,8 @@ class MCPServer(AbstractToolset[Any], ABC):
                     self._client = await exit_stack.enter_async_context(self._client)
 
                     with anyio.fail_after(self.timeout):
-                        await self._client.initialize()
-
+                        result = await self._client.initialize()
+                        self._server_info = result.serverInfo
                         if log_level := self.log_level:
                             await self._client.set_logging_level(log_level)
 
@@ -399,6 +427,9 @@ class MCPServer(AbstractToolset[Any], ABC):
         else:
             assert_never(resource)
 
+    def __eq__(self, value: object, /) -> bool:
+        return isinstance(value, MCPServer) and self.id == value.id and self.tool_prefix == value.tool_prefix
+
 
 class MCPServerStdio(MCPServer):
     """Runs an MCP server in a subprocess and communicates with it over stdin/stdout.
@@ -419,14 +450,9 @@ class MCPServerStdio(MCPServer):
         'uv', args=['run', 'mcp-run-python', 'stdio'], timeout=10
     )
     agent = Agent('openai:gpt-4o', toolsets=[server])
-
-    async def main():
-        async with agent:  # (2)!
-            ...
     ```
 
     1. See [MCP Run Python](https://github.com/pydantic/mcp-run-python) for more information.
-    2. This will start the server as a subprocess and connect to it.
     """
 
     command: str
@@ -549,14 +575,14 @@ class MCPServerStdio(MCPServer):
             f'args={self.args!r}',
         ]
         if self.id:
-            repr_args.append(f'id={self.id!r}')
+            repr_args.append(f'id={self.id!r}')  # pragma: lax no cover
         return f'{self.__class__.__name__}({", ".join(repr_args)})'
 
     def __eq__(self, value: object, /) -> bool:
-        if not isinstance(value, MCPServerStdio):
-            return False  # pragma: no cover
         return (
-            self.command == value.command
+            super().__eq__(value)
+            and isinstance(value, MCPServerStdio)
+            and self.command == value.command
             and self.args == value.args
             and self.env == value.env
             and self.cwd == value.cwd
@@ -709,9 +735,9 @@ class _MCPServerHTTP(MCPServer):
             MemoryObjectReceiveStream[SessionMessage | Exception],
             MemoryObjectSendStream[SessionMessage],
         ]
-    ]:  # pragma: no cover
+    ]:
         if self.http_client and self.headers:
-            raise ValueError('`http_client` is mutually exclusive with `headers`.')
+            raise ValueError('`http_client` is mutually exclusive with `headers`.')  # pragma: no cover
 
         transport_client_partial = functools.partial(
             self._transport_client,
@@ -720,7 +746,7 @@ class _MCPServerHTTP(MCPServer):
             sse_read_timeout=self.read_timeout,
         )
 
-        if self.http_client is not None:
+        if self.http_client is not None:  # pragma: no cover
 
             def httpx_client_factory(
                 headers: dict[str, str] | None = None,
@@ -766,13 +792,7 @@ class MCPServerSSE(_MCPServerHTTP):
 
     server = MCPServerSSE('http://localhost:3001/sse')
     agent = Agent('openai:gpt-4o', toolsets=[server])
-
-    async def main():
-        async with agent:  # (1)!
-            ...
     ```
-
-    1. This will connect to a server running on `localhost:3001`.
     """
 
     @classmethod
@@ -794,9 +814,7 @@ class MCPServerSSE(_MCPServerHTTP):
         return sse_client  # pragma: no cover
 
     def __eq__(self, value: object, /) -> bool:
-        if not isinstance(value, MCPServerSSE):
-            return False  # pragma: no cover
-        return self.url == value.url
+        return super().__eq__(value) and isinstance(value, MCPServerSSE) and self.url == value.url
 
 
 @deprecated('The `MCPServerHTTP` class is deprecated, use `MCPServerSSE` instead.')
@@ -817,13 +835,7 @@ class MCPServerHTTP(MCPServerSSE):
 
     server = MCPServerHTTP('http://localhost:3001/sse')
     agent = Agent('openai:gpt-4o', toolsets=[server])
-
-    async def main():
-        async with agent:  # (2)!
-            ...
     ```
-
-    1. This will connect to a server running on `localhost:3001`.
     """
 
 
@@ -842,12 +854,8 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     from pydantic_ai import Agent
     from pydantic_ai.mcp import MCPServerStreamableHTTP
 
-    server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
+    server = MCPServerStreamableHTTP('http://localhost:8000/mcp')
     agent = Agent('openai:gpt-4o', toolsets=[server])
-
-    async def main():
-        async with agent:  # (2)!
-            ...
     ```
     """
 
@@ -867,12 +875,10 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
 
     @property
     def _transport_client(self):
-        return streamablehttp_client  # pragma: no cover
+        return streamablehttp_client
 
     def __eq__(self, value: object, /) -> bool:
-        if not isinstance(value, MCPServerStreamableHTTP):
-            return False  # pragma: no cover
-        return self.url == value.url
+        return super().__eq__(value) and isinstance(value, MCPServerStreamableHTTP) and self.url == value.url
 
 
 ToolResult = (
@@ -949,4 +955,11 @@ def load_mcp_servers(config_path: str | Path) -> list[MCPServerStdio | MCPServer
         raise FileNotFoundError(f'Config file {config_path} not found')
 
     config = MCPServerConfig.model_validate_json(config_path.read_bytes())
-    return list(config.mcp_servers.values())
+
+    servers: list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE] = []
+    for name, server in config.mcp_servers.items():
+        server.id = name
+        server.tool_prefix = name
+        servers.append(server)
+
+    return servers

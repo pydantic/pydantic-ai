@@ -14,7 +14,7 @@ from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import httpx
 import pytest
@@ -23,11 +23,21 @@ from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
-from pydantic_ai import Agent
-from pydantic_ai.messages import BinaryContent
+from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.models import Model, cached_async_http_client
 
-__all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'IsInstance', 'TestEnv', 'ClientWithHandler', 'try_import'
+__all__ = (
+    'IsDatetime',
+    'IsFloat',
+    'IsNow',
+    'IsStr',
+    'IsBytes',
+    'IsInt',
+    'IsInstance',
+    'TestEnv',
+    'ClientWithHandler',
+    'try_import',
+)
 
 # Configure VCR logger to WARNING as it is too verbose by default
 # specifically, it logs every request and response including binary
@@ -51,8 +61,9 @@ if TYPE_CHECKING:
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
     def IsSameStr(*args: Any, **kwargs: Any) -> str: ...
+    def IsBytes(*args: Any, **kwargs: Any) -> bytes: ...
 else:
-    from dirty_equals import IsDatetime, IsFloat, IsInstance, IsInt, IsNow as _IsNow, IsStr
+    from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsNow as _IsNow, IsStr
 
     def IsNow(*args: Any, **kwargs: Any):
         # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
@@ -340,6 +351,13 @@ def document_content(assets_path: Path) -> BinaryContent:
 
 
 @pytest.fixture(scope='session')
+def text_document_content(assets_path: Path) -> BinaryContent:
+    content = assets_path.joinpath('dummy.txt').read_text()
+    bin_content = BinaryContent(data=content.encode(), media_type='text/plain')
+    return bin_content
+
+
+@pytest.fixture(scope='session')
 def deepseek_api_key() -> str:
     return os.getenv('DEEPSEEK_API_KEY', 'mock-api-key')
 
@@ -406,6 +424,7 @@ def bedrock_provider():
             region_name=os.getenv('AWS_REGION', 'us-east-1'),
             aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
             aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
+            aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
         )
         yield BedrockProvider(bedrock_client=bedrock_client)
         bedrock_client.close()
@@ -445,21 +464,13 @@ async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
-        from google.genai import Client
-
-        from pydantic_ai.providers.google import GoogleProvider
+        from pydantic_ai.providers.google import GoogleProvider, VertexAILocation
     except ImportError:  # pragma: lax no cover
         pytest.skip('google is not installed')
 
     project = os.getenv('GOOGLE_PROJECT', 'pydantic-ai')
-    location = os.getenv('GOOGLE_LOCATION', 'us-central1')
-    client = Client(vertexai=True, project=project, location=location)
-
-    try:
-        yield GoogleProvider(client=client)
-    finally:
-        client.aio._api_client._httpx_client.close()  # type: ignore
-        await client.aio._api_client._async_httpx_client.aclose()  # type: ignore
+    location = os.getenv('GOOGLE_LOCATION', 'global')
+    yield GoogleProvider(project=project, location=cast(VertexAILocation, location))
 
 
 @pytest.fixture()
@@ -488,7 +499,7 @@ def model(
             from pydantic_ai.models.anthropic import AnthropicModel
             from pydantic_ai.providers.anthropic import AnthropicProvider
 
-            return AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+            return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
         elif request.param == 'mistral':
             from pydantic_ai.models.mistral import MistralModel
             from pydantic_ai.providers.mistral import MistralProvider
@@ -525,6 +536,18 @@ def model(
             return HuggingFaceModel(
                 'Qwen/Qwen2.5-72B-Instruct',
                 provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
+            )
+        elif request.param == 'outlines':
+            from outlines.models.transformers import from_transformers
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+
+            from pydantic_ai.models.outlines import OutlinesModel
+
+            return OutlinesModel(
+                from_transformers(
+                    AutoModelForCausalLM.from_pretrained('erwanf/gpt2-mini'),
+                    AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),
+                )
             )
         else:
             raise ValueError(f'Unknown model: {request.param}')

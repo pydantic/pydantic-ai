@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import inspect
 import json
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -9,7 +10,9 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator, to_json
-from typing_extensions import Self, TypedDict, TypeVar, assert_never
+from typing_extensions import Self, TypedDict, TypeVar
+
+from pydantic_ai._instrumentation import InstrumentationNames
 
 from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
@@ -19,10 +22,10 @@ from .output import (
     NativeOutput,
     OutputDataT,
     OutputMode,
+    OutputObjectDefinition,
     OutputSpec,
     OutputTypeOrFunction,
     PromptedOutput,
-    StructuredOutputMode,
     TextOutput,
     TextOutputFunc,
     ToolOutput,
@@ -32,7 +35,7 @@ from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
-    from .profiles import ModelProfile
+    pass
 
 T = TypeVar('T')
 """An invariant TypeVar."""
@@ -67,12 +70,13 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
+OUTPUT_TOOL_NAME_SANITIZER = re.compile(r'[^a-zA-Z0-9-_]')
 
 
 async def execute_traced_output_function(
     function_schema: _function_schema.FunctionSchema,
     run_context: RunContext[AgentDepsT],
-    args: dict[str, Any] | Any,
+    args: dict[str, Any],
     wrap_validation_errors: bool = True,
 ) -> Any:
     """Execute an output function within a traced span with error handling.
@@ -94,6 +98,7 @@ async def execute_traced_output_function(
         ToolRetryError: When wrap_validation_errors is True and a ModelRetry is caught
         ModelRetry: When wrap_validation_errors is False and a ModelRetry occurs
     """
+    instrumentation_names = InstrumentationNames.for_version(run_context.instrumentation_version)
     # Set up span attributes
     tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
     attributes = {
@@ -103,18 +108,29 @@ async def execute_traced_output_function(
     if run_context.tool_call_id:
         attributes['gen_ai.tool.call.id'] = run_context.tool_call_id
     if run_context.trace_include_content:
-        attributes['tool_arguments'] = to_json(args).decode()
-        attributes['logfire.json_schema'] = json.dumps(
-            {
-                'type': 'object',
-                'properties': {
-                    'tool_arguments': {'type': 'object'},
-                    'tool_response': {'type': 'object'},
-                },
-            }
-        )
+        attributes[instrumentation_names.tool_arguments_attr] = to_json(args).decode()
 
-    with run_context.tracer.start_as_current_span('running output function', attributes=attributes) as span:
+    attributes['logfire.json_schema'] = json.dumps(
+        {
+            'type': 'object',
+            'properties': {
+                **(
+                    {
+                        instrumentation_names.tool_arguments_attr: {'type': 'object'},
+                        instrumentation_names.tool_result_attr: {'type': 'object'},
+                    }
+                    if run_context.trace_include_content
+                    else {}
+                ),
+                'gen_ai.tool.name': {},
+                **({'gen_ai.tool.call.id': {}} if run_context.tool_call_id else {}),
+            },
+        }
+    )
+
+    with run_context.tracer.start_as_current_span(
+        instrumentation_names.get_output_tool_span_name(tool_name), attributes=attributes
+    ) as span:
         try:
             output = await function_schema.call(args, run_context)
         except ModelRetry as r:
@@ -134,7 +150,7 @@ async def execute_traced_output_function(
             from .models.instrumented import InstrumentedModel
 
             span.set_attribute(
-                'tool_response',
+                instrumentation_names.tool_result_attr,
                 output if isinstance(output, str) else json.dumps(InstrumentedModel.serialize_any(output)),
             )
 
@@ -194,91 +210,93 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
             return result_data
 
 
-@dataclass
-class BaseOutputSchema(ABC, Generic[OutputDataT]):
-    allows_deferred_tools: bool
+@dataclass(kw_only=True)
+class OutputSchema(ABC, Generic[OutputDataT]):
+    text_processor: BaseOutputProcessor[OutputDataT] | None = None
+    toolset: OutputToolset[Any] | None = None
+    object_def: OutputObjectDefinition | None = None
+    allows_deferred_tools: bool = False
+    allows_image: bool = False
 
-    @abstractmethod
-    def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
+    @property
+    def mode(self) -> OutputMode:
         raise NotImplementedError()
 
     @property
-    def toolset(self) -> OutputToolset[Any] | None:
-        """Get the toolset for this output schema."""
-        return None
-
-
-@dataclass(init=False)
-class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
-    """Model the final output from an agent run."""
-
-    @classmethod
-    @overload
-    def build(
-        cls,
-        output_spec: OutputSpec[OutputDataT],
-        *,
-        default_mode: StructuredOutputMode,
-        name: str | None = None,
-        description: str | None = None,
-        strict: bool | None = None,
-    ) -> OutputSchema[OutputDataT]: ...
-
-    @classmethod
-    @overload
-    def build(
-        cls,
-        output_spec: OutputSpec[OutputDataT],
-        *,
-        default_mode: None = None,
-        name: str | None = None,
-        description: str | None = None,
-        strict: bool | None = None,
-    ) -> BaseOutputSchema[OutputDataT]: ...
+    def allows_text(self) -> bool:
+        return self.text_processor is not None
 
     @classmethod
     def build(  # noqa: C901
         cls,
         output_spec: OutputSpec[OutputDataT],
         *,
-        default_mode: StructuredOutputMode | None = None,
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
-    ) -> BaseOutputSchema[OutputDataT]:
+    ) -> OutputSchema[OutputDataT]:
         """Build an OutputSchema dataclass from an output type."""
-        raw_outputs = _flatten_output_spec(output_spec)
+        outputs = _flatten_output_spec(output_spec)
 
-        outputs = [output for output in raw_outputs if output is not DeferredToolRequests]
-        allows_deferred_tools = len(outputs) < len(raw_outputs)
-        if len(outputs) == 0 and allows_deferred_tools:
-            raise UserError('At least one output type must be provided other than `DeferredToolRequests`.')
+        allows_deferred_tools = DeferredToolRequests in outputs
+        if allows_deferred_tools:
+            outputs = [output for output in outputs if output is not DeferredToolRequests]
+            if len(outputs) == 0:
+                raise UserError('At least one output type must be provided other than `DeferredToolRequests`.')
+
+        allows_image = _messages.BinaryImage in outputs
+        if allows_image:
+            outputs = [output for output in outputs if output is not _messages.BinaryImage]
 
         if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):
             if len(outputs) > 1:
                 raise UserError('`NativeOutput` must be the only output type.')  # pragma: no cover
 
+            flattened_outputs = _flatten_output_spec(output.outputs)
+
+            if DeferredToolRequests in flattened_outputs:
+                raise UserError(  # pragma: no cover
+                    '`NativeOutput` cannot contain `DeferredToolRequests`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), DeferredToolRequests]`'
+                )
+            if _messages.BinaryImage in flattened_outputs:
+                raise UserError(  # pragma: no cover
+                    '`NativeOutput` cannot contain `BinaryImage`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), BinaryImage]`'
+                )
+
             return NativeOutputSchema(
                 processor=cls._build_processor(
-                    _flatten_output_spec(output.outputs),
+                    flattened_outputs,
                     name=output.name,
                     description=output.description,
                     strict=output.strict,
                 ),
                 allows_deferred_tools=allows_deferred_tools,
+                allows_image=allows_image,
             )
         elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):
             if len(outputs) > 1:
                 raise UserError('`PromptedOutput` must be the only output type.')  # pragma: no cover
 
+            flattened_outputs = _flatten_output_spec(output.outputs)
+
+            if DeferredToolRequests in flattened_outputs:
+                raise UserError(  # pragma: no cover
+                    '`PromptedOutput` cannot contain `DeferredToolRequests`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), DeferredToolRequests]`'
+                )
+            if _messages.BinaryImage in flattened_outputs:
+                raise UserError(  # pragma: no cover
+                    '`PromptedOutput` cannot contain `BinaryImage`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), BinaryImage]`'
+                )
+
             return PromptedOutputSchema(
+                template=output.template,
                 processor=cls._build_processor(
-                    _flatten_output_spec(output.outputs),
+                    flattened_outputs,
                     name=output.name,
                     description=output.description,
                 ),
-                template=output.template,
                 allows_deferred_tools=allows_deferred_tools,
+                allows_image=allows_image,
             )
 
         text_outputs: Sequence[type[str] | TextOutput[OutputDataT]] = []
@@ -302,36 +320,47 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
 
         toolset = OutputToolset.build(tool_outputs + other_outputs, name=name, description=description, strict=strict)
 
+        text_processor: BaseOutputProcessor[OutputDataT] | None = None
+
         if len(text_outputs) > 0:
             if len(text_outputs) > 1:
                 raise UserError('Only one `str` or `TextOutput` is allowed.')
             text_output = text_outputs[0]
 
-            text_output_schema = None
             if isinstance(text_output, TextOutput):
-                text_output_schema = PlainTextOutputProcessor(text_output.output_function)
+                text_processor = TextFunctionOutputProcessor(text_output.output_function)
+            else:
+                text_processor = TextOutputProcessor()
 
             if toolset:
-                return ToolOrTextOutputSchema(
-                    processor=text_output_schema,
+                return ToolOutputSchema(
                     toolset=toolset,
+                    text_processor=text_processor,
                     allows_deferred_tools=allows_deferred_tools,
+                    allows_image=allows_image,
                 )
             else:
-                return PlainTextOutputSchema(processor=text_output_schema, allows_deferred_tools=allows_deferred_tools)
+                return TextOutputSchema(
+                    text_processor=text_processor,
+                    allows_deferred_tools=allows_deferred_tools,
+                    allows_image=allows_image,
+                )
 
         if len(tool_outputs) > 0:
-            return ToolOutputSchema(toolset=toolset, allows_deferred_tools=allows_deferred_tools)
+            return ToolOutputSchema(
+                toolset=toolset, allows_deferred_tools=allows_deferred_tools, allows_image=allows_image
+            )
 
         if len(other_outputs) > 0:
-            schema = OutputSchemaWithoutMode(
+            return AutoOutputSchema(
                 processor=cls._build_processor(other_outputs, name=name, description=description, strict=strict),
                 toolset=toolset,
                 allows_deferred_tools=allows_deferred_tools,
+                allows_image=allows_image,
             )
-            if default_mode:
-                schema = schema.with_default_mode(default_mode)
-            return schema
+
+        if allows_image:
+            return ImageOutputSchema(allows_deferred_tools=allows_deferred_tools)
 
         raise UserError('At least one output type must be provided.')
 
@@ -341,255 +370,160 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
-    ) -> ObjectOutputProcessor[OutputDataT] | UnionOutputProcessor[OutputDataT]:
+    ) -> BaseObjectOutputProcessor[OutputDataT]:
         outputs = _flatten_output_spec(outputs)
         if len(outputs) == 1:
             return ObjectOutputProcessor(output=outputs[0], name=name, description=description, strict=strict)
 
         return UnionOutputProcessor(outputs=outputs, strict=strict, name=name, description=description)
 
-    @property
-    @abstractmethod
-    def mode(self) -> OutputMode:
-        raise NotImplementedError()
-
-    @abstractmethod
-    def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by the model."""
-        raise NotImplementedError()
-
-    def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
-        return self
-
 
 @dataclass(init=False)
-class OutputSchemaWithoutMode(BaseOutputSchema[OutputDataT]):
-    processor: ObjectOutputProcessor[OutputDataT] | UnionOutputProcessor[OutputDataT]
-    _toolset: OutputToolset[Any] | None
+class AutoOutputSchema(OutputSchema[OutputDataT]):
+    processor: BaseObjectOutputProcessor[OutputDataT]
 
     def __init__(
         self,
-        processor: ObjectOutputProcessor[OutputDataT] | UnionOutputProcessor[OutputDataT],
+        processor: BaseObjectOutputProcessor[OutputDataT],
         toolset: OutputToolset[Any] | None,
         allows_deferred_tools: bool,
+        allows_image: bool,
     ):
-        super().__init__(allows_deferred_tools)
-        self.processor = processor
-        self._toolset = toolset
-
-    def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
-        if mode == 'native':
-            return NativeOutputSchema(processor=self.processor, allows_deferred_tools=self.allows_deferred_tools)
-        elif mode == 'prompted':
-            return PromptedOutputSchema(processor=self.processor, allows_deferred_tools=self.allows_deferred_tools)
-        elif mode == 'tool':
-            return ToolOutputSchema(toolset=self.toolset, allows_deferred_tools=self.allows_deferred_tools)
-        else:
-            assert_never(mode)
-
-    @property
-    def toolset(self) -> OutputToolset[Any] | None:
-        """Get the toolset for this output schema."""
-        # We return a toolset here as they're checked for name conflicts with other toolsets in the Agent constructor.
+        # We set a toolset here as they're checked for name conflicts with other toolsets in the Agent constructor.
         # At that point we may not know yet what output mode we're going to use if no model was provided or it was deferred until agent.run time,
         # but we cover ourselves just in case we end up using the tool output mode.
-        return self._toolset
+        super().__init__(
+            toolset=toolset,
+            object_def=processor.object_def,
+            text_processor=processor,
+            allows_deferred_tools=allows_deferred_tools,
+            allows_image=allows_image,
+        )
+        self.processor = processor
+
+    @property
+    def mode(self) -> OutputMode:
+        return 'auto'
 
 
-class TextOutputSchema(OutputSchema[OutputDataT], ABC):
-    @abstractmethod
-    async def process(
+@dataclass(init=False)
+class TextOutputSchema(OutputSchema[OutputDataT]):
+    def __init__(
         self,
-        text: str,
-        run_context: RunContext[AgentDepsT],
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
-    ) -> OutputDataT:
-        raise NotImplementedError()
-
-
-@dataclass
-class PlainTextOutputSchema(TextOutputSchema[OutputDataT]):
-    processor: PlainTextOutputProcessor[OutputDataT] | None = None
+        *,
+        text_processor: TextOutputProcessor[OutputDataT],
+        allows_deferred_tools: bool,
+        allows_image: bool,
+    ):
+        super().__init__(
+            text_processor=text_processor,
+            allows_deferred_tools=allows_deferred_tools,
+            allows_image=allows_image,
+        )
 
     @property
     def mode(self) -> OutputMode:
         return 'text'
 
-    def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by the model."""
-        pass
 
-    async def process(
-        self,
-        text: str,
-        run_context: RunContext[AgentDepsT],
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
-    ) -> OutputDataT:
-        """Validate an output message.
-
-        Args:
-            text: The output text to validate.
-            run_context: The current run context.
-            allow_partial: If true, allow partial validation.
-            wrap_validation_errors: If true, wrap the validation errors in a retry message.
-
-        Returns:
-            Either the validated output data (left) or a retry message (right).
-        """
-        if self.processor is None:
-            return cast(OutputDataT, text)
-
-        return await self.processor.process(
-            text, run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
-        )
-
-
-@dataclass
-class StructuredTextOutputSchema(TextOutputSchema[OutputDataT], ABC):
-    processor: ObjectOutputProcessor[OutputDataT] | UnionOutputProcessor[OutputDataT]
+class ImageOutputSchema(OutputSchema[OutputDataT]):
+    def __init__(self, *, allows_deferred_tools: bool):
+        super().__init__(allows_deferred_tools=allows_deferred_tools, allows_image=True)
 
     @property
-    def object_def(self) -> OutputObjectDefinition:
-        return self.processor.object_def
+    def mode(self) -> OutputMode:
+        return 'image'
 
 
-@dataclass
+@dataclass(init=False)
+class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
+    processor: BaseObjectOutputProcessor[OutputDataT]
+
+    def __init__(
+        self, *, processor: BaseObjectOutputProcessor[OutputDataT], allows_deferred_tools: bool, allows_image: bool
+    ):
+        super().__init__(
+            text_processor=processor,
+            object_def=processor.object_def,
+            allows_deferred_tools=allows_deferred_tools,
+            allows_image=allows_image,
+        )
+        self.processor = processor
+
+
 class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
     @property
     def mode(self) -> OutputMode:
         return 'native'
 
-    def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by the model."""
-        if not profile.supports_json_schema_output:
-            raise UserError('Native structured output is not supported by the model.')
 
-    async def process(
-        self,
-        text: str,
-        run_context: RunContext[AgentDepsT],
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
-    ) -> OutputDataT:
-        """Validate an output message.
-
-        Args:
-            text: The output text to validate.
-            run_context: The current run context.
-            allow_partial: If true, allow partial validation.
-            wrap_validation_errors: If true, wrap the validation errors in a retry message.
-
-        Returns:
-            Either the validated output data (left) or a retry message (right).
-        """
-        return await self.processor.process(
-            text, run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
-        )
-
-
-@dataclass
+@dataclass(init=False)
 class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
-    template: str | None = None
+    template: str | None
+
+    def __init__(
+        self,
+        *,
+        template: str | None = None,
+        processor: BaseObjectOutputProcessor[OutputDataT],
+        allows_deferred_tools: bool,
+        allows_image: bool,
+    ):
+        super().__init__(
+            processor=PromptedOutputProcessor(processor),
+            allows_deferred_tools=allows_deferred_tools,
+            allows_image=allows_image,
+        )
+        self.template = template
 
     @property
     def mode(self) -> OutputMode:
         return 'prompted'
 
-    def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by the model."""
-        pass
-
-    def instructions(self, default_template: str) -> str:
-        """Get instructions to tell model to output JSON matching the schema."""
-        template = self.template or default_template
-
-        if '{schema}' not in template:
-            template = '\n\n'.join([template, '{schema}'])
-
-        object_def = self.object_def
+    @classmethod
+    def build_instructions(cls, template: str, object_def: OutputObjectDefinition) -> str:
+        """Build instructions from a template and an object definition."""
         schema = object_def.json_schema.copy()
         if object_def.name:
             schema['title'] = object_def.name
         if object_def.description:
             schema['description'] = object_def.description
 
+        if '{schema}' not in template:
+            template = '\n\n'.join([template, '{schema}'])
+
         return template.format(schema=json.dumps(schema))
 
-    async def process(
-        self,
-        text: str,
-        run_context: RunContext[AgentDepsT],
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
-    ) -> OutputDataT:
-        """Validate an output message.
-
-        Args:
-            text: The output text to validate.
-            run_context: The current run context.
-            allow_partial: If true, allow partial validation.
-            wrap_validation_errors: If true, wrap the validation errors in a retry message.
-
-        Returns:
-            Either the validated output data (left) or a retry message (right).
-        """
-        text = _utils.strip_markdown_fences(text)
-
-        return await self.processor.process(
-            text, run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
-        )
+    def instructions(self, default_template: str) -> str:  # pragma: no cover
+        """Get instructions to tell model to output JSON matching the schema."""
+        template = self.template or default_template
+        object_def = self.object_def
+        assert object_def is not None
+        return self.build_instructions(template, object_def)
 
 
 @dataclass(init=False)
 class ToolOutputSchema(OutputSchema[OutputDataT]):
-    _toolset: OutputToolset[Any] | None
-
-    def __init__(self, toolset: OutputToolset[Any] | None, allows_deferred_tools: bool):
-        super().__init__(allows_deferred_tools)
-        self._toolset = toolset
+    def __init__(
+        self,
+        *,
+        toolset: OutputToolset[Any] | None,
+        text_processor: BaseOutputProcessor[OutputDataT] | None = None,
+        allows_deferred_tools: bool,
+        allows_image: bool,
+    ):
+        super().__init__(
+            toolset=toolset,
+            allows_deferred_tools=allows_deferred_tools,
+            text_processor=text_processor,
+            allows_image=allows_image,
+        )
 
     @property
     def mode(self) -> OutputMode:
         return 'tool'
 
-    def raise_if_unsupported(self, profile: ModelProfile) -> None:
-        """Raise an error if the mode is not supported by the model."""
-        if not profile.supports_tools:
-            raise UserError('Output tools are not supported by the model.')
 
-    @property
-    def toolset(self) -> OutputToolset[Any] | None:
-        """Get the toolset for this output schema."""
-        return self._toolset
-
-
-@dataclass(init=False)
-class ToolOrTextOutputSchema(ToolOutputSchema[OutputDataT], PlainTextOutputSchema[OutputDataT]):
-    def __init__(
-        self,
-        processor: PlainTextOutputProcessor[OutputDataT] | None,
-        toolset: OutputToolset[Any] | None,
-        allows_deferred_tools: bool,
-    ):
-        super().__init__(toolset=toolset, allows_deferred_tools=allows_deferred_tools)
-        self.processor = processor
-
-    @property
-    def mode(self) -> OutputMode:
-        return 'tool_or_text'
-
-
-@dataclass
-class OutputObjectDefinition:
-    json_schema: ObjectJsonSchema
-    name: str | None = None
-    description: str | None = None
-    strict: bool | None = None
-
-
-@dataclass(init=False)
 class BaseOutputProcessor(ABC, Generic[OutputDataT]):
     @abstractmethod
     async def process(
@@ -603,9 +537,35 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
         raise NotImplementedError()
 
 
-@dataclass(init=False)
-class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
+@dataclass(kw_only=True)
+class BaseObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
     object_def: OutputObjectDefinition
+
+
+@dataclass(init=False)
+class PromptedOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
+    wrapped: BaseObjectOutputProcessor[OutputDataT]
+
+    def __init__(self, wrapped: BaseObjectOutputProcessor[OutputDataT]):
+        self.wrapped = wrapped
+        super().__init__(object_def=wrapped.object_def)
+
+    async def process(
+        self,
+        data: str,
+        run_context: RunContext[AgentDepsT],
+        allow_partial: bool = False,
+        wrap_validation_errors: bool = True,
+    ) -> OutputDataT:
+        text = _utils.strip_markdown_fences(data)
+
+        return await self.wrapped.process(
+            text, run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
+        )
+
+
+@dataclass(init=False)
+class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     outer_typed_dict_key: str | None = None
     validator: SchemaValidator
     _function_schema: _function_schema.FunctionSchema | None = None
@@ -666,11 +626,13 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
             else:
                 description = f'{description}. {json_schema_description}'
 
-        self.object_def = OutputObjectDefinition(
-            name=name or getattr(output, '__name__', None),
-            description=description,
-            json_schema=json_schema,
-            strict=strict,
+        super().__init__(
+            object_def=OutputObjectDefinition(
+                name=name or getattr(output, '__name__', None),
+                description=description,
+                json_schema=json_schema,
+                strict=strict,
+            )
         )
 
     async def process(
@@ -719,10 +681,10 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
 
     async def call(
         self,
-        output: Any,
+        output: dict[str, Any],
         run_context: RunContext[AgentDepsT],
         wrap_validation_errors: bool = True,
-    ):
+    ) -> Any:
         if k := self.outer_typed_dict_key:
             output = output[k]
 
@@ -746,8 +708,7 @@ class UnionOutputModel:
 
 
 @dataclass(init=False)
-class UnionOutputProcessor(BaseOutputProcessor[OutputDataT]):
-    object_def: OutputObjectDefinition
+class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     _union_processor: ObjectOutputProcessor[UnionOutputModel]
     _processors: dict[str, ObjectOutputProcessor[OutputDataT]]
 
@@ -823,16 +784,18 @@ class UnionOutputProcessor(BaseOutputProcessor[OutputDataT]):
         if all_defs:
             json_schema['$defs'] = all_defs
 
-        self.object_def = OutputObjectDefinition(
-            json_schema=json_schema,
-            strict=strict,
-            name=name,
-            description=description,
+        super().__init__(
+            object_def=OutputObjectDefinition(
+                json_schema=json_schema,
+                strict=strict,
+                name=name,
+                description=description,
+            )
         )
 
     async def process(
         self,
-        data: str | dict[str, Any] | None,
+        data: str,
         run_context: RunContext[AgentDepsT],
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
@@ -843,7 +806,7 @@ class UnionOutputProcessor(BaseOutputProcessor[OutputDataT]):
 
         result = union_object.result
         kind = result.kind
-        data = result.data
+        inner_data = result.data
         try:
             processor = self._processors[kind]
         except KeyError as e:  # pragma: no cover
@@ -854,12 +817,23 @@ class UnionOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 raise
 
         return await processor.process(
-            data, run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
+            inner_data, run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
         )
 
 
+class TextOutputProcessor(BaseOutputProcessor[OutputDataT]):
+    async def process(
+        self,
+        data: str,
+        run_context: RunContext[AgentDepsT],
+        allow_partial: bool = False,
+        wrap_validation_errors: bool = True,
+    ) -> OutputDataT:
+        return cast(OutputDataT, data)
+
+
 @dataclass(init=False)
-class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
+class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
     _function_schema: _function_schema.FunctionSchema
     _str_argument_name: str
 
@@ -869,17 +843,15 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
     ):
         self._function_schema = _function_schema.function_schema(output_function, GenerateToolJsonSchema)
 
-        arguments_schema = self._function_schema.json_schema.get('properties', {})
-        argument_name = next(iter(arguments_schema.keys()), None)
-        if argument_name and arguments_schema.get(argument_name, {}).get('type') == 'string':
-            self._str_argument_name = argument_name
-            return
+        if (
+            not (arguments_schema := self._function_schema.json_schema.get('properties', {}))
+            or len(arguments_schema) != 1
+            or not (argument_name := next(iter(arguments_schema.keys()), None))
+            or arguments_schema.get(argument_name, {}).get('type') != 'string'
+        ):
+            raise UserError('TextOutput must take a function taking a single `str` argument')
 
-        raise UserError('TextOutput must take a function taking a `str`')
-
-    @property
-    def object_def(self) -> None:
-        return None  # pragma: no cover
+        self._str_argument_name = argument_name
 
     async def process(
         self,
@@ -889,9 +861,9 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
         args = {self._str_argument_name: data}
-        output = await execute_traced_output_function(self._function_schema, run_context, args, wrap_validation_errors)
+        data = await execute_traced_output_function(self._function_schema, run_context, args, wrap_validation_errors)
 
-        return cast(OutputDataT, output)
+        return await super().process(data, run_context, allow_partial, wrap_validation_errors)
 
 
 @dataclass(init=False)
@@ -946,7 +918,9 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             if name is None:
                 name = default_name
                 if multiple:
-                    name += f'_{object_def.name}'
+                    # strip unsupported characters like "[" and "]" from generic class names
+                    safe_name = OUTPUT_TOOL_NAME_SANITIZER.sub('', object_def.name or '')
+                    name += f'_{safe_name}'
 
             i = 1
             original_name = name

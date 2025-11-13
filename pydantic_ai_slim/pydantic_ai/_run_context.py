@@ -8,21 +8,27 @@ from typing import TYPE_CHECKING, Generic
 from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
 
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+
 from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
     from .models import Model
     from .result import RunUsage
 
+# TODO (v2): Change the default for all typevars like this from `None` to `object`
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 """Type variable for agent dependencies."""
 
+RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=None, covariant=True)
+"""Type variable for the agent dependencies in `RunContext`."""
+
 
 @dataclasses.dataclass(repr=False, kw_only=True)
-class RunContext(Generic[AgentDepsT]):
+class RunContext(Generic[RunContextAgentDepsT]):
     """Information about the current call."""
 
-    deps: AgentDepsT
+    deps: RunContextAgentDepsT
     """Dependencies for the agent."""
     model: Model
     """The model used in this run."""
@@ -36,6 +42,8 @@ class RunContext(Generic[AgentDepsT]):
     """The tracer to use for tracing the run."""
     trace_include_content: bool = False
     """Whether to include the content of the messages in the trace."""
+    instrumentation_version: int = DEFAULT_INSTRUMENTATION_VERSION
+    """Instrumentation settings version, if instrumentation is enabled."""
     retries: dict[str, int] = field(default_factory=dict)
     """Number of retries for each tool so far."""
     tool_call_id: str | None = None
@@ -50,6 +58,10 @@ class RunContext(Generic[AgentDepsT]):
     """The current step in the run."""
     tool_call_approved: bool = False
     """Whether a tool call that required approval has now been approved."""
+    partial_output: bool = False
+    """Whether the output passed to an output validator is partial."""
+    run_id: str | None = None
+    """"Unique identifier for the agent run."""
 
     @property
     def last_attempt(self) -> bool:

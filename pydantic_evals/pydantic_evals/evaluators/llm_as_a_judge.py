@@ -7,8 +7,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 from pydantic_core import to_json
 
-from pydantic_ai import Agent, models
-from pydantic_ai.messages import MultiModalContent, UserContent
+from pydantic_ai import Agent, MultiModalContent, UserContent, models
 from pydantic_ai.settings import ModelSettings
 
 __all__ = (
@@ -202,7 +201,7 @@ async def judge_output_expected(
     ).output
 
 
-def set_default_judge_model(model: models.Model | models.KnownModelName) -> None:  # pragma: no cover
+def set_default_judge_model(model: models.Model | models.KnownModelName) -> None:
     """Set the default model used for judging.
 
     This model is used if `None` is passed to the `model` argument of `judge_output` and `judge_input_output`.
