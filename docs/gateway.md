@@ -1,3 +1,8 @@
+---
+title: Pydantic AI Gateway
+status: new
+---
+
 # Pydantic AI Gateway
 
 **Pydantic AI Gateway** (PAIG) is a unified interface for accessing multiple AI providers with a single key. Features include built-in OpenTelemetry observability, real-time cost monitoring, failover management, and native integration with the Pydantic stack.
