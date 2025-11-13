@@ -60,7 +60,7 @@ There are two ways to use Providers in the Pydantic AI Gateway: you can bring yo
 On the [Providers](https://gateway.pydantic.dev/admin/providers) page, fill in the form to add a provider. Paste your API key into the form under Credentials, and make sure to **select the Project that will be associated to this provider**. It is possible to add multiple keys from the same provider.
 
 ### Use Built-in Providers
-On the top of the dashboard page, click in the 'Add billing details' button, and put in your credit card details to enable the built-in providers. This will allow you to buy inference through the available providers.
+Go to the Billing page, add a payment method, and purchase $15 in credits to activate built-in providers. This gives you single-key access to all available models from OpenAI, Anthropic, Google Vertex, AWS Bedrock, and Groq.
 
 ## Grant access to your team
 On the [Users](https://gateway.pydantic.dev/admin/users) page, create an invitation and share the URL with your team to allow them to access the project.
