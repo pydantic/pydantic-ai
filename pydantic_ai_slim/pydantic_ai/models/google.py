@@ -5,10 +5,10 @@ from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any, Literal, TypedDict, cast, overload
+from typing import Any, Literal, cast, overload
 from uuid import uuid4
 
-from typing_extensions import assert_never
+from typing_extensions import TypedDict, assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
@@ -91,11 +91,14 @@ except ImportError as _import_error:
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
 
+
 # FileSearchDict will be available in future google-genai versions
 # For now, we define it ourselves to match the expected structure
 class FileSearchDict(TypedDict, total=False):
     """Configuration for file search tool in Google Gemini."""
+
     file_search_store_names: list[str]
+
 
 LatestGoogleModelNames = Literal[
     'gemini-2.0-flash',
@@ -350,7 +353,7 @@ class GoogleModel(Model):
                     tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
                 elif isinstance(tool, FileSearchTool):
                     file_search_config = FileSearchDict(file_search_store_names=tool.vector_store_ids)
-                    tools.append(ToolDict(file_search=file_search_config))
+                    tools.append(ToolDict(file_search=file_search_config))  # type: ignore[call-arg]
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                     if not self.profile.supports_image_output:
                         raise UserError(
@@ -1002,7 +1005,11 @@ def _map_file_search_grounding_metadata(
                 provider_name=provider_name,
                 tool_name=FileSearchTool.kind,
                 tool_call_id=tool_call_id,
-                content=[chunk.retrieved_context.model_dump(mode='json') for chunk in grounding_chunks if chunk.retrieved_context]
+                content=[
+                    chunk.retrieved_context.model_dump(mode='json')
+                    for chunk in grounding_chunks
+                    if chunk.retrieved_context
+                ]
                 if (grounding_chunks := grounding_metadata.grounding_chunks)
                 else None,
             ),

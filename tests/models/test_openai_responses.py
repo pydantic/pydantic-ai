@@ -15,7 +15,6 @@ from pydantic_ai import (
     BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
-    FileSearchTool,
     FinalResultEvent,
     ImageGenerationTool,
     ImageUrl,
@@ -7305,145 +7304,15 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
     )
 
 
-@pytest.mark.skip(reason='Requires vector store setup - will record cassette when ready')
-async def test_openai_responses_model_file_search_tool(allow_model_requests: None, openai_api_key: str):
-    """Test FileSearchTool with OpenAI Responses model."""
-    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[FileSearchTool(vector_store_ids=['vs_test123'])])
-
-    result = await agent.run('What information is in the uploaded document?')
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='What information is in the uploaded document?',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                instructions='You are a helpful assistant.',
-            ),
-            ModelResponse(
-                parts=[
-                    BuiltinToolCallPart(
-                        tool_name='file_search',
-                        args={'queries': IsInstance(list)},
-                        tool_call_id=IsStr(),
-                        provider_name='openai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='file_search',
-                        content={
-                            'status': IsStr(),
-                            'results': IsInstance(list),
-                        },
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
-                    TextPart(
-                        content=IsStr(),
-                        id=IsStr(),
-                    ),
-                ],
-                usage=RequestUsage(
-                    input_tokens=IsInt(),
-                    output_tokens=IsInt(),
-                ),
-                model_name=IsStr(),
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_details={'finish_reason': IsStr()},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-            ),
-        ]
-    )
-
-    # Verify message history can be passed back
-    messages = result.all_messages()
-    result = await agent.run(user_prompt='Tell me more', message_history=messages)
-    assert len(result.new_messages()) == 2
-
-
-@pytest.mark.skip(reason='Requires vector store setup - will record cassette when ready')
-async def test_openai_responses_model_file_search_tool_stream(allow_model_requests: None, openai_api_key: str):
-    """Test FileSearchTool streaming with OpenAI Responses model."""
-    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(
-        m,
-        instructions='You are a helpful assistant.',
-        builtin_tools=[FileSearchTool(vector_store_ids=['vs_test123'])],
-    )
-
-    event_parts: list[Any] = []
-    async with agent.iter(user_prompt='What information is in the uploaded document?') as agent_run:
-        async for node in agent_run:
-            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
-                async with node.stream(agent_run.ctx) as request_stream:
-                    async for event in request_stream:
-                        event_parts.append(event)
-
-    assert agent_run.result is not None
-    messages = agent_run.result.all_messages()
-    assert messages == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='What information is in the uploaded document?',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                instructions='You are a helpful assistant.',
-            ),
-            ModelResponse(
-                parts=[
-                    BuiltinToolCallPart(
-                        tool_name='file_search',
-                        args={'queries': IsInstance(list)},
-                        tool_call_id=IsStr(),
-                        provider_name='openai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='file_search',
-                        content={
-                            'status': IsStr(),
-                            'results': IsInstance(list),
-                        },
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
-                    TextPart(
-                        content=IsStr(),
-                        id=IsStr(),
-                    ),
-                ],
-                usage=RequestUsage(
-                    input_tokens=IsInt(),
-                    output_tokens=IsInt(),
-                ),
-                model_name=IsStr(),
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_details={'finish_reason': IsStr()},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-            ),
-        ]
-    )
-
-    # Verify streaming events include file search parts
-    assert len(event_parts) > 0
-    builtin_tool_parts = [e for e in event_parts if hasattr(e, 'part') and isinstance(e.part, (BuiltinToolCallPart, BuiltinToolReturnPart))]
-    assert len(builtin_tool_parts) > 0
+# Integration tests for FileSearchTool require vector store setup and cassette recording.
+# Unit tests below validate the parsing logic.
 
 
 def test_map_file_search_tool_call():
     """Test that _map_file_search_tool_call correctly creates builtin tool parts."""
-    from pydantic_ai.models.openai import _map_file_search_tool_call
     from openai.types.responses import ResponseFileSearchToolCall
+
+    from pydantic_ai.models.openai import _map_file_search_tool_call  # type: ignore[reportPrivateUsage]
 
     # Create a mock ResponseFileSearchToolCall
     file_search_call = ResponseFileSearchToolCall(
@@ -7453,14 +7322,14 @@ def test_map_file_search_tool_call():
         queries=['test query 1', 'test query 2'],
         results=None,
     )
-    
+
     call_part, return_part = _map_file_search_tool_call(file_search_call, 'openai')
-    
+
     assert call_part.tool_name == 'file_search'
     assert call_part.args == {'queries': ['test query 1', 'test query 2']}
     assert call_part.tool_call_id == 'fs_test123'
     assert call_part.provider_name == 'openai'
-    
+
     assert return_part.tool_name == 'file_search'
     assert return_part.tool_call_id == 'fs_test123'
     assert return_part.provider_name == 'openai'
@@ -7469,8 +7338,9 @@ def test_map_file_search_tool_call():
 
 def test_map_file_search_tool_call_queries_structure():
     """Test that _map_file_search_tool_call correctly structures queries and results."""
-    from pydantic_ai.models.openai import _map_file_search_tool_call
     from openai.types.responses import ResponseFileSearchToolCall
+
+    from pydantic_ai.models.openai import _map_file_search_tool_call  # type: ignore[reportPrivateUsage]
 
     # Create a mock with empty queries list
     file_search_call = ResponseFileSearchToolCall(
@@ -7480,9 +7350,9 @@ def test_map_file_search_tool_call_queries_structure():
         queries=[],
         results=None,
     )
-    
+
     call_part, return_part = _map_file_search_tool_call(file_search_call, 'openai')
-    
+
     assert call_part.args == {'queries': []}
     assert return_part.content == {'status': 'in_progress'}
     assert call_part.tool_call_id == return_part.tool_call_id
