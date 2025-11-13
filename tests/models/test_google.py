@@ -3203,9 +3203,8 @@ def _generate_response_with_texts(response_id: str, texts: list[str]) -> Generat
     )
 
 
-# Integration tests for FileSearchTool are skipped because google-genai SDK v1.46.0
-# does not support file_search as a tool type yet. The code is ready for when SDK adds support.
-# Unit tests below validate the parsing logic.
+# Unit tests below validate the FileSearchTool parsing logic.
+# Integration tests require setting up file search stores via the Google API.
 
 
 def test_map_file_search_grounding_metadata():
