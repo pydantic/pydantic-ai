@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from inline_snapshot import snapshot
+from inline_snapshot.extra import raises
+from pydantic import AnyUrl
 
 from pydantic_ai import (
     BinaryContent,
@@ -1537,6 +1539,71 @@ def test_load_mcp_servers(tmp_path: Path):
 
     with pytest.raises(FileNotFoundError):
         load_mcp_servers(tmp_path / 'does_not_exist.json')
+
+
+async def test_mcp_server_access_client(mcp_server: MCPServerStdio):
+    with raises(
+        snapshot(
+            'AttributeError: The `MCPServerStdio.client` is only instantiated when entering the async context manager.'
+        )
+    ):
+        mcp_server.client
+
+    async with mcp_server:
+        resources = await mcp_server.client.list_resources()
+        assert resources.model_dump() == snapshot(
+            {
+                'meta': None,
+                'nextCursor': None,
+                'resources': [
+                    {
+                        'name': 'kiwi_resource',
+                        'title': None,
+                        'uri': AnyUrl('resource://kiwi.png'),
+                        'description': '',
+                        'mimeType': 'image/png',
+                        'size': None,
+                        'annotations': None,
+                        'meta': None,
+                    },
+                    {
+                        'name': 'marcelo_resource',
+                        'title': None,
+                        'uri': AnyUrl('resource://marcelo.mp3'),
+                        'description': '',
+                        'mimeType': 'audio/mpeg',
+                        'size': None,
+                        'annotations': None,
+                        'meta': None,
+                    },
+                    {
+                        'name': 'product_name_resource',
+                        'title': None,
+                        'uri': AnyUrl('resource://product_name.txt'),
+                        'description': '',
+                        'mimeType': 'text/plain',
+                        'size': None,
+                        'annotations': None,
+                        'meta': None,
+                    },
+                ],
+            }
+        )
+
+        resource = await mcp_server.client.read_resource(AnyUrl('resource://product_name.txt'))
+        assert resource.model_dump() == snapshot(
+            {
+                'meta': None,
+                'contents': [
+                    {
+                        'uri': AnyUrl('resource://product_name.txt'),
+                        'mimeType': 'text/plain',
+                        'meta': None,
+                        'text': 'Pydantic AI\n',
+                    }
+                ],
+            }
+        )
 
 
 async def test_server_info(mcp_server: MCPServerStdio) -> None:

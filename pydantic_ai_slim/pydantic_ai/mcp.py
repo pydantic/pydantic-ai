@@ -315,7 +315,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             if self._running_count == 0:
                 async with AsyncExitStack() as exit_stack:
                     self._read_stream, self._write_stream = await exit_stack.enter_async_context(self.client_streams())
-                    client = ClientSession(
+                    self._client = ClientSession(
                         read_stream=self._read_stream,
                         write_stream=self._write_stream,
                         sampling_callback=self._sampling_callback if self.allow_sampling else None,
@@ -323,7 +323,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                         logging_callback=self.log_handler,
                         read_timeout_seconds=timedelta(seconds=self.read_timeout),
                     )
-                    self._client = await exit_stack.enter_async_context(client)
+                    self._client = await exit_stack.enter_async_context(self._client)
 
                     with anyio.fail_after(self.timeout):
                         result = await self._client.initialize()
@@ -334,6 +334,15 @@ class MCPServer(AbstractToolset[Any], ABC):
                     self._exit_stack = exit_stack.pop_all()
             self._running_count += 1
         return self
+
+    @property
+    def client(self) -> ClientSession:
+        """Access the underlying `ClientSession`."""
+        if getattr(self, '_client', None) is None:
+            raise AttributeError(
+                f'The `{self.__class__.__name__}.client` is only instantiated when entering the async context manager.'
+            )
+        return self._client
 
     async def __aexit__(self, *args: Any) -> bool | None:
         if self._running_count == 0:
