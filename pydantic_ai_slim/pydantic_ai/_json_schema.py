@@ -144,10 +144,6 @@ class JsonSchemaTransformer(ABC):
 
         handled = [self._handle(member) for member in members]
 
-        if len(handled) == 1:
-            # In this case, no need to retain the union
-            return handled[0] | schema
-
         # If we have keys besides the union kind (such as title or discriminator), keep them without modifications
         schema = schema.copy()
         schema[union_kind] = handled
