@@ -103,6 +103,13 @@ KnownModelName = TypeAliasType(
         'bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
         'bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
         'bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
+        'bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
+        'bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
+        'bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0',
+        'bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
         'bedrock:cohere.command-text-v14',
         'bedrock:cohere.command-r-v1:0',
         'bedrock:cohere.command-r-plus-v1:0',
@@ -773,9 +780,10 @@ def infer_model(  # noqa: C901
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
-        from ..providers.gateway import infer_gateway_model
+        from ..providers.gateway import normalize_gateway_provider
 
-        return infer_gateway_model(model_kind.removeprefix('gateway/'), model_name=model_name)
+        model_kind = provider_name.removeprefix('gateway/')
+        model_kind = normalize_gateway_provider(model_kind)
     if model_kind in (
         'openai',
         'azure',
