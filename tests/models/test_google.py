@@ -3123,13 +3123,162 @@ def _generate_response_with_texts(response_id: str, texts: list[str]) -> Generat
     )
 
 
+@pytest.mark.skip(reason='google-genai SDK does not support file_search tool type yet (version 1.46.0). Code is ready for when SDK adds support.')
 async def test_google_model_file_search_tool(allow_model_requests: None, google_provider: GoogleProvider):
-    """Test that FileSearchTool can be configured with Google models."""
+    """Test FileSearchTool with Google models using grounding_metadata."""
     m = GoogleModel('gemini-2.5-pro', provider=google_provider)
-    agent = Agent(
-        m,
-        builtin_tools=[FileSearchTool(vector_store_ids=['files/test123'])],
+    agent = Agent(m, system_prompt='You are a helpful assistant.', builtin_tools=[FileSearchTool(vector_store_ids=['files/test_doc_123'])])
+
+    result = await agent.run('What information is in the uploaded document?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful assistant.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='What information is in the uploaded document?',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='file_search',
+                        args={'queries': ['information uploaded document']},
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='file_search',
+                        content=[
+                            {
+                                'title': 'Document Title',
+                                'uri': 'https://example.com/document.pdf',
+                            }
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=IsInt(),
+                    output_tokens=IsInt(),
+                ),
+                model_name='gemini-2.5-pro',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+            ),
+        ]
     )
 
-    # Just verify the agent initializes properly
-    assert agent is not None
+
+@pytest.mark.skip(reason='google-genai SDK does not support file_search tool type yet (version 1.46.0). Code is ready for when SDK adds support.')
+async def test_google_model_file_search_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):
+    """Test FileSearchTool streaming with Google models."""
+    m = GoogleModel('gemini-2.5-pro', provider=google_provider)
+    agent = Agent(m, system_prompt='You are a helpful assistant.', builtin_tools=[FileSearchTool(vector_store_ids=['files/test_doc_123'])])
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='What information is in the uploaded document?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    messages = agent_run.result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful assistant.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='What information is in the uploaded document?',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=IsInt(),
+                    output_tokens=IsInt(),
+                ),
+                model_name='gemini-2.5-pro',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    # Verify streaming events include file search parts
+    assert len(event_parts) > 0
+
+
+def test_map_file_search_grounding_metadata():
+    """Test that _map_file_search_grounding_metadata correctly creates builtin tool parts."""
+    from pydantic_ai.models.google import _map_file_search_grounding_metadata
+    from google.genai.types import GroundingMetadata
+
+    # Test with retrieval queries
+    grounding_metadata = GroundingMetadata(
+        retrieval_queries=['test query 1', 'test query 2'],
+        grounding_chunks=[],
+    )
+    
+    call_part, return_part = _map_file_search_grounding_metadata(grounding_metadata, 'google-gla')
+    
+    assert call_part is not None
+    assert return_part is not None
+    assert call_part.tool_name == 'file_search'
+    assert call_part.args == {'queries': ['test query 1', 'test query 2']}
+    assert call_part.provider_name == 'google-gla'
+    assert call_part.tool_call_id == return_part.tool_call_id
+    assert return_part.tool_name == 'file_search'
+    assert return_part.provider_name == 'google-gla'
+
+
+def test_map_file_search_grounding_metadata_no_queries():
+    """Test that _map_file_search_grounding_metadata returns None when no retrieval queries."""
+    from pydantic_ai.models.google import _map_file_search_grounding_metadata
+    from google.genai.types import GroundingMetadata
+
+    # Test with no retrieval queries
+    grounding_metadata = GroundingMetadata(grounding_chunks=[])
+    
+    call_part, return_part = _map_file_search_grounding_metadata(grounding_metadata, 'google-gla')
+    
+    assert call_part is None
+    assert return_part is None
+
+
+def test_map_file_search_grounding_metadata_none():
+    """Test that _map_file_search_grounding_metadata handles None metadata."""
+    from pydantic_ai.models.google import _map_file_search_grounding_metadata
+    
+    call_part, return_part = _map_file_search_grounding_metadata(None, 'google-gla')
+    
+    assert call_part is None
+    assert return_part is None
