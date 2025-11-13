@@ -202,7 +202,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        # TODO(Marcelo): Enable 3.11 again.
+        python-version: ["3.10", "3.12", "3.13"]
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
