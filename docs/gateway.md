@@ -12,7 +12,7 @@ status: new
 
 Sign up at [gateway.pydantic.dev](https://gateway.pydantic.dev/).
 
-!!! question
+!!! question "Questions?"
     For questions and feedback, contact us on [Slack](https://logfire.pydantic.dev/docs/join-slack/).
 
 ## Documentation Integration
