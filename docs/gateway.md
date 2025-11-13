@@ -5,7 +5,7 @@ status: new
 
 # Pydantic AI Gateway
 
-**[Pydantic AI Gateway](https://pydantic.dev/gateway)** (PAIG) is a unified interface for accessing multiple AI providers with a single key. Features include built-in OpenTelemetry observability, real-time cost monitoring, failover management, and native integration with the other tools in the [Pydantic stack](https://pydantic.dev/).
+**[Pydantic AI Gateway](https://pydantic.dev/ai-gateway)** (PAIG) is a unified interface for accessing multiple AI providers with a single key. Features include built-in OpenTelemetry observability, real-time cost monitoring, failover management, and native integration with the other tools in the [Pydantic stack](https://pydantic.dev/).
 
 !!! note "Free while in Beta"
     The Pydantic AI Gateway is currently in Beta. You can bring your own key (BYOK) or buy inference through the Gateway (we will eat the card fee for now).
