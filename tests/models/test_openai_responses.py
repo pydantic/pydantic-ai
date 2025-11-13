@@ -7436,6 +7436,7 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
     )
 
 
+@pytest.mark.vcr()
 async def test_openai_responses_model_file_search_tool(allow_model_requests: None, openai_api_key: str):
     """Integration test for FileSearchTool with OpenAI."""
     from openai import AsyncOpenAI
@@ -7477,6 +7478,7 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
         await async_client.close()
 
 
+@pytest.mark.vcr()
 async def test_openai_responses_model_file_search_tool_stream(allow_model_requests: None, openai_api_key: str):
     """Integration test for FileSearchTool streaming with OpenAI."""
     from openai import AsyncOpenAI

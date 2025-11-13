@@ -3203,6 +3203,7 @@ def _generate_response_with_texts(response_id: str, texts: list[str]) -> Generat
     )
 
 
+@pytest.mark.vcr()
 async def test_google_model_file_search_tool(allow_model_requests: None, google_provider: GoogleProvider):
     """Integration test for FileSearchTool with Google."""
     from pydantic_ai.builtin_tools import FileSearchTool
@@ -3243,6 +3244,7 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
             await client.aio.file_search_stores.delete(name=store.name)
 
 
+@pytest.mark.vcr()
 async def test_google_model_file_search_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):
     """Integration test for FileSearchTool streaming with Google."""
     from pydantic_ai.builtin_tools import FileSearchTool
