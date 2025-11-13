@@ -87,7 +87,8 @@ print(dice_result.all_messages())
                 content='My guess is 4',
                 timestamp=datetime.datetime(...),
             ),
-        ]
+        ],
+        run_id='...',
     ),
     ModelResponse(
         parts=[
@@ -98,6 +99,7 @@ print(dice_result.all_messages())
         usage=RequestUsage(input_tokens=90, output_tokens=2),
         model_name='gemini-2.5-flash',
         timestamp=datetime.datetime(...),
+        run_id='...',
     ),
     ModelRequest(
         parts=[
@@ -107,7 +109,8 @@ print(dice_result.all_messages())
                 tool_call_id='pyd_ai_tool_call_id',
                 timestamp=datetime.datetime(...),
             )
-        ]
+        ],
+        run_id='...',
     ),
     ModelResponse(
         parts=[
@@ -118,6 +121,7 @@ print(dice_result.all_messages())
         usage=RequestUsage(input_tokens=91, output_tokens=4),
         model_name='gemini-2.5-flash',
         timestamp=datetime.datetime(...),
+        run_id='...',
     ),
     ModelRequest(
         parts=[
@@ -127,7 +131,8 @@ print(dice_result.all_messages())
                 tool_call_id='pyd_ai_tool_call_id',
                 timestamp=datetime.datetime(...),
             )
-        ]
+        ],
+        run_id='...',
     ),
     ModelResponse(
         parts=[
@@ -138,6 +143,7 @@ print(dice_result.all_messages())
         usage=RequestUsage(input_tokens=92, output_tokens=12),
         model_name='gemini-2.5-flash',
         timestamp=datetime.datetime(...),
+        run_id='...',
     ),
 ]
 """
