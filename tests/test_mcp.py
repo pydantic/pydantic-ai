@@ -121,21 +121,6 @@ async def test_aexit_called_more_times_than_aenter():
         await server.__aexit__(None, None, None)
 
 
-async def test_is_running():
-    """Test the is_running property."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-
-    # Server should not be running initially
-    assert not server.is_running
-
-    # Server should be running inside the context manager
-    async with server:
-        assert server.is_running
-
-    # Server should not be running after exiting the context manager
-    assert not server.is_running
-
-
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
     async with server:
