@@ -222,18 +222,10 @@ async def test_sync_request_text_response(allow_model_requests: None):
     )
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse(
-                parts=[TextPart(content='world')],
-                usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
-                model_name='claude-3-5-haiku-123',
-                timestamp=IsNow(tz=timezone.utc),
-                provider_name='anthropic',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='123',
-                finish_reason='stop',
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
             ),
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
@@ -243,6 +235,22 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
+                model_name='claude-3-5-haiku-123',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -318,7 +326,10 @@ async def test_request_structured_response(allow_model_requests: None):
     assert result.output == [1, 2, 3]
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -334,6 +345,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -343,7 +355,8 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -384,7 +397,8 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[
                     SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc)),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -401,6 +415,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -410,7 +425,8 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -427,6 +443,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -436,7 +453,8 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -447,6 +465,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -788,7 +807,8 @@ async def test_image_as_binary_content_tool_response(
                         content=['What fruit is in the image you can get from the get_image tool?'],
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -811,6 +831,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_01Kwjzggomz7bv9og51qGFuH',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -827,7 +848,8 @@ async def test_image_as_binary_content_tool_response(
                         ],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -851,6 +873,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_015btMBYLTuDnMP7zAeuHQGi',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -956,6 +979,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
@@ -975,6 +999,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01Fg1JVgvCYUHWsxrj9GkpEv',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -988,7 +1013,10 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ThinkingPart(
@@ -1026,6 +1054,7 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01BnZvs3naGorn93wjjCDwbd',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1042,7 +1071,8 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1081,6 +1111,7 @@ I'll keep the format similar to my street-crossing response for consistency.\
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1102,7 +1133,8 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1130,6 +1162,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01TbZ1ZKNMPq28AgBLyLX3c4',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1146,7 +1179,8 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         content='What was that?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1174,6 +1208,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_012oSSVsQdwoGH6b2fryM4fF',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1203,7 +1238,8 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                         content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1237,6 +1273,7 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_018XZkwvj9asBiffg3fXt88s',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1344,7 +1381,8 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1383,6 +1421,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c1fda6f11081a1b9fa80ae9122743506da9901a3d98ab7',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1404,7 +1443,8 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1431,6 +1471,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_016e2w8nkCuArd5HFSfEwke7',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1458,7 +1499,8 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1485,6 +1527,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01PiJ6i3vjEZjHxojahi2YNc',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1866,7 +1909,8 @@ async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_a
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='What is the weather in San Francisco today?', timestamp=IsDatetime())]
+                parts=[UserPromptPart(content='What is the weather in San Francisco today?', timestamp=IsDatetime())],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2058,6 +2102,7 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_0119wM5YxCLg3hwUWrxEQ9Y8',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2072,7 +2117,8 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                         content='how about Mexico City?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2255,6 +2301,7 @@ Mexico City is experiencing typical rainy season weather with moderate temperatu
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01Vatv9GeGaeqVHfSGhkU7mo',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2283,7 +2330,8 @@ async def test_anthropic_model_web_search_tool_stream(allow_model_requests: None
                         content='What is the weather in San Francisco today?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2536,6 +2584,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01QmxBSdEbD9ZeBWDVgFDoQ5',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3329,7 +3378,8 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                         content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3397,6 +3447,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01MYDjkvBDRaKsY6PDwQz3n6',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3411,7 +3462,8 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                         content='How about the pydantic repo in the same org?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3530,6 +3582,7 @@ Pydantic ensures runtime data integrity through type hints and is foundational t
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01DSGib8F7nNoYprfYSGp1sd',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3574,7 +3627,8 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                         content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3637,6 +3691,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01Xf6SmUVY1mDrSwFc5RsY3n',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3836,6 +3891,7 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
             ModelRequest(
                 parts=[UserPromptPart(content='How much is 3 * 12390?', timestamp=IsDatetime())],
                 instructions='Always use the code execution tool for math.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3886,6 +3942,7 @@ print(f"3 * 12390 = {result}")\
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_018bVTPr9khzuds31rFDuqW4',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3901,6 +3958,7 @@ print(f"3 * 12390 = {result}")\
                     )
                 ],
                 instructions='Always use the code execution tool for math.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3951,6 +4009,7 @@ print(f"4 * 12390 = {result}")\
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01VngRFBcNddwrYQoKUmdePY',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3978,7 +4037,8 @@ async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, 
                         content='what is 65465-6544 * 65464-6+1.02255',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4058,6 +4118,7 @@ Here's how it breaks down following the order of operations:
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01TaPV5KLA8MsCPDuJNKPLF4',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -4573,7 +4634,10 @@ It's being celebrated as:
     result = await agent.run('What day is tomorrow?', model=openai_model, message_history=result.all_messages())
     assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     TextPart(
@@ -4588,6 +4652,7 @@ It's being celebrated as:
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_689dc4abe31c81968ed493d15d8810fe0afe80ec3d42722e',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -4684,7 +4749,8 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4706,6 +4772,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_012TXW181edhmR5JCsQRsBKx',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -4715,7 +4782,8 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         tool_call_id='toolu_01X9wcHKKAZD9tBC711xipPa',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4741,6 +4809,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_01K4Fzcf1bhiyLzHpwLdrefj',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -4750,7 +4819,8 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         tool_call_id='toolu_01LZABsgreMefH2Go8D5PQbW',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -4783,7 +4853,8 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                         content='What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4808,6 +4879,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_01MsqUB7ZyhjGkvepS1tCXp3',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -4817,7 +4889,8 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                         tool_call_id='toolu_01JJ8TequDsrEU2pv1QFRWAK',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4841,6 +4914,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_0142umg4diSckrDtV9vAmmPL',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -4872,7 +4946,8 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                         content='What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4894,6 +4969,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_018YiNXULHGpoKoHkTt6GivG',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -4903,7 +4979,8 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                         tool_call_id='toolu_01ArHq5f2wxRpRF2PVQcKExM',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -4923,6 +5000,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01WiRVmLhCrJbJZRqmAWKv3X',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -4952,7 +5030,8 @@ async def test_anthropic_prompted_output_multiple(allow_model_requests: None, an
                         content='What is the largest city in Mexico?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4976,6 +5055,7 @@ async def test_anthropic_prompted_output_multiple(allow_model_requests: None, an
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01N2PwwVQo2aBtt6UFhMDtEX',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )

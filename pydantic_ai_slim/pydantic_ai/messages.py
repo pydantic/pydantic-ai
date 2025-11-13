@@ -776,10 +776,11 @@ class BaseToolReturnPart:
     def model_response_object(self) -> dict[str, Any]:
         """Return a dictionary representation of the content, wrapping non-dict types appropriately."""
         # gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict
-        if isinstance(self.content, dict):
-            return tool_return_ta.dump_python(self.content, mode='json')  # pyright: ignore[reportUnknownMemberType]
+        json_content = tool_return_ta.dump_python(self.content, mode='json')
+        if isinstance(json_content, dict):
+            return json_content  # type: ignore[reportUnknownReturn]
         else:
-            return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
+            return {'return_value': json_content}
 
     def otel_event(self, settings: InstrumentationSettings) -> Event:
         return Event(
@@ -946,6 +947,9 @@ class ModelRequest:
 
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
+
+    run_id: str | None = None
+    """The unique identifier of the agent run in which this message originated."""
 
     @classmethod
     def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
@@ -1187,6 +1191,9 @@ class ModelResponse:
 
     finish_reason: FinishReason | None = None
     """Reason the model finished generating the response, normalized to OpenTelemetry values."""
+
+    run_id: str | None = None
+    """The unique identifier of the agent run in which this message originated."""
 
     @property
     def text(self) -> str | None:

@@ -44,6 +44,9 @@ class ModelRetry(Exception):
     def __eq__(self, other: Any) -> bool:
         return isinstance(other, self.__class__) and other.message == self.message
 
+    def __hash__(self) -> int:
+        return hash((self.__class__, self.message))
+
     @classmethod
     def __get_pydantic_core_schema__(cls, _: Any, __: Any) -> core_schema.CoreSchema:
         """Pydantic core schema to allow `ModelRetry` to be (de)serialized."""
