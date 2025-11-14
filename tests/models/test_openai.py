@@ -634,7 +634,7 @@ async def test_stream_with_embedded_thinking_sets_metadata(allow_model_requests:
     # Verify ThinkingPart has id='content' and provider_name='openai' (covers lines 1748-1749)
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='', timestamp=IsDatetime())]),
+            ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
                     ThinkingPart(content='reasoning', id='content', provider_name='openai'),
@@ -642,7 +642,7 @@ async def test_stream_with_embedded_thinking_sets_metadata(allow_model_requests:
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='gpt-4o-123',
-                timestamp=IsDatetime(),
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='openai',
                 provider_response_id='123',
             ),
