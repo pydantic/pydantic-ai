@@ -552,3 +552,52 @@ def test_handle_part():
     event = manager.handle_part(vendor_part_id=None, part=part3)
     assert event == snapshot(PartStartEvent(index=1, part=part3))
     assert manager.get_parts() == snapshot([part2, part3])
+
+
+def test_handle_thinking_delta_when_latest_is_not_thinking():
+    """Test that handle_thinking_delta creates new part when latest part is not ThinkingPart."""
+    manager = ModelResponsePartsManager()
+
+    # Create TextPart first
+    list(manager.handle_text_delta(vendor_part_id='content', content='text'))
+
+    # Call handle_thinking_delta with vendor_part_id=None
+    # Should create NEW ThinkingPart instead of trying to update TextPart
+    event = next(manager.handle_thinking_delta(vendor_part_id=None, content='thinking'))
+
+    assert event == snapshot(PartStartEvent(index=1, part=ThinkingPart(content='thinking')))
+    assert manager.get_parts() == snapshot([TextPart(content='text'), ThinkingPart(content='thinking')])
+
+
+def test_handle_tool_call_delta_when_latest_is_not_tool_call():
+    """Test that handle_tool_call_delta creates new part when latest part is not a tool call."""
+    manager = ModelResponsePartsManager()
+
+    # Create TextPart first
+    list(manager.handle_text_delta(vendor_part_id='content', content='text'))
+
+    # Call handle_tool_call_delta with vendor_part_id=None
+    # Should create NEW ToolCallPart instead of trying to update TextPart
+    event = manager.handle_tool_call_delta(vendor_part_id=None, tool_name='my_tool')
+
+    assert event == snapshot(PartStartEvent(index=1, part=ToolCallPart(tool_name='my_tool', tool_call_id=IsStr())))
+    assert manager.get_parts() == snapshot(
+        [TextPart(content='text'), ToolCallPart(tool_name='my_tool', tool_call_id=IsStr())]
+    )
+
+
+def test_handle_tool_call_delta_without_tool_name_when_latest_is_not_tool_call():
+    """Test handle_tool_call_delta with vendor_part_id=None and tool_name=None when latest is not a tool call."""
+    manager = ModelResponsePartsManager()
+
+    # Create TextPart first
+    list(manager.handle_text_delta(vendor_part_id='content', content='text'))
+
+    # Call handle_tool_call_delta with BOTH vendor_part_id=None AND tool_name=None
+    # Latest part is TextPart (not a tool call), so should create new ToolCallPartDelta
+    event = manager.handle_tool_call_delta(vendor_part_id=None, tool_name=None, args='{"foo": "bar"}')
+
+    # Since no tool_name provided, no event is emitted until we have enough info
+    assert event == snapshot(None)
+    # But a ToolCallPartDelta should not be in get_parts() (only complete parts)
+    assert manager.get_parts() == snapshot([TextPart(content='text')])

@@ -1,4 +1,7 @@
-"""This is the version of the tests that test the parts manager than handles embedded thinking regardless of vendor part IDs."""
+"""This file tests the "embedded thinking handling" functionality of the Parts Manager (_parts_manager.py).
+
+It tests each case with both vendor_part_id='content' and vendor_part_id=None to ensure consistent behavior.
+"""
 
 from __future__ import annotations as _annotations
 
@@ -6,8 +9,16 @@ from collections.abc import Hashable, Sequence
 from dataclasses import dataclass, field
 
 import pytest
+from inline_snapshot import snapshot
 
-from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart, ThinkingPartDelta
+from pydantic_ai import (
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
+)
 from pydantic_ai._parts_manager import ModelResponsePart, ModelResponsePartsManager
 from pydantic_ai.messages import ModelResponseStreamEvent
 
@@ -116,7 +127,50 @@ OPENING_TAG_CASES: list[Case] = [
 ]
 
 # Category 2: Delayed Thinking (no event until content after complete opening)
-DELAYED_THINKING_CASES: list[Case] = []
+DELAYED_THINKING_CASES: list[Case] = [
+    Case(
+        name='delayed_thinking_with_content_closes_in_next_chunk',
+        chunks=['<think>', 'content</think>'],
+        expected_parts=[ThinkingPart('content')],
+        expected_normal_events=[
+            PartStartEvent(index=0, part=ThinkingPart('content')),
+        ],
+    ),
+    Case(
+        name='delayed_thinking_with_leading_whitespace_trimmed',
+        chunks=['<think>', '  content', '</think>'],
+        expected_parts=[ThinkingPart('content')],
+        expected_normal_events=[
+            PartStartEvent(index=0, part=ThinkingPart('content')),
+        ],
+        ignore_leading_whitespace=True,
+    ),
+    Case(
+        name='delayed_empty_thinking_closes_in_separate_chunk_with_after',
+        chunks=['<think>', '</think>after'],
+        expected_parts=[TextPart('after')],
+        expected_normal_events=[
+            PartStartEvent(index=0, part=TextPart('after')),
+        ],
+        # NOTE empty thinking is skipped entirely
+        expected_flushed_events=[],
+    ),
+    Case(
+        name='incomplete_thinking_with_partial_closing_tag_triggers_final_flush',
+        chunks=['<think>reasoning</'],
+        expected_parts=[ThinkingPart('reasoning</')],
+        expected_normal_events=[
+            PartStartEvent(index=0, part=ThinkingPart('reasoning')),
+        ],
+        # COVERAGE: This case covers models/__init__.py line 625: the `yield event` in chain_async_and_sync_iters.
+        # When the stream ends with a partial closing tag ('</' that never completes to '</think>'),
+        # final_flush() yields the buffered partial tag content as a PartDeltaEvent.
+        # This exercises the `for event in iter2: yield event` path where iter2 = final_flush().
+        expected_flushed_events=[
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='</')),
+        ],
+    ),
+]
 
 # Category 3: Invalid Opening Tags (prefixes, invalid continuations, flushes)
 INVALID_OPENING_CASES: list[Case] = [
@@ -358,6 +412,26 @@ NO_THINKING_TAGS_CASES: list[Case] = [
 # Category 11: Buffer Management (stutter, flushed)
 BUFFER_MANAGEMENT_CASES: list[Case] = [
     Case(
+        name='empty_first_chunk_with_buffered_partial_opening_flushed',
+        chunks=['', '<thi'],
+        expected_parts=[TextPart('<thi')],
+        expected_normal_events=[],
+        expected_flushed_events=[
+            PartStartEvent(index=0, part=TextPart('<thi')),
+        ],
+    ),
+    Case(
+        name='existing_text_stutter_buffer_via_tag_prefix_match',
+        chunks=['<t', '<thi'],
+        expected_parts=[TextPart('<t<thi')],
+        expected_normal_events=[
+            PartStartEvent(index=0, part=TextPart('<t')),
+        ],
+        expected_flushed_events=[
+            PartDeltaEvent(index=0, delta=TextPartDelta('<thi')),
+        ],
+    ),
+    Case(
         name='existing_text_stutter_buffer_via_replace',
         chunks=['<thi', '<think>content</think>'],
         expected_parts=[TextPart('<thi'), ThinkingPart('content')],
@@ -458,6 +532,7 @@ def test_thinking_parts_parametrized(case: Case, vendor_part_id: str | None) -> 
     Parametrized coverage for all cases described in the report.
     Tests each case with both vendor_part_id='content' and vendor_part_id=None.
     """
+    case.vendor_part_id = vendor_part_id
 
     normal_events, flushed_events, final_parts = stream_text_deltas(case)
 
@@ -473,3 +548,28 @@ def test_thinking_parts_parametrized(case: Case, vendor_part_id: str | None) -> 
     assert flushed_events == case.expected_flushed_events, (
         f'\nObserved: {flushed_events}\nExpected: {case.expected_flushed_events}'
     )
+
+
+def test_final_flush_with_partial_tag_on_non_latest_part():
+    """Test that final_flush properly handles partial tags attached to earlier parts."""
+    manager = ModelResponsePartsManager()
+
+    # Create ThinkingPart at index 0 with partial closing tag buffered
+    for _ in manager.handle_text_delta(
+        vendor_part_id='thinking',
+        content='<think>content<',
+        thinking_tags=('<think>', '</think>'),
+    ):
+        pass
+
+    # Create new part at index 1 using different vendor_part_id (makes ThinkingPart non-latest)
+    # Use tool call to create a different part type
+    manager.handle_tool_call_delta(
+        vendor_part_id='tool',
+        tool_name='my_tool',
+        args='{}',
+    )
+
+    # final_flush should emit PartDeltaEvent to index 0 (non-latest ThinkingPart with buffered '<')
+    events = list(manager.final_flush())
+    assert events == snapshot([PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='<'))])

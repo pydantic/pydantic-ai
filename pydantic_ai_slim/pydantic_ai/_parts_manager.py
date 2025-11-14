@@ -72,7 +72,7 @@ def suffix_prefix_overlap(s1: str, s2: str) -> int:
 class PartialThinkingTag(BaseModel, validate_assignment=True):
     respective_tag: str
     buffer: str = ''
-    previous_part_index: int | None = None
+    previous_part_index: int
     vendor_part_id: VendorId | None = None
 
     @model_validator(mode='after')
@@ -88,6 +88,10 @@ class PartialThinkingTag(BaseModel, validate_assignment=True):
     @property
     def is_complete(self) -> bool:
         return self.buffer == self.respective_tag
+
+    @property
+    def has_previous_part(self) -> bool:
+        return self.previous_part_index >= 0
 
 
 @dataclass
@@ -168,7 +172,7 @@ class PartialEndTag(PartialThinkingTag):
             return self.respective_opening_tag + self.buffer
 
     def validate_new_content(self, new_content: str, trim_whitespace: bool = False) -> EndTagValidation:
-        if trim_whitespace and self.previous_part_index is None:
+        if trim_whitespace and not self.has_previous_part:  # pragma: no cover
             new_content = new_content.lstrip()
 
         if not new_content:
@@ -183,7 +187,7 @@ class PartialEndTag(PartialThinkingTag):
                 content_before_closed=content_before_closed, content_after_closed=content_after_closed
             )
 
-        if new_content.startswith(self.expected_next):
+        if new_content.startswith(self.expected_next):  # pragma: no cover
             tag_content = combined[: len(self.respective_tag)]
             self.buffer = tag_content
             content_after_closed = combined[len(self.respective_tag) :]
@@ -214,7 +218,7 @@ class ModelResponsePartsManager:
     """Tracks the vendor part IDs of parts to their indices in the `_parts` list.
 
     Not all parts arrive with vendor part IDs, so the length of the tracker doesn't mirror the length of the _parts.
-    `ThinkingPart`s that are created via the `handle_text_delta` will stop being tracked once their closing tag is seen.
+    `ThinkingPart`s that are created via embedded thinking will stop being tracked once their closing tag is seen.
     """
 
     _partial_tags_list: list[PartialStartTag | PartialEndTag] = field(default_factory=list, init=False)
@@ -262,15 +266,9 @@ class ModelResponsePartsManager:
         return None
 
     def _stop_tracking_partial_tag(self, partial_tag: PartialStartTag | PartialEndTag) -> None:
-        """Stop tracking a partial tag.
-
-        Removes the partial tag from the tracking list.
-
-        Args:
-            partial_tag: The partial tag to stop tracking.
-            part_index: The part index where the tag is tracked (unused, kept for API compatibility).
-        """
-        if partial_tag in self._partial_tags_list:
+        """Stop tracking a partial tag."""
+        if partial_tag in self._partial_tags_list:  # pragma: no cover
+            # this is a defensive check in case we try to remove a tag that wasn't tracked
             self._partial_tags_list.remove(partial_tag)
 
     def _get_active_partial_tag(
@@ -280,7 +278,7 @@ class ModelResponsePartsManager:
     ) -> PartialStartTag | PartialEndTag | None:
         """Get the active partial tag.
 
-        - if vendor_part_id provided: lookup by vendor_id first (most direct)
+        - if vendor_part_id provided: lookup by vendor_id first (most relevant)
         - if existing_part exists: lookup by that part's index
         - if no existing_part: lookup by latest part's index, or index -1 for unattached tags
         """
@@ -533,11 +531,7 @@ class ModelResponsePartsManager:
             yield PartStartEvent(index=new_part_index, part=new_thinking_part)
 
         if partial_end_tag.is_complete:
-            # Remove tracking if still present
-            if end_tag_validation.content_before_closed:
-                new_part_index = partial_end_tag.previous_part_index
-                if new_part_index is not None:
-                    self._stop_tracking_partial_tag(partial_end_tag)
+            self._stop_tracking_partial_tag(partial_end_tag)
 
             if end_tag_validation.content_after_closed:
                 yield self._emit_text_start(
@@ -560,7 +554,6 @@ class ModelResponsePartsManager:
         """Handle opening tag validation and buffering."""
         text_part = cast(_ExistingPart[TextPart] | None, text_part)
 
-        # Create partial tag if needed
         if partial_start_tag is None:
             partial_start_tag = PartialStartTag(
                 respective_tag=opening_tag,
@@ -570,7 +563,6 @@ class ModelResponsePartsManager:
             )
             self._partial_tags_list.append(partial_start_tag)
 
-        # Validate content
         start_tag_validation = partial_start_tag.validate_new_content(content)
 
         # Emit flushed buffer as text
@@ -622,13 +614,11 @@ class ModelResponsePartsManager:
             vendor_part_id=vendor_part_id,
         )
 
-        # Process thinking content against closing tag
         end_tag_validation = partial_end_tag.validate_new_content(
             thinking_content, trim_whitespace=ignore_leading_whitespace
         )
 
         if end_tag_validation.content_before_closed:
-            # Create ThinkingPart
             new_thinking_part = ThinkingPart(content=end_tag_validation.content_before_closed)
             new_part_index = self._append_and_track_new_part(new_thinking_part, vendor_part_id)
             partial_end_tag.previous_part_index = new_part_index
@@ -700,28 +690,26 @@ class ModelResponsePartsManager:
 
         # Flush remaining partial tags
         for partial_tag in list(self._partial_tags_list):
-            has_content = partial_tag.flush() if isinstance(partial_tag, PartialEndTag) else partial_tag.buffer
-            if not has_content:
+            buffered_content = partial_tag.flush() if isinstance(partial_tag, PartialEndTag) else partial_tag.buffer
+            if not buffered_content:
                 self._stop_tracking_partial_tag(partial_tag)  # partial tag has an associated part index of -1 here
                 continue
 
-            # Check >= 0 to exclude the -1 sentinel (unattached tag) from part lookup
-            if partial_tag.previous_part_index is not None and partial_tag.previous_part_index >= 0:
+            if not partial_tag.has_previous_part:
+                # No associated part - create new TextPart
+                self._stop_tracking_partial_tag(partial_tag)  # partial tag has an associated part index of -1 here
+
+                new_text_part = TextPart(content='')
+                new_part_index = self._append_and_track_new_part(new_text_part, vendor_part_id=None)
+                yield from remove_partial_and_emit_buffered(partial_tag, new_part_index, new_text_part)
+            else:
+                # exclude the -1 sentinel (unattached tag) from part lookup
                 part_index = partial_tag.previous_part_index
                 part = self._parts[part_index]
                 if isinstance(part, TextPart | ThinkingPart):
                     yield from remove_partial_and_emit_buffered(partial_tag, part_index, part)
                 else:  # pragma: no cover
                     raise RuntimeError('Partial tag is associated with a non-text/non-thinking part')
-            else:
-                # No associated part - create new TextPart
-                buffered_content = partial_tag.flush() if isinstance(partial_tag, PartialEndTag) else partial_tag.buffer
-                self._stop_tracking_partial_tag(partial_tag)  # partial tag has an associated part index of -1 here
-
-                if buffered_content:
-                    new_text_part = TextPart(content=buffered_content)
-                    new_part_index = self._append_and_track_new_part(new_text_part, vendor_part_id=None)
-                    yield PartStartEvent(index=new_part_index, part=new_text_part)
 
     def handle_thinking_delta(
         self,
