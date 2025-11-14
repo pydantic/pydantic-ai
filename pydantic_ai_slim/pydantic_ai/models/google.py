@@ -353,10 +353,6 @@ class GoogleModel(Model):
                             "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
                         )
                     if tool.aspect_ratio:
-                        if image_config and image_config.get('aspect_ratio') != tool.aspect_ratio:
-                            raise UserError(
-                                'Multiple `ImageGenerationTool` instances with different `aspect_ratio` values are not supported.'
-                            )
                         image_config = ImageConfigDict(aspect_ratio=tool.aspect_ratio)
                 else:  # pragma: no cover
                     raise UserError(
@@ -448,29 +444,28 @@ class GoogleModel(Model):
             else:
                 raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
 
-        config: GenerateContentConfigDict = {
-            'http_options': http_options,
-            'system_instruction': system_instruction,
-            'temperature': model_settings.get('temperature'),
-            'top_p': model_settings.get('top_p'),
-            'max_output_tokens': model_settings.get('max_tokens'),
-            'stop_sequences': model_settings.get('stop_sequences'),
-            'presence_penalty': model_settings.get('presence_penalty'),
-            'frequency_penalty': model_settings.get('frequency_penalty'),
-            'seed': model_settings.get('seed'),
-            'safety_settings': model_settings.get('google_safety_settings'),
-            'thinking_config': model_settings.get('google_thinking_config'),
-            'labels': model_settings.get('google_labels'),
-            'media_resolution': model_settings.get('google_video_resolution'),
-            'cached_content': model_settings.get('google_cached_content'),
-            'tools': cast(ToolListUnionDict, tools),
-            'tool_config': tool_config,
-            'response_mime_type': response_mime_type,
-            'response_schema': response_schema,
-            'response_modalities': modalities,
-        }
-        if image_config:
-            config['image_config'] = image_config
+        config = GenerateContentConfigDict(
+            http_options=http_options,
+            system_instruction=system_instruction,
+            temperature=model_settings.get('temperature'),
+            top_p=model_settings.get('top_p'),
+            max_output_tokens=model_settings.get('max_tokens'),
+            stop_sequences=model_settings.get('stop_sequences'),
+            presence_penalty=model_settings.get('presence_penalty'),
+            frequency_penalty=model_settings.get('frequency_penalty'),
+            seed=model_settings.get('seed'),
+            safety_settings=model_settings.get('google_safety_settings'),
+            thinking_config=model_settings.get('google_thinking_config'),
+            labels=model_settings.get('google_labels'),
+            media_resolution=model_settings.get('google_video_resolution'),
+            cached_content=model_settings.get('google_cached_content'),
+            tools=cast(ToolListUnionDict, tools),
+            tool_config=tool_config,
+            response_mime_type=response_mime_type,
+            response_schema=response_schema,
+            response_modalities=modalities,
+            image_config=image_config,
+        )
 
         return contents, config
 

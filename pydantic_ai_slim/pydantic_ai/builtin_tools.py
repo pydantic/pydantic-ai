@@ -263,7 +263,7 @@ class ImageGenerationTool(AbstractBuiltinTool):
 
     Supported by:
 
-    * Google image-generation models (Gemini) when the tool is explicitly enabled.
+    * Google image-generation models (Gemini)
     """
 
     kind: str = 'image_generation'
