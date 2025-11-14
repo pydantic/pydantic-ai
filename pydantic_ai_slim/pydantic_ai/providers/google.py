@@ -28,11 +28,13 @@ class GoogleProvider(Provider[Client]):
 
     @property
     def name(self) -> str:
-        return 'google-vertex' if self._client._api_client.vertexai else 'google-gla'  # type: ignore[reportPrivateUsage]
+        # type: ignore[reportPrivateUsage]
+        return 'google-vertex' if self._client._api_client.vertexai else 'google-gla'
 
     @property
     def base_url(self) -> str:
-        return str(self._client._api_client._http_options.base_url)  # type: ignore[reportPrivateUsage]
+        # type: ignore[reportPrivateUsage]
+        return str(self._client._api_client._http_options.base_url)
 
     @property
     def client(self) -> Client:
@@ -220,5 +222,5 @@ class _NonClosingApiClient(BaseApiClient):
         # The original implementation also calls `await self._async_httpx_client.aclose()`, but we don't want to close our `cached_async_http_client` or the one the user passed in.
         # TODO: Remove once https://github.com/googleapis/python-genai/issues/1566 is solved.
         session = getattr(self, '_aiohttp_session', None)
-        if session:
-            await self._aiohttp_session.close()  # pragma: no cover
+        if session is not None:
+            await session.close()  # pragma: no cover
