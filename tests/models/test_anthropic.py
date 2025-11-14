@@ -43,7 +43,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, UrlContextTool, WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -3611,6 +3611,22 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
     )
 
 
+@pytest.mark.vcr()
+async def test_anthropic_url_context_tool(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    agent = Agent(m, builtin_tools=[UrlContextTool()], model_settings=settings)
+
+    result = await agent.run(
+        'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
+    )
+
+    assert result.output == snapshot(
+        'Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
+    )
+
+
+@pytest.mark.vcr()
 async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})

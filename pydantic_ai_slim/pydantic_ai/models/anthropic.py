@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
-from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, UrlContextTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
@@ -106,6 +106,9 @@ try:
         BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
+        BetaWebFetchTool20250910Param,
+        BetaWebFetchToolResultBlock,
+        BetaWebFetchToolResultBlockParam,
         BetaWebSearchTool20250305Param,
         BetaWebSearchToolResultBlock,
         BetaWebSearchToolResultBlockContent,
@@ -371,6 +374,8 @@ class AnthropicModel(Model):
                 items.append(_map_web_search_tool_result_block(item, self.system))
             elif isinstance(item, BetaCodeExecutionToolResultBlock):
                 items.append(_map_code_execution_tool_result_block(item, self.system))
+            elif isinstance(item, BetaWebFetchToolResultBlock):
+                items.append(_map_web_fetch_tool_result_block(item, self.system))
             elif isinstance(item, BetaRedactedThinkingBlock):
                 items.append(
                     ThinkingPart(id='redacted_thinking', content='', signature=item.data, provider_name=self.system)
@@ -464,6 +469,9 @@ class AnthropicModel(Model):
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
                 beta_features.append('code-execution-2025-05-22')
+            elif isinstance(tool, UrlContextTool):  # pragma: no branch
+                tools.append(BetaWebFetchTool20250910Param(name='web_fetch', type='web_fetch_20250910'))
+                beta_features.append('web-fetch-2025-09-10')
             elif isinstance(tool, MemoryTool):  # pragma: no branch
                 if 'memory' not in model_request_parameters.tool_defs:
                     raise UserError("Built-in `MemoryTool` requires a 'memory' tool to be defined.")
@@ -542,6 +550,7 @@ class AnthropicModel(Model):
                     | BetaServerToolUseBlockParam
                     | BetaWebSearchToolResultBlockParam
                     | BetaCodeExecutionToolResultBlockParam
+                    | BetaWebFetchToolResultBlockParam
                     | BetaThinkingBlockParam
                     | BetaRedactedThinkingBlockParam
                     | BetaMCPToolUseBlockParam
@@ -604,6 +613,14 @@ class AnthropicModel(Model):
                                     input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
+                            elif response_part.tool_name == UrlContextTool.kind:
+                                server_tool_use_block_param = BetaServerToolUseBlockParam(
+                                    id=tool_use_id,
+                                    type='server_tool_use',
+                                    name='web_fetch',
+                                    input=response_part.args_as_dict(),
+                                )
+                                assistant_content_params.append(server_tool_use_block_param)
                             elif (
                                 response_part.tool_name.startswith(MCPServerTool.kind)
                                 and (server_id := response_part.tool_name.split(':', 1)[1])
@@ -648,6 +665,19 @@ class AnthropicModel(Model):
                                             BetaCodeExecutionToolResultBlockParamContentParam,
                                             response_part.content,  # pyright: ignore[reportUnknownMemberType]
                                         ),
+                                    )
+                                )
+                            elif response_part.tool_name == UrlContextTool.kind and isinstance(
+                                response_part.content, dict
+                            ):  # pragma: no branch
+                                assistant_content_params.append(
+                                    cast(
+                                        BetaWebFetchToolResultBlockParam,
+                                        {
+                                            'tool_use_id': tool_use_id,
+                                            'type': 'web_fetch_tool_result',
+                                            'content': response_part.content,  # pyright: ignore[reportUnknownMemberType]
+                                        },
                                     )
                                 )
                             elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
@@ -866,6 +896,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                         vendor_part_id=event.index,
                         part=_map_code_execution_tool_result_block(current_block, self.provider_name),
                     )
+                elif isinstance(current_block, BetaWebFetchToolResultBlock):
+                    yield self._parts_manager.handle_part(
+                        vendor_part_id=event.index,
+                        part=_map_web_fetch_tool_result_block(current_block, self.provider_name),
+                    )
                 elif isinstance(current_block, BetaMCPToolUseBlock):
                     call_part = _map_mcp_server_use_block(current_block, self.provider_name)
                     builtin_tool_calls[call_part.tool_call_id] = call_part
@@ -972,7 +1007,14 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )
-    elif item.name in ('web_fetch', 'bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
+    elif item.name == 'web_fetch':
+        return BuiltinToolCallPart(
+            provider_name=provider_name,
+            tool_name=UrlContextTool.kind,
+            args=cast(dict[str, Any], item.input) or None,
+            tool_call_id=item.id,
+        )
+    elif item.name in ('bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     else:
         assert_never(item.name)
@@ -1004,6 +1046,15 @@ def _map_code_execution_tool_result_block(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
         content=code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
+        tool_call_id=item.tool_use_id,
+    )
+
+
+def _map_web_fetch_tool_result_block(item: BetaWebFetchToolResultBlock, provider_name: str) -> BuiltinToolReturnPart:
+    return BuiltinToolReturnPart(
+        provider_name=provider_name,
+        tool_name=UrlContextTool.kind,
+        content=item.model_dump(mode='json', include={'content'}),
         tool_call_id=item.tool_use_id,
     )
 

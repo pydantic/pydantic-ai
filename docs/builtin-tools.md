@@ -315,9 +315,9 @@ allowing it to pull up-to-date information from the web.
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
+| Anthropic | ✅ | Full feature support. Uses Anthropic's [Web Fetch Tool](https://docs.claude.com/en/docs/agents-and-tools/tool-use/web-fetch-tool) internally to retrieve URL contents. |
 | Google | ✅ | No [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] is currently generated; please submit an issue if you need this. Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
 | OpenAI | ❌ | |
-| Anthropic | ❌ | |
 | Groq | ❌ | |
 | Bedrock | ❌ | |
 | Mistral | ❌ | |
@@ -327,7 +327,21 @@ allowing it to pull up-to-date information from the web.
 
 ### Usage
 
-```py {title="url_context_basic.py"}
+```py {title="url_context_anthropic.py"}
+from pydantic_ai import Agent, UrlContextTool
+
+agent = Agent('anthropic:claude-sonnet-4-0', builtin_tools=[UrlContextTool()])
+
+result = agent.run_sync('What is the first sentence on https://ai.pydantic.dev?')
+print(result.output)
+#> Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.
+```
+
+_(This example is complete, it can be run "as is")_
+
+With Google, you can also use `UrlContextTool`:
+
+```py {title="url_context_google.py"}
 from pydantic_ai import Agent, UrlContextTool
 
 agent = Agent('google-gla:gemini-2.5-flash', builtin_tools=[UrlContextTool()])

@@ -171,6 +171,7 @@ class UrlContextTool(AbstractBuiltinTool):
 
     Supported by:
 
+    * Anthropic
     * Google
     """
 
