@@ -99,7 +99,7 @@ else:
         from openai import Omit, omit
 
         OMIT = omit
-    except ImportError:
+    except ImportError:  # pragma: lax no cover
         from openai import NOT_GIVEN, NotGiven
 
         OMIT = NOT_GIVEN
