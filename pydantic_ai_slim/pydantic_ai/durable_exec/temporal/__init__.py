@@ -52,30 +52,31 @@ def _data_converter(converter: DataConverter | None) -> DataConverter:
 
 def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
     if not runner:
-        raise ValueError('No WorkflowRunner provided to the Pydantic AI plugin.')
+        raise ValueError('No WorkflowRunner provided to the Pydantic AI plugin.')  # pragma: no cover
 
-    if isinstance(runner, SandboxedWorkflowRunner):
-        return replace(
-            runner,
-            restrictions=runner.restrictions.with_passthrough_modules(
-                'pydantic_ai',
-                'pydantic',
-                'pydantic_core',
-                'logfire',
-                'rich',
-                'httpx',
-                'anyio',
-                'httpcore',
-                # Used by fastmcp via py-key-value-aio
-                'beartype',
-                # Imported inside `logfire._internal.json_encoder` when running `logfire.info` inside an activity with attributes to serialize
-                'attrs',
-                # Imported inside `logfire._internal.json_schema` when running `logfire.info` inside an activity with attributes to serialize
-                'numpy',
-                'pandas',
-            ),
-        )
-    return runner
+    if not isinstance(runner, SandboxedWorkflowRunner):
+        return runner  # pragma: no cover
+
+    return replace(
+        runner,
+        restrictions=runner.restrictions.with_passthrough_modules(
+            'pydantic_ai',
+            'pydantic',
+            'pydantic_core',
+            'logfire',
+            'rich',
+            'httpx',
+            'anyio',
+            'httpcore',
+            # Used by fastmcp via py-key-value-aio
+            'beartype',
+            # Imported inside `logfire._internal.json_encoder` when running `logfire.info` inside an activity with attributes to serialize
+            'attrs',
+            # Imported inside `logfire._internal.json_schema` when running `logfire.info` inside an activity with attributes to serialize
+            'numpy',
+            'pandas',
+        ),
+    )
 
 
 class PydanticAIPlugin(SimplePlugin):
