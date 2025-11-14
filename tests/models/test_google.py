@@ -856,6 +856,18 @@ async def test_google_model_text_document_url_input(allow_model_requests: None, 
     )
 
 
+async def test_google_model_json_document_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-pro', provider=google_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+
+    json_document_url = DocumentUrl(url='https://kamalscraping-collab.github.io/sample-data/sample_transcript.json')
+
+    result = await agent.run(['What is the main content of this document?', json_document_url])
+    assert result.output == snapshot(
+        'Based on the JSON data provided, the document contains the log of a conversation between a user and an AI assistant.\n'
+    )
+
+
 async def test_google_model_text_as_binary_content_input(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, system_prompt='You are a helpful chatbot.')
