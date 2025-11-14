@@ -22,7 +22,7 @@ interactions:
       generationConfig:
         responseModalities:
         - TEXT
-    uri: http://localhost:8787/gemini/v1beta1/publishers/google/models/gemini-2.5-flash:generateContent
+    uri: http://localhost:8787/google-vertex/v1beta1/publishers/google/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
@@ -39,15 +39,15 @@ interactions:
       - Origin, X-Origin, Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -1.1077090501785278
+      - avgLogprobs: -1.1087236404418945
         content:
           parts:
           - text: The capital of France is **Paris**.
           role: model
         finishReason: STOP
-      createTime: '2025-11-09T10:55:33.769850Z'
+      createTime: '2025-11-11T12:44:24.411107Z'
       modelVersion: gemini-2.5-flash
-      responseId: JXMQabr-LsPv2fMP0YexuA8
+      responseId: qC8TaeOLGZbhtfAPlbGdyAk
       usageMetadata:
         candidatesTokenCount: 8
         candidatesTokensDetails:

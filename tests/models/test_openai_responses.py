@@ -1326,6 +1326,14 @@ async def test_reasoning_model_with_temperature(allow_model_requests: None, open
 
 
 @pytest.mark.vcr()
+async def test_gpt5_pro(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-5-pro', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+    result = await agent.run('What is the capital of Mexico?')
+    assert result.output == snapshot('Mexico City (Ciudad de México).')
+
+
+@pytest.mark.vcr()
 async def test_tool_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
