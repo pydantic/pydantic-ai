@@ -1,3 +1,6 @@
+import os
+from unittest.mock import patch
+
 import pytest
 from dirty_equals import IsList
 
@@ -22,14 +25,23 @@ with try_import() as cohere_imports_successful:
 @pytest.mark.skipif(not openai_imports_successful, reason='OpenAI not installed')
 class TestOpenAI:
     async def test_infer_model(self, openai_api_key: str):
-        model = infer_model('openai:text-embedding-3-small')
+        with patch.dict(os.environ, {'OPENAI_API_KEY': openai_api_key}):
+            model = infer_model('openai:text-embedding-3-small')
         assert isinstance(model, OpenAIEmbeddingModel)
         assert model.model_name == 'text-embedding-3-small'
         assert model.system == 'openai'
         assert model.base_url == 'https://api.openai.com/v1/'
 
     async def test_infer_model_azure(self, openai_api_key: str):
-        model = infer_model('azure:text-embedding-3-small')
+        with patch.dict(
+            os.environ,
+            {
+                'AZURE_OPENAI_API_KEY': 'azure-openai-api-key',
+                'AZURE_OPENAI_ENDPOINT': 'https://project-id.openai.azure.com/',
+                'OPENAI_API_VERSION': '2023-03-15-preview',
+            },
+        ):
+            model = infer_model('azure:text-embedding-3-small')
         assert isinstance(model, OpenAIEmbeddingModel)
         assert model.model_name == 'text-embedding-3-small'
         assert model.system == 'azure'
@@ -55,7 +67,8 @@ class TestOpenAI:
 @pytest.mark.skipif(not cohere_imports_successful, reason='Cohere not installed')
 class TestCohere:
     async def test_infer_model(self, co_api_key: str):
-        model = infer_model('cohere:embed-v4.0')
+        with patch.dict(os.environ, {'CO_API_KEY': co_api_key}):
+            model = infer_model('cohere:embed-v4.0')
         assert isinstance(model, CohereEmbeddingModel)
         assert model.model_name == 'embed-v4.0'
         assert model.system == 'cohere'
