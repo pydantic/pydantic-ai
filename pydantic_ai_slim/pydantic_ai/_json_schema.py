@@ -33,7 +33,7 @@ class JsonSchemaTransformer(ABC):
         self.is_strict_compatible = True  # Can be set to False by subclasses to set `strict` on `ToolDefinition` when set not set by user explicitly
 
         self.prefer_inlined_defs = prefer_inlined_defs
-        self.simplify_nullable_unions = simplify_nullable_unions  # TODO (v2): Remove this, no longer used
+        self.simplify_nullable_unions = simplify_nullable_unions
 
         self.defs: dict[str, JsonSchema] = self.schema.get('$defs', {})
         self.refs_stack: list[str] = []
@@ -149,7 +149,6 @@ class JsonSchemaTransformer(ABC):
         # TODO (v2): Remove this feature, no longer used
         if self.simplify_nullable_unions:
             handled = self._simplify_nullable_union(handled)
-
         if len(handled) == 1:
             # In this case, no need to retain the union
             return handled[0] | schema
