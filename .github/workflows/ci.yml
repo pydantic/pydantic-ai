@@ -184,6 +184,14 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
+      - name: Block external network access
+        run: |
+          sudo iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT
+          sudo iptables -A OUTPUT -d 10.0.0.0/8 -j ACCEPT
+          sudo iptables -A OUTPUT -d 172.16.0.0/12 -j ACCEPT
+          sudo iptables -A OUTPUT -d 192.168.0.0/16 -j ACCEPT
+          sudo iptables -A OUTPUT -j REJECT
+
       - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
@@ -236,6 +244,14 @@ jobs:
 
       - run: unset UV_FROZEN
 
+      - name: Block external network access
+        run: |
+          sudo iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT
+          sudo iptables -A OUTPUT -d 10.0.0.0/8 -j ACCEPT
+          sudo iptables -A OUTPUT -d 172.16.0.0/12 -j ACCEPT
+          sudo iptables -A OUTPUT -d 192.168.0.0/16 -j ACCEPT
+          sudo iptables -A OUTPUT -j REJECT
+
       - run: uv run --all-extras --resolution lowest-direct coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
@@ -273,6 +289,14 @@ jobs:
           key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
           restore-keys: |
             hf-${{ runner.os }}-
+
+      - name: Block external network access
+        run: |
+          sudo iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT
+          sudo iptables -A OUTPUT -d 10.0.0.0/8 -j ACCEPT
+          sudo iptables -A OUTPUT -d 172.16.0.0/12 -j ACCEPT
+          sudo iptables -A OUTPUT -d 192.168.0.0/16 -j ACCEPT
+          sudo iptables -A OUTPUT -j REJECT
 
       - run: uv run --all-extras python tests/import_examples.py
 
