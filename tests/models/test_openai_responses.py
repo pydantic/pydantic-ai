@@ -7445,35 +7445,40 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
     from pydantic_ai.providers.openai import OpenAIProvider
 
     async_client = AsyncOpenAI(api_key=openai_api_key)
-    
+
     import tempfile
+
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
         f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
         test_file_path = f.name
-    
+
+    file = None
+    vector_store = None
     try:
         with open(test_file_path, 'rb') as f:
             file = await async_client.files.create(file=f, purpose='assistants')
-        
+
         vector_store = await async_client.vector_stores.create(name='test-file-search')
         await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
-        
+
         import asyncio
+
         await asyncio.sleep(2)
-        
+
         model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
         agent = Agent(model=model, builtin_tools=[FileSearchTool(vector_store_ids=[vector_store.id])])
-        
+
         result = await agent.run('What is the capital of France according to my files?')
-        
+
         assert 'Paris' in result.output or 'paris' in result.output.lower()
-        
+
     finally:
         import os
+
         os.unlink(test_file_path)
-        if 'file' in locals():
+        if file is not None:
             await async_client.files.delete(file.id)
-        if 'vector_store' in locals():
+        if vector_store is not None:
             await async_client.vector_stores.delete(vector_store.id)
         await async_client.close()
 
@@ -7487,40 +7492,45 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
     from pydantic_ai.providers.openai import OpenAIProvider
 
     async_client = AsyncOpenAI(api_key=openai_api_key)
-    
+
     import tempfile
+
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
         f.write('The Eiffel Tower is located in Paris, France.')
         test_file_path = f.name
-    
+
+    file = None
+    vector_store = None
     try:
         with open(test_file_path, 'rb') as f:
             file = await async_client.files.create(file=f, purpose='assistants')
-        
+
         vector_store = await async_client.vector_stores.create(name='test-file-search-stream')
         await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
-        
+
         import asyncio
+
         await asyncio.sleep(2)
-        
+
         model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
         agent = Agent(model=model, builtin_tools=[FileSearchTool(vector_store_ids=[vector_store.id])])
-        
-        parts = []
+
+        result_text: list[str] = []
         async with agent.run_stream('Where is the Eiffel Tower according to my files?') as result:
-            async for part in result.stream_responses(debounce_by=None):
-                parts.append(part)
+            async for text in result.stream_text(delta=False):
+                result_text.append(text)
             output = await result.get_output()
-        
-        assert len(parts) > 0
+
+        assert len(result_text) > 0
         assert 'Paris' in output or 'France' in output or 'paris' in output.lower()
-        
+
     finally:
         import os
+
         os.unlink(test_file_path)
-        if 'file' in locals():
+        if file is not None:
             await async_client.files.delete(file.id)
-        if 'vector_store' in locals():
+        if vector_store is not None:
             await async_client.vector_stores.delete(vector_store.id)
         await async_client.close()
 
