@@ -66,7 +66,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsNow, IsStr, TestEnv
+from .conftest import IsDatetime, IsNow, TestEnv
 
 pytestmark = pytest.mark.anyio
 

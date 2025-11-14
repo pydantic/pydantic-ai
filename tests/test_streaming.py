@@ -51,7 +51,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApp
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
-from .conftest import IsDatetime, IsInt, IsNow, IsStr
+from .conftest import IsDatetime, IsInt, IsNow
 
 pytestmark = pytest.mark.anyio
 
