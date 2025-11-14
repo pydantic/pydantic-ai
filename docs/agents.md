@@ -320,7 +320,8 @@ async def main():
                         content='What is the capital of France?',
                         timestamp=datetime.datetime(...),
                     )
-                ]
+                ],
+                run_id='...',
             )
         ),
         CallToolsNode(
@@ -329,6 +330,7 @@ async def main():
                 usage=RequestUsage(input_tokens=56, output_tokens=7),
                 model_name='gpt-5',
                 timestamp=datetime.datetime(...),
+                run_id='...',
             )
         ),
         End(data=FinalResult(output='The capital of France is Paris.')),
@@ -382,7 +384,8 @@ async def main():
                             content='What is the capital of France?',
                             timestamp=datetime.datetime(...),
                         )
-                    ]
+                    ],
+                    run_id='...',
                 )
             ),
             CallToolsNode(
@@ -391,6 +394,7 @@ async def main():
                     usage=RequestUsage(input_tokens=56, output_tokens=7),
                     model_name='gpt-5',
                     timestamp=datetime.datetime(...),
+                    run_id='...',
                 )
             ),
             End(data=FinalResult(output='The capital of France is Paris.')),
@@ -904,14 +908,15 @@ You should use:
 
 In general, we recommend using `instructions` instead of `system_prompt` unless you have a specific reason to use `system_prompt`.
 
-Instructions, like system prompts, fall into two categories:
+Instructions, like system prompts, can be specified at different times:
 
 1. **Static instructions**: These are known when writing the code and can be defined via the `instructions` parameter of the [`Agent` constructor][pydantic_ai.Agent.__init__].
 2. **Dynamic instructions**: These rely on context that is only available at runtime and should be defined using functions decorated with [`@agent.instructions`][pydantic_ai.Agent.instructions]. Unlike dynamic system prompts, which may be reused when `message_history` is present, dynamic instructions are always reevaluated.
+3. **Runtime instructions*: These are additional instructions for a specific run that can be passed to one of the [run methods](#running-agents) using the `instructions` argument.
 
-Both static and dynamic instructions can be added to a single agent, and they are appended in the order they are defined at runtime.
+All three types of instructions can be added to a single agent, and they are appended in the order they are defined at runtime.
 
-Here's an example using both types of instructions:
+Here's an example using a static instruction as well as dynamic instructions:
 
 ```python {title="instructions.py"}
 from datetime import date
@@ -1043,7 +1048,8 @@ with capture_run_messages() as messages:  # (2)!
                         content='Please get me the volume of a box with size 6.',
                         timestamp=datetime.datetime(...),
                     )
-                ]
+                ],
+                run_id='...',
             ),
             ModelResponse(
                 parts=[
@@ -1056,6 +1062,7 @@ with capture_run_messages() as messages:  # (2)!
                 usage=RequestUsage(input_tokens=62, output_tokens=4),
                 model_name='gpt-5',
                 timestamp=datetime.datetime(...),
+                run_id='...',
             ),
             ModelRequest(
                 parts=[
@@ -1065,7 +1072,8 @@ with capture_run_messages() as messages:  # (2)!
                         tool_call_id='pyd_ai_tool_call_id',
                         timestamp=datetime.datetime(...),
                     )
-                ]
+                ],
+                run_id='...',
             ),
             ModelResponse(
                 parts=[
@@ -1078,6 +1086,7 @@ with capture_run_messages() as messages:  # (2)!
                 usage=RequestUsage(input_tokens=72, output_tokens=8),
                 model_name='gpt-5',
                 timestamp=datetime.datetime(...),
+                run_id='...',
             ),
         ]
         """

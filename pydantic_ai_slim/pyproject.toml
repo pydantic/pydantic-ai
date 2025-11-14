@@ -74,7 +74,7 @@ google = ["google-genai>=1.48.0"]
 anthropic = ["anthropic>=0.70.0"]
 groq = ["groq>=0.25.0"]
 mistral = ["mistralai>=1.9.10"]
-bedrock = ["boto3>=1.39.0"]
+bedrock = ["boto3>=1.40.14"]
 huggingface = ["huggingface-hub[inference]>=0.33.5"]
 outlines-transformers = ["outlines[transformers]>=1.0.0, <1.3.0; (sys_platform != 'darwin' or platform_machine != 'x86_64')", "transformers>=4.0.0", "pillow", "torch; (sys_platform != 'darwin' or platform_machine != 'x86_64')"]
 outlines-llamacpp = ["outlines[llamacpp]>=1.0.0, <1.3.0"]
@@ -106,7 +106,7 @@ ag-ui = ["ag-ui-protocol>=0.1.8", "starlette>=0.45.3"]
 # Retries
 retries = ["tenacity>=8.2.3"]
 # Temporal
-temporal = ["temporalio==1.18.0"]
+temporal = ["temporalio==1.18.2"]
 # DBOS
 dbos = ["dbos>=1.14.0"]
 # Prefect

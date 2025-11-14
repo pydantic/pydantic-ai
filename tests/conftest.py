@@ -424,6 +424,7 @@ def bedrock_provider():
             region_name=os.getenv('AWS_REGION', 'us-east-1'),
             aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
             aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
+            aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
         )
         yield BedrockProvider(bedrock_client=bedrock_client)
         bedrock_client.close()

@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import base64
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 from uuid import uuid4
@@ -19,6 +19,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     FilePart,
     FileUrl,
     FinishReason,
@@ -224,6 +225,18 @@ class GoogleModel(Model):
         """The model provider."""
         return self._provider.name
 
+    def prepare_request(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        if model_request_parameters.builtin_tools and model_request_parameters.output_tools:
+            if model_request_parameters.output_mode == 'auto':
+                model_request_parameters = replace(model_request_parameters, output_mode='prompted')
+            else:
+                raise UserError(
+                    'Google does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+                )
+        return super().prepare_request(model_settings, model_request_parameters)
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -320,12 +333,8 @@ class GoogleModel(Model):
         ]
 
         if model_request_parameters.builtin_tools:
-            if model_request_parameters.output_tools:
-                raise UserError(
-                    'Gemini does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
-                )
             if model_request_parameters.function_tools:
-                raise UserError('Gemini does not support user tools and built-in tools at the same time.')
+                raise UserError('Google does not support function tools and built-in tools at the same time.')
 
             for tool in model_request_parameters.builtin_tools:
                 if isinstance(tool, WebSearchTool):
@@ -402,7 +411,7 @@ class GoogleModel(Model):
         if model_request_parameters.output_mode == 'native':
             if tools:
                 raise UserError(
-                    'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+                    'Google does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
                 )
             response_mime_type = 'application/json'
             output_object = model_request_parameters.output_object
@@ -414,7 +423,7 @@ class GoogleModel(Model):
             response_mime_type = 'application/json'
 
         tool_config = self._get_tool_config(model_request_parameters, tools)
-        system_instruction, contents = await self._map_messages(messages)
+        system_instruction, contents = await self._map_messages(messages, model_request_parameters)
 
         modalities = [Modality.TEXT.value]
         if self.profile.supports_image_output:
@@ -504,7 +513,9 @@ class GoogleModel(Model):
             _provider_name=self._provider.name,
         )
 
-    async def _map_messages(self, messages: list[ModelMessage]) -> tuple[ContentDict | None, list[ContentUnionDict]]:
+    async def _map_messages(
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
 
@@ -551,7 +562,7 @@ class GoogleModel(Model):
                 contents.append(_content_model_response(m, self.system))
             else:
                 assert_never(m)
-        if instructions := self._get_instructions(messages):
+        if instructions := self._get_instructions(messages, model_request_parameters):
             system_parts.insert(0, {'text': instructions})
         system_instruction = ContentDict(role='user', parts=system_parts) if system_parts else None
         return system_instruction, contents
@@ -592,6 +603,9 @@ class GoogleModel(Model):
                     else:
                         file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
                         content.append({'file_data': file_data_dict})  # pragma: lax no cover
+                elif isinstance(item, CachePoint):
+                    # Google Gemini doesn't support prompt caching via CachePoint
+                    pass
                 else:
                     assert_never(item)
         return content
@@ -668,12 +682,17 @@ class GeminiStreamedResponse(StreamedResponse):
                     )
 
                 if part.text is not None:
-                    if part.thought:
-                        yield self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=part.text)
-                    else:
-                        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                    if len(part.text) > 0:
+                        if part.thought:
+                            yield self._parts_manager.handle_thinking_delta(
+                                vendor_part_id='thinking', content=part.text
+                            )
+                        else:
+                            maybe_event = self._parts_manager.handle_text_delta(
+                                vendor_part_id='content', content=part.text
+                            )
+                            if maybe_event is not None:  # pragma: no branch
+                                yield maybe_event
                 elif part.function_call:
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=uuid4(),
@@ -813,6 +832,9 @@ def _process_response_from_parts(
             assert code_execution_tool_call_id is not None
             item = _map_code_execution_result(part.code_execution_result, provider_name, code_execution_tool_call_id)
         elif part.text is not None:
+            # Google sometimes sends empty text parts, we don't want to add them to the response
+            if len(part.text) == 0:
+                continue
             if part.thought:
                 item = ThinkingPart(content=part.text)
             else:

@@ -106,7 +106,8 @@ print(result.all_messages())
                 content='Delete `__init__.py`, write `Hello, world!` to `README.md`, and clear `.env`',
                 timestamp=datetime.datetime(...),
             )
-        ]
+        ],
+        run_id='...',
     ),
     ModelResponse(
         parts=[
@@ -129,6 +130,7 @@ print(result.all_messages())
         usage=RequestUsage(input_tokens=63, output_tokens=21),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
+        run_id='...',
     ),
     ModelRequest(
         parts=[
@@ -138,23 +140,25 @@ print(result.all_messages())
                 tool_call_id='update_file_readme',
                 timestamp=datetime.datetime(...),
             )
-        ]
+        ],
+        run_id='...',
     ),
     ModelRequest(
         parts=[
-            ToolReturnPart(
-                tool_name='delete_file',
-                content='Deleting files is not allowed',
-                tool_call_id='delete_file',
-                timestamp=datetime.datetime(...),
-            ),
             ToolReturnPart(
                 tool_name='update_file',
                 content="File '.env' updated: ''",
                 tool_call_id='update_file_dotenv',
                 timestamp=datetime.datetime(...),
             ),
-        ]
+            ToolReturnPart(
+                tool_name='delete_file',
+                content='Deleting files is not allowed',
+                tool_call_id='delete_file',
+                timestamp=datetime.datetime(...),
+            ),
+        ],
+        run_id='...',
     ),
     ModelResponse(
         parts=[
@@ -165,6 +169,7 @@ print(result.all_messages())
         usage=RequestUsage(input_tokens=79, output_tokens=39),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
+        run_id='...',
     ),
 ]
 """
@@ -275,7 +280,8 @@ async def main():
                     content='Calculate the answer to the ultimate question of life, the universe, and everything',
                     timestamp=datetime.datetime(...),
                 )
-            ]
+            ],
+            run_id='...',
         ),
         ModelResponse(
             parts=[
@@ -290,6 +296,7 @@ async def main():
             usage=RequestUsage(input_tokens=63, output_tokens=13),
             model_name='gpt-5',
             timestamp=datetime.datetime(...),
+            run_id='...',
         ),
         ModelRequest(
             parts=[
@@ -299,7 +306,8 @@ async def main():
                     tool_call_id='pyd_ai_tool_call_id',
                     timestamp=datetime.datetime(...),
                 )
-            ]
+            ],
+            run_id='...',
         ),
         ModelResponse(
             parts=[
@@ -310,6 +318,7 @@ async def main():
             usage=RequestUsage(input_tokens=64, output_tokens=28),
             model_name='gpt-5',
             timestamp=datetime.datetime(...),
+            run_id='...',
         ),
     ]
     """

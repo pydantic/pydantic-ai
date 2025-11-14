@@ -63,7 +63,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             content='What is the capital of France?',
                             timestamp=datetime.datetime(...),
                         )
-                    ]
+                    ],
+                    run_id='...',
                 )
             ),
             CallToolsNode(
@@ -72,6 +73,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     usage=RequestUsage(input_tokens=56, output_tokens=7),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
+                    run_id='...',
                 )
             ),
             End(data=FinalResult(output='The capital of France is Paris.')),
@@ -134,6 +136,36 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             self._graph_run.deps.new_message_index,
             self._traceparent(required=False),
         )
+
+    def all_messages(self) -> list[_messages.ModelMessage]:
+        """Return all messages for the run so far.
+
+        Messages from older runs are included.
+        """
+        return self.ctx.state.message_history
+
+    def all_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes:
+        """Return all messages from [`all_messages`][pydantic_ai.agent.AgentRun.all_messages] as JSON bytes.
+
+        Returns:
+            JSON bytes representing the messages.
+        """
+        return _messages.ModelMessagesTypeAdapter.dump_json(self.all_messages())
+
+    def new_messages(self) -> list[_messages.ModelMessage]:
+        """Return new messages for the run so far.
+
+        Messages from older runs are excluded.
+        """
+        return self.all_messages()[self.ctx.deps.new_message_index :]
+
+    def new_messages_json(self) -> bytes:
+        """Return new messages from [`new_messages`][pydantic_ai.agent.AgentRun.new_messages] as JSON bytes.
+
+        Returns:
+            JSON bytes representing the new messages.
+        """
+        return _messages.ModelMessagesTypeAdapter.dump_json(self.new_messages())
 
     def __aiter__(
         self,
@@ -210,7 +242,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                                     content='What is the capital of France?',
                                     timestamp=datetime.datetime(...),
                                 )
-                            ]
+                            ],
+                            run_id='...',
                         )
                     ),
                     CallToolsNode(
@@ -219,6 +252,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             usage=RequestUsage(input_tokens=56, output_tokens=7),
                             model_name='gpt-4o',
                             timestamp=datetime.datetime(...),
+                            run_id='...',
                         )
                     ),
                     End(data=FinalResult(output='The capital of France is Paris.')),
@@ -248,6 +282,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def usage(self) -> _usage.RunUsage:
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
         return self._graph_run.state.usage
+
+    @property
+    def run_id(self) -> str:
+        """The unique identifier for the agent run."""
+        return self._graph_run.state.run_id
 
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output
@@ -382,6 +421,11 @@ class AgentRunResult(Generic[OutputDataT]):
     def timestamp(self) -> datetime:
         """Return the timestamp of last response."""
         return self.response.timestamp
+
+    @property
+    def run_id(self) -> str:
+        """The unique identifier for the agent run."""
+        return self._state.run_id
 
 
 @dataclasses.dataclass(repr=False)

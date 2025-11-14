@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import datetime
 import os
 import re
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -47,6 +48,7 @@ from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -56,6 +58,7 @@ from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
     from google.genai.types import (
+        FinishReason as GoogleFinishReason,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
         HarmBlockThreshold,
@@ -64,7 +67,12 @@ with try_import() as imports_successful:
         ModalityTokenCount,
     )
 
-    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings, _metadata_as_usage  # type: ignore
+    from pydantic_ai.models.google import (
+        GeminiStreamedResponse,
+        GoogleModel,
+        GoogleModelSettings,
+        _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -115,7 +123,8 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                         content='Hello!',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello there! How can I help you today?\n')],
@@ -128,6 +137,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -178,7 +188,8 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                         content='What was the temperature in London 1st January 2022?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -197,13 +208,15 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='temperature', content='30°C', tool_call_id=IsStr(), timestamp=IsDatetime()
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -224,6 +237,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -233,7 +247,8 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -298,7 +313,8 @@ async def test_google_model_builtin_code_execution_stream(
                         content='what is 65465-6544 * 65464-6+1.02255',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -360,6 +376,7 @@ print(result)\
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='1NjJaIDxJcL7qtsP5aPfqQs',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -533,7 +550,8 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 parts=[
                     SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
                     UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime()),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_capital', args={'country': 'France'}, tool_call_id=IsStr())],
@@ -546,6 +564,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -555,7 +574,8 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -572,6 +592,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -859,6 +880,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.\n')],
@@ -871,6 +893,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -928,7 +951,8 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
                         content='What is the weather in San Francisco today?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -991,6 +1015,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='btnJaOrqE4_6qtsP7bOboQs',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1005,7 +1030,8 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                         content='how about Mexico City?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1066,6 +1092,7 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='dtnJaKyTAri3qtsPu4imqQs',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1097,7 +1124,8 @@ async def test_google_model_web_search_tool_stream(allow_model_requests: None, g
                         content='What is the weather in San Francisco today?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1131,6 +1159,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='ftnJaMmAMcm-qtsPwvCCoAo',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1240,7 +1269,8 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                         content='how about Mexico City?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1306,6 +1336,7 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='itnJaJK1BsGxqtsPrIeb6Ao',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1335,7 +1366,8 @@ async def test_google_model_code_execution_tool(allow_model_requests: None, goog
                 parts=[
                     SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
                     UserPromptPart(content='What day is today in Utrecht?', timestamp=IsDatetime()),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1393,6 +1425,7 @@ print(f"Today in Utrecht is {formatted_date}.")
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1400,7 +1433,10 @@ print(f"Today in Utrecht is {formatted_date}.")
     result = await agent.run('What day is tomorrow?', message_history=result.all_messages())
     assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     BuiltinToolCallPart(
@@ -1445,6 +1481,7 @@ print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1611,7 +1648,8 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1631,6 +1669,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='sebBaN7rGrSsqtsPhf3J0Q4',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1647,7 +1686,8 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1667,6 +1707,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='zObBaKreOqSIqtsP7uur4A0',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1697,7 +1738,8 @@ async def test_google_model_thinking_part_from_other_model(
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1732,6 +1774,7 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c1fb6b6a248196a6216e80fc2ace380c14a8a9087e8689',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1753,7 +1796,8 @@ async def test_google_model_thinking_part_from_other_model(
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1773,6 +1817,7 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='mPvBaJmNOMywqtsPsb_l2A4',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1808,7 +1853,8 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1828,6 +1874,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='beHBaJfEMIi-qtsP3769-Q8',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2007,7 +2054,8 @@ async def test_google_url_input(
                         content=['What is the main content of this URL?', Is(url)],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(expected_output))],
@@ -2018,6 +2066,7 @@ async def test_google_url_input(
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2047,7 +2096,8 @@ async def test_google_url_input_force_download(
                         content=['What is the main content of this URL?', Is(video_url)],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(output))],
@@ -2058,6 +2108,7 @@ async def test_google_url_input_force_download(
                 provider_response_id=IsStr(),
                 provider_name='google-vertex',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2095,7 +2146,8 @@ async def test_google_tool_config_any_with_tool_without_args(
                         content='run bar for me please',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='bar', args={}, tool_call_id=IsStr())],
@@ -2108,6 +2160,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2117,7 +2170,8 @@ async def test_google_tool_config_any_with_tool_without_args(
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2136,6 +2190,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2145,7 +2200,8 @@ async def test_google_tool_config_any_with_tool_without_args(
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2186,7 +2242,8 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
@@ -2199,6 +2256,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2208,7 +2266,8 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2227,6 +2286,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2236,7 +2296,8 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2267,7 +2328,8 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                         content='What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
@@ -2280,6 +2342,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2289,7 +2352,8 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The largest city in Mexico is Mexico City.')],
@@ -2302,6 +2366,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2323,7 +2388,7 @@ async def test_google_native_output_with_tools(allow_model_requests: None, googl
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+            'Google does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
         ),
     ):
         await agent.run('What is the largest city in the user country?')
@@ -2351,7 +2416,8 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                         content='What is the largest city in Mexico?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2373,6 +2439,7 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2402,7 +2469,8 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                         content='What is the primarily language spoken in Mexico?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2429,6 +2497,7 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2455,13 +2524,7 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -2474,6 +2537,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2506,13 +2570,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
@@ -2525,6 +2583,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2535,13 +2594,7 @@ Don't include any text or Markdown fencing before or after.\
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -2554,6 +2607,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2584,13 +2638,7 @@ async def test_google_prompted_output_multiple(allow_model_requests: None, googl
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2609,6 +2657,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2713,7 +2762,7 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
 
     with pytest.raises(
         UserError,
-        match=re.escape('Gemini does not support user tools and built-in tools at the same time.'),
+        match=re.escape('Google does not support function tools and built-in tools at the same time.'),
     ):
         await agent.run('What is the largest city in the user country?')
 
@@ -2726,12 +2775,14 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Gemini does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+            'Google does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
         ),
     ):
         await agent.run('What is the largest city in Mexico?')
 
-    agent = Agent(m, output_type=PromptedOutput(CityLocation), builtin_tools=[UrlContextTool()])
+    # Will default to prompted output
+    agent = Agent(m, output_type=CityLocation, builtin_tools=[UrlContextTool()])
+
     result = await agent.run('What is the largest city in Mexico?')
     assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
 
@@ -2759,7 +2810,8 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                         content='Generate an image of an axolotl.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2784,6 +2836,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2805,7 +2858,8 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                         content='Now give it a sombrero.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2830,6 +2884,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2874,7 +2929,8 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                         content='Generate an image of an axolotl.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2899,6 +2955,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2941,7 +2998,8 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
                         content='Generate an illustrated two-sentence story about an axolotl.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2968,6 +3026,7 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3093,3 +3152,68 @@ async def test_google_httpx_client_is_not_closed(allow_model_requests: None, gem
     agent = Agent(GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key=gemini_api_key)))
     result = await agent.run('What is the capital of Mexico?')
     assert result.output == snapshot('The capital of Mexico is **Mexico City**.')
+
+
+def test_google_process_response_filters_empty_text_parts(google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-pro', provider=google_provider)
+    response = _generate_response_with_texts(response_id='resp-123', texts=['', 'first', '', 'second'])
+
+    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+
+    assert result.parts == snapshot([TextPart(content='first'), TextPart(content='second')])
+
+
+async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
+    chunk = _generate_response_with_texts('stream-1', ['', 'streamed text'])
+
+    async def response_iterator() -> AsyncIterator[GenerateContentResponse]:
+        yield chunk
+
+    streamed_response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-test',
+        _response=response_iterator(),
+        _timestamp=datetime.datetime.now(datetime.timezone.utc),
+        _provider_name='test-provider',
+    )
+
+    events = [event async for event in streamed_response._get_event_iterator()]  # pyright: ignore[reportPrivateUsage]
+    assert events == snapshot([PartStartEvent(index=0, part=TextPart(content='streamed text'))])
+
+
+def _generate_response_with_texts(response_id: str, texts: list[str]) -> GenerateContentResponse:
+    return GenerateContentResponse.model_validate(
+        {
+            'response_id': response_id,
+            'model_version': 'gemini-test',
+            'usage_metadata': GenerateContentResponseUsageMetadata(
+                prompt_token_count=0,
+                candidates_token_count=0,
+            ),
+            'candidates': [
+                {
+                    'finish_reason': GoogleFinishReason.STOP,
+                    'content': {
+                        'role': 'model',
+                        'parts': [{'text': text} for text in texts],
+                    },
+                }
+            ],
+        }
+    )
+
+
+async def test_cache_point_filtering():
+    """Test that CachePoint is filtered out in Google internal method."""
+    from pydantic_ai import CachePoint
+
+    # Create a minimal GoogleModel instance to test _map_user_prompt
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    # Test that CachePoint in a list is handled (triggers line 606)
+    content = await model._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
+
+    # CachePoint should be filtered out, only text content should remain
+    assert len(content) == 2
+    assert content[0] == {'text': 'text before'}
+    assert content[1] == {'text': 'text after'}

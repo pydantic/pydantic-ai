@@ -592,30 +592,30 @@ wheels = [
 
 [[package]]
 name = "boto3"
-version = "1.40.3"
+version = "1.40.67"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore" },
     { name = "jmespath" },
     { name = "s3transfer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/71/a5/c859040c5d3466db6532b0d94bd81ab490093194387621b3fefd14b1f9db/boto3-1.40.3.tar.gz", hash = "sha256:8cdda3a3fbaa0229aa32fdf2f6f59b5c96e5cd5916ed45be378c06fae09cef19", size = 111805, upload-time = "2025-08-05T20:03:50.357Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/40/a5/0e87ff413d2ca57500b1ec9e583a83589ed56fc27af8bacf8f0681c28672/boto3-1.40.67.tar.gz", hash = "sha256:3e4317139ace6d44658b8e1f2b5b6612f05b45720721841c90cdee45b02aa514", size = 111587, upload-time = "2025-11-05T20:33:16.326Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/89/12/d4977c85fbac3dff809558f61f486fdb3e674a87db455e321a53785d11b4/boto3-1.40.3-py3-none-any.whl", hash = "sha256:6e8ace4439b5a03ce1b07532a86a3e56fc0adc268bcdeef55624d64f99e90e2a", size = 139882, upload-time = "2025-08-05T20:03:48.456Z" },
+    { url = "https://files.pythonhosted.org/packages/b9/2d/f4896b59ff21d1bf228bde2973b5c5af2debc71e11137533dd088f094846/boto3-1.40.67-py3-none-any.whl", hash = "sha256:3d06e9b3c7abedb8253c7d75b9ab27005480ca1e6e448d1f3c3cc3e209673ca0", size = 139362, upload-time = "2025-11-05T20:33:14.994Z" },
 ]
 
 [[package]]
 name = "boto3-stubs"
-version = "1.37.1"
+version = "1.40.64"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore-stubs" },
     { name = "types-s3transfer" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bc/ae/252719bc3ef1dabfd5a1bd38b3d2811d2698894f783c870971b7e19308e8/boto3_stubs-1.37.1.tar.gz", hash = "sha256:beee1ec3bb11c7bac50299d945aca8789427cf8d3cd076d1459ae32106749a2a", size = 98425, upload-time = "2025-02-25T20:43:48.166Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ab/af/362ed100e01551b36558da328dfdd4c3307a112915cef92a18cf3af7c8db/boto3_stubs-1.40.64.tar.gz", hash = "sha256:af4a7fb67bda0c1277afcd45a25065605567d260a8afd34bbdf1799d2492334f", size = 99647, upload-time = "2025-10-31T19:47:34.613Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e4/73/2d66858ab637b20af9fe8ab505c5338972b9d4c55ef15d98429f5b235e58/boto3_stubs-1.37.1-py3-none-any.whl", hash = "sha256:e771e8c627efe34a599e01144408569d2d299cf15288ea2e9bc5448e9b92e4fc", size = 68137, upload-time = "2025-02-25T20:43:36.951Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/92/45cc1db83ebaaa26d2e4f200436aafbcddf8fb29a8c2b1d296921d9aa722/boto3_stubs-1.40.64-py3-none-any.whl", hash = "sha256:c0c0dd70c02b08550ca596e8799586b3669e9352844db22401e76556b05d71a3", size = 69067, upload-time = "2025-10-31T19:47:25.89Z" },
 ]
 
 [package.optional-dependencies]
@@ -625,16 +625,16 @@ bedrock-runtime = [
 
 [[package]]
 name = "botocore"
-version = "1.40.3"
+version = "1.40.67"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jmespath" },
     { name = "python-dateutil" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e0/0a/162669b946a4f0f44494347c407e3f7d268634a99a6f623c7b1b0fe9a959/botocore-1.40.3.tar.gz", hash = "sha256:bba6b642fff19e32bee52edbbb8dd3f45e37ba7b8e54addc9ae3b105c4eaf2a4", size = 14309624, upload-time = "2025-08-05T20:03:39.759Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2d/aa/4d3d04e3fb2f497fbe574051d50180a6326ffef481caea80837605a0016d/botocore-1.40.67.tar.gz", hash = "sha256:cc086f39c877aee0ea8dc88ef69062c9f395b9d30d49bfcfac7b8b7e61864b3a", size = 14417097, upload-time = "2025-11-05T20:33:06.595Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ad/e7/c27a2cad80dd0a47e9a5c942b5734bd05a95db6b4d6cd778393183d78c6a/botocore-1.40.3-py3-none-any.whl", hash = "sha256:0c6d00b4412babb5e3d0944b5e057d31f763bf54429d5667f367e7b46e5c1c22", size = 13970985, upload-time = "2025-08-05T20:03:34.563Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/65/2b50bb0112d6e2c171c8e07cc7f2a0581d39b850921d4defdf5421098fc9/botocore-1.40.67-py3-none-any.whl", hash = "sha256:e49e61f6718e8bc8b34e9bb8a97f16c8dc560485faef4981b55d76f825c9d78a", size = 14081807, upload-time = "2025-11-05T20:33:03.804Z" },
 ]
 
 [[package]]
@@ -3619,14 +3619,14 @@ wheels = [
 
 [[package]]
 name = "mypy-boto3-bedrock-runtime"
-version = "1.37.0"
+version = "1.40.62"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f7/7f/f9a0443db1dbdd37ab2994da2647513e4cf5c0cb5f8ffda7cb96c5f5ba29/mypy_boto3_bedrock_runtime-1.37.0.tar.gz", hash = "sha256:6cafe42000f5432a87c3018e39fbfe812406248e43e7aac5f6ea596e8fd69961", size = 25201, upload-time = "2025-02-24T22:17:22.617Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/51/d0/ca3c58a1284f9142959fb00889322d4889278c2e4b165350d8e294c07d9c/mypy_boto3_bedrock_runtime-1.40.62.tar.gz", hash = "sha256:5505a60e2b5f9c845ee4778366d49c93c3723f6790d0cec116d8fc5f5609d846", size = 28611, upload-time = "2025-10-29T21:43:02.599Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ef/b1/f745fc50793cc774c9845c2774692f67efe87dbdf62430c64304ebb54e20/mypy_boto3_bedrock_runtime-1.37.0-py3-none-any.whl", hash = "sha256:1abd52eb584a7351e7e615e073b2906680aadb651436e7faaaaef4935f171c4d", size = 31074, upload-time = "2025-02-24T22:17:20.074Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/c5/ad62e5f80684ce5fe878d320634189ef29d00ee294cd62a37f3e51719f47/mypy_boto3_bedrock_runtime-1.40.62-py3-none-any.whl", hash = "sha256:e383e70b5dffb0b335b49fc1b2772f0d35118f99994bc7e731445ba0ab237831", size = 34497, upload-time = "2025-10-29T21:43:01.591Z" },
 ]
 
 [[package]]
@@ -5623,7 +5623,7 @@ requires-dist = [
     { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.8" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.70.0" },
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
-    { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.39.0" },
+    { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.40.14" },
     { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.18.0" },
     { name = "dbos", marker = "extra == 'dbos'", specifier = ">=1.14.0" },
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
@@ -5660,7 +5660,7 @@ requires-dist = [
     { name = "starlette", marker = "extra == 'ag-ui'", specifier = ">=0.45.3" },
     { name = "starlette", marker = "extra == 'ui'", specifier = ">=0.45.3" },
     { name = "tavily-python", marker = "extra == 'tavily'", specifier = ">=0.5.0" },
-    { name = "temporalio", marker = "extra == 'temporal'", specifier = "==1.18.0" },
+    { name = "temporalio", marker = "extra == 'temporal'", specifier = "==1.18.2" },
     { name = "tenacity", marker = "extra == 'retries'", specifier = ">=8.2.3" },
     { name = "torch", marker = "(platform_machine != 'x86_64' and extra == 'outlines-transformers') or (sys_platform != 'darwin' and extra == 'outlines-transformers')" },
     { name = "torch", marker = "(platform_machine != 'x86_64' and extra == 'outlines-vllm-offline') or (sys_platform != 'darwin' and extra == 'outlines-vllm-offline')" },
@@ -6733,14 +6733,14 @@ wheels = [
 
 [[package]]
 name = "s3transfer"
-version = "0.13.1"
+version = "0.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6d/05/d52bf1e65044b4e5e27d4e63e8d1579dbdec54fce685908ae09bc3720030/s3transfer-0.13.1.tar.gz", hash = "sha256:c3fdba22ba1bd367922f27ec8032d6a1cf5f10c934fb5d68cf60fd5a23d936cf", size = 150589, upload-time = "2025-07-18T19:22:42.31Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/62/74/8d69dcb7a9efe8baa2046891735e5dfe433ad558ae23d9e3c14c633d1d58/s3transfer-0.14.0.tar.gz", hash = "sha256:eff12264e7c8b4985074ccce27a3b38a485bb7f7422cc8046fee9be4983e4125", size = 151547, upload-time = "2025-09-09T19:23:31.089Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6d/4f/d073e09df851cfa251ef7840007d04db3293a0482ce607d2b993926089be/s3transfer-0.13.1-py3-none-any.whl", hash = "sha256:a981aa7429be23fe6dfc13e80e4020057cbab622b08c0315288758d67cabc724", size = 85308, upload-time = "2025-07-18T19:22:40.947Z" },
+    { url = "https://files.pythonhosted.org/packages/48/f0/ae7ca09223a81a1d890b2557186ea015f6e0502e9b8cb8e1813f1d8cfa4e/s3transfer-0.14.0-py3-none-any.whl", hash = "sha256:ea3b790c7077558ed1f02a3072fb3cb992bbbd253392f4b6e9e8976941c7d456", size = 85712, upload-time = "2025-09-09T19:23:30.041Z" },
 ]
 
 [[package]]
@@ -7323,7 +7323,7 @@ wheels = [
 
 [[package]]
 name = "temporalio"
-version = "1.18.0"
+version = "1.18.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "nexus-rpc" },
@@ -7332,13 +7332,13 @@ dependencies = [
     { name = "types-protobuf" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7e/20/b52c96b37bf00ead6e8a4a197075770ebad516db765cc3abca8396de0689/temporalio-1.18.0.tar.gz", hash = "sha256:7ff7f833eb1e7697084b4ed9d86c3167cbff1ec77f1b40df774313a5d0fd5f6d", size = 1781572, upload-time = "2025-09-19T23:40:52.511Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/61/ab/f866e19e02d46792ebd08e3e975f30ec86f985f1cd0cee4d5bc632d538e6/temporalio-1.18.2.tar.gz", hash = "sha256:b6ecb43562988ac698eef155d9c2527fa6c53a2ae564cb4787421499a0269599", size = 1788530, upload-time = "2025-10-27T19:24:50.624Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2f/28/c5a4ee259748450ac0765837f8c78cbfa36800264158d98bd2cde4496d87/temporalio-1.18.0-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:ac5d30d8b010c9b042065ea1259da7638db1a0a25e81ee4be0671a393ed329c5", size = 12734753, upload-time = "2025-09-19T23:40:06.575Z" },
-    { url = "https://files.pythonhosted.org/packages/be/94/24bd903b5594420a4d131bfa3de965313f9a409af77b47e9a9a56d85bb9e/temporalio-1.18.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:19315d192247230c9bd7c60a566c2b3a80ad4d9de891c6aa13df63d72d3ec169", size = 12323141, upload-time = "2025-09-19T23:40:16.817Z" },
-    { url = "https://files.pythonhosted.org/packages/6d/76/82415b43c68e2c6bb3a85e8800555d206767815088c8cad0ade9a06bd7ac/temporalio-1.18.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:a023b25033e48b2e43f623a78737047a45b8cb553f69f457d09272fce5c723da", size = 12694061, upload-time = "2025-09-19T23:40:26.388Z" },
-    { url = "https://files.pythonhosted.org/packages/41/60/176a3224c2739fee270052dd9224ae36370c4e13d2ab1bb96a2f9bbb513c/temporalio-1.18.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:695211dddbcffc20077d5b3b9a9b41bd09f60393c4ff211bcc7d6d895d607cc1", size = 12879404, upload-time = "2025-09-19T23:40:37.487Z" },
-    { url = "https://files.pythonhosted.org/packages/e3/8d/e3809b356262d1d398d8cbb78df1e19d460c0a89e6ab64ca8d9c05d5fe5a/temporalio-1.18.0-cp39-abi3-win_amd64.whl", hash = "sha256:e3f691bd0a01a22c0fe40e87b6236cc8a292628e3a5a490880d1bf94709249c9", size = 13088041, upload-time = "2025-09-19T23:40:49.469Z" },
+    { url = "https://files.pythonhosted.org/packages/35/7e/2fc0d8cf18644fba2e4e5d0ba66206bf2e6f22ad04e9da8f038261351ff6/temporalio-1.18.2-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:b97f046b23a492b0a3956dffce3664ed44ca1f3577df6aa4b8023ec988f5d093", size = 12808656, upload-time = "2025-10-27T19:24:26.884Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/2f/8ee0836e31f60a03582358ff64210f6f0c91001f34e4fc85da892e5c3087/temporalio-1.18.2-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:dac1203ebabae3268bc0b43b8c841e6f9102893c616488a278bc5d06043b76e5", size = 12393520, upload-time = "2025-10-27T19:24:32.048Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/39/53d9add2e8c1d4066ea0c288476cdc944453ea309e36e7b24d4a1c43db79/temporalio-1.18.2-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:f45b124099dbbe32a76a4df0d851db2ad94e6725f778fd74fccc8d33ee4868e9", size = 12733544, upload-time = "2025-10-27T19:24:36.871Z" },
+    { url = "https://files.pythonhosted.org/packages/22/b2/5558978e9002fd1e71a1a459ddcc8fdd1fc1f4f595fd578eb7568be266a6/temporalio-1.18.2-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d427a398f6f402920e9f78d571b7d7a72876244d5affeaeaec8843c34013e84e", size = 12926857, upload-time = "2025-10-27T19:24:43.443Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/a2/ea81149ae7faa154aa842e9dd88390df3158a687db694e06d08716c030b6/temporalio-1.18.2-cp39-abi3-win_amd64.whl", hash = "sha256:7e1f3da98cf23af7094467f1c1180374a10c38aa712cd7e868e15412dd2c6cde", size = 13059111, upload-time = "2025-10-27T19:24:48.382Z" },
 ]
 
 [[package]]
