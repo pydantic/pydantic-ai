@@ -54,22 +54,31 @@ Choose a name for your organization (or accept the default). You will automatica
 A default project will be created for you. You can choose to use it, or create a new one on the [Projects](https://gateway.pydantic.dev/admin/projects) page.
 
 ### Add **Providers**
+
 There are two ways to use Providers in the Pydantic AI Gateway: you can bring your own key (BYOK) or buy inference through the platform.
 
 #### Bringing your own API key (BYOK)
 
-On the [Providers](https://gateway.pydantic.dev/admin/providers) page, fill in the form to add a provider. Paste your API key into the form under Credentials, and make sure to **select the Project that will be associated to this provider**. It is possible to add multiple keys from the same provider.
+On the [Providers](https://gateway.pydantic.dev/admin/providers) page, fill in the form to add a provider.
+Paste your API key into the form under Credentials, and make sure to **select the Project that will be associated to this provider**.
+It is possible to add multiple keys from the same provider.
 
 #### Use Built-in Providers
-Go to the Billing page, add a payment method, and purchase $15 in credits to activate built-in providers. This gives you single-key access to all available models from OpenAI, Anthropic, Google Vertex, AWS Bedrock, and Groq.
+
+Go to the [Billing page](https://gateway.pydantic.dev/admin/billing), add a payment method, and purchase $15 in credits to activate built-in providers.
+This gives you single-key access to all available models from OpenAI, Anthropic, Google Vertex, AWS Bedrock, and Groq.
 
 ### Grant access to your team
+
 On the [Users](https://gateway.pydantic.dev/admin/users) page, create an invitation and share the URL with your team to allow them to access the project.
 
 ### Create Gateway project keys
-On the Keys page, Admins can create project keys which are not affected by spending limits. Users can only create personal keys, that will inherit spending caps from both User and Project levels, whichever is more restrictive.
+
+On the Keys page, Admins can create project keys which are not affected by spending limits.
+Users can only create personal keys, that will inherit spending caps from both User and Project levels, whichever is more restrictive.
 
 ## Usage
+
 After setting up your account with the instructions above, you will be able to make an AI model request with the Pydantic AI Gateway.
 The code snippets below show how you can use PAIG with different frameworks and SDKs.
 You can add `gateway/` as prefix on every known provider that
@@ -87,6 +96,7 @@ Examples of providers and models that can be used are:
 | AWS Bedrock | `bedrock`       | `gateway/bedrock:amazon.nova-micro-v1:0` |
 
 ### Pydantic AI
+
 Before you start, make sure you are on version 1.16 or later of `pydantic-ai`. To update to the latest version run:
 
 === "uv"
@@ -123,6 +133,7 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 
 ### Claude Code
+
 Before you start, log out of Claude Code using `/logout`.
 
 Set your gateway credentials as environment variables:
@@ -174,3 +185,16 @@ response = client.messages.create(
 print(response.content[0].text)
 #> Hello user
 ```
+
+## Troubleshooting
+
+### Unable to calculate spend
+
+The gateway needs to know the cost of the request in order to provide insights about the spend, and to enforce spending limits.
+If it's unable to calculate the cost, it will return a 400 error with the message "Unable to calculate spend".
+
+When [configuring a provider](https://gateway.pydantic.dev/admin/providers/new), you need to decide if you want the gateway to block
+the API key if it's unable to calculate the cost. If you choose to block the API key, and further requests using that API key will fail.
+
+We are actively working on supporting more providers, and models.
+If you have a specific provider that you would like to see supported, please let us know on [Slack](https://logfire.pydantic.dev/docs/join-slack/).
