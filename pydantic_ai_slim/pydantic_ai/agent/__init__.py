@@ -672,9 +672,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 async with toolset:
                     agent_run = AgentRun(graph_run)
                     yield agent_run
+                    final_result = agent_run.result
                     if instrumentation_settings and run_span.is_recording():
                         run_metadata = self._compute_agent_metadata(build_run_context(agent_run.ctx))
-                        if instrumentation_settings.include_content and (final_result := agent_run.result) is not None:
+                        if instrumentation_settings.include_content and final_result is not None:
                             run_span.set_attribute(
                                 'final_result',
                                 (
