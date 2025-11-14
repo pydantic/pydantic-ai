@@ -19,6 +19,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     FilePart,
     FileUrl,
     FinishReason,
@@ -204,7 +205,7 @@ class GoogleModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider('gateway/gemini' if provider == 'gateway' else provider)
+            provider = infer_provider('gateway/google-vertex' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
@@ -602,6 +603,9 @@ class GoogleModel(Model):
                     else:
                         file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
                         content.append({'file_data': file_data_dict})  # pragma: lax no cover
+                elif isinstance(item, CachePoint):
+                    # Google Gemini doesn't support prompt caching via CachePoint
+                    pass
                 else:
                     assert_never(item)
         return content
@@ -677,13 +681,18 @@ class GeminiStreamedResponse(StreamedResponse):
                         provider_name=self.provider_name,
                     )
 
-                if part.text:
-                    if part.thought:
-                        yield self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=part.text)
-                    else:
-                        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
+                if part.text is not None:
+                    if len(part.text) > 0:
+                        if part.thought:
+                            yield self._parts_manager.handle_thinking_delta(
+                                vendor_part_id='thinking', content=part.text
+                            )
+                        else:
+                            maybe_event = self._parts_manager.handle_text_delta(
+                                vendor_part_id='content', content=part.text
+                            )
+                            if maybe_event is not None:  # pragma: no branch
+                                yield maybe_event
                 elif part.function_call:
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=uuid4(),
@@ -822,7 +831,10 @@ def _process_response_from_parts(
         elif part.code_execution_result is not None:
             assert code_execution_tool_call_id is not None
             item = _map_code_execution_result(part.code_execution_result, provider_name, code_execution_tool_call_id)
-        elif part.text:
+        elif part.text is not None:
+            # Google sometimes sends empty text parts, we don't want to add them to the response
+            if len(part.text) == 0:
+                continue
             if part.thought:
                 item = ThinkingPart(content=part.text)
             else:

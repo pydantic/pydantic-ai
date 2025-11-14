@@ -29,7 +29,8 @@ async def model_function(
                     content='Testing my agent...',
                     timestamp=datetime.datetime(...),
                 )
-            ]
+            ],
+            run_id='...',
         )
     ]
     """

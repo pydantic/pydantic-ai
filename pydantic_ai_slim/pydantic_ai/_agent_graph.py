@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import inspect
+import uuid
 from asyncio import Task
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
@@ -92,6 +93,7 @@ class GraphAgentState:
     usage: _usage.RunUsage = dataclasses.field(default_factory=_usage.RunUsage)
     retries: int = 0
     run_step: int = 0
+    run_id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4()))
 
     def increment_retries(
         self,
@@ -469,6 +471,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     async def _prepare_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> tuple[ModelSettings | None, models.ModelRequestParameters, list[_messages.ModelMessage], RunContext[DepsT]]:
+        self.request.run_id = self.request.run_id or ctx.state.run_id
         ctx.state.message_history.append(self.request)
 
         ctx.state.run_step += 1
@@ -510,6 +513,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
     ) -> CallToolsNode[DepsT, NodeRunEndT]:
+        response.run_id = response.run_id or ctx.state.run_id
         # Update usage
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
@@ -741,7 +745,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         # For backwards compatibility, append a new ModelRequest using the tool returns and retries
         if tool_responses:
-            messages.append(_messages.ModelRequest(parts=tool_responses))
+            messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id))
 
         return End(final_result)
 
@@ -775,6 +779,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         if ctx.deps.instrumentation_settings
         else DEFAULT_INSTRUMENTATION_VERSION,
         run_step=ctx.state.run_step,
+        run_id=ctx.state.run_id,
     )
 
 
