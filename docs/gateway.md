@@ -194,7 +194,7 @@ The gateway needs to know the cost of the request in order to provide insights a
 If it's unable to calculate the cost, it will return a 400 error with the message "Unable to calculate spend".
 
 When [configuring a provider](https://gateway.pydantic.dev/admin/providers/new), you need to decide if you want the gateway to block
-the API key if it's unable to calculate the cost. If you choose to block the API key, and further requests using that API key will fail.
+the API key if it's unable to calculate the cost. If you choose to block the API key, any further requests using that API key will fail.
 
 We are actively working on supporting more providers, and models.
-If you have a specific provider that you would like to see supported, please let us know on [Slack](https://logfire.pydantic.dev/docs/join-slack/).
+If you have a specific provider that you would like to see supported, please let us know on [Slack](https://logfire.pydantic.dev/docs/join-slack/) or [open an issue on `genai-prices`](https://github.com/pydantic/genai-prices/issues/new).
