@@ -20,6 +20,7 @@ from pydantic_ai import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     FinalResultEvent,
     ImageUrl,
@@ -290,6 +291,262 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
     last_message = result.all_messages()[-1]
     assert isinstance(last_message, ModelResponse)
     assert last_message.cost().total_price == snapshot(Decimal('0.00002688'))
+
+
+async def test_cache_point_adds_cache_control(allow_model_requests: None):
+    """Test that CachePoint correctly adds cache_control to content blocks."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # Test with CachePoint after text content
+    await agent.run(['Some context to cache', CachePoint(), 'Now the question'])
+
+    # Verify cache_control was added to the right content block
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Some context to cache', 'type': 'text', 'cache_control': {'type': 'ephemeral'}},
+                    {'text': 'Now the question', 'type': 'text'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_cache_point_multiple_markers(allow_model_requests: None):
+    """Test multiple CachePoint markers in a single prompt."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run(['First chunk', CachePoint(), 'Second chunk', CachePoint(), 'Question'])
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    content = completion_kwargs['messages'][0]['content']
+
+    assert content == snapshot(
+        [
+            {'text': 'First chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral'}},
+            {'text': 'Second chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral'}},
+            {'text': 'Question', 'type': 'text'},
+        ]
+    )
+
+
+async def test_cache_point_as_first_content_raises_error(allow_model_requests: None):
+    """Test that CachePoint as first content raises UserError."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(
+        UserError,
+        match='CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to.',
+    ):
+        await agent.run([CachePoint(), 'This should fail'])
+
+
+async def test_cache_point_with_image_content(allow_model_requests: None):
+    """Test CachePoint works with image content."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run(
+        [
+            ImageUrl('https://example.com/image.jpg'),
+            CachePoint(),
+            'What is in this image?',
+        ]
+    )
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    content = completion_kwargs['messages'][0]['content']
+
+    assert content == snapshot(
+        [
+            {
+                'source': {'type': 'url', 'url': 'https://example.com/image.jpg'},
+                'type': 'image',
+                'cache_control': {'type': 'ephemeral'},
+            },
+            {'text': 'What is in this image?', 'type': 'text'},
+        ]
+    )
+
+
+async def test_cache_point_in_otel_message_parts(allow_model_requests: None):
+    """Test that CachePoint is handled correctly in otel message parts conversion."""
+    from pydantic_ai.agent import InstrumentationSettings
+    from pydantic_ai.messages import UserPromptPart
+
+    # Create a UserPromptPart with CachePoint
+    part = UserPromptPart(content=['text before', CachePoint(), 'text after'])
+
+    # Convert to otel message parts
+    settings = InstrumentationSettings(include_content=True)
+    otel_parts = part.otel_message_parts(settings)
+
+    # Should have 2 text parts, CachePoint is skipped
+    assert otel_parts == snapshot(
+        [{'type': 'text', 'content': 'text before'}, {'type': 'text', 'content': 'text after'}]
+    )
+
+
+def test_cache_control_unsupported_param_type():
+    """Test that cache control raises error for unsupported param types."""
+
+    from pydantic_ai.exceptions import UserError
+    from pydantic_ai.models.anthropic import AnthropicModel
+
+    # Create a list with an unsupported param type (document)
+    # We'll use a mock document block param
+    params: list[dict[str, Any]] = [{'type': 'document', 'source': {'data': 'test'}}]
+
+    with pytest.raises(UserError, match='Cache control not supported for param type: document'):
+        AnthropicModel._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
+
+
+async def test_anthropic_cache_tools(allow_model_requests: None):
+    """Test that anthropic_cache_tool_definitions adds cache_control to last tool."""
+    c = completion_message(
+        [BetaTextBlock(text='Tool result', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='Test system prompt',
+        model_settings=AnthropicModelSettings(anthropic_cache_tool_definitions=True),
+    )
+
+    @agent.tool_plain
+    def tool_one() -> str:  # pragma: no cover
+        return 'one'
+
+    @agent.tool_plain
+    def tool_two() -> str:  # pragma: no cover
+        return 'two'
+
+    await agent.run('test prompt')
+
+    # Verify cache_control was added to the last tool
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = completion_kwargs['tools']
+    assert tools == snapshot(
+        [
+            {
+                'name': 'tool_one',
+                'description': '',
+                'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+            },
+            {
+                'name': 'tool_two',
+                'description': '',
+                'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'cache_control': {'type': 'ephemeral'},
+            },
+        ]
+    )
+
+
+async def test_anthropic_cache_instructions(allow_model_requests: None):
+    """Test that anthropic_cache_instructions adds cache_control to system prompt."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='This is a test system prompt with instructions.',
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    await agent.run('test prompt')
+
+    # Verify system is a list with cache_control on last block
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    system = completion_kwargs['system']
+    assert system == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': 'This is a test system prompt with instructions.',
+                'cache_control': {'type': 'ephemeral'},
+            }
+        ]
+    )
+
+
+async def test_anthropic_cache_tools_and_instructions(allow_model_requests: None):
+    """Test that both cache settings work together."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='System instructions to cache.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_tool_definitions=True,
+            anthropic_cache_instructions=True,
+        ),
+    )
+
+    @agent.tool_plain
+    def my_tool(value: str) -> str:  # pragma: no cover
+        return f'Result: {value}'
+
+    await agent.run('test prompt')
+
+    # Verify both have cache_control
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = completion_kwargs['tools']
+    system = completion_kwargs['system']
+    assert tools == snapshot(
+        [
+            {
+                'name': 'my_tool',
+                'description': '',
+                'input_schema': {
+                    'additionalProperties': False,
+                    'properties': {'value': {'type': 'string'}},
+                    'required': ['value'],
+                    'type': 'object',
+                },
+                'cache_control': {'type': 'ephemeral'},
+            }
+        ]
+    )
+    assert system == snapshot(
+        [{'type': 'text', 'text': 'System instructions to cache.', 'cache_control': {'type': 'ephemeral'}}]
+    )
 
 
 async def test_async_request_text_response(allow_model_requests: None):
@@ -4695,14 +4952,14 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
     messages_empty_string: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='')], kind='request'),
     ]
-    _, anthropic_messages = await model._map_message(messages_empty_string, ModelRequestParameters())  # type: ignore[attr-defined]
+    _, anthropic_messages = await model._map_message(messages_empty_string, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     assert anthropic_messages == snapshot([])  # Empty content should be filtered out
 
     # Test _map_message with list containing empty strings in user prompt
     messages_mixed_content: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content=['', 'Hello', '', 'World'])], kind='request'),
     ]
-    _, anthropic_messages = await model._map_message(messages_mixed_content, ModelRequestParameters())  # type: ignore[attr-defined]
+    _, anthropic_messages = await model._map_message(messages_mixed_content, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     assert anthropic_messages == snapshot(
         [{'role': 'user', 'content': [{'text': 'Hello', 'type': 'text'}, {'text': 'World', 'type': 'text'}]}]
     )
@@ -4713,7 +4970,7 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
         ModelResponse(parts=[TextPart(content='')], kind='response'),  # Empty response
         ModelRequest(parts=[UserPromptPart(content='Hello')], kind='request'),
     ]
-    _, anthropic_messages = await model._map_message(messages, ModelRequestParameters())  # type: ignore[attr-defined]
+    _, anthropic_messages = await model._map_message(messages, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     # The empty assistant message should be filtered out
     assert anthropic_messages == snapshot([{'role': 'user', 'content': [{'text': 'Hello', 'type': 'text'}]}])
 
@@ -4721,7 +4978,7 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
     messages_resp: list[ModelMessage] = [
         ModelResponse(parts=[TextPart(content=''), TextPart(content='')], kind='response'),
     ]
-    _, anthropic_messages = await model._map_message(messages_resp, ModelRequestParameters())  # type: ignore[attr-defined]
+    _, anthropic_messages = await model._map_message(messages_resp, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     assert len(anthropic_messages) == 0  # No messages should be added
 
 
