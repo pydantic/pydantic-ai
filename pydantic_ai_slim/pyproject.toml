@@ -106,7 +106,7 @@ ag-ui = ["ag-ui-protocol>=0.1.8", "starlette>=0.45.3"]
 # Retries
 retries = ["tenacity>=8.2.3"]
 # Temporal
-temporal = ["temporalio==1.18.2"]
+temporal = ["temporalio==1.19.0"]
 # DBOS
 dbos = ["dbos>=1.14.0"]
 # Prefect
