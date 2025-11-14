@@ -9,8 +9,10 @@ from pydantic_ai.providers import Provider, infer_provider
 from . import OpenAIEmbeddingsCompatibleProvider
 
 try:
-    from openai import NOT_GIVEN, AsyncOpenAI
+    from openai import AsyncOpenAI
     from openai.types import EmbeddingModel as LatestOpenAIEmbeddingModelNames
+
+    from pydantic_ai.models.openai import OMIT
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI embeddings model, '
@@ -93,7 +95,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         response = await self._client.embeddings.create(
             input=documents,  # pyright: ignore[reportArgumentType]  # Sequence[str] not compatible with SequenceNotStr[str] :/
             model=self.model_name,
-            dimensions=settings.get('dimensions') or NOT_GIVEN,
+            dimensions=settings.get('dimensions') or OMIT,
             extra_headers=settings.get('extra_headers'),
             extra_body=settings.get('extra_body'),
         )
