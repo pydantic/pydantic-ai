@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal
 import pydantic_core
 import pytest
 from _pytest.logging import LogCaptureFixture
+from dirty_equals import IsStr
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, TypeAdapter, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
@@ -1405,12 +1406,12 @@ def test_call_deferred_with_metadata():
         raise CallDeferred(metadata={'task_id': 'task-123', 'estimated_cost': 25.50})
 
     result = agent.run_sync('Hello')
-    assert isinstance(result.output, DeferredToolRequests)
-    assert len(result.output.calls) == 1
-
-    tool_call_id = result.output.calls[0].tool_call_id
-    assert tool_call_id in result.output.metadata
-    assert result.output.metadata[tool_call_id] == {'task_id': 'task-123', 'estimated_cost': 25.50}
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+            metadata={'pyd_ai_tool_call_id__my_tool': {'task_id': 'task-123', 'estimated_cost': 25.5}},
+        )
+    )
 
 
 def test_approval_required_with_metadata():
@@ -1445,15 +1446,12 @@ def test_approval_required_with_metadata():
         return x * 42
 
     result = agent.run_sync('Hello')
-    assert isinstance(result.output, DeferredToolRequests)
-    assert len(result.output.approvals) == 1
-
-    assert 'my_tool' in result.output.metadata
-    assert result.output.metadata['my_tool'] == {
-        'reason': 'High compute cost',
-        'estimated_time': '5 minutes',
-        'cost_usd': 100.0,
-    }
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id=IsStr())],
+            metadata={'my_tool': {'reason': 'High compute cost', 'estimated_time': '5 minutes', 'cost_usd': 100.0}},
+        )
+    )
 
     # Continue with approval
     messages = result.all_messages()

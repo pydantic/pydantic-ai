@@ -47,7 +47,7 @@ PROTECTED_FILES = {'.env'}
 @agent.tool
 def update_file(ctx: RunContext, path: str, content: str) -> str:
     if path in PROTECTED_FILES and not ctx.tool_call_approved:
-        raise ApprovalRequired
+        raise ApprovalRequired(metadata={'reason': 'protected'})  # (1)!
     return f'File {path!r} updated: {content!r}'
 
 
@@ -77,7 +77,7 @@ DeferredToolRequests(
             tool_call_id='delete_file',
         ),
     ],
-    metadata={},
+    metadata={'update_file_dotenv': {'reason': 'protected'}},
 )
 """
 
@@ -176,6 +176,8 @@ print(result.all_messages())
 """
 ```
 
+1. The `metadata` parameter can attach arbitrary context to deferred tool calls, accessible in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
+
 _(This example is complete, it can be run "as is")_
 
 ## External Tool Execution
@@ -210,13 +212,13 @@ from pydantic_ai import (
 
 @dataclass
 class TaskResult:
-    tool_call_id: str
+    task_id: str
     result: Any
 
 
-async def calculate_answer_task(tool_call_id: str, question: str) -> TaskResult:
+async def calculate_answer_task(task_id: str, question: str) -> TaskResult:
     await asyncio.sleep(1)
-    return TaskResult(tool_call_id=tool_call_id, result=42)
+    return TaskResult(task_id=task_id, result=42)
 
 
 agent = Agent('openai:gpt-5', output_type=[str, DeferredToolRequests])
@@ -226,12 +228,11 @@ tasks: list[asyncio.Task[TaskResult]] = []
 
 @agent.tool
 async def calculate_answer(ctx: RunContext, question: str) -> str:
-    assert ctx.tool_call_id is not None
-
-    task = asyncio.create_task(calculate_answer_task(ctx.tool_call_id, question))  # (1)!
+    task_id = f'task_{len(tasks)}'  # (1)!
+    task = asyncio.create_task(calculate_answer_task(task_id, question))
     tasks.append(task)
 
-    raise CallDeferred
+    raise CallDeferred(metadata={'task_id': task_id})  # (2)!
 
 
 async def main():
@@ -253,18 +254,19 @@ async def main():
             )
         ],
         approvals=[],
-        metadata={},
+        metadata={'pyd_ai_tool_call_id': {'task_id': 'task_0'}},
     )
     """
 
-    done, _ = await asyncio.wait(tasks)  # (2)!
+    done, _ = await asyncio.wait(tasks)  # (3)!
     task_results = [task.result() for task in done]
-    task_results_by_tool_call_id = {result.tool_call_id: result.result for result in task_results}
+    task_results_by_task_id = {result.task_id: result.result for result in task_results}
 
     results = DeferredToolResults()
     for call in requests.calls:
         try:
-            result = task_results_by_tool_call_id[call.tool_call_id]
+            task_id = requests.metadata[call.tool_call_id]['task_id']
+            result = task_results_by_task_id[task_id]
         except KeyError:
             result = ModelRetry('No result for this tool call was found.')
 
@@ -326,155 +328,11 @@ async def main():
     """
 ```
 
-1. In reality, you'd likely use Celery or a similar task queue to run the task in the background.
-2. In reality, this would typically happen in a separate process that polls for the task status or is notified when all pending tasks are complete.
+1. Generate a task ID that can be tracked independently of the tool call ID.
+2. The `metadata` parameter passes the `task_id` so it can be matched with results later, accessible in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
+3. In reality, this would typically happen in a separate process that polls for the task status or is notified when all pending tasks are complete.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
-
-## Attaching Metadata to Deferred Tools
-
-Both [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] and [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] exceptions accept an optional `metadata` parameter that allows you to attach arbitrary context information to deferred tool calls. This metadata is available in [`DeferredToolRequests.metadata`][pydantic_ai.tools.DeferredToolRequests.metadata] keyed by tool call ID.
-
-Common use cases include cost estimates for approval decisions and tracking information for external systems.
-
-```python {title="deferred_tools_with_metadata.py"}
-from dataclasses import dataclass
-
-from pydantic_ai import (
-    Agent,
-    ApprovalRequired,
-    CallDeferred,
-    DeferredToolRequests,
-    DeferredToolResults,
-    RunContext,
-    ToolApproved,
-    ToolDenied,
-)
-
-
-@dataclass
-class User:
-    home_location: str = 'St. Louis, MO'
-
-
-class FlightAPI:
-    COSTS = {
-        ('St. Louis, MO', 'Lisbon, Portugal'): 850,
-        ('St. Louis, MO', 'Santiago, Chile'): 1200,
-        ('St. Louis, MO', 'Los Angeles, CA'): 300,
-    }
-
-    def get_flight_cost(self, origin: str, destination: str) -> int:
-        return self.COSTS.get((origin, destination), 500)
-
-    def get_airline_auth_url(self, airline: str) -> str:
-        # In real code, this might generate a proper OAuth URL
-        return f"https://example.com/auth/{airline.lower().replace(' ', '-')}"
-
-
-@dataclass
-class TravelDeps:
-    user: User
-    flight_api: FlightAPI
-
-
-agent = Agent(
-    'openai:gpt-5',
-    deps_type=TravelDeps,
-    output_type=[str, DeferredToolRequests],
-)
-
-
-@agent.tool
-def book_flight(ctx: RunContext[TravelDeps], destination: str) -> str:
-    """Book a flight to the destination."""
-    if not ctx.tool_call_approved:
-        # Look up cost based on user's location and destination
-        cost = ctx.deps.flight_api.get_flight_cost(
-            ctx.deps.user.home_location,
-            destination
-        )
-
-        raise ApprovalRequired(
-            metadata={
-                'origin': ctx.deps.user.home_location,
-                'destination': destination,
-                'cost_usd': cost,
-            }
-        )
-
-    return f'Flight booked to {destination}'
-
-
-@agent.tool
-def authenticate_with_airline(ctx: RunContext[TravelDeps], airline: str) -> str:
-    """Authenticate with airline website to link frequent flyer account."""
-    # Generate auth URL that would normally open in browser
-    auth_url = ctx.deps.flight_api.get_airline_auth_url(airline)
-
-    # Cannot complete auth in this process - need user interaction
-    raise CallDeferred(
-        metadata={
-            'airline': airline,
-            'auth_url': auth_url,
-        }
-    )
-
-
-# Set up dependencies
-user = User(home_location='St. Louis, MO')
-flight_api = FlightAPI()
-deps = TravelDeps(user=user, flight_api=flight_api)
-
-# Agent calls both tools
-result = agent.run_sync(
-    'Book a flight to Lisbon, Portugal and link my SkyWay Airlines account',
-    deps=deps,
-)
-messages = result.all_messages()
-
-assert isinstance(result.output, DeferredToolRequests)
-requests = result.output
-
-# Make approval decision using metadata
-results = DeferredToolResults()
-for call in requests.approvals:
-    metadata = requests.metadata.get(call.tool_call_id, {})
-    cost = metadata.get('cost_usd', 0)
-
-    print(f'Approval needed: {call.tool_name}')
-    #> Approval needed: book_flight
-    print(f"  {metadata['origin']} → {metadata['destination']}: ${cost}")
-    #>   St. Louis, MO → Lisbon, Portugal: $850
-
-    if cost < 1000:
-        results.approvals[call.tool_call_id] = ToolApproved()
-    else:
-        results.approvals[call.tool_call_id] = ToolDenied('Cost exceeds budget')
-
-# Handle deferred calls using metadata
-for call in requests.calls:
-    metadata = requests.metadata.get(call.tool_call_id, {})
-    auth_url = metadata.get('auth_url')
-
-    print(f'Browser auth required: {auth_url}')
-    #> Browser auth required: https://example.com/auth/skyway-airlines
-
-    # In real code: open browser, wait for auth completion
-    # For demo, just mark as completed
-    results.calls[call.tool_call_id] = 'Frequent flyer account linked'
-
-# Continue with results
-result = agent.run_sync(
-    message_history=messages,
-    deferred_tool_results=results,
-    deps=deps,
-)
-print(result.output)
-#> Flight to Lisbon booked successfully and your SkyWay Airlines account is now linked.
-```
-
-_(This example is complete, it can be run "as is")_
 
 ## See Also
 

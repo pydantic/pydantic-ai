@@ -10,7 +10,7 @@ from typing import Any, Generic, Literal, TypeVar, Union
 
 import httpx
 import pytest
-from dirty_equals import IsJson
+from dirty_equals import IsJson, IsStr
 from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter, field_validator
 from pydantic_core import to_json
@@ -5072,13 +5072,9 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
     else:
         result = agent.run_sync(user_prompt)
 
-    assert isinstance(result.output, DeferredToolRequests)
-    assert len(result.output.approvals) == 1
-    assert result.output.approvals[0].tool_name == 'requires_approval'
-    # When no metadata is provided, the tool_call_id should not be in metadata dict
-    tool_call_id = result.output.approvals[0].tool_call_id
-    assert tool_call_id not in result.output.metadata
-    assert result.output.metadata == {}
+    assert result.output == snapshot(
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())])
+    )
     assert integer_holder == 2
 
 

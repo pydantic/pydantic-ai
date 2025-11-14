@@ -10,6 +10,7 @@ from datetime import timezone
 from typing import Any
 
 import pytest
+from dirty_equals import IsStr
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
@@ -1213,13 +1214,9 @@ async def test_early_strategy_with_deferred_tool_call():
 
     async with agent.run_stream('test early strategy with external tool call') as result:
         response = await result.get_output()
-        assert isinstance(response, DeferredToolRequests)
-        assert len(response.calls) == 1
-        assert response.calls[0].tool_name == 'deferred_tool'
-        # When no metadata is provided, the tool_call_id should not be in metadata dict
-        tool_call_id = response.calls[0].tool_call_id
-        assert tool_call_id not in response.metadata
-        assert response.metadata == {}
+        assert response == snapshot(
+            DeferredToolRequests(calls=[ToolCallPart(tool_name='deferred_tool', tool_call_id=IsStr())])
+        )
         messages = result.all_messages()
 
     # Verify no tools were called
