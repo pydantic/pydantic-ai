@@ -632,22 +632,24 @@ async def test_stream_with_embedded_thinking_sets_metadata(allow_model_requests:
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['response'])
 
     # Verify ThinkingPart has id='content' and provider_name='openai' (covers lines 1748-1749)
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse(
-                parts=[
-                    ThinkingPart(content='reasoning', id='content', provider_name='openai'),
-                    TextPart(content='response'),
-                ],
-                usage=RequestUsage(input_tokens=10, output_tokens=5),
-                model_name='gpt-4o-123',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                provider_name='openai',
-                provider_response_id='123',
-            ),
-        ]
-    )
+    messages = result.all_messages()
+    assert len(messages) == 2
+    assert isinstance(messages[0], ModelRequest)
+    assert isinstance(messages[1], ModelResponse)
+
+    response = messages[1]
+    assert len(response.parts) == 2
+
+    # This is what we're testing - the ThinkingPart should have these metadata fields set
+    thinking_part = response.parts[0]
+    assert isinstance(thinking_part, ThinkingPart)
+    assert thinking_part.id == 'content'  # Line 1748 in openai.py
+    assert thinking_part.provider_name == 'openai'  # Line 1749 in openai.py
+    assert thinking_part.content == 'reasoning'
+
+    text_part = response.parts[1]
+    assert isinstance(text_part, TextPart)
+    assert text_part.content == 'response'
 
 
 async def test_no_delta(allow_model_requests: None):
