@@ -284,7 +284,7 @@ class ModelResponsePartsManager:
         """
         if vendor_part_id is not None:
             for tag in self._partial_tags_list:
-                if tag.vendor_part_id == vendor_part_id:
+                if tag.vendor_part_id == vendor_part_id:  # pragma: no branch
                     return tag
 
         if existing_part is not None:

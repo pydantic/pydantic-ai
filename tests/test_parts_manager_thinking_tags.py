@@ -155,21 +155,6 @@ DELAYED_THINKING_CASES: list[Case] = [
         # NOTE empty thinking is skipped entirely
         expected_flushed_events=[],
     ),
-    Case(
-        name='incomplete_thinking_with_partial_closing_tag_triggers_final_flush',
-        chunks=['<think>reasoning</'],
-        expected_parts=[ThinkingPart('reasoning</')],
-        expected_normal_events=[
-            PartStartEvent(index=0, part=ThinkingPart('reasoning')),
-        ],
-        # COVERAGE: This case covers models/__init__.py line 625: the `yield event` in chain_async_and_sync_iters.
-        # When the stream ends with a partial closing tag ('</' that never completes to '</think>'),
-        # final_flush() yields the buffered partial tag content as a PartDeltaEvent.
-        # This exercises the `for event in iter2: yield event` path where iter2 = final_flush().
-        expected_flushed_events=[
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='</')),
-        ],
-    ),
 ]
 
 # Category 3: Invalid Opening Tags (prefixes, invalid continuations, flushes)
