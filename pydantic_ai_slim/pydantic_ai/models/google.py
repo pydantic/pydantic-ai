@@ -363,10 +363,6 @@ class GoogleModel(Model):
                             "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
                         )
                     if tool.aspect_ratio:
-                        if image_config and image_config.get('aspect_ratio') != tool.aspect_ratio:
-                            raise UserError(
-                                'Multiple `ImageGenerationTool` instances with different `aspect_ratio` values are not supported.'
-                            )
                         image_config = ImageConfigDict(aspect_ratio=tool.aspect_ratio)
                 else:  # pragma: no cover
                     raise UserError(
@@ -485,7 +481,7 @@ class GoogleModel(Model):
             tools=cast(ToolListUnionDict, tools),
             tool_config=tool_config,
             response_mime_type=response_mime_type,
-            response_json_schema=response_schema,
+            response_schema=response_schema,
             response_modalities=modalities,
             image_config=image_config,
         )
