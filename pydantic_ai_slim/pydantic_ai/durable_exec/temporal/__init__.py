@@ -75,6 +75,8 @@ class PydanticAIPlugin(ClientPlugin, WorkerPlugin):
                     'httpx',
                     'anyio',
                     'httpcore',
+                    # Used by fastmcp via py-key-value-aio
+                    'beartype',
                     # Imported inside `logfire._internal.json_encoder` when running `logfire.info` inside an activity with attributes to serialize
                     'attrs',
                     # Imported inside `logfire._internal.json_schema` when running `logfire.info` inside an activity with attributes to serialize
