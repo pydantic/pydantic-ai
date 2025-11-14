@@ -32,6 +32,7 @@ from .._agent_graph import (
     HistoryProcessor,
     ModelRequestNode,
     UserPromptNode,
+    build_run_context,
     capture_run_messages,
 )
 from .._output import OutputToolset
@@ -89,6 +90,8 @@ T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
 
+AgentMetadataValue = str | dict[str, str] | Callable[[RunContext[AgentDepsT]], str | dict[str, str]]
+
 
 @dataclasses.dataclass(init=False)
 class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
@@ -130,6 +133,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     """Options to automatically instrument with OpenTelemetry."""
 
     _instrument_default: ClassVar[InstrumentationSettings | bool] = False
+    _metadata: AgentMetadataValue[AgentDepsT] | None = dataclasses.field(repr=False)
 
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _output_schema: _output.OutputSchema[OutputDataT] = dataclasses.field(repr=False)
@@ -175,6 +179,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
+        metadata: AgentMetadataValue[AgentDepsT] | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> None: ...
@@ -201,6 +206,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
+        metadata: AgentMetadataValue[AgentDepsT] | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> None: ...
@@ -225,6 +231,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
+        metadata: AgentMetadataValue[AgentDepsT] | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Any,
@@ -276,6 +283,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 [`Agent.instrument_all()`][pydantic_ai.Agent.instrument_all]
                 will be used, which defaults to False.
                 See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+            metadata: Optional metadata to attach to telemetry for this agent.
+                Provide a string literal, a dict of string keys and values, or a callable returning one of those values
+                computed from the [`RunContext`][pydantic_ai.tools.RunContext] on each run.
+                Metadata is only recorded when instrumentation is enabled.
             history_processors: Optional list of callables to process the message history before sending it to the model.
                 Each processor takes a list of messages and returns a modified list of messages.
                 Processors can be sync or async and are applied in sequence.
@@ -292,6 +303,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._output_type = output_type
         self.instrument = instrument
+        self._metadata = metadata
         self._deps_type = deps_type
 
         if mcp_servers := _deprecated_kwargs.pop('mcp_servers', None):
@@ -349,6 +361,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_instructions: ContextVar[
             _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
         ] = ContextVar('_override_instructions', default=None)
+        self._override_metadata: ContextVar[_utils.Option[AgentMetadataValue[AgentDepsT]]] = ContextVar(
+            '_override_metadata', default=None
+        )
 
         self._enter_lock = Lock()
         self._entered_count = 0
@@ -645,6 +660,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             },
         )
 
+        run_metadata: str | dict[str, str] | None = None
         try:
             async with graph.iter(
                 inputs=user_prompt_node,
@@ -656,8 +672,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 async with toolset:
                     agent_run = AgentRun(graph_run)
                     yield agent_run
-                    if (final_result := agent_run.result) is not None and run_span.is_recording():
-                        if instrumentation_settings and instrumentation_settings.include_content:
+                    if instrumentation_settings and run_span.is_recording():
+                        run_metadata = self._compute_agent_metadata(build_run_context(agent_run.ctx))
+                        if instrumentation_settings.include_content and (final_result := agent_run.result) is not None:
                             run_span.set_attribute(
                                 'final_result',
                                 (
@@ -671,11 +688,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if instrumentation_settings and run_span.is_recording():
                     run_span.set_attributes(
                         self._run_span_end_attributes(
-                            instrumentation_settings, usage, state.message_history, graph_deps.new_message_index
+                            instrumentation_settings,
+                            usage,
+                            state.message_history,
+                            graph_deps.new_message_index,
+                            run_metadata,
                         )
                     )
             finally:
                 run_span.end()
+
+    def _compute_agent_metadata(self, ctx: RunContext[AgentDepsT]) -> str | dict[str, str] | None:
+        metadata_override = self._override_metadata.get()
+        metadata_config = metadata_override.value if metadata_override is not None else self._metadata
+        if metadata_config is None:
+            return None
+
+        metadata = metadata_config(ctx) if callable(metadata_config) else metadata_config
+        return metadata
 
     def _run_span_end_attributes(
         self,
@@ -683,6 +713,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage,
         message_history: list[_messages.ModelMessage],
         new_message_index: int,
+        metadata: str | dict[str, str] | None = None,
     ):
         if settings.version == 1:
             attrs = {
@@ -716,6 +747,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ):
                 attrs['pydantic_ai.variable_instructions'] = True
 
+        if metadata is not None:
+            if isinstance(metadata, dict):
+                attrs['logfire.agent.metadata'] = json.dumps(metadata)
+            else:
+                attrs['logfire.agent.metadata'] = metadata
+
         return {
             **usage.opentelemetry_attributes(),
             **attrs,
@@ -740,6 +777,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        metadata: AgentMetadataValue[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 
@@ -753,6 +791,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            metadata: The metadata to use instead of the metadata passed to the agent constructor.
         """
         if _utils.is_set(name):
             name_token = self._override_name.set(_utils.Some(name))
@@ -785,6 +824,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             instructions_token = None
 
+        if _utils.is_set(metadata):
+            metadata_token = self._override_metadata.set(_utils.Some(metadata))
+        else:
+            metadata_token = None
+
         try:
             yield
         finally:
@@ -800,6 +844,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_tools.reset(tools_token)
             if instructions_token is not None:
                 self._override_instructions.reset(instructions_token)
+            if metadata_token is not None:
+                self._override_metadata.reset(metadata_token)
 
     @overload
     def instructions(

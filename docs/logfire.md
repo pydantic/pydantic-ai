@@ -92,6 +92,8 @@ including how to instrument other libraries like [HTTPX](https://logfire.pydanti
 
 Since Logfire is built on [OpenTelemetry](https://opentelemetry.io/), you can use the Logfire Python SDK to send data to any OpenTelemetry collector, see [below](#using-opentelemetry).
 
+When instrumentation is enabled, the resolved metadata is recorded (JSON encoded) on the run span under the `logfire.agent.metadata` attribute.
+
 ### Debugging
 
 To demonstrate how Logfire can let you visualise the flow of a Pydantic AI run, here's the view you get from Logfire while running the [chat app examples](examples/chat-app.md):
@@ -356,3 +358,18 @@ Agent.instrument_all(instrumentation_settings)
 ```
 
 This setting is particularly useful in production environments where compliance requirements or data sensitivity concerns make it necessary to limit what content is sent to your observability platform.
+
+### Adding Custom Metadata
+
+Use the agent's `metadata` parameter to attach additional data to the agent's span.
+Metadata can be provided as a string, a dictionary, or a callable that reads the [`RunContext`][pydantic_ai.tools.RunContext] to compute values on each run.
+
+```python {hl_lines="4-5"}
+from pydantic_ai import Agent
+
+agent = Agent(
+    'openai:gpt-5',
+    instrument=True,
+    metadata=lambda ctx: {'deployment': 'staging', 'tenant': ctx.deps.tenant},
+)
+```
