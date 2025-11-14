@@ -108,7 +108,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
             return await super().get_tools(ctx)
 
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        tool_defs = await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
+        tool_defs = await workflow.execute_activity(
             activity=self.get_tools_activity,
             args=[
                 _GetToolsParams(serialized_run_context=serialized_run_context),
@@ -131,7 +131,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         tool_activity_config = self.activity_config | self.tool_activity_config.get(name, {})
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         return self._unwrap_call_tool_result(
-            await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
+            await workflow.execute_activity(
                 activity=self.call_tool_activity,
                 args=[
                     CallToolParams(

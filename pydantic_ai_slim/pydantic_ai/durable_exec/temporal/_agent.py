@@ -219,7 +219,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     ) -> None:
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         async for event in stream:
-            await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
+            await workflow.execute_activity(
                 activity=self.event_stream_handler_activity,
                 args=[
                     _EventStreamHandlerParams(
