@@ -5,7 +5,7 @@ to use their tools.
 
 ## Install
 
-You need to either install [`pydantic-ai`](../install.md), or[`pydantic-ai-slim`](../install.md#slim-install) with the `mcp` optional group:
+You need to either install [`pydantic-ai`](../install.md), or [`pydantic-ai-slim`](../install.md#slim-install) with the `mcp` optional group:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[mcp]"
@@ -55,7 +55,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
 server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
-agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
+agent = Agent('openai:gpt-5', toolsets=[server])  # (2)!
 
 async def main():
     result = await agent.run('What is 7 plus 5?')
@@ -116,7 +116,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerSSE
 
 server = MCPServerSSE('http://localhost:3001/sse')  # (1)!
-agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
+agent = Agent('openai:gpt-5', toolsets=[server])  # (2)!
 
 
 async def main():
@@ -143,7 +143,7 @@ from pydantic_ai.mcp import MCPServerStdio
 server = MCPServerStdio(  # (1)!
     'uv', args=['run', 'mcp-run-python', 'stdio'], timeout=10
 )
-agent = Agent('openai:gpt-4o', toolsets=[server])
+agent = Agent('openai:gpt-5', toolsets=[server])
 
 
 async def main():
@@ -186,6 +186,37 @@ The configuration file should be a JSON file with an `mcpServers` object contain
     Any other server with the "url" field will be inferred to be a Streamable HTTP server.
 
     We made this decision given that the SSE transport is deprecated.
+
+### Environment Variables
+
+The configuration file supports environment variable expansion using the `${VAR}` and `${VAR:-default}` syntax,
+[like Claude Code](https://code.claude.com/docs/en/mcp#environment-variable-expansion-in-mcp-json).
+This is useful for keeping sensitive information like API keys or host names out of your configuration files:
+
+```json {title="mcp_config_with_env.json"}
+{
+  "mcpServers": {
+    "python-runner": {
+      "command": "${PYTHON_CMD:-python3}",
+      "args": ["run", "${MCP_MODULE}", "stdio"],
+      "env": {
+        "API_KEY": "${MY_API_KEY}"
+      }
+    },
+    "weather-api": {
+      "url": "https://${SERVER_HOST:-localhost}:${SERVER_PORT:-8080}/sse"
+    }
+  }
+}
+```
+
+When loading this configuration with [`load_mcp_servers()`][pydantic_ai.mcp.load_mcp_servers]:
+
+- `${VAR}` references will be replaced with the corresponding environment variable values.
+- `${VAR:-default}` references will use the environment variable value if set, otherwise the default value.
+
+!!! warning
+    If a referenced environment variable using `${VAR}` syntax is not defined, a `ValueError` will be raised. Use the `${VAR:-default}` syntax to provide a fallback value.
 
 ### Usage
 
@@ -304,7 +335,7 @@ calculator_server = MCPServerSSE(
 # Both servers might have a tool named 'get_data', but they'll be exposed as:
 # - 'weather_get_data'
 # - 'calc_get_data'
-agent = Agent('openai:gpt-4o', toolsets=[weather_server, calculator_server])
+agent = Agent('openai:gpt-5', toolsets=[weather_server, calculator_server])
 ```
 
 ## Tool metadata
@@ -346,7 +377,7 @@ server = MCPServerSSE(
     'http://localhost:3001/sse',
     http_client=http_client,  # (1)!
 )
-agent = Agent('openai:gpt-4o', toolsets=[server])
+agent = Agent('openai:gpt-5', toolsets=[server])
 
 async def main():
     result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
@@ -442,7 +473,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
 server = MCPServerStdio('python', args=['generate_svg.py'])
-agent = Agent('openai:gpt-4o', toolsets=[server])
+agent = Agent('openai:gpt-5', toolsets=[server])
 
 
 async def main():
@@ -584,7 +615,7 @@ restaurant_server = MCPServerStdio(
 )
 
 # Create agent
-agent = Agent('openai:gpt-4o', toolsets=[restaurant_server])
+agent = Agent('openai:gpt-5', toolsets=[restaurant_server])
 
 
 async def main():

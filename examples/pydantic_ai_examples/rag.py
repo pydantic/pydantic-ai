@@ -49,7 +49,7 @@ class Deps:
     pool: asyncpg.Pool
 
 
-agent = Agent('openai:gpt-4o', deps_type=Deps)
+agent = Agent('openai:gpt-5', deps_type=Deps)
 
 
 @agent.tool
@@ -115,7 +115,7 @@ async def build_search_db():
     async with httpx.AsyncClient() as client:
         response = await client.get(DOCS_JSON)
         response.raise_for_status()
-    sections = sessions_ta.validate_json(response.content)
+    sections = sections_ta.validate_json(response.content)
 
     openai = AsyncOpenAI()
     logfire.instrument_openai(openai)
@@ -183,7 +183,7 @@ class DocsSection:
         return '\n\n'.join((f'path: {self.path}', f'title: {self.title}', self.content))
 
 
-sessions_ta = TypeAdapter(list[DocsSection])
+sections_ta = TypeAdapter(list[DocsSection])
 
 
 # pyright: reportUnknownMemberType=false

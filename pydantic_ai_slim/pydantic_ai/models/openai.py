@@ -26,6 +26,7 @@ from ..messages import (
     BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -477,7 +478,7 @@ class OpenAIChatModel(Model):
         else:
             tool_choice = 'auto'
 
-        openai_messages = await self._map_messages(messages)
+        openai_messages = await self._map_messages(messages, model_request_parameters)
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
@@ -672,7 +673,9 @@ class OpenAIChatModel(Model):
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIChatModel`. If it should be, please file an issue.'
                 )
 
-    async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
+    async def _map_messages(
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         for message in messages:
@@ -713,7 +716,7 @@ class OpenAIChatModel(Model):
                 openai_messages.append(message_param)
             else:
                 assert_never(message)
-        if instructions := self._get_instructions(messages):
+        if instructions := self._get_instructions(messages, model_request_parameters):
             openai_messages.insert(0, chat.ChatCompletionSystemMessageParam(content=instructions, role='system'))
         return openai_messages
 
@@ -858,6 +861,9 @@ class OpenAIChatModel(Model):
                         )
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
+                elif isinstance(item, CachePoint):
+                    # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
+                    pass
                 else:
                     assert_never(item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
@@ -947,6 +953,10 @@ class OpenAIResponsesModel(Model):
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    @property
+    def base_url(self) -> str:
+        return str(self.client.base_url)
 
     @property
     def model_name(self) -> OpenAIModelName:
@@ -1148,10 +1158,10 @@ class OpenAIResponsesModel(Model):
             + list(model_settings.get('openai_builtin_tools', []))
             + self._get_tools(model_request_parameters)
         )
-
+        profile = OpenAIModelProfile.from_profile(self.profile)
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output:
+        elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -1160,7 +1170,7 @@ class OpenAIResponsesModel(Model):
         if previous_response_id == 'auto':
             previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
 
-        instructions, openai_messages = await self._map_messages(messages, model_settings)
+        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._get_reasoning(model_settings)
 
         text: responses.ResponseTextConfigParam | None = None
@@ -1184,7 +1194,6 @@ class OpenAIResponsesModel(Model):
             text = text or {}
             text['verbosity'] = verbosity
 
-        profile = OpenAIModelProfile.from_profile(self.profile)
         unsupported_model_settings = profile.openai_unsupported_model_settings
         for setting in unsupported_model_settings:
             model_settings.pop(setting, None)
@@ -1349,7 +1358,10 @@ class OpenAIResponsesModel(Model):
             return None, messages
 
     async def _map_messages(  # noqa: C901
-        self, messages: list[ModelMessage], model_settings: OpenAIResponsesModelSettings
+        self,
+        messages: list[ModelMessage],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> tuple[str | NotGiven, list[responses.ResponseInputItemParam]]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam`."""
         profile = OpenAIModelProfile.from_profile(self.profile)
@@ -1431,6 +1443,8 @@ class OpenAIResponsesModel(Model):
                             call_id=call_id,
                             type='function_call',
                         )
+                        if profile.openai_responses_requires_function_call_status_none:
+                            param['status'] = None  # type: ignore[reportGeneralTypeIssues]
                         if id and send_item_ids:  # pragma: no branch
                             param['id'] = id
                         openai_messages.append(param)
@@ -1572,7 +1586,7 @@ class OpenAIResponsesModel(Model):
                         assert_never(item)
             else:
                 assert_never(message)
-        instructions = self._get_instructions(messages) or NOT_GIVEN
+        instructions = self._get_instructions(messages, model_request_parameters) or NOT_GIVEN
         return instructions, openai_messages
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> responses.ResponseFormatTextJSONSchemaConfigParam:
@@ -1588,7 +1602,7 @@ class OpenAIResponsesModel(Model):
         return response_format_param
 
     @staticmethod
-    async def _map_user_prompt(part: UserPromptPart) -> responses.EasyInputMessageParam:
+    async def _map_user_prompt(part: UserPromptPart) -> responses.EasyInputMessageParam:  # noqa: C901
         content: str | list[responses.ResponseInputContentParam]
         if isinstance(part.content, str):
             content = part.content
@@ -1663,6 +1677,9 @@ class OpenAIResponsesModel(Model):
                     )
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI.')
+                elif isinstance(item, CachePoint):
+                    # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
+                    pass
                 else:
                     assert_never(item)
         return responses.EasyInputMessageParam(role='user', content=content)

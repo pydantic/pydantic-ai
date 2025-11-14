@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '166'
+      - '159'
       content-type:
       - application/json
       host:
@@ -21,7 +21,7 @@ interactions:
         - text: What is the capital of France?
           type: text
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
     uri: http://localhost:8787/anthropic/v1/messages?beta=true
   response:
@@ -32,6 +32,8 @@ interactions:
       - application/json
       pydantic-ai-gateway-price-estimate:
       - 0.0002USD
+      retry-after:
+      - '34'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -40,8 +42,8 @@ interactions:
       content:
       - text: The capital of France is Paris.
         type: text
-      id: msg_0116L5r52AZ42YhvvdUuHEsk
-      model: claude-3-5-sonnet-20241022
+      id: msg_015jjU4Q5dqhSc9vyfCdoujx
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
       stop_sequence: null

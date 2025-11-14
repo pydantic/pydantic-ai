@@ -20,6 +20,7 @@ from pydantic_ai import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     FinalResultEvent,
     ImageUrl,
@@ -29,6 +30,7 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
@@ -47,6 +49,7 @@ from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
@@ -118,10 +121,10 @@ T = TypeVar('T')
 
 
 def test_init():
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key='foobar'))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='foobar'))
     assert isinstance(m.client, AsyncAnthropic)
     assert m.client.api_key == 'foobar'
-    assert m.model_name == 'claude-3-5-haiku-latest'
+    assert m.model_name == 'claude-haiku-4-5'
     assert m.system == 'anthropic'
     assert m.base_url == 'https://api.anthropic.com'
 
@@ -192,7 +195,7 @@ def completion_message(content: list[BetaContentBlock], usage: BetaUsage) -> Bet
 async def test_sync_request_text_response(allow_model_requests: None):
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('hello')
@@ -220,18 +223,10 @@ async def test_sync_request_text_response(allow_model_requests: None):
     )
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse(
-                parts=[TextPart(content='world')],
-                usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
-                model_name='claude-3-5-haiku-123',
-                timestamp=IsNow(tz=timezone.utc),
-                provider_name='anthropic',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='123',
-                finish_reason='stop',
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
             ),
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
@@ -241,6 +236,22 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
+                model_name='claude-3-5-haiku-123',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -257,7 +268,7 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
         ),
     )
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('hello')
@@ -282,13 +293,269 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
     assert last_message.cost().total_price == snapshot(Decimal('0.00002688'))
 
 
+async def test_cache_point_adds_cache_control(allow_model_requests: None):
+    """Test that CachePoint correctly adds cache_control to content blocks."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # Test with CachePoint after text content
+    await agent.run(['Some context to cache', CachePoint(), 'Now the question'])
+
+    # Verify cache_control was added to the right content block
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Some context to cache', 'type': 'text', 'cache_control': {'type': 'ephemeral'}},
+                    {'text': 'Now the question', 'type': 'text'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_cache_point_multiple_markers(allow_model_requests: None):
+    """Test multiple CachePoint markers in a single prompt."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run(['First chunk', CachePoint(), 'Second chunk', CachePoint(), 'Question'])
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    content = completion_kwargs['messages'][0]['content']
+
+    assert content == snapshot(
+        [
+            {'text': 'First chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral'}},
+            {'text': 'Second chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral'}},
+            {'text': 'Question', 'type': 'text'},
+        ]
+    )
+
+
+async def test_cache_point_as_first_content_raises_error(allow_model_requests: None):
+    """Test that CachePoint as first content raises UserError."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(
+        UserError,
+        match='CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to.',
+    ):
+        await agent.run([CachePoint(), 'This should fail'])
+
+
+async def test_cache_point_with_image_content(allow_model_requests: None):
+    """Test CachePoint works with image content."""
+    c = completion_message(
+        [BetaTextBlock(text='response', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run(
+        [
+            ImageUrl('https://example.com/image.jpg'),
+            CachePoint(),
+            'What is in this image?',
+        ]
+    )
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    content = completion_kwargs['messages'][0]['content']
+
+    assert content == snapshot(
+        [
+            {
+                'source': {'type': 'url', 'url': 'https://example.com/image.jpg'},
+                'type': 'image',
+                'cache_control': {'type': 'ephemeral'},
+            },
+            {'text': 'What is in this image?', 'type': 'text'},
+        ]
+    )
+
+
+async def test_cache_point_in_otel_message_parts(allow_model_requests: None):
+    """Test that CachePoint is handled correctly in otel message parts conversion."""
+    from pydantic_ai.agent import InstrumentationSettings
+    from pydantic_ai.messages import UserPromptPart
+
+    # Create a UserPromptPart with CachePoint
+    part = UserPromptPart(content=['text before', CachePoint(), 'text after'])
+
+    # Convert to otel message parts
+    settings = InstrumentationSettings(include_content=True)
+    otel_parts = part.otel_message_parts(settings)
+
+    # Should have 2 text parts, CachePoint is skipped
+    assert otel_parts == snapshot(
+        [{'type': 'text', 'content': 'text before'}, {'type': 'text', 'content': 'text after'}]
+    )
+
+
+def test_cache_control_unsupported_param_type():
+    """Test that cache control raises error for unsupported param types."""
+
+    from pydantic_ai.exceptions import UserError
+    from pydantic_ai.models.anthropic import AnthropicModel
+
+    # Create a list with an unsupported param type (document)
+    # We'll use a mock document block param
+    params: list[dict[str, Any]] = [{'type': 'document', 'source': {'data': 'test'}}]
+
+    with pytest.raises(UserError, match='Cache control not supported for param type: document'):
+        AnthropicModel._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
+
+
+async def test_anthropic_cache_tools(allow_model_requests: None):
+    """Test that anthropic_cache_tool_definitions adds cache_control to last tool."""
+    c = completion_message(
+        [BetaTextBlock(text='Tool result', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='Test system prompt',
+        model_settings=AnthropicModelSettings(anthropic_cache_tool_definitions=True),
+    )
+
+    @agent.tool_plain
+    def tool_one() -> str:  # pragma: no cover
+        return 'one'
+
+    @agent.tool_plain
+    def tool_two() -> str:  # pragma: no cover
+        return 'two'
+
+    await agent.run('test prompt')
+
+    # Verify cache_control was added to the last tool
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = completion_kwargs['tools']
+    assert tools == snapshot(
+        [
+            {
+                'name': 'tool_one',
+                'description': '',
+                'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+            },
+            {
+                'name': 'tool_two',
+                'description': '',
+                'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'cache_control': {'type': 'ephemeral'},
+            },
+        ]
+    )
+
+
+async def test_anthropic_cache_instructions(allow_model_requests: None):
+    """Test that anthropic_cache_instructions adds cache_control to system prompt."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='This is a test system prompt with instructions.',
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    await agent.run('test prompt')
+
+    # Verify system is a list with cache_control on last block
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    system = completion_kwargs['system']
+    assert system == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': 'This is a test system prompt with instructions.',
+                'cache_control': {'type': 'ephemeral'},
+            }
+        ]
+    )
+
+
+async def test_anthropic_cache_tools_and_instructions(allow_model_requests: None):
+    """Test that both cache settings work together."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='System instructions to cache.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_tool_definitions=True,
+            anthropic_cache_instructions=True,
+        ),
+    )
+
+    @agent.tool_plain
+    def my_tool(value: str) -> str:  # pragma: no cover
+        return f'Result: {value}'
+
+    await agent.run('test prompt')
+
+    # Verify both have cache_control
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = completion_kwargs['tools']
+    system = completion_kwargs['system']
+    assert tools == snapshot(
+        [
+            {
+                'name': 'my_tool',
+                'description': '',
+                'input_schema': {
+                    'additionalProperties': False,
+                    'properties': {'value': {'type': 'string'}},
+                    'required': ['value'],
+                    'type': 'object',
+                },
+                'cache_control': {'type': 'ephemeral'},
+            }
+        ]
+    )
+    assert system == snapshot(
+        [{'type': 'text', 'text': 'System instructions to cache.', 'cache_control': {'type': 'ephemeral'}}]
+    )
+
+
 async def test_async_request_text_response(allow_model_requests: None):
     c = completion_message(
         [BetaTextBlock(text='world', type='text')],
         usage=BetaUsage(input_tokens=3, output_tokens=5),
     )
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('hello')
@@ -309,14 +576,17 @@ async def test_request_structured_response(allow_model_requests: None):
         usage=BetaUsage(input_tokens=3, output_tokens=5),
     )
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, output_type=list[int])
 
     result = await agent.run('hello')
     assert result.output == [1, 2, 3]
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -332,6 +602,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -341,7 +612,8 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -364,7 +636,7 @@ async def test_request_tool_call(allow_model_requests: None):
     ]
 
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.tool_plain
@@ -382,7 +654,8 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[
                     SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc)),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -399,6 +672,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -408,7 +682,8 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -425,6 +700,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -434,7 +710,8 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -445,6 +722,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -471,7 +749,7 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
     ]
 
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=ModelSettings(parallel_tool_calls=parallel_tool_calls))
 
     @agent.tool_plain
@@ -509,7 +787,7 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
     # However, we do want to use the environment variable if present when rewriting VCR cassettes.
     api_key = os.getenv('ANTHROPIC_API_KEY', 'mock-value')
     agent = Agent(
-        AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=api_key)),
+        AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=api_key)),
         system_prompt=system_prompt,
         tools=[retrieve_entity_info],
     )
@@ -583,7 +861,7 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
 async def test_anthropic_specific_metadata(allow_model_requests: None) -> None:
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_metadata={'user_id': '123'}))
@@ -678,7 +956,7 @@ async def test_stream_structured(allow_model_requests: None):
     ]
 
     mock_client = MockAnthropic.create_stream_mock([stream, done_stream])
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     tool_called = False
@@ -695,12 +973,7 @@ async def test_stream_structured(allow_model_requests: None):
 
         # The tool output doesn't echo any content to the stream, so we only get the final payload once when
         # the block starts and once when it ends.
-        assert chunks == snapshot(
-            [
-                'FINAL_PAYLOAD',
-                'FINAL_PAYLOAD',
-            ]
-        )
+        assert chunks == snapshot(['FINAL_PAYLOAD'])
         assert result.is_complete
         assert result.usage() == snapshot(
             RunUsage(
@@ -729,7 +1002,7 @@ async def test_stream_structured(allow_model_requests: None):
 
 
 async def test_image_url_input(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     result = await agent.run(
@@ -745,7 +1018,7 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
 
 async def test_extra_headers(allow_model_requests: None, anthropic_api_key: str):
     # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         m,
         model_settings=AnthropicModelSettings(
@@ -756,7 +1029,7 @@ async def test_extra_headers(allow_model_requests: None, anthropic_api_key: str)
 
 
 async def test_image_url_input_invalid_mime_type(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     result = await agent.run(
@@ -775,7 +1048,7 @@ async def test_image_url_input_invalid_mime_type(allow_model_requests: None, ant
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, anthropic_api_key: str, image_content: BinaryContent
 ):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -791,7 +1064,8 @@ async def test_image_as_binary_content_tool_response(
                         content=['What fruit is in the image you can get from the get_image tool?'],
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -808,12 +1082,13 @@ async def test_image_as_binary_content_tool_response(
                         'output_tokens': 49,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_01Kwjzggomz7bv9og51qGFuH',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -830,7 +1105,8 @@ async def test_image_as_binary_content_tool_response(
                         ],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -848,12 +1124,13 @@ async def test_image_as_binary_content_tool_response(
                         'output_tokens': 81,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_015btMBYLTuDnMP7zAeuHQGi',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -863,7 +1140,7 @@ async def test_image_as_binary_content_tool_response(
 async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     base64_content = b'//uQZ'
@@ -880,19 +1157,19 @@ def test_model_status_error(allow_model_requests: None) -> None:
             body={'error': 'test error'},
         )
     )
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     assert str(exc_info.value) == snapshot(
-        "status_code: 500, model_name: claude-3-5-sonnet-latest, body: {'error': 'test error'}"
+        "status_code: 500, model_name: claude-sonnet-4-5, body: {'error': 'test error'}"
     )
 
 
 async def test_document_binary_content_input(
     allow_model_requests: None, anthropic_api_key: str, document_content: BinaryContent
 ):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     result = await agent.run(['What is the main content on this document?', document_content])
@@ -902,7 +1179,7 @@ async def test_document_binary_content_input(
 
 
 async def test_document_url_input(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     document_url = DocumentUrl(url='https://pdfobject.com/pdf/sample.pdf')
@@ -914,7 +1191,7 @@ async def test_document_url_input(allow_model_requests: None, anthropic_api_key:
 
 
 async def test_text_document_url_input(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     text_document_url = DocumentUrl(url='https://example-files.online-convert.com/document/txt/example.txt')
@@ -959,6 +1236,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
@@ -978,20 +1256,24 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01Fg1JVgvCYUHWsxrj9GkpEv',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
 
 
 async def test_anthropic_model_thinking_part(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-7-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
     agent = Agent(m, model_settings=settings)
 
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ThinkingPart(
@@ -1023,12 +1305,13 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
                         'output_tokens': 363,
                     },
                 ),
-                model_name='claude-3-7-sonnet-20250219',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01BnZvs3naGorn93wjjCDwbd',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1045,7 +1328,8 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1078,19 +1362,20 @@ I'll keep the format similar to my street-crossing response for consistency.\
                         'output_tokens': 471,
                     },
                 ),
-                model_name='claude-3-7-sonnet-20250219',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
 
 
 async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-7-sonnet-20250219', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5-20250929', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
     agent = Agent(m, model_settings=settings)
 
@@ -1105,7 +1390,8 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1127,12 +1413,13 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'output_tokens': 196,
                     },
                 ),
-                model_name='claude-3-7-sonnet-20250219',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01TbZ1ZKNMPq28AgBLyLX3c4',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1149,7 +1436,8 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         content='What was that?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1171,19 +1459,20 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'output_tokens': 232,
                     },
                 ),
-                model_name='claude-3-7-sonnet-20250219',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_012oSSVsQdwoGH6b2fryM4fF',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
 
 
 async def test_anthropic_model_thinking_part_redacted_stream(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-7-sonnet-20250219', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5-20250929', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
     agent = Agent(m, model_settings=settings)
 
@@ -1206,7 +1495,8 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                         content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1234,12 +1524,13 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                         'output_tokens': 189,
                     },
                 ),
-                model_name='claude-3-7-sonnet-20250219',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_018XZkwvj9asBiffg3fXt88s',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1255,16 +1546,39 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                     provider_name='anthropic',
                 ),
             ),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_thinking',
+                    signature='EqkECkYIBxgCKkA8AZ4noDfV5VcOJe/p3JTRB6Xz5297mrWhl3MbHSXDKTMfuB/Z52U2teiWWTN0gg4eQ4bGS9TPilFX/xWTIq9HEgyOmstSPriNwyn1G7AaDC51r0hQ062qEd55IiIwYQj3Z3MSBBv0bSVdXi60LEHDvC7tzzmpQfw5Hb6R9rtyOz/6vC/xPw9/E1mUqfBqKpADO2HS2QlE/CnuzR901nZOn0TOw7kEXwH7kg30c85b9W7iKALgEejY9sELMBdPyIZNlTgKqNOKtY3R/aV5rGIRPTHh2Wh9Ijmqsf/TT7i//Z+InaYTo6f/fxF8R0vFXMRPOBME4XIscb05HcNhh4c9FDkpqQGYKaq31IR1NNwPWA0BsvdDz7SIo1nfx4H+X0qKKqqegKnQ3ynaXiD5ydT1C4U7fku4ftgF0LGwIk4PwXBE+4BP0DcKr1HV3cn7YSyNakBSDTvRJMKcXW6hl7X3w2a4//sxjC1Cjq0uzkIHkhzRWirN0OSXt+g3m6b1ex0wGmSyuO17Ak6kgVBpxwPugtrqsflG0oujFem44hecXJ9LQNssPf4RSlcydiG8EXp/XLGTe0YfHbe3kJagkowSH/Dm6ErXBiVs7249brncyY8WA+7MOoqIM82YIU095B9frCqDJDUWnN84VwOszRrcaywmpJXZO4aeQLMC1kXD5Wabu+O/00tD/X67EWkkWuR0AhDIXXjpot45vnBd4ewJ/hgB',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='thinking',
+            ),
             PartStartEvent(
                 index=1,
                 part=ThinkingPart(
                     content='',
                     id='redacted_thinking',
-                    signature=IsStr(),
+                    signature='EtgBCkYIBxgCKkDQfGkwzflEJP5asG3oQfJXcTwJLoRznn8CmuczWCsJ36dv93X9H0NCeaJRbi5BrCA2DyMgFnRKRuzZx8VTv5axEgwkFmcHJk8BSiZMZRQaDDYv2KZPfbFgRa2QjyIwm47f5YYsSK9CT/oh/WWpU1HJJVHr8lrC6HG1ItRdtMvYQYmEGy+KhyfcIACfbssVKkDGv/NKqNMOAcu0bd66gJ2+R1R0PX11Jxn2Nd1JtZqkxx7vMT/PXtHDhm9jkDZ2k/6RjRRFuab/DBV3yRYdZ1J0GAE=',
                     provider_name='anthropic',
                 ),
+                previous_part_kind='thinking',
             ),
-            PartStartEvent(index=2, part=TextPart(content="I notice that you've sent what")),
+            PartEndEvent(
+                index=1,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_thinking',
+                    signature='EtgBCkYIBxgCKkDQfGkwzflEJP5asG3oQfJXcTwJLoRznn8CmuczWCsJ36dv93X9H0NCeaJRbi5BrCA2DyMgFnRKRuzZx8VTv5axEgwkFmcHJk8BSiZMZRQaDDYv2KZPfbFgRa2QjyIwm47f5YYsSK9CT/oh/WWpU1HJJVHr8lrC6HG1ItRdtMvYQYmEGy+KhyfcIACfbssVKkDGv/NKqNMOAcu0bd66gJ2+R1R0PX11Jxn2Nd1JtZqkxx7vMT/PXtHDhm9jkDZ2k/6RjRRFuab/DBV3yRYdZ1J0GAE=',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=2, part=TextPart(content="I notice that you've sent what"), previous_part_kind='thinking'
+            ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' appears to be some')),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' kind of test string')),
@@ -1289,6 +1603,16 @@ I'm Claude\
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=', and honest. How')),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' can I assist you today with')),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' a legitimate task or question?')),
+            PartEndEvent(
+                index=2,
+                part=TextPart(
+                    content="""\
+I notice that you've sent what appears to be some kind of test string or command. I don't have any special "magic string" triggers or backdoor commands that would expose internal systems or change my behavior.
+
+I'm Claude, an AI assistant created by Anthropic to be helpful, harmless, and honest. How can I assist you today with a legitimate task or question?\
+"""
+                ),
+            ),
         ]
     )
 
@@ -1314,7 +1638,8 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1353,6 +1678,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c1fda6f11081a1b9fa80ae9122743506da9901a3d98ab7',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1374,7 +1700,8 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1401,6 +1728,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_016e2w8nkCuArd5HFSfEwke7',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1428,7 +1756,8 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1449,12 +1778,13 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                         'output_tokens': 419,
                     },
                 ),
-                model_name='claude-3-7-sonnet-20250219',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01PiJ6i3vjEZjHxojahi2YNc',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1593,7 +1923,32 @@ I'll also mention\
                     provider_name='anthropic',
                 ),
             ),
-            PartStartEvent(index=1, part=IsInstance(TextPart)),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content="""\
+The question is asking about how to safely cross a street, which is a basic but important safety skill.
+
+I should provide clear, step-by-step instructions for crossing a street safely:
+
+1. Find a designated crossing point if possible (crosswalk, pedestrian crossing, etc.)
+2. Look both ways (left-right-left in countries where cars drive on the right; right-left-right where they drive on the left)
+3. Wait for traffic to stop or for a clear gap in traffic
+4. Make eye contact with drivers if possible
+5. Cross at a steady pace without running
+6. Continue watching for traffic while crossing
+7. Use pedestrian signals where available
+
+I'll also mention some additional safety tips and considerations for different situations (busy streets, streets with traffic signals, etc.).\
+""",
+                    signature='ErUBCkYIBhgCIkA/Y+JwNMtmQyHcoo4/v2dpY6ruQifcu3pAzHbzIwpIrjIyaWaYdJOp9/0vUmBPj+LmqgiDSTktRcn0U75AlpXOEgwzVmYdHgDaZfeyBGcaDFSIZCHzzrZQkolJKCIwhMETosYLx+Dw/vKa83hht943z9R3/ViOqokT25JmMfaGOntuo+33Zxqf5rqUbkQ3Kh34rIqqnKaFSVr7Nn85z8OFN3Cwzz+HmXl2FgCXOxgC',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=1, part=TextPart(content='# How to Cross a Street Safely'), previous_part_kind='thinking'
+            ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
                 index=1,
@@ -1659,6 +2014,38 @@ Follow these steps to cross a\
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartEndEvent(
+                index=1,
+                part=TextPart(
+                    content="""\
+# How to Cross a Street Safely
+
+Follow these steps to cross a street safely:
+
+1. **Find a proper crossing point** - Use a crosswalk, pedestrian crossing, or intersection whenever possible.
+
+2. **Stop at the curb** - Stand slightly back from the edge.
+
+3. **Look both ways** - Look left, right, then left again (reverse in countries where cars drive on the left).
+
+4. **Listen for traffic** - Remove headphones if you're wearing them.
+
+5. **Wait for a gap** or for vehicles to stop completely.
+
+6. **Make eye contact** with drivers to ensure they see you.
+
+7. **Cross with purpose** - Walk at a steady pace without stopping or running.
+
+8. **Continue watching** for traffic as you cross.
+
+9. **Use signals** - Follow pedestrian crossing signals where available.
+
+If there's a traffic light or pedestrian signal, only cross when indicated, and always check for turning vehicles even when you have the right of way.
+
+Is there a specific situation or type of street crossing you're concerned about?\
+"""
+                ),
+            ),
         ]
     )
 
@@ -1666,7 +2053,7 @@ Follow these steps to cross a\
 async def test_multiple_system_prompt_formatting(allow_model_requests: None):
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic().create_mock(c)
-    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.system_prompt
@@ -1683,7 +2070,7 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
     return BetaMessage(
         id='x',
         content=[],
-        model='claude-3-7-sonnet-latest',
+        model='claude-sonnet-4-5',
         role='assistant',
         type='message',
         usage=usage,
@@ -1748,7 +2135,7 @@ async def test_anthropic_model_empty_message_on_history(allow_model_requests: No
 
     Check <https://github.com/pydantic/pydantic-ai/pull/1027> for more details.
     """
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     result = await agent.run(
@@ -1779,7 +2166,8 @@ async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_a
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='What is the weather in San Francisco today?', timestamp=IsDatetime())]
+                parts=[UserPromptPart(content='What is the weather in San Francisco today?', timestamp=IsDatetime())],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1971,6 +2359,7 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_0119wM5YxCLg3hwUWrxEQ9Y8',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1985,7 +2374,8 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                         content='how about Mexico City?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2168,6 +2558,7 @@ Mexico City is experiencing typical rainy season weather with moderate temperatu
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01Vatv9GeGaeqVHfSGhkU7mo',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2196,7 +2587,8 @@ async def test_anthropic_model_web_search_tool_stream(allow_model_requests: None
                         content='What is the weather in San Francisco today?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2449,6 +2841,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01QmxBSdEbD9ZeBWDVgFDoQ5',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2524,11 +2917,25 @@ I should search for current\
                     provider_name='anthropic',
                 ),
             ),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content="""\
+The user is asking about the weather in San Francisco today. This is clearly a request for current, real-time information that changes daily, so I should use web search to get up-to-date weather information. According to the guidelines, today's date is September 16, 2025.
+
+I should search for current weather in San Francisco. I'll include "today" in the search query to get the most current information.\
+""",
+                    signature='Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ==',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
             PartStartEvent(
                 index=1,
                 part=BuiltinToolCallPart(
                     tool_name='web_search', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h', provider_name='anthropic'
                 ),
+                previous_part_kind='thinking',
             ),
             PartDeltaEvent(
                 index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
@@ -2558,6 +2965,16 @@ I should search for current\
             ),
             PartDeltaEvent(
                 index=1, delta=ToolCallPartDelta(args_delta='ay"}', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
+            ),
+            PartEndEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args='{"query": "San Francisco weather today"}',
+                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
                 index=2,
@@ -2639,8 +3056,9 @@ I should search for current\
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=3, part=TextPart(content='Base')),
+            PartStartEvent(index=3, part=TextPart(content='Base'), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d on the search results, I can see')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' that the information is a bit date')),
@@ -2652,11 +3070,19 @@ I should search for current\
             ),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Let me search for more current')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' information.')),
+            PartEndEvent(
+                index=3,
+                part=TextPart(
+                    content='Based on the search results, I can see that the information is a bit dated (most results are from about 6 days to a week ago), but I can provide you with the available weather information for San Francisco. Let me search for more current information.'
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
             PartStartEvent(
                 index=4,
                 part=BuiltinToolCallPart(
                     tool_name='web_search', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx', provider_name='anthropic'
                 ),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(
                 index=4, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
@@ -2695,6 +3121,16 @@ I should search for current\
             ),
             PartDeltaEvent(
                 index=4, delta=ToolCallPartDelta(args_delta='025"}', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
+            ),
+            PartEndEvent(
+                index=4,
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args='{"query": "San Francisco weather September 16 2025"}',
+                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
                 index=5,
@@ -2776,8 +3212,9 @@ I should search for current\
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=6, part=TextPart(content='Base')),
+            PartStartEvent(index=6, part=TextPart(content='Base'), previous_part_kind='builtin-tool-return'),
             PartDeltaEvent(
                 index=6,
                 delta=TextPartDelta(
@@ -2795,7 +3232,27 @@ According\
                 ),
             ),
             PartDeltaEvent(index=6, delta=TextPartDelta(content_delta=" to AccuWeather's forecast, ")),
-            PartStartEvent(index=7, part=TextPart(content='today (September 16) shows a high of 76°F and low of 59°F')),
+            PartEndEvent(
+                index=6,
+                part=TextPart(
+                    content="""\
+Based on the search results, I can provide you with information about San Francisco's weather today (September 16, 2025):
+
+According to AccuWeather's forecast, \
+"""
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=7,
+                part=TextPart(content='today (September 16) shows a high of 76°F and low of 59°F'),
+                previous_part_kind='text',
+            ),
+            PartEndEvent(
+                index=7,
+                part=TextPart(content='today (September 16) shows a high of 76°F and low of 59°F'),
+                next_part_kind='text',
+            ),
             PartStartEvent(
                 index=8,
                 part=TextPart(
@@ -2805,12 +3262,33 @@ According\
 From the recent San\
 """
                 ),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' Francisco Chronicle weather report, ')),
-            PartStartEvent(
-                index=9, part=TextPart(content='average mid-September highs in San Francisco are around 70 degrees')
+            PartEndEvent(
+                index=8,
+                part=TextPart(
+                    content="""\
+ for San Francisco.
+
+From the recent San Francisco Chronicle weather report, \
+"""
+                ),
+                next_part_kind='text',
             ),
-            PartStartEvent(index=10, part=TextPart(content=", so today's forecast of 76°F is")),
+            PartStartEvent(
+                index=9,
+                part=TextPart(content='average mid-September highs in San Francisco are around 70 degrees'),
+                previous_part_kind='text',
+            ),
+            PartEndEvent(
+                index=9,
+                part=TextPart(content='average mid-September highs in San Francisco are around 70 degrees'),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=10, part=TextPart(content=", so today's forecast of 76°F is"), previous_part_kind='text'
+            ),
             PartDeltaEvent(
                 index=10,
                 delta=TextPartDelta(
@@ -2830,13 +3308,33 @@ The\
 """
                 ),
             ),
+            PartEndEvent(
+                index=10,
+                part=TextPart(
+                    content="""\
+, so today's forecast of 76°F is slightly above the typical temperature for this time of year.
+
+The general weather pattern for San Francisco in September includes:
+- \
+"""
+                ),
+                next_part_kind='text',
+            ),
             PartStartEvent(
                 index=11,
                 part=TextPart(
                     content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C'
                 ),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(index=11, delta=TextPartDelta(content_delta=' (55°F) at night')),
+            PartEndEvent(
+                index=11,
+                part=TextPart(
+                    content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C (55°F) at night'
+                ),
+                next_part_kind='text',
+            ),
             PartStartEvent(
                 index=12,
                 part=TextPart(
@@ -2845,12 +3343,31 @@ The\
 - \
 """
                 ),
+                previous_part_kind='text',
+            ),
+            PartEndEvent(
+                index=12,
+                part=TextPart(
+                    content="""\
+
+- \
+"""
+                ),
+                next_part_kind='text',
             ),
             PartStartEvent(
                 index=13,
                 part=TextPart(content='There are normally 9 hours of bright sunshine each day in San Francisco in'),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' September')),
+            PartEndEvent(
+                index=13,
+                part=TextPart(
+                    content='There are normally 9 hours of bright sunshine each day in San Francisco in September'
+                ),
+                next_part_kind='text',
+            ),
             PartStartEvent(
                 index=14,
                 part=TextPart(
@@ -2859,15 +3376,34 @@ The\
 - \
 """
                 ),
+                previous_part_kind='text',
+            ),
+            PartEndEvent(
+                index=14,
+                part=TextPart(
+                    content="""\
+
+- \
+"""
+                ),
+                next_part_kind='text',
             ),
             PartStartEvent(
                 index=15,
                 part=TextPart(
                     content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm.'
                 ),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' Typically, there are no rainy days')),
             PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' during this month')),
+            PartEndEvent(
+                index=15,
+                part=TextPart(
+                    content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this month'
+                ),
+                next_part_kind='text',
+            ),
             PartStartEvent(
                 index=16,
                 part=TextPart(
@@ -2877,12 +3413,23 @@ The\
 So for today, you can expect partly sunny to sunny skies with a\
 """
                 ),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=' high around 76°F (24°C)')),
             PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=' and a low around 59°F (15°C),')),
             PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=" with very little chance of rain. It's sh")),
             PartDeltaEvent(
                 index=16, delta=TextPartDelta(content_delta='aping up to be a pleasant day in San Francisco!')
+            ),
+            PartEndEvent(
+                index=16,
+                part=TextPart(
+                    content="""\
+
+
+So for today, you can expect partly sunny to sunny skies with a high around 76°F (24°C) and a low around 59°F (15°C), with very little chance of rain. It's shaping up to be a pleasant day in San Francisco!\
+"""
+                ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
@@ -3088,7 +3635,8 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                         content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3156,6 +3704,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01MYDjkvBDRaKsY6PDwQz3n6',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3170,7 +3719,8 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                         content='How about the pydantic repo in the same org?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3289,6 +3839,7 @@ Pydantic ensures runtime data integrity through type hints and is foundational t
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01DSGib8F7nNoYprfYSGp1sd',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3333,7 +3884,8 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                         content='Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3396,6 +3948,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01Xf6SmUVY1mDrSwFc5RsY3n',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3409,6 +3962,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
                     tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
                     provider_name='anthropic',
                 ),
+                previous_part_kind='thinking',
             ),
             PartDeltaEvent(
                 index=1,
@@ -3571,6 +4125,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
         ]
     )
@@ -3593,6 +4148,7 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
             ModelRequest(
                 parts=[UserPromptPart(content='How much is 3 * 12390?', timestamp=IsDatetime())],
                 instructions='Always use the code execution tool for math.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3643,6 +4199,7 @@ print(f"3 * 12390 = {result}")\
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_018bVTPr9khzuds31rFDuqW4',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3658,6 +4215,7 @@ print(f"3 * 12390 = {result}")\
                     )
                 ],
                 instructions='Always use the code execution tool for math.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3708,6 +4266,7 @@ print(f"4 * 12390 = {result}")\
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01VngRFBcNddwrYQoKUmdePY',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3735,7 +4294,8 @@ async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, 
                         content='what is 65465-6544 * 65464-6+1.02255',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3815,6 +4375,7 @@ Here's how it breaks down following the order of operations:
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01TaPV5KLA8MsCPDuJNKPLF4',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3932,12 +4493,42 @@ This\
                     provider_name='anthropic',
                 ),
             ),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content="""\
+The user is asking me to calculate a mathematical expression: 65465-6544 * 65464-6+1.02255
+
+This involves multiplication and subtraction operations, and I need to be careful about the order of operations (PEMDAS/BODMAS). Let me break this down:
+
+65465-6544 * 65464-6+1.02255
+
+Following order of operations:
+1. First, multiplication: 6544 * 65464
+2. Then left to right for addition and subtraction: 65465 - (result from step 1) - 6 + 1.02255
+
+This is a computational task that requires precise calculations, so I should use the code_execution tool to get an accurate result.\
+""",
+                    signature='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ==',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='text',
+            ),
             PartStartEvent(
-                index=1, part=TextPart(content="I'll calculate this mathematical expression for you. Let me break")
+                index=1,
+                part=TextPart(content="I'll calculate this mathematical expression for you. Let me break"),
+                previous_part_kind='thinking',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
                 index=1, delta=TextPartDelta(content_delta=' it down step by step following the order of operations.')
+            ),
+            PartEndEvent(
+                index=1,
+                part=TextPart(
+                    content="I'll calculate this mathematical expression for you. Let me break it down step by step following the order of operations."
+                ),
+                next_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=2,
@@ -3946,6 +4537,7 @@ This\
                     tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
                     provider_name='anthropic',
                 ),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(
                 index=2, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG')
@@ -4137,6 +4729,16 @@ This\
             PartDeltaEvent(
                 index=2, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG')
             ),
+            PartEndEvent(
+                index=2,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
             PartStartEvent(
                 index=3,
                 part=BuiltinToolReturnPart(
@@ -4161,8 +4763,9 @@ Results match: True
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=4, part=TextPart(content='The answer to')),
+            PartStartEvent(index=4, part=TextPart(content='The answer to'), previous_part_kind='builtin-tool-return'),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' **65465-6544 * ')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='65464-6+1.02255** is **')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-428,330,955.97745**.')),
@@ -4209,6 +4812,20 @@ Here's how it breaks down following the order of operations:
                 ),
             ),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='1.02255 = -428,330,955.97745')),
+            PartEndEvent(
+                index=4,
+                part=TextPart(
+                    content="""\
+The answer to **65465-6544 * 65464-6+1.02255** is **-428,330,955.97745**.
+
+Here's how it breaks down following the order of operations:
+1. First, multiplication: 6,544 × 65,464 = 428,396,416
+2. Then left to right: 65,465 - 428,396,416 = -428,330,951
+3. Continue: -428,330,951 - 6 = -428,330,957
+4. Finally: -428,330,957 + 1.02255 = -428,330,955.97745\
+"""
+                ),
+            ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
@@ -4252,7 +4869,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
     from pydantic_ai.providers.openai import OpenAIProvider
 
     openai_model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
-    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    anthropic_model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()])
 
     result = await agent.run('What day is today?')
@@ -4274,7 +4891,10 @@ It's being celebrated as:
     result = await agent.run('What day is tomorrow?', model=openai_model, message_history=result.all_messages())
     assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     TextPart(
@@ -4289,6 +4909,7 @@ It's being celebrated as:
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_689dc4abe31c81968ed493d15d8810fe0afe80ec3d42722e',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -4325,20 +4946,20 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
 
     # Initialize model for all tests
     env.set('ANTHROPIC_API_KEY', 'test-key')
-    model = AnthropicModel('claude-3-5-sonnet-latest', provider='anthropic')
+    model = AnthropicModel('claude-sonnet-4-5', provider='anthropic')
 
     # Test _map_message with empty string in user prompt
     messages_empty_string: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='')], kind='request'),
     ]
-    _, anthropic_messages = await model._map_message(messages_empty_string)  # type: ignore[attr-defined]
+    _, anthropic_messages = await model._map_message(messages_empty_string, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     assert anthropic_messages == snapshot([])  # Empty content should be filtered out
 
     # Test _map_message with list containing empty strings in user prompt
     messages_mixed_content: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content=['', 'Hello', '', 'World'])], kind='request'),
     ]
-    _, anthropic_messages = await model._map_message(messages_mixed_content)  # type: ignore[attr-defined]
+    _, anthropic_messages = await model._map_message(messages_mixed_content, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     assert anthropic_messages == snapshot(
         [{'role': 'user', 'content': [{'text': 'Hello', 'type': 'text'}, {'text': 'World', 'type': 'text'}]}]
     )
@@ -4349,7 +4970,7 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
         ModelResponse(parts=[TextPart(content='')], kind='response'),  # Empty response
         ModelRequest(parts=[UserPromptPart(content='Hello')], kind='request'),
     ]
-    _, anthropic_messages = await model._map_message(messages)  # type: ignore[attr-defined]
+    _, anthropic_messages = await model._map_message(messages, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     # The empty assistant message should be filtered out
     assert anthropic_messages == snapshot([{'role': 'user', 'content': [{'text': 'Hello', 'type': 'text'}]}])
 
@@ -4357,12 +4978,12 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
     messages_resp: list[ModelMessage] = [
         ModelResponse(parts=[TextPart(content=''), TextPart(content='')], kind='response'),
     ]
-    _, anthropic_messages = await model._map_message(messages_resp)  # type: ignore[attr-defined]
+    _, anthropic_messages = await model._map_message(messages_resp, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     assert len(anthropic_messages) == 0  # No messages should be added
 
 
 async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     class CityLocation(BaseModel):
         city: str
@@ -4385,7 +5006,8 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4401,12 +5023,13 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         'output_tokens': 23,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_012TXW181edhmR5JCsQRsBKx',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -4416,7 +5039,8 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         tool_call_id='toolu_01X9wcHKKAZD9tBC711xipPa',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4436,12 +5060,13 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         'output_tokens': 56,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_01K4Fzcf1bhiyLzHpwLdrefj',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -4451,14 +5076,15 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         tool_call_id='toolu_01LZABsgreMefH2Go8D5PQbW',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
 
 
 async def test_anthropic_text_output_function(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     def upcase(text: str) -> str:
         return text.upper()
@@ -4484,7 +5110,8 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                         content='What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4503,12 +5130,13 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                         'output_tokens': 65,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_01MsqUB7ZyhjGkvepS1tCXp3',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -4518,7 +5146,8 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                         tool_call_id='toolu_01JJ8TequDsrEU2pv1QFRWAK',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4536,19 +5165,20 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                         'output_tokens': 91,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_0142umg4diSckrDtV9vAmmPL',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
 
 
 async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     class CityLocation(BaseModel):
         city: str
@@ -4574,13 +5204,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4596,12 +5220,13 @@ Don't include any text or Markdown fencing before or after.\
                         'output_tokens': 38,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_018YiNXULHGpoKoHkTt6GivG',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -4612,13 +5237,7 @@ Don't include any text or Markdown fencing before or after.\
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -4632,19 +5251,20 @@ Don't include any text or Markdown fencing before or after.\
                         'output_tokens': 17,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01WiRVmLhCrJbJZRqmAWKv3X',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
 
 
 async def test_anthropic_prompted_output_multiple(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     class CityLocation(BaseModel):
         city: str
@@ -4668,13 +5288,7 @@ async def test_anthropic_prompted_output_multiple(allow_model_requests: None, an
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4692,19 +5306,20 @@ Don't include any text or Markdown fencing before or after.\
                         'output_tokens': 31,
                     },
                 ),
-                model_name='claude-3-5-sonnet-20241022',
+                model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01N2PwwVQo2aBtt6UFhMDtEX',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
 
 
 async def test_anthropic_native_output(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     class CityLocation(BaseModel):
         city: str
@@ -4723,7 +5338,7 @@ async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, a
         settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000}),
     )
 
-    agent = Agent(m, output_type=int)
+    agent = Agent(m, output_type=ToolOutput(int))
 
     with pytest.raises(
         UserError,
@@ -4733,7 +5348,8 @@ async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, a
     ):
         await agent.run('What is 3 + 3?')
 
-    agent = Agent(m, output_type=PromptedOutput(int))
+    # Will default to prompted output
+    agent = Agent(m, output_type=int)
 
     result = await agent.run('What is 3 + 3?')
     assert result.output == snapshot(6)
@@ -4795,7 +5411,7 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
     )
 
     mock_client = MockAnthropic.create_mock([first_response, second_response])
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
 
     # First run to get server tool history
@@ -4847,7 +5463,7 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
     )
 
     mock_client = MockAnthropic.create_mock([first_response, second_response])
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
     # First run to get server tool history
@@ -4909,6 +5525,16 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             PartDeltaEvent(
                 index=0,
                 delta=ToolCallPartDelta(args_delta='s today"}', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY'),
+            ),
+            PartEndEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args='{"query": "top world news today"}',
+                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
                 index=1,
@@ -4990,15 +5616,28 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=2, part=TextPart(content='Let me search for more specific breaking')),
+            PartStartEvent(
+                index=2,
+                part=TextPart(content='Let me search for more specific breaking'),
+                previous_part_kind='builtin-tool-return',
+            ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' news stories to get clearer headlines.')),
+            PartEndEvent(
+                index=2,
+                part=TextPart(
+                    content='Let me search for more specific breaking news stories to get clearer headlines.'
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
             PartStartEvent(
                 index=3,
                 part=BuiltinToolCallPart(
                     tool_name='web_search', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T', provider_name='anthropic'
                 ),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(
                 index=3, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
@@ -5026,6 +5665,16 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             ),
             PartDeltaEvent(
                 index=3, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
+            ),
+            PartEndEvent(
+                index=3,
+                part=BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args='{"query": "breaking news headlines August 14 2025"}',
+                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
                 index=4,
@@ -5107,8 +5756,9 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=5, part=TextPart(content='Base')),
+            PartStartEvent(index=5, part=TextPart(content='Base'), previous_part_kind='builtin-tool-return'),
             PartDeltaEvent(
                 index=5, delta=TextPartDelta(content_delta='d on the search results, I can identify the top')
             ),
@@ -5135,27 +5785,70 @@ d the world today (August 14, 2025):
             ),
             PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='1. Trump-Putin Summit and Ukraine Crisis')),
             PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='**\n')),
+            PartEndEvent(
+                index=5,
+                part=TextPart(
+                    content="""\
+Based on the search results, I can identify the top 3 major news stories from around the world today (August 14, 2025):
+
+## Top 3 World News Stories Today
+
+**1. Trump-Putin Summit and Ukraine Crisis**
+"""
+                ),
+                next_part_kind='text',
+            ),
             PartStartEvent(
                 index=6,
                 part=TextPart(
                     content='European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine'
                 ),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="'s Volodymyr Zel")),
             PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="enskyy and NATO's chief ahea")),
             PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="d of Friday's U.S.-")),
             PartDeltaEvent(index=6, delta=TextPartDelta(content_delta='Russia summit')),
-            PartStartEvent(index=7, part=TextPart(content='. ')),
-            PartStartEvent(index=8, part=TextPart(content='The White House lowered its expectations surrounding')),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' the Trump-Putin summit on Friday')),
-            PartStartEvent(index=9, part=TextPart(content='. ')),
+            PartEndEvent(
+                index=6,
+                part=TextPart(
+                    content="European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine's Volodymyr Zelenskyy and NATO's chief ahead of Friday's U.S.-Russia summit"
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=7, part=TextPart(content='. '), previous_part_kind='text'),
+            PartEndEvent(index=7, part=TextPart(content='. '), next_part_kind='text'),
             PartStartEvent(
-                index=10, part=TextPart(content='In a surprise move just days before the Trump-Putin summit')
+                index=8,
+                part=TextPart(content='The White House lowered its expectations surrounding'),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' the Trump-Putin summit on Friday')),
+            PartEndEvent(
+                index=8,
+                part=TextPart(
+                    content='The White House lowered its expectations surrounding the Trump-Putin summit on Friday'
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=9, part=TextPart(content='. '), previous_part_kind='text'),
+            PartEndEvent(index=9, part=TextPart(content='. '), next_part_kind='text'),
+            PartStartEvent(
+                index=10,
+                part=TextPart(content='In a surprise move just days before the Trump-Putin summit'),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=', the White House swapped out pro')),
             PartDeltaEvent(index=10, delta=TextPartDelta(content_delta="-EU PM Tusk for Poland's new president –")),
             PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=" a political ally who once opposed Ukraine's")),
             PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=' NATO and EU bids')),
+            PartEndEvent(
+                index=10,
+                part=TextPart(
+                    content="In a surprise move just days before the Trump-Putin summit, the White House swapped out pro-EU PM Tusk for Poland's new president – a political ally who once opposed Ukraine's NATO and EU bids"
+                ),
+                next_part_kind='text',
+            ),
             PartStartEvent(
                 index=11,
                 part=TextPart(
@@ -5165,33 +5858,72 @@ d the world today (August 14, 2025):
 **2. Trump's Federal Takeover of Washington D\
 """
                 ),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(index=11, delta=TextPartDelta(content_delta='.C.**')),
             PartDeltaEvent(index=11, delta=TextPartDelta(content_delta='\n')),
+            PartEndEvent(
+                index=11,
+                part=TextPart(
+                    content="""\
+.
+
+**2. Trump's Federal Takeover of Washington D.C.**
+"""
+                ),
+                next_part_kind='text',
+            ),
             PartStartEvent(
                 index=12,
                 part=TextPart(
                     content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's tak"
                 ),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(index=12, delta=TextPartDelta(content_delta="eover of the city's police entered its thir")),
             PartDeltaEvent(index=12, delta=TextPartDelta(content_delta='d night')),
-            PartStartEvent(index=13, part=TextPart(content='. ')),
+            PartEndEvent(
+                index=12,
+                part=TextPart(
+                    content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's takeover of the city's police entered its third night"
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=13, part=TextPart(content='. '), previous_part_kind='text'),
+            PartEndEvent(index=13, part=TextPart(content='. '), next_part_kind='text'),
             PartStartEvent(
                 index=14,
                 part=TextPart(
                     content="National Guard troops arrived in Washington, D.C., following President Trump's deployment an"
                 ),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(
                 index=14, delta=TextPartDelta(content_delta='d federalization of local police to crack down on crime')
             ),
             PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=" in the nation's capital")),
-            PartStartEvent(index=15, part=TextPart(content='. ')),
+            PartEndEvent(
+                index=14,
+                part=TextPart(
+                    content="National Guard troops arrived in Washington, D.C., following President Trump's deployment and federalization of local police to crack down on crime in the nation's capital"
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=15, part=TextPart(content='. '), previous_part_kind='text'),
+            PartEndEvent(index=15, part=TextPart(content='. '), next_part_kind='text'),
             PartStartEvent(
-                index=16, part=TextPart(content='Over 100 arrests made as National Guard rolls into DC under')
+                index=16,
+                part=TextPart(content='Over 100 arrests made as National Guard rolls into DC under'),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=" Trump's federal takeover")),
+            PartEndEvent(
+                index=16,
+                part=TextPart(
+                    content="Over 100 arrests made as National Guard rolls into DC under Trump's federal takeover"
+                ),
+                next_part_kind='text',
+            ),
             PartStartEvent(
                 index=17,
                 part=TextPart(
@@ -5201,21 +5933,43 @@ d the world today (August 14, 2025):
 **3. Air\
 """
                 ),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(index=17, delta=TextPartDelta(content_delta=' Canada Flight Disruption')),
             PartDeltaEvent(index=17, delta=TextPartDelta(content_delta='**\n')),
+            PartEndEvent(
+                index=17,
+                part=TextPart(
+                    content="""\
+.
+
+**3. Air Canada Flight Disruption**
+"""
+                ),
+                next_part_kind='text',
+            ),
             PartStartEvent(
                 index=18,
                 part=TextPart(
                     content='Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend'
                 ),
+                previous_part_kind='text',
             ),
-            PartStartEvent(index=19, part=TextPart(content='. ')),
+            PartEndEvent(
+                index=18,
+                part=TextPart(
+                    content='Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend'
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=19, part=TextPart(content='. '), previous_part_kind='text'),
+            PartEndEvent(index=19, part=TextPart(content='. '), next_part_kind='text'),
             PartStartEvent(
                 index=20,
                 part=TextPart(
                     content='Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations'
                 ),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(
                 index=20,
@@ -5227,6 +5981,13 @@ d the world today (August 14, 2025):
                 index=20, delta=TextPartDelta(content_delta=' Saturday as it faces a potential work stoppage by')
             ),
             PartDeltaEvent(index=20, delta=TextPartDelta(content_delta=' its flight attendants')),
+            PartEndEvent(
+                index=20,
+                part=TextPart(
+                    content="Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations with a complete cessation of flights for the country's largest airline by Saturday as it faces a potential work stoppage by its flight attendants"
+                ),
+                next_part_kind='text',
+            ),
             PartStartEvent(
                 index=21,
                 part=TextPart(
@@ -5236,9 +5997,20 @@ d the world today (August 14, 2025):
 These stories represent major international diplomatic developments, significant domestic policy\
 """
                 ),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(index=21, delta=TextPartDelta(content_delta=' changes in the US, and major transportation')),
             PartDeltaEvent(index=21, delta=TextPartDelta(content_delta=' disruptions affecting North America.')),
+            PartEndEvent(
+                index=21,
+                part=TextPart(
+                    content="""\
+.
+
+These stories represent major international diplomatic developments, significant domestic policy changes in the US, and major transportation disruptions affecting North America.\
+"""
+                ),
+            ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
@@ -5422,7 +6194,7 @@ These stories represent major international diplomatic developments, significant
 async def test_anthropic_text_parts_ahead_of_built_in_tool_call(allow_model_requests: None, anthropic_api_key: str):
     # Verify that text parts ahead of the built-in tool call are not included in the output
 
-    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    anthropic_model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()], instructions='Be very concise.')
 
     result = await agent.run('Briefly mention 1 event that happened today in history?')
@@ -5460,7 +6232,6 @@ In 1939, Finnish runner Taisto Mäki made history by becoming the first person t
                 "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he",
                 "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its",
                 "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally",
-                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally.",
                 "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally.",
             ]
         )

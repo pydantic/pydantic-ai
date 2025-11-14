@@ -17,6 +17,7 @@ from pydantic_ai import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     FilePart,
     FinalResultEvent,
@@ -26,6 +27,7 @@ from pydantic_ai import (
     ModelResponse,
     ModelResponseStreamEvent,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
@@ -187,6 +189,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
+                        'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
                     },
@@ -402,6 +405,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                 PartStartEvent(index=0, part=TextPart(content='text1')),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='text2')),
+                PartEndEvent(index=0, part=TextPart(content='text1text2')),
             ]
         )
 
@@ -425,6 +429,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
+                        'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
                     },
@@ -524,6 +529,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
+                        'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
                     },
@@ -643,6 +649,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instr
                             'output_mode': 'text',
                             'output_object': None,
                             'output_tools': [],
+                            'prompted_output_template': None,
                             'allow_text_output': True,
                             'allow_image_output': False,
                         },
@@ -776,6 +783,7 @@ Fix the errors and try again.\
                             'output_mode': 'text',
                             'output_object': None,
                             'output_tools': [],
+                            'prompted_output_template': None,
                             'allow_text_output': True,
                             'allow_image_output': False,
                         },
@@ -1490,6 +1498,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
+                        'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
                     },
@@ -1603,6 +1612,81 @@ def test_message_with_builtin_tool_calls():
                         ],
                     },
                     {'type': 'text', 'content': 'text3'},
+                ],
+            }
+        ]
+    )
+
+
+def test_cache_point_in_user_prompt():
+    """Test that CachePoint is correctly skipped in OpenTelemetry conversion.
+
+    CachePoint is a marker for prompt caching and should not be included in the
+    OpenTelemetry message parts output.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['text before', CachePoint(), 'text after'])]),
+    ]
+    settings = InstrumentationSettings()
+
+    # Test otel_message_parts - CachePoint should be skipped
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'text before'},
+                    {'type': 'text', 'content': 'text after'},
+                ],
+            }
+        ]
+    )
+
+    # Test with multiple CachePoints
+    messages_multi: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=['first', CachePoint(), 'second', CachePoint(), 'third']),
+            ]
+        ),
+    ]
+    assert settings.messages_to_otel_messages(messages_multi) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'first'},
+                    {'type': 'text', 'content': 'second'},
+                    {'type': 'text', 'content': 'third'},
+                ],
+            }
+        ]
+    )
+
+    # Test with CachePoint mixed with other content types
+    messages_mixed: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'context',
+                        CachePoint(),
+                        ImageUrl('https://example.com/image.jpg'),
+                        CachePoint(),
+                        'question',
+                    ]
+                ),
+            ]
+        ),
+    ]
+    assert settings.messages_to_otel_messages(messages_mixed) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'context'},
+                    {'type': 'image-url', 'url': 'https://example.com/image.jpg'},
+                    {'type': 'text', 'content': 'question'},
                 ],
             }
         ]

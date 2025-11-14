@@ -17,6 +17,7 @@ from pydantic_ai import (
     Agent,
     AudioUrl,
     BinaryContent,
+    CachePoint,
     DocumentUrl,
     ImageUrl,
     ModelHTTPError,
@@ -45,7 +46,14 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, try_import
-from .mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
+from .mock_openai import (
+    MockOpenAI,
+    MockOpenAIResponses,
+    completion_message,
+    get_mock_chat_completion_kwargs,
+    get_mock_responses_kwargs,
+    response_message,
+)
 
 with try_import() as imports_successful:
     from openai import APIStatusError, AsyncOpenAI
@@ -114,17 +122,10 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.usage() == snapshot(RunUsage(requests=1))
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse(
-                parts=[TextPart(content='world')],
-                model_name='gpt-4o-123',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                provider_name='openai',
-                provider_details={'finish_reason': 'stop'},
-                provider_response_id='123',
-                finish_reason='stop',
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
             ),
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 model_name='gpt-4o-123',
@@ -133,6 +134,21 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                model_name='gpt-4o-123',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                provider_name='openai',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -219,7 +235,10 @@ async def test_request_structured_response(allow_model_requests: None):
     assert result.output == [1, 2, 123]
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -234,6 +253,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -243,7 +263,8 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -310,7 +331,8 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[
                     SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -331,6 +353,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -340,7 +363,8 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -361,6 +385,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -370,7 +395,8 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -380,6 +406,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -498,13 +525,7 @@ async def test_stream_structured(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {},
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{}, {'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
         assert result.is_complete
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
@@ -527,13 +548,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
         assert result.is_complete
 
@@ -553,12 +568,7 @@ async def test_stream_native_output(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
         assert result.is_complete
 
@@ -589,12 +599,7 @@ async def test_stream_tool_call_with_empty_text(allow_model_requests: None):
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
     assert await result.get_output() == snapshot({'first': 'One', 'second': 'Two'})
 
@@ -620,13 +625,7 @@ async def test_stream_text_empty_think_tag_and_text_before_tool_call(allow_model
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {},
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
+            [{}, {'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
     assert await result.get_output() == snapshot({'first': 'One', 'second': 'Two'})
 
@@ -891,7 +890,8 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                         content=['What food is in the image you can get from the get_image tool?'],
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG')],
@@ -911,6 +911,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -930,7 +931,8 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                         ],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a potato.')],
@@ -950,6 +952,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -974,7 +977,8 @@ async def test_image_as_binary_content_tool_response(
                         content=['What fruit is in the image you can get from the get_image tool?'],
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_Btn0GIzGr4ugNlLmkQghQUMY')],
@@ -994,6 +998,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id='chatcmpl-BRlkLhPc87BdohVobEJJCGq3rUAG2',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1010,7 +1015,8 @@ async def test_image_as_binary_content_tool_response(
                         ],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a kiwi fruit.')],
@@ -1030,6 +1036,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-BRlkORPA5rXMV3uzcOcgK4eQFKCVW',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1956,6 +1963,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
@@ -1975,6 +1983,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-BJjf61mLb9z5H45ClJzbx0UWKwjo1',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2003,6 +2012,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
             ModelRequest(
                 parts=[UserPromptPart(content='What is the temperature in Tokyo?', timestamp=IsDatetime())],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_temperature', args='{"city":"Tokyo"}', tool_call_id=IsStr())],
@@ -2022,6 +2032,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id='chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2030,6 +2041,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                     )
                 ],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The temperature in Tokyo is currently 20.0 degrees Celsius.')],
@@ -2049,6 +2061,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2063,7 +2076,10 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ThinkingPart(
@@ -2082,6 +2098,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c1fa0523248197888681b898567bde093f57e27128848a',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2099,7 +2116,8 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr())],
@@ -2119,6 +2137,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-CENUmtwDD0HdvTUYL6lUeijDtxrZL',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2373,7 +2392,8 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
@@ -2393,6 +2413,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id='chatcmpl-BSXk0dWkG4hfPt0lph4oFO35iT73I',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2402,7 +2423,8 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2428,6 +2450,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id='chatcmpl-BSXk1xGHYzbhXgUkSutK08bdoNv5s',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2437,7 +2460,8 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2466,7 +2490,8 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2488,6 +2513,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id='chatcmpl-BgeDFS85bfHosRFEEAvq8reaCPCZ8',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2497,7 +2523,8 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                         tool_call_id='call_J1YabdC7G7kzEZNbbZopwenH',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The largest city in Mexico is Mexico City.')],
@@ -2517,6 +2544,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-BgeDGX9eDyVrEI56aP2vtIHahBzFH',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2548,7 +2576,8 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2570,6 +2599,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id='chatcmpl-BSXjyBwGuZrtuuSzNCeaWMpGv2MZ3',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2579,7 +2609,8 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                         tool_call_id='call_PkRGedQNRFUzJp2R7dO7avWR',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
@@ -2599,6 +2630,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-BSXjzYGu67dhTy5r8KmjJvQ4HhDVO',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2632,7 +2664,8 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2654,6 +2687,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id='chatcmpl-Bgg5utuCSXMQ38j0n2qgfdQKcR9VD',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2663,7 +2697,8 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                         tool_call_id='call_SIttSeiOistt33Htj4oiHOOX',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2687,6 +2722,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-Bgg5vrxUtCDlvgMreoxYxPaKxANmd',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2717,13 +2753,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2745,6 +2775,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id='chatcmpl-Bgh27PeOaFW6qmF04qC5uI2H9mviw',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2755,13 +2786,7 @@ Don't include any text or Markdown fencing before or after.\
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
@@ -2781,6 +2806,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-Bgh28advCSFhGHPnzUevVS6g6Uwg0',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2815,13 +2841,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2843,6 +2863,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id='chatcmpl-Bgh2AW2NXGgMc7iS639MJXNRgtatR',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2853,13 +2874,7 @@ Don't include any text or Markdown fencing before or after.\
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2883,6 +2898,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-Bgh2BthuopRnSqCuUgMbBnOqgkDHC',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2978,6 +2994,25 @@ async def test_tool_choice_fallback(allow_model_requests: None) -> None:
     assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == 'auto'
 
 
+async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> None:
+    """Ensure tool_choice falls back to 'auto' for Responses API when 'required' unsupported."""
+    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
+
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('openai/gpt-oss', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=False)
+
+    await model._responses_create(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        stream=False,
+        model_settings={},
+        model_request_parameters=params,
+    )
+
+    assert get_mock_responses_kwargs(mock_client)[0]['tool_choice'] == 'auto'
+
+
 async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
@@ -3020,3 +3055,33 @@ def test_deprecated_openai_model(openai_api_key: str):
 
         provider = OpenAIProvider(api_key=openai_api_key)
         OpenAIModel('gpt-4o', provider=provider)  # type: ignore[reportDeprecated]
+
+
+async def test_cache_point_filtering(allow_model_requests: None):
+    """Test that CachePoint is filtered out in OpenAI Chat Completions requests."""
+    c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    # Test the instance method directly to trigger line 864
+    msg = await m._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
+
+    # CachePoint should be filtered out, only text content should remain
+    assert msg['role'] == 'user'
+    assert len(msg['content']) == 2  # type: ignore[reportUnknownArgumentType]
+    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
+    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
+
+
+async def test_cache_point_filtering_responses_model():
+    """Test that CachePoint is filtered out in OpenAI Responses API requests."""
+    # Test the static method directly to trigger line 1680
+    msg = await OpenAIResponsesModel._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(content=['text before', CachePoint(), 'text after'])
+    )
+
+    # CachePoint should be filtered out, only text content should remain
+    assert msg['role'] == 'user'
+    assert len(msg['content']) == 2
+    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
+    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]

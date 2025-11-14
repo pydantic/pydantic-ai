@@ -424,6 +424,7 @@ def bedrock_provider():
             region_name=os.getenv('AWS_REGION', 'us-east-1'),
             aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
             aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
+            aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
         )
         yield BedrockProvider(bedrock_client=bedrock_client)
         bedrock_client.close()
@@ -498,7 +499,7 @@ def model(
             from pydantic_ai.models.anthropic import AnthropicModel
             from pydantic_ai.providers.anthropic import AnthropicProvider
 
-            return AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+            return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
         elif request.param == 'mistral':
             from pydantic_ai.models.mistral import MistralModel
             from pydantic_ai.providers.mistral import MistralProvider
@@ -535,6 +536,18 @@ def model(
             return HuggingFaceModel(
                 'Qwen/Qwen2.5-72B-Instruct',
                 provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
+            )
+        elif request.param == 'outlines':
+            from outlines.models.transformers import from_transformers
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+
+            from pydantic_ai.models.outlines import OutlinesModel
+
+            return OutlinesModel(
+                from_transformers(
+                    AutoModelForCausalLM.from_pretrained('erwanf/gpt2-mini'),
+                    AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),
+                )
             )
         else:
             raise ValueError(f'Unknown model: {request.param}')
