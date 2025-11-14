@@ -24,7 +24,7 @@ Here's a toy example of an agent that simulates a roulette wheel:
 from pydantic_ai import Agent, RunContext
 
 roulette_agent = Agent(  # (1)!
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=int,
     output_type=bool,
     system_prompt=(
@@ -65,7 +65,7 @@ There are five ways to run an agent:
 
 1. [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] — an async function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response.
 2. [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] — a plain, synchronous function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response (internally, this just calls `loop.run_until_complete(self.run())`).
-3. [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] — an async context manager which returns a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], which contains methods to stream text and structured output as an async iterable.
+3. [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] — an async context manager which returns a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], which contains methods to stream text and structured output as an async iterable. [`agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] is a synchronous variation that returns a [`StreamedRunResultSync`][pydantic_ai.result.StreamedRunResultSync] with synchronous versions of the same methods.
 4. [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] — a function which returns an async iterable of [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] and a [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] containing the final run result.
 5. [`agent.iter()`][pydantic_ai.Agent.iter] — a context manager which returns an [`AgentRun`][pydantic_ai.agent.AgentRun], an async iterable over the nodes of the agent's underlying [`Graph`][pydantic_graph.graph.Graph].
 
@@ -74,7 +74,7 @@ Here's a simple example demonstrating the first four:
 ```python {title="run_agent.py"}
 from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 result_sync = agent.run_sync('What is the capital of Italy?')
 print(result_sync.output)
@@ -103,6 +103,9 @@ async def main():
         FinalResultEvent(tool_name=None, tool_call_id=None),
         PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='Mexico is Mexico ')),
         PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='City.')),
+        PartEndEvent(
+            index=0, part=TextPart(content='The capital of Mexico is Mexico City.')
+        ),
         AgentRunResultEvent(
             result=AgentRunResult(output='The capital of Mexico is Mexico City.')
         ),
@@ -148,7 +151,7 @@ from pydantic_ai import (
 )
 
 weather_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     system_prompt='Providing a weather forecast at the locations the user provides.',
 )
 
@@ -290,7 +293,7 @@ Here's an example of using `async for` with `iter` to record each node the agent
 ```python {title="agent_iter_async_for.py"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 
 async def main():
@@ -317,15 +320,17 @@ async def main():
                         content='What is the capital of France?',
                         timestamp=datetime.datetime(...),
                     )
-                ]
+                ],
+                run_id='...',
             )
         ),
         CallToolsNode(
             model_response=ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
                 usage=RequestUsage(input_tokens=56, output_tokens=7),
-                model_name='gpt-4o',
+                model_name='gpt-5',
                 timestamp=datetime.datetime(...),
+                run_id='...',
             )
         ),
         End(data=FinalResult(output='The capital of France is Paris.')),
@@ -348,7 +353,7 @@ You can also drive the iteration manually by passing the node you want to run ne
 from pydantic_ai import Agent
 from pydantic_graph import End
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 
 async def main():
@@ -379,15 +384,17 @@ async def main():
                             content='What is the capital of France?',
                             timestamp=datetime.datetime(...),
                         )
-                    ]
+                    ],
+                    run_id='...',
                 )
             ),
             CallToolsNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='The capital of France is Paris.')],
                     usage=RequestUsage(input_tokens=56, output_tokens=7),
-                    model_name='gpt-4o',
+                    model_name='gpt-5',
                     timestamp=datetime.datetime(...),
+                    run_id='...',
                 )
             ),
             End(data=FinalResult(output='The capital of France is Paris.')),
@@ -443,7 +450,7 @@ class WeatherService:
 
 
 weather_agent = Agent[WeatherService, str](
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=WeatherService,
     output_type=str,  # We'll produce a final answer as plain text
     system_prompt='Providing a weather forecast at the locations the user provides.',
@@ -572,7 +579,7 @@ Consider the following example, where we limit the number of response tokens:
 ```py
 from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
 
-agent = Agent('anthropic:claude-3-5-sonnet-latest')
+agent = Agent('anthropic:claude-sonnet-4-5')
 
 result_sync = agent.run_sync(
     'What is the capital of Italy? Answer with just the city.',
@@ -610,7 +617,7 @@ class NeverOutputType(TypedDict):
 
 
 agent = Agent(
-    'anthropic:claude-3-5-sonnet-latest',
+    'anthropic:claude-sonnet-4-5',
     retries=3,
     output_type=NeverOutputType,
     system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
@@ -643,7 +650,7 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.usage import UsageLimits
 
-agent = Agent('anthropic:claude-3-5-sonnet-latest')
+agent = Agent('anthropic:claude-sonnet-4-5')
 
 @agent.tool_plain
 def do_work() -> str:
@@ -682,7 +689,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 
 # 1. Model-level defaults
 model = OpenAIChatModel(
-    'gpt-4o',
+    'gpt-5',
     settings=ModelSettings(temperature=0.8, max_tokens=500)  # Base defaults
 )
 
@@ -714,7 +721,7 @@ For example:
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models.google import GoogleModelSettings
 
-agent = Agent('google-gla:gemini-1.5-flash')
+agent = Agent('google-gla:gemini-2.5-flash')
 
 try:
     result = agent.run_sync(
@@ -736,7 +743,7 @@ try:
 except UnexpectedModelBehavior as e:
     print(e)  # (1)!
     """
-    Safety settings triggered, body:
+    Content filter 'SAFETY' triggered, body:
     <safety settings details>
     """
 ```
@@ -752,7 +759,7 @@ Here's an example of a conversation comprised of multiple runs:
 ```python {title="conversation_example.py" hl_lines="13"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 # First run
 result1 = agent.run_sync('Who was Albert Einstein?')
@@ -860,7 +867,7 @@ from datetime import date
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=str,  # (1)!
     system_prompt="Use the customer's name while replying to them.",  # (2)!
 )
@@ -901,14 +908,15 @@ You should use:
 
 In general, we recommend using `instructions` instead of `system_prompt` unless you have a specific reason to use `system_prompt`.
 
-Instructions, like system prompts, fall into two categories:
+Instructions, like system prompts, can be specified at different times:
 
 1. **Static instructions**: These are known when writing the code and can be defined via the `instructions` parameter of the [`Agent` constructor][pydantic_ai.Agent.__init__].
 2. **Dynamic instructions**: These rely on context that is only available at runtime and should be defined using functions decorated with [`@agent.instructions`][pydantic_ai.Agent.instructions]. Unlike dynamic system prompts, which may be reused when `message_history` is present, dynamic instructions are always reevaluated.
+3. **Runtime instructions*: These are additional instructions for a specific run that can be passed to one of the [run methods](#running-agents) using the `instructions` argument.
 
-Both static and dynamic instructions can be added to a single agent, and they are appended in the order they are defined at runtime.
+All three types of instructions can be added to a single agent, and they are appended in the order they are defined at runtime.
 
-Here's an example using both types of instructions:
+Here's an example using a static instruction as well as dynamic instructions:
 
 ```python {title="instructions.py"}
 from datetime import date
@@ -916,7 +924,7 @@ from datetime import date
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=str,  # (1)!
     instructions="Use the customer's name while replying to them.",  # (2)!
 )
@@ -973,7 +981,7 @@ class ChatResult(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=DatabaseConn,
     output_type=ChatResult,
 )
@@ -1011,7 +1019,7 @@ In these cases, [`capture_run_messages`][pydantic_ai.capture_run_messages] can b
 ```python {title="agent_model_errors.py"}
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, capture_run_messages
 
-agent = Agent('openai:gpt-4o')
+agent = Agent('openai:gpt-5')
 
 
 @agent.tool_plain
@@ -1040,7 +1048,8 @@ with capture_run_messages() as messages:  # (2)!
                         content='Please get me the volume of a box with size 6.',
                         timestamp=datetime.datetime(...),
                     )
-                ]
+                ],
+                run_id='...',
             ),
             ModelResponse(
                 parts=[
@@ -1051,8 +1060,9 @@ with capture_run_messages() as messages:  # (2)!
                     )
                 ],
                 usage=RequestUsage(input_tokens=62, output_tokens=4),
-                model_name='gpt-4o',
+                model_name='gpt-5',
                 timestamp=datetime.datetime(...),
+                run_id='...',
             ),
             ModelRequest(
                 parts=[
@@ -1062,7 +1072,8 @@ with capture_run_messages() as messages:  # (2)!
                         tool_call_id='pyd_ai_tool_call_id',
                         timestamp=datetime.datetime(...),
                     )
-                ]
+                ],
+                run_id='...',
             ),
             ModelResponse(
                 parts=[
@@ -1073,8 +1084,9 @@ with capture_run_messages() as messages:  # (2)!
                     )
                 ],
                 usage=RequestUsage(input_tokens=72, output_tokens=8),
-                model_name='gpt-4o',
+                model_name='gpt-5',
                 timestamp=datetime.datetime(...),
+                run_id='...',
             ),
         ]
         """

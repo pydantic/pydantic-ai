@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import datetime
 import os
 import re
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -26,6 +27,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
@@ -46,6 +48,7 @@ from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -55,6 +58,7 @@ from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
     from google.genai.types import (
+        FinishReason as GoogleFinishReason,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
         HarmBlockThreshold,
@@ -63,7 +67,12 @@ with try_import() as imports_successful:
         ModalityTokenCount,
     )
 
-    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings, _metadata_as_usage  # type: ignore
+    from pydantic_ai.models.google import (
+        GeminiStreamedResponse,
+        GoogleModel,
+        GoogleModelSettings,
+        _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -114,7 +123,8 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                         content='Hello!',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello there! How can I help you today?\n')],
@@ -127,6 +137,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -177,7 +188,8 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                         content='What was the temperature in London 1st January 2022?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -196,13 +208,15 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='temperature', content='30°C', tool_call_id=IsStr(), timestamp=IsDatetime()
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -223,6 +237,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -232,7 +247,8 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -297,7 +313,8 @@ async def test_google_model_builtin_code_execution_stream(
                         content='what is 65465-6544 * 65464-6+1.02255',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -359,6 +376,7 @@ print(result)\
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='1NjJaIDxJcL7qtsP5aPfqQs',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -380,6 +398,23 @@ print(result)\
                     provider_name='google-gla',
                 ),
             ),
+            PartEndEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args={
+                        'code': """\
+    result = 65465 - 6544 * 65464 - 6 + 1.02255
+    print(result)
+    \
+""",
+                        'language': 'PYTHON',
+                    },
+                    tool_call_id=IsStr(),
+                    provider_name='google-gla',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
             PartStartEvent(
                 index=1,
                 part=BuiltinToolReturnPart(
@@ -389,6 +424,7 @@ print(result)\
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=2,
@@ -405,6 +441,24 @@ print(result)\
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
                 ),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartEndEvent(
+                index=2,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args={
+                        'code': """\
+# Calculate the expression 65465-6544 * 65464-6+1.02255
+result = 65465 - 6544 * 65464 - 6 + 1.02255
+print(result)\
+""",
+                        'language': 'PYTHON',
+                    },
+                    tool_call_id=IsStr(),
+                    provider_name='google-gla',
+                ),
+                next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
                 index=3,
@@ -415,11 +469,13 @@ print(result)\
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                 ),
+                previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=4, part=TextPart(content='The result is')),
+            PartStartEvent(index=4, part=TextPart(content='The result is'), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' -428,330,955.977')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='45.')),
+            PartEndEvent(index=4, part=TextPart(content='The result is -428,330,955.97745.')),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
@@ -494,7 +550,8 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 parts=[
                     SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
                     UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime()),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_capital', args={'country': 'France'}, tool_call_id=IsStr())],
@@ -507,6 +564,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -516,7 +574,8 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -533,6 +592,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -625,6 +685,14 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                 index=0,
                 part=ToolCallPart(tool_name='get_capital', args={'country': 'France'}, tool_call_id=IsStr()),
             ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='get_capital',
+                    args={'country': 'France'},
+                    tool_call_id=IsStr(),
+                ),
+            ),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -635,6 +703,14 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                 index=0,
                 part=ToolCallPart(tool_name='get_temperature', args={'city': 'Paris'}, tool_call_id=IsStr()),
             ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='get_temperature',
+                    args={'city': 'Paris'},
+                    tool_call_id=IsStr(),
+                ),
+            ),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -644,6 +720,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
             PartStartEvent(index=0, part=TextPart(content='The temperature in Paris')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' is 30°C.\n')),
+            PartEndEvent(index=0, part=TextPart(content='The temperature in Paris is 30°C.\n')),
         ]
     )
 
@@ -803,6 +880,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.\n')],
@@ -815,6 +893,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -851,7 +930,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
     )
     agent = Agent(m, instructions='You hate the world!', model_settings=settings)
 
-    with pytest.raises(UnexpectedModelBehavior, match='Safety settings triggered'):
+    with pytest.raises(UnexpectedModelBehavior, match="Content filter 'SAFETY' triggered"):
         await agent.run('Tell me a joke about a Brazilians.')
 
 
@@ -872,7 +951,8 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
                         content='What is the weather in San Francisco today?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -935,6 +1015,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='btnJaOrqE4_6qtsP7bOboQs',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -949,7 +1030,8 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                         content='how about Mexico City?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1010,6 +1092,7 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='dtnJaKyTAri3qtsPu4imqQs',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1041,7 +1124,8 @@ async def test_google_model_web_search_tool_stream(allow_model_requests: None, g
                         content='What is the weather in San Francisco today?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1075,6 +1159,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='ftnJaMmAMcm-qtsPwvCCoAo',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1156,6 +1241,22 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                 index=0,
                 delta=TextPartDelta(content_delta=' the evening. The chance of rain remains low throughout the day.'),
             ),
+            PartEndEvent(
+                index=0,
+                part=TextPart(
+                    content="""\
+### Weather in San Francisco is Mild and Partly Cloudy Today
+
+**San Francisco, CA** - Today's weather in San Francisco is partly cloudy with temperatures ranging from the high 50s to the low 80s, according to various weather reports.
+
+As of Tuesday afternoon, the temperature is around 69°F (21°C), with a real feel of about 76°F (24°C) and humidity at approximately 68%. Another report indicates a temperature of 68°F with passing clouds. There is a very low chance of rain throughout the day.
+
+The forecast for the remainder of the day predicts sunny skies with highs ranging from the mid-60s to the lower 80s. Some sources suggest the high could reach up to 85°F. Tonight, the weather is expected to be partly cloudy with lows in the upper 50s.
+
+Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening. The chance of rain remains low throughout the day.\
+"""
+                ),
+            ),
         ]
     )
 
@@ -1168,7 +1269,8 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                         content='how about Mexico City?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1234,6 +1336,7 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='itnJaJK1BsGxqtsPrIeb6Ao',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1263,7 +1366,8 @@ async def test_google_model_code_execution_tool(allow_model_requests: None, goog
                 parts=[
                     SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
                     UserPromptPart(content='What day is today in Utrecht?', timestamp=IsDatetime()),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1321,6 +1425,7 @@ print(f"Today in Utrecht is {formatted_date}.")
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1328,7 +1433,10 @@ print(f"Today in Utrecht is {formatted_date}.")
     result = await agent.run('What day is tomorrow?', message_history=result.all_messages())
     assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     BuiltinToolCallPart(
@@ -1373,6 +1481,7 @@ print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1539,7 +1648,8 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1559,6 +1669,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='sebBaN7rGrSsqtsPhf3J0Q4',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1575,7 +1686,8 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1595,6 +1707,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='zObBaKreOqSIqtsP7uur4A0',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1625,7 +1738,8 @@ async def test_google_model_thinking_part_from_other_model(
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1660,6 +1774,7 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c1fb6b6a248196a6216e80fc2ace380c14a8a9087e8689',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1681,7 +1796,8 @@ async def test_google_model_thinking_part_from_other_model(
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1701,6 +1817,7 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='mPvBaJmNOMywqtsPsb_l2A4',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1736,7 +1853,8 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1756,6 +1874,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='beHBaJfEMIi-qtsP3769-Q8',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1767,7 +1886,43 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta=IsStr(), provider_name='google-gla')),
-            PartStartEvent(index=1, part=TextPart(content=IsStr())),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content="""\
+**Clarifying User Goals**
+
+I'm currently focused on defining the user's ultimate goal: ensuring their safety while crossing the street. I've pinpointed that this is a real-world scenario with significant safety considerations. However, I'm also mindful of my limitations as an AI and my inability to physically assist or visually assess the situation.
+
+
+**Developing a Safety Protocol**
+
+I'm now formulating a comprehensive safety procedure. I've pinpointed the essential first step: finding a safe crossing location, such as marked crosswalks or intersections. Stopping at the curb, and looking and listening for traffic are vital too. The rationale behind "look left, right, then left again" now needs further exploration. I'm focusing on crafting universally applicable and secure steps.
+
+
+**Prioritizing Safe Crossing**
+
+I've revised the procedure's initial step, emphasizing safe crossing zones (crosswalks, intersections). Next, I'm integrating the "look left, right, then left" sequence, considering why it's repeated. I'm focusing on crafting universal, safety-focused instructions that suit diverse situations and address my inherent limitations.
+
+
+**Crafting Safe Instructions**
+
+I've identified the core user intent: to learn safe street-crossing. Now, I'm focusing on crafting universally applicable steps. Finding safe crossing locations and looking-listening for traffic remain paramount. I'm prioritizing direct, clear language, addressing my limitations as an AI. I'm crafting advice that works generally, regardless of specific circumstances or locations.
+
+
+""",
+                    signature='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',
+                    provider_name='google-gla',
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=1,
+                part=TextPart(
+                    content='This is a great question! Safely crossing the street is all about being aware and predictable. Here is a step-by-step'
+                ),
+                previous_part_kind='thinking',
+            ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
@@ -1787,6 +1942,45 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartEndEvent(
+                index=1,
+                part=TextPart(
+                    content="""\
+This is a great question! Safely crossing the street is all about being aware and predictable. Here is a step-by-step guide that is widely taught for safety:
+
+### 1. Find a Safe Place to Cross
+The best place is always at a designated **crosswalk** or a **street corner/intersection**. These are places where drivers expect to see pedestrians. Avoid crossing in the middle of the block or from between parked cars.
+
+### 2. Stop at the Edge of the Curb
+Stand on the sidewalk, a safe distance from the edge of the street. This gives you a clear view of the traffic without putting you in danger.
+
+### 3. Look and Listen for Traffic
+Follow the "Left-Right-Left" rule:
+*   **Look left** for the traffic that will be closest to you first.
+*   **Look right** for oncoming traffic in the other lane.
+*   **Look left again** to make sure nothing has changed.
+*   **Listen** for the sound of approaching vehicles that you might not be able to see.
+
+### 4. Wait for a Safe Gap
+Wait until there is a large enough gap in traffic for you to walk all the way across. Don't assume a driver will stop for you. If you can, try to **make eye contact** with drivers to ensure they have seen you.
+
+### 5. Walk, Don't Run
+Once it's safe:
+*   Walk straight across the street.
+*   **Keep looking and listening** for traffic as you cross. The situation can change quickly.
+*   **Don't use your phone** or wear headphones that block out the sound of traffic.
+
+---
+
+### Special Situations:
+
+*   **At a Traffic Light:** Wait for the pedestrian signal to show the "Walk" sign (often a symbol of a person walking). Even when the sign says to walk, you should still look left and right before crossing.
+*   **At a Stop Sign:** Wait for the car to come to a complete stop. Make eye contact with the driver before you step into the street to be sure they see you.
+
+The most important rule is to **stay alert and be predictable**. Always assume a driver might not see you.\
+"""
+                ),
+            ),
         ]
     )
 
@@ -1860,7 +2054,8 @@ async def test_google_url_input(
                         content=['What is the main content of this URL?', Is(url)],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(expected_output))],
@@ -1871,6 +2066,7 @@ async def test_google_url_input(
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1900,7 +2096,8 @@ async def test_google_url_input_force_download(
                         content=['What is the main content of this URL?', Is(video_url)],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(output))],
@@ -1911,6 +2108,7 @@ async def test_google_url_input_force_download(
                 provider_response_id=IsStr(),
                 provider_name='google-vertex',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1948,7 +2146,8 @@ async def test_google_tool_config_any_with_tool_without_args(
                         content='run bar for me please',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='bar', args={}, tool_call_id=IsStr())],
@@ -1961,6 +2160,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1970,7 +2170,8 @@ async def test_google_tool_config_any_with_tool_without_args(
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1989,6 +2190,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1998,7 +2200,8 @@ async def test_google_tool_config_any_with_tool_without_args(
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2039,7 +2242,8 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
@@ -2052,6 +2256,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2061,7 +2266,8 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2080,6 +2286,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2089,7 +2296,8 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2120,7 +2328,8 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                         content='What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
@@ -2133,6 +2342,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2142,7 +2352,8 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The largest city in Mexico is Mexico City.')],
@@ -2155,6 +2366,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2176,7 +2388,7 @@ async def test_google_native_output_with_tools(allow_model_requests: None, googl
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+            'Google does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
         ),
     ):
         await agent.run('What is the largest city in the user country?')
@@ -2204,7 +2416,8 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                         content='What is the largest city in Mexico?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2226,6 +2439,7 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2255,7 +2469,8 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                         content='What is the primarily language spoken in Mexico?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2282,6 +2497,7 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2308,13 +2524,7 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -2327,6 +2537,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2359,13 +2570,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
@@ -2378,6 +2583,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2388,13 +2594,7 @@ Don't include any text or Markdown fencing before or after.\
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -2407,6 +2607,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2437,13 +2638,7 @@ async def test_google_prompted_output_multiple(allow_model_requests: None, googl
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions="""\
-Always respond with a JSON object that's compatible with this schema:
-
-{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
-
-Don't include any text or Markdown fencing before or after.\
-""",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2462,6 +2657,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2566,7 +2762,7 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
 
     with pytest.raises(
         UserError,
-        match=re.escape('Gemini does not support user tools and built-in tools at the same time.'),
+        match=re.escape('Google does not support function tools and built-in tools at the same time.'),
     ):
         await agent.run('What is the largest city in the user country?')
 
@@ -2579,12 +2775,14 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Gemini does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+            'Google does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
         ),
     ):
         await agent.run('What is the largest city in Mexico?')
 
-    agent = Agent(m, output_type=PromptedOutput(CityLocation), builtin_tools=[UrlContextTool()])
+    # Will default to prompted output
+    agent = Agent(m, output_type=CityLocation, builtin_tools=[UrlContextTool()])
+
     result = await agent.run('What is the largest city in Mexico?')
     assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
 
@@ -2600,6 +2798,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _identifier='8a7952',
             identifier='8a7952',
         )
     )
@@ -2611,7 +2810,8 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                         content='Generate an image of an axolotl.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2620,6 +2820,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _identifier='8a7952',
                             identifier='8a7952',
                         )
                     ),
@@ -2635,6 +2836,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2644,6 +2846,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _identifier='7d173c',
             identifier='7d173c',
         )
     )
@@ -2655,7 +2858,8 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                         content='Now give it a sombrero.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2664,6 +2868,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _identifier='7d173c',
                             identifier='7d173c',
                         )
                     ),
@@ -2679,6 +2884,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2693,6 +2899,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
             BinaryImage(
                 data=IsBytes(),
                 media_type='image/png',
+                _identifier='9ff9cc',
                 identifier='9ff9cc',
             )
         )
@@ -2710,6 +2917,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _identifier='2af2a7',
             identifier='2af2a7',
         )
     )
@@ -2721,7 +2929,8 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                         content='Generate an image of an axolotl.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2730,6 +2939,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _identifier='2af2a7',
                             identifier='2af2a7',
                         )
                     ),
@@ -2745,6 +2955,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2752,15 +2963,17 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
         [
             PartStartEvent(index=0, part=TextPart(content='Here you go!')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' ')),
+            PartEndEvent(index=0, part=TextPart(content='Here you go! '), next_part_kind='file'),
             PartStartEvent(
                 index=1,
                 part=FilePart(
                     content=BinaryImage(
                         data=IsBytes(),
                         media_type='image/png',
-                        identifier='2af2a7',
+                        _identifier='2af2a7',
                     )
                 ),
+                previous_part_kind='text',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
         ]
@@ -2785,7 +2998,8 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
                         content='Generate an illustrated two-sentence story about an axolotl.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2796,6 +3010,7 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _identifier='00f2af',
                             identifier=IsStr(),
                         )
                     ),
@@ -2811,6 +3026,7 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2831,6 +3047,7 @@ async def test_google_image_or_text_output(allow_model_requests: None, google_pr
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _identifier='f82faf',
             identifier='f82faf',
         )
     )
@@ -2849,6 +3066,7 @@ async def test_google_image_and_text_output(allow_model_requests: None, google_p
             BinaryImage(
                 data=IsBytes(),
                 media_type='image/png',
+                _identifier='67b12f',
                 identifier='67b12f',
             )
         ]
@@ -2923,3 +3141,79 @@ async def test_google_vertexai_image_generation(allow_model_requests: None, vert
 
     result = await agent.run('Generate an image of an axolotl.')
     assert result.output == snapshot(BinaryImage(data=IsBytes(), media_type='image/png', identifier='b037a4'))
+
+
+async def test_google_httpx_client_is_not_closed(allow_model_requests: None, gemini_api_key: str):
+    # This should not raise any errors, see https://github.com/pydantic/pydantic-ai/issues/3242.
+    agent = Agent(GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key=gemini_api_key)))
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot('The capital of France is **Paris**.')
+
+    agent = Agent(GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key=gemini_api_key)))
+    result = await agent.run('What is the capital of Mexico?')
+    assert result.output == snapshot('The capital of Mexico is **Mexico City**.')
+
+
+def test_google_process_response_filters_empty_text_parts(google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-pro', provider=google_provider)
+    response = _generate_response_with_texts(response_id='resp-123', texts=['', 'first', '', 'second'])
+
+    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+
+    assert result.parts == snapshot([TextPart(content='first'), TextPart(content='second')])
+
+
+async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
+    chunk = _generate_response_with_texts('stream-1', ['', 'streamed text'])
+
+    async def response_iterator() -> AsyncIterator[GenerateContentResponse]:
+        yield chunk
+
+    streamed_response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-test',
+        _response=response_iterator(),
+        _timestamp=datetime.datetime.now(datetime.timezone.utc),
+        _provider_name='test-provider',
+    )
+
+    events = [event async for event in streamed_response._get_event_iterator()]  # pyright: ignore[reportPrivateUsage]
+    assert events == snapshot([PartStartEvent(index=0, part=TextPart(content='streamed text'))])
+
+
+def _generate_response_with_texts(response_id: str, texts: list[str]) -> GenerateContentResponse:
+    return GenerateContentResponse.model_validate(
+        {
+            'response_id': response_id,
+            'model_version': 'gemini-test',
+            'usage_metadata': GenerateContentResponseUsageMetadata(
+                prompt_token_count=0,
+                candidates_token_count=0,
+            ),
+            'candidates': [
+                {
+                    'finish_reason': GoogleFinishReason.STOP,
+                    'content': {
+                        'role': 'model',
+                        'parts': [{'text': text} for text in texts],
+                    },
+                }
+            ],
+        }
+    )
+
+
+async def test_cache_point_filtering():
+    """Test that CachePoint is filtered out in Google internal method."""
+    from pydantic_ai import CachePoint
+
+    # Create a minimal GoogleModel instance to test _map_user_prompt
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    # Test that CachePoint in a list is handled (triggers line 606)
+    content = await model._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
+
+    # CachePoint should be filtered out, only text content should remain
+    assert len(content) == 2
+    assert content[0] == {'text': 'text before'}
+    assert content[1] == {'text': 'text after'}

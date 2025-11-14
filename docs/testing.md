@@ -37,7 +37,7 @@ from fake_database import DatabaseConn  # (1)!
 from weather_service import WeatherService  # (2)!
 
 weather_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=WeatherService,
     system_prompt='Providing a weather forecast at the locations the user provides.',
 )
@@ -127,7 +127,8 @@ async def test_forecast():
                     content='What will the weather be like in London on 2024-11-28?',
                     timestamp=IsNow(tz=timezone.utc),  # (7)!
                 ),
-            ]
+            ],
+            run_id=IsStr(),
         ),
         ModelResponse(
             parts=[
@@ -146,6 +147,7 @@ async def test_forecast():
             ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
         ),
         ModelRequest(
             parts=[
@@ -156,6 +158,7 @@ async def test_forecast():
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ],
+            run_id=IsStr(),
         ),
         ModelResponse(
             parts=[
@@ -169,6 +172,7 @@ async def test_forecast():
             ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
         ),
     ]
 ```

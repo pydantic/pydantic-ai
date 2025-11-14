@@ -62,15 +62,8 @@ except ImportError as _import_error:
 LatestCohereModelNames = Literal[
     'c4ai-aya-expanse-32b',
     'c4ai-aya-expanse-8b',
-    'command',
-    'command-light',
-    'command-light-nightly',
     'command-nightly',
-    'command-r',
-    'command-r-03-2024',
     'command-r-08-2024',
-    'command-r-plus',
-    'command-r-plus-04-2024',
     'command-r-plus-08-2024',
     'command-r7b-12-2024',
 ]
@@ -185,7 +178,7 @@ class CohereModel(Model):
         if model_request_parameters.builtin_tools:
             raise UserError('Cohere does not support built-in tools')
 
-        cohere_messages = self._map_messages(messages)
+        cohere_messages = self._map_messages(messages, model_request_parameters)
         try:
             return await self.client.chat(
                 model=self._model_name,
@@ -236,7 +229,9 @@ class CohereModel(Model):
             provider_details=provider_details,
         )
 
-    def _map_messages(self, messages: list[ModelMessage]) -> list[ChatMessageV2]:
+    def _map_messages(
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> list[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
         cohere_messages: list[ChatMessageV2] = []
         for message in messages:
@@ -275,7 +270,7 @@ class CohereModel(Model):
                 cohere_messages.append(message_param)
             else:
                 assert_never(message)
-        if instructions := self._get_instructions(messages):
+        if instructions := self._get_instructions(messages, model_request_parameters):
             cohere_messages.insert(0, SystemChatMessageV2(role='system', content=instructions))
         return cohere_messages
 

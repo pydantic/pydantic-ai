@@ -1,24 +1,17 @@
 from __future__ import annotations as _annotations
 
-from typing import Any
-
 import pytest
-from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
 
 from pydantic_ai import (
     Agent,
-    FinalResultEvent,
     ModelRequest,
     ModelResponse,
-    PartDeltaEvent,
-    PartStartEvent,
     TextPart,
-    TextPartDelta,
     ThinkingPart,
-    ThinkingPartDelta,
     UserPromptPart,
 )
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsStr, try_import
@@ -41,7 +34,10 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='deepseek'),
@@ -62,6 +58,7 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='181d9669-2b3a-445e-bd13-2ebff2c378f6',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -71,27 +68,44 @@ async def test_deepseek_model_thinking_stream(allow_model_requests: None, deepse
     deepseek_model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
     agent = Agent(model=deepseek_model)
 
-    event_parts: list[Any] = []
-    async with agent.iter(user_prompt='Hello') as agent_run:
-        async for node in agent_run:
-            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
-                async with node.stream(agent_run.ctx) as request_stream:
-                    async for event in request_stream:
-                        event_parts.append(event)
+    result: AgentRunResult | None = None
+    async for event in agent.run_stream_events(user_prompt='How do I cross the street?'):
+        if isinstance(event, AgentRunResultEvent):
+            result = event.result
 
-    assert event_parts == IsListOrTuple(
-        positions={
-            0: snapshot(
-                PartStartEvent(
-                    index=0, part=ThinkingPart(content='H', id='reasoning_content', provider_name='deepseek')
-                )
+    assert result is not None
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
             ),
-            1: snapshot(PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='mm', provider_name='deepseek'))),
-            2: snapshot(PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=',', provider_name='deepseek'))),
-            198: snapshot(PartStartEvent(index=1, part=TextPart(content='Hello'))),
-            199: snapshot(FinalResultEvent(tool_name=None, tool_call_id=None)),
-            200: snapshot(PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' there'))),
-            201: snapshot(PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='!'))),
-        },
-        length=211,
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='reasoning_content',
+                        provider_name='deepseek',
+                    ),
+                    TextPart(content='Hello there! 😊 How can I help you today?'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=6,
+                    output_tokens=212,
+                    details={'prompt_cache_hit_tokens': 0, 'prompt_cache_miss_tokens': 6, 'reasoning_tokens': 198},
+                ),
+                model_name='deepseek-reasoner',
+                timestamp=IsDatetime(),
+                provider_name='deepseek',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='33be18fc-3842-486c-8c29-dd8e578f7f20',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
     )

@@ -17,6 +17,7 @@ from pydantic_ai import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     FilePart,
     FinalResultEvent,
@@ -26,6 +27,7 @@ from pydantic_ai import (
     ModelResponse,
     ModelResponseStreamEvent,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
@@ -87,7 +89,16 @@ class MyModel(Model):
                 TextPart('text2'),
                 {},  # test unexpected parts  # type: ignore
             ],
-            usage=RequestUsage(input_tokens=100, output_tokens=200),
+            usage=RequestUsage(
+                input_tokens=100,
+                output_tokens=200,
+                cache_write_tokens=10,
+                cache_read_tokens=20,
+                input_audio_tokens=10,
+                cache_audio_read_tokens=5,
+                output_audio_tokens=30,
+                details={'reasoning_tokens': 30},
+            ),
             model_name='gpt-4o-2024-11-20',
             provider_details=dict(finish_reason='stop', foo='bar'),
             provider_response_id='response_id',
@@ -178,6 +189,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
+                        'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
                     },
@@ -190,9 +202,15 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'logfire.span_type': 'span',
                     'gen_ai.response.model': 'gpt-4o-2024-11-20',
                     'gen_ai.response.id': 'response_id',
+                    'gen_ai.usage.details.reasoning_tokens': 30,
+                    'gen_ai.usage.details.cache_write_tokens': 10,
+                    'gen_ai.usage.details.cache_read_tokens': 20,
+                    'gen_ai.usage.details.input_audio_tokens': 10,
+                    'gen_ai.usage.details.cache_audio_read_tokens': 5,
+                    'gen_ai.usage.details.output_audio_tokens': 30,
                     'gen_ai.usage.input_tokens': 100,
                     'gen_ai.usage.output_tokens': 200,
-                    'operation.cost': 0.00225,
+                    'operation.cost': 0.00188125,
                 },
             },
         ]
@@ -387,6 +405,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                 PartStartEvent(index=0, part=TextPart(content='text1')),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='text2')),
+                PartEndEvent(index=0, part=TextPart(content='text1text2')),
             ]
         )
 
@@ -410,6 +429,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
+                        'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
                     },
@@ -509,6 +529,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
+                        'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
                     },
@@ -628,6 +649,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instr
                             'output_mode': 'text',
                             'output_object': None,
                             'output_tools': [],
+                            'prompted_output_template': None,
                             'allow_text_output': True,
                             'allow_image_output': False,
                         },
@@ -724,11 +746,17 @@ Fix the errors and try again.\
                                 'event.name': 'gen_ai.choice',
                             },
                         ],
+                        'gen_ai.usage.details.reasoning_tokens': 30,
+                        'gen_ai.usage.details.cache_write_tokens': 10,
+                        'gen_ai.usage.details.cache_read_tokens': 20,
+                        'gen_ai.usage.details.input_audio_tokens': 10,
+                        'gen_ai.usage.details.cache_audio_read_tokens': 5,
+                        'gen_ai.usage.details.output_audio_tokens': 30,
                         'logfire.json_schema': {
                             'type': 'object',
                             'properties': {'events': {'type': 'array'}, 'model_request_parameters': {'type': 'object'}},
                         },
-                        'operation.cost': 0.00225,
+                        'operation.cost': 0.00188125,
                         'gen_ai.response.id': 'response_id',
                     },
                 },
@@ -755,6 +783,7 @@ Fix the errors and try again.\
                             'output_mode': 'text',
                             'output_object': None,
                             'output_tools': [],
+                            'prompted_output_template': None,
                             'allow_text_output': True,
                             'allow_image_output': False,
                         },
@@ -821,6 +850,12 @@ Fix the errors and try again.\
                         'gen_ai.system_instructions': [{'type': 'text', 'content': 'instructions'}],
                         'gen_ai.usage.input_tokens': 100,
                         'gen_ai.usage.output_tokens': 200,
+                        'gen_ai.usage.details.reasoning_tokens': 30,
+                        'gen_ai.usage.details.cache_write_tokens': 10,
+                        'gen_ai.usage.details.cache_read_tokens': 20,
+                        'gen_ai.usage.details.input_audio_tokens': 10,
+                        'gen_ai.usage.details.cache_audio_read_tokens': 5,
+                        'gen_ai.usage.details.output_audio_tokens': 30,
                         'logfire.json_schema': {
                             'type': 'object',
                             'properties': {
@@ -830,7 +865,7 @@ Fix the errors and try again.\
                                 'model_request_parameters': {'type': 'object'},
                             },
                         },
-                        'operation.cost': 0.00225,
+                        'operation.cost': 0.00188125,
                         'gen_ai.response.id': 'response_id',
                     },
                 },
@@ -908,14 +943,14 @@ Fix the errors and try again.\
                             'start_time_unix_nano': IsInt(),
                             'time_unix_nano': IsInt(),
                             'count': 1,
-                            'sum': 0.00025,
+                            'sum': 0.00018125,
                             'scale': 20,
                             'zero_count': 0,
-                            'positive': {'offset': -12547035, 'bucket_counts': [1]},
+                            'positive': {'offset': -13033519, 'bucket_counts': [1]},
                             'negative': {'offset': 0, 'bucket_counts': [0]},
                             'flags': 0,
-                            'min': 0.00025,
-                            'max': 0.00025,
+                            'min': 0.00018125,
+                            'max': 0.00018125,
                             'exemplars': [],
                         },
                         {
@@ -929,14 +964,14 @@ Fix the errors and try again.\
                             'start_time_unix_nano': IsInt(),
                             'time_unix_nano': IsInt(),
                             'count': 1,
-                            'sum': 0.002,
+                            'sum': 0.0017,
                             'scale': 20,
                             'zero_count': 0,
-                            'positive': {'offset': -9401307, 'bucket_counts': [1]},
+                            'positive': {'offset': -9647161, 'bucket_counts': [1]},
                             'negative': {'offset': 0, 'bucket_counts': [0]},
                             'flags': 0,
-                            'min': 0.002,
-                            'max': 0.002,
+                            'min': 0.0017,
+                            'max': 0.0017,
                             'exemplars': [],
                         },
                     ],
@@ -1463,6 +1498,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
+                        'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
                     },
@@ -1490,6 +1526,12 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                     },
                     'gen_ai.usage.input_tokens': 100,
                     'gen_ai.usage.output_tokens': 200,
+                    'gen_ai.usage.details.reasoning_tokens': 30,
+                    'gen_ai.usage.details.cache_write_tokens': 10,
+                    'gen_ai.usage.details.cache_read_tokens': 20,
+                    'gen_ai.usage.details.input_audio_tokens': 10,
+                    'gen_ai.usage.details.cache_audio_read_tokens': 5,
+                    'gen_ai.usage.details.output_audio_tokens': 30,
                     'gen_ai.response.model': 'gpt-4o-2024-11-20',
                     'gen_ai.response.id': 'response_id',
                 },
@@ -1570,6 +1612,81 @@ def test_message_with_builtin_tool_calls():
                         ],
                     },
                     {'type': 'text', 'content': 'text3'},
+                ],
+            }
+        ]
+    )
+
+
+def test_cache_point_in_user_prompt():
+    """Test that CachePoint is correctly skipped in OpenTelemetry conversion.
+
+    CachePoint is a marker for prompt caching and should not be included in the
+    OpenTelemetry message parts output.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['text before', CachePoint(), 'text after'])]),
+    ]
+    settings = InstrumentationSettings()
+
+    # Test otel_message_parts - CachePoint should be skipped
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'text before'},
+                    {'type': 'text', 'content': 'text after'},
+                ],
+            }
+        ]
+    )
+
+    # Test with multiple CachePoints
+    messages_multi: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=['first', CachePoint(), 'second', CachePoint(), 'third']),
+            ]
+        ),
+    ]
+    assert settings.messages_to_otel_messages(messages_multi) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'first'},
+                    {'type': 'text', 'content': 'second'},
+                    {'type': 'text', 'content': 'third'},
+                ],
+            }
+        ]
+    )
+
+    # Test with CachePoint mixed with other content types
+    messages_mixed: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'context',
+                        CachePoint(),
+                        ImageUrl('https://example.com/image.jpg'),
+                        CachePoint(),
+                        'question',
+                    ]
+                ),
+            ]
+        ),
+    ]
+    assert settings.messages_to_otel_messages(messages_mixed) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'context'},
+                    {'type': 'image-url', 'url': 'https://example.com/image.jpg'},
+                    {'type': 'text', 'content': 'question'},
                 ],
             }
         ]

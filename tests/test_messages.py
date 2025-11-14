@@ -147,6 +147,7 @@ def test_binary_content_video(media_type: str, format: str):
         ('application/pdf', 'pdf'),
         ('text/plain', 'txt'),
         ('text/csv', 'csv'),
+        ('application/msword', 'doc'),
         ('application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'docx'),
         ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'xlsx'),
         ('text/html', 'html'),
@@ -209,6 +210,7 @@ _url_formats = [
     pytest.param(DocumentUrl('foobar.pdf'), 'application/pdf', 'pdf', id='pdf'),
     pytest.param(DocumentUrl('foobar.txt'), 'text/plain', 'txt', id='txt'),
     pytest.param(DocumentUrl('foobar.csv'), 'text/csv', 'csv', id='csv'),
+    pytest.param(DocumentUrl('foobar.doc'), 'application/msword', 'doc', id='doc'),
     pytest.param(
         DocumentUrl('foobar.docx'),
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -460,11 +462,30 @@ def test_file_part_serialization_roundtrip():
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,
+                'run_id': None,
             }
         ]
     )
     deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
     assert deserialized == messages
+
+
+def test_model_messages_type_adapter_preserves_run_id():
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=timezone.utc))],
+            run_id='run-123',
+        ),
+        ModelResponse(
+            parts=[TextPart(content='Hello!')],
+            run_id='run-123',
+        ),
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='python')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+
+    assert [message.run_id for message in deserialized] == snapshot(['run-123', 'run-123'])
 
 
 def test_model_response_convenience_methods():

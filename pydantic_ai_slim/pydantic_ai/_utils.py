@@ -147,7 +147,7 @@ async def group_by_temporal(
         aiterable: The async iterable to group.
         soft_max_interval: Maximum interval over which to group items, this should avoid a trickle of items causing
             a group to never be yielded. It's a soft max in the sense that once we're over this time, we yield items
-            as soon as `aiter.__anext__()` returns. If `None`, no grouping/debouncing is performed
+            as soon as `anext(aiter)` returns. If `None`, no grouping/debouncing is performed
 
     Returns:
         A context manager usable as an async iterable of lists of items produced by the input async iterable.
@@ -171,7 +171,7 @@ async def group_by_temporal(
         buffer: list[T] = []
         group_start_time = time.monotonic()
 
-        aiterator = aiterable.__aiter__()
+        aiterator = aiter(aiterable)
         while True:
             if group_start_time is None:
                 # group hasn't started, we just wait for the maximum interval
@@ -182,9 +182,9 @@ async def group_by_temporal(
 
             # if there's no current task, we get the next one
             if task is None:
-                # aiter.__anext__() returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
+                # anext(aiter) returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
                 # so far, this doesn't seem to be a problem
-                task = asyncio.create_task(aiterator.__anext__())  # pyright: ignore[reportArgumentType]
+                task = asyncio.create_task(anext(aiterator))  # pyright: ignore[reportArgumentType]
 
             # we use asyncio.wait to avoid cancelling the coroutine if it's not done
             done, _ = await asyncio.wait((task,), timeout=wait_time)
@@ -232,6 +232,15 @@ def sync_anext(iterator: Iterator[T]) -> T:
         return next(iterator)
     except StopIteration as e:
         raise StopAsyncIteration() from e
+
+
+def sync_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
+    loop = get_event_loop()
+    while True:
+        try:
+            yield loop.run_until_complete(anext(async_iter))
+        except StopAsyncIteration:
+            break
 
 
 def now_utc() -> datetime:
@@ -284,10 +293,10 @@ class PeekableAsyncStream(Generic[T]):
 
         # Otherwise, we need to fetch the next item from the underlying iterator.
         if self._source_iter is None:
-            self._source_iter = self._source.__aiter__()
+            self._source_iter = aiter(self._source)
 
         try:
-            self._buffer = await self._source_iter.__anext__()
+            self._buffer = await anext(self._source_iter)
         except StopAsyncIteration:
             self._exhausted = True
             return UNSET
@@ -318,10 +327,10 @@ class PeekableAsyncStream(Generic[T]):
 
         # Otherwise, fetch the next item from the source.
         if self._source_iter is None:
-            self._source_iter = self._source.__aiter__()
+            self._source_iter = aiter(self._source)
 
         try:
-            return await self._source_iter.__anext__()
+            return await anext(self._source_iter)
         except StopAsyncIteration:
             self._exhausted = True
             raise
@@ -489,3 +498,12 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
         return tuple(_unwrap_annotated(arg) for arg in get_args(tp))
     else:
         return ()
+
+
+def get_event_loop():
+    try:
+        event_loop = asyncio.get_event_loop()
+    except RuntimeError:  # pragma: lax no cover
+        event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(event_loop)
+    return event_loop
