@@ -344,16 +344,16 @@ MCP servers can provide instructions during initialization that give context abo
 
 ```python {title="mcp_server_instructions.py"}
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServerStdio
+from pydantic_ai.mcp import MCPServerStreamableHTTP
 
-server = MCPServerStdio('python', args=['math_server.py'])
+server = MCPServerStreamableHTTP('http://localhost:8000/mcp')
 agent = Agent('openai:gpt-5', toolsets=[server])
 
 async def main():
     async with agent:
         # Access server instructions after connection is established
         if server.instructions:
-            print(f"Server guidance: {server.instructions}")
+            print(f'Server guidance: {server.instructions}')
 ```
 
 ## Tool metadata
