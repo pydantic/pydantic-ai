@@ -59,6 +59,7 @@ outlines-llamacpp = ["pydantic-ai-slim[outlines-llamacpp]=={{ version }}"]
 outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}"]
 outlines-sglang = ["pydantic-ai-slim[outlines-sglang]=={{ version }}"]
 outlines-vllm-offline = ["pydantic-ai-slim[outlines-vllm-offline]=={{ version }}"]
+hatchet = ["pydantic-ai-slim[hatchet]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
@@ -110,6 +111,7 @@ dev = [
     "pip>=25.2",
     "genai-prices>=0.0.28",
     "mcp-run-python>=0.0.20",
+    "testcontainers>=4.13.1"
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [

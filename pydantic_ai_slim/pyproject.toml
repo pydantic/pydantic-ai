@@ -111,6 +111,8 @@ temporal = ["temporalio==1.18.2"]
 dbos = ["dbos>=1.14.0"]
 # Prefect
 prefect = ["prefect>=3.4.21"]
+# Hatchet
+hatchet = ["hatchet-sdk >= 1.21.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
