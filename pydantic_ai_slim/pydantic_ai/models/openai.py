@@ -7,7 +7,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from pydantic import ValidationError
 from pydantic_core import to_json
@@ -63,7 +63,7 @@ from . import (
 )
 
 try:
-    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream, NotGiven
+    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream
     from openai.types import AllModels, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
@@ -97,6 +97,23 @@ except ImportError as _import_error:
         'Please install `openai` to use the OpenAI model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+if TYPE_CHECKING:
+    from openai import Omit, omit
+
+    OMIT = omit
+else:
+    # Backward compatibility with openai<2
+    try:
+        from openai import Omit, omit
+
+        OMIT = omit
+    except ImportError:  # pragma: lax no cover
+        from openai import NOT_GIVEN, NotGiven
+
+        OMIT = NOT_GIVEN
+        Omit = NotGiven
+
 
 __all__ = (
     'OpenAIModel',
@@ -467,28 +484,28 @@ class OpenAIChatModel(Model):
             return await self.client.chat.completions.create(
                 model=self._model_name,
                 messages=openai_messages,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
-                tools=tools or NOT_GIVEN,
-                tool_choice=tool_choice or NOT_GIVEN,
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
+                tools=tools or OMIT,
+                tool_choice=tool_choice or OMIT,
                 stream=stream,
-                stream_options={'include_usage': True} if stream else NOT_GIVEN,
-                stop=model_settings.get('stop_sequences', NOT_GIVEN),
-                max_completion_tokens=model_settings.get('max_tokens', NOT_GIVEN),
+                stream_options={'include_usage': True} if stream else OMIT,
+                stop=model_settings.get('stop_sequences', OMIT),
+                max_completion_tokens=model_settings.get('max_tokens', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
-                response_format=response_format or NOT_GIVEN,
-                seed=model_settings.get('seed', NOT_GIVEN),
-                reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
-                user=model_settings.get('openai_user', NOT_GIVEN),
-                web_search_options=web_search_options or NOT_GIVEN,
-                service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
-                prediction=model_settings.get('openai_prediction', NOT_GIVEN),
-                temperature=model_settings.get('temperature', NOT_GIVEN),
-                top_p=model_settings.get('top_p', NOT_GIVEN),
-                presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
-                frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
-                logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
-                logprobs=model_settings.get('openai_logprobs', NOT_GIVEN),
-                top_logprobs=model_settings.get('openai_top_logprobs', NOT_GIVEN),
+                response_format=response_format or OMIT,
+                seed=model_settings.get('seed', OMIT),
+                reasoning_effort=model_settings.get('openai_reasoning_effort', OMIT),
+                user=model_settings.get('openai_user', OMIT),
+                web_search_options=web_search_options or OMIT,
+                service_tier=model_settings.get('openai_service_tier', OMIT),
+                prediction=model_settings.get('openai_prediction', OMIT),
+                temperature=model_settings.get('temperature', OMIT),
+                top_p=model_settings.get('top_p', OMIT),
+                presence_penalty=model_settings.get('presence_penalty', OMIT),
+                frequency_penalty=model_settings.get('frequency_penalty', OMIT),
+                logit_bias=model_settings.get('logit_bias', OMIT),
+                logprobs=model_settings.get('openai_logprobs', OMIT),
+                top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -1148,7 +1165,7 @@ class OpenAIResponsesModel(Model):
             # Apparently they're only checking input messages for "JSON", not instructions.
             assert isinstance(instructions, str)
             openai_messages.insert(0, responses.EasyInputMessageParam(role='system', content=instructions))
-            instructions = NOT_GIVEN
+            instructions = OMIT
 
         if verbosity := model_settings.get('openai_text_verbosity'):
             text = text or {}
@@ -1164,7 +1181,7 @@ class OpenAIResponsesModel(Model):
         if model_settings.get('openai_include_code_execution_outputs'):
             include.append('code_interpreter_call.outputs')
         if model_settings.get('openai_include_web_search_sources'):
-            include.append('web_search_call.action.sources')  # pyright: ignore[reportArgumentType]
+            include.append('web_search_call.action.sources')
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -1173,21 +1190,21 @@ class OpenAIResponsesModel(Model):
                 input=openai_messages,
                 model=self._model_name,
                 instructions=instructions,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
-                tools=tools or NOT_GIVEN,
-                tool_choice=tool_choice or NOT_GIVEN,
-                max_output_tokens=model_settings.get('max_tokens', NOT_GIVEN),
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
+                tools=tools or OMIT,
+                tool_choice=tool_choice or OMIT,
+                max_output_tokens=model_settings.get('max_tokens', OMIT),
                 stream=stream,
-                temperature=model_settings.get('temperature', NOT_GIVEN),
-                top_p=model_settings.get('top_p', NOT_GIVEN),
-                truncation=model_settings.get('openai_truncation', NOT_GIVEN),
+                temperature=model_settings.get('temperature', OMIT),
+                top_p=model_settings.get('top_p', OMIT),
+                truncation=model_settings.get('openai_truncation', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
-                service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
-                previous_response_id=previous_response_id or NOT_GIVEN,
+                service_tier=model_settings.get('openai_service_tier', OMIT),
+                previous_response_id=previous_response_id or OMIT,
                 reasoning=reasoning,
-                user=model_settings.get('openai_user', NOT_GIVEN),
-                text=text or NOT_GIVEN,
-                include=include or NOT_GIVEN,
+                user=model_settings.get('openai_user', OMIT),
+                text=text or OMIT,
+                include=include or OMIT,
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -1196,7 +1213,7 @@ class OpenAIResponsesModel(Model):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
 
-    def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | NotGiven:
+    def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | Omit:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
         reasoning_summary = model_settings.get('openai_reasoning_summary', None)
         reasoning_generate_summary = model_settings.get('openai_reasoning_generate_summary', None)
@@ -1212,7 +1229,7 @@ class OpenAIResponsesModel(Model):
             reasoning_summary = reasoning_generate_summary
 
         if reasoning_effort is None and reasoning_summary is None:
-            return NOT_GIVEN
+            return OMIT
         return Reasoning(effort=reasoning_effort, summary=reasoning_summary)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
@@ -1322,7 +1339,7 @@ class OpenAIResponsesModel(Model):
         messages: list[ModelMessage],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[str | NotGiven, list[responses.ResponseInputItemParam]]:
+    ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam`."""
         profile = OpenAIModelProfile.from_profile(self.profile)
         send_item_ids = model_settings.get(
@@ -1546,7 +1563,7 @@ class OpenAIResponsesModel(Model):
                         assert_never(item)
             else:
                 assert_never(message)
-        instructions = self._get_instructions(messages, model_request_parameters) or NOT_GIVEN
+        instructions = self._get_instructions(messages, model_request_parameters) or OMIT
         return instructions, openai_messages
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> responses.ResponseFormatTextJSONSchemaConfigParam:
