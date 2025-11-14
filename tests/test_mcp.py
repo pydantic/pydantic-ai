@@ -1539,6 +1539,214 @@ def test_load_mcp_servers(tmp_path: Path):
         load_mcp_servers(tmp_path / 'does_not_exist.json')
 
 
+def test_load_mcp_servers_with_env_vars(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Test environment variable expansion in config files."""
+    config = tmp_path / 'mcp.json'
+
+    # Test with environment variables in command
+    monkeypatch.setenv('PYTHON_CMD', 'python3')
+    monkeypatch.setenv('MCP_MODULE', 'tests.mcp_server')
+    config.write_text('{"mcpServers": {"my_server": {"command": "${PYTHON_CMD}", "args": ["-m", "${MCP_MODULE}"]}}}')
+
+    servers = load_mcp_servers(config)
+
+    assert len(servers) == 1
+    server = servers[0]
+    assert isinstance(server, MCPServerStdio)
+    assert server.command == 'python3'
+    assert server.args == ['-m', 'tests.mcp_server']
+    assert server.id == 'my_server'
+    assert server.tool_prefix == 'my_server'
+
+
+def test_load_mcp_servers_env_var_in_env_dict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Test environment variable expansion in env dict."""
+    config = tmp_path / 'mcp.json'
+
+    # Test with environment variables in env dict
+    monkeypatch.setenv('API_KEY', 'secret123')
+    config.write_text(
+        '{"mcpServers": {"my_server": {"command": "python", "args": ["-m", "tests.mcp_server"], '
+        '"env": {"API_KEY": "${API_KEY}"}}}}'
+    )
+
+    servers = load_mcp_servers(config)
+
+    assert len(servers) == 1
+    server = servers[0]
+    assert isinstance(server, MCPServerStdio)
+    assert server.env == {'API_KEY': 'secret123'}
+
+
+def test_load_mcp_servers_env_var_expansion_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Test environment variable expansion in URL."""
+    config = tmp_path / 'mcp.json'
+
+    # Test with environment variables in URL
+    monkeypatch.setenv('SERVER_HOST', 'example.com')
+    monkeypatch.setenv('SERVER_PORT', '8080')
+    config.write_text('{"mcpServers": {"web_server": {"url": "https://${SERVER_HOST}:${SERVER_PORT}/mcp"}}}')
+
+    servers = load_mcp_servers(config)
+
+    assert len(servers) == 1
+    server = servers[0]
+    assert isinstance(server, MCPServerStreamableHTTP)
+    assert server.url == 'https://example.com:8080/mcp'
+
+
+def test_load_mcp_servers_undefined_env_var(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Test that undefined environment variables raise an error."""
+    config = tmp_path / 'mcp.json'
+
+    # Make sure the environment variable is not set
+    monkeypatch.delenv('UNDEFINED_VAR', raising=False)
+
+    config.write_text('{"mcpServers": {"my_server": {"command": "${UNDEFINED_VAR}", "args": []}}}')
+
+    with pytest.raises(ValueError, match='Environment variable \\$\\{UNDEFINED_VAR\\} is not defined'):
+        load_mcp_servers(config)
+
+
+def test_load_mcp_servers_partial_env_vars(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Test environment variables in partial strings."""
+    config = tmp_path / 'mcp.json'
+
+    monkeypatch.setenv('HOST', 'example.com')
+    monkeypatch.setenv('PATH_SUFFIX', 'mcp')
+    config.write_text('{"mcpServers": {"server": {"url": "https://${HOST}/api/${PATH_SUFFIX}"}}}')
+
+    servers = load_mcp_servers(config)
+
+    assert len(servers) == 1
+    server = servers[0]
+    assert isinstance(server, MCPServerStreamableHTTP)
+    assert server.url == 'https://example.com/api/mcp'
+
+
+def test_load_mcp_servers_with_non_string_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Test that non-string primitive values (int, bool, null) in nested structures are passed through unchanged."""
+    config = tmp_path / 'mcp.json'
+
+    # Create a config with environment variables and extra fields containing primitives
+    # The extra fields will be ignored during validation but go through _expand_env_vars
+    monkeypatch.setenv('PYTHON_CMD', 'python')
+    config.write_text(
+        '{"mcpServers": {"my_server": {"command": "${PYTHON_CMD}", "args": ["-m", "tests.mcp_server"], '
+        '"metadata": {"count": 42, "enabled": true, "value": null}}}}'
+    )
+
+    # This should successfully expand env vars and ignore the metadata field
+    servers = load_mcp_servers(config)
+
+    assert len(servers) == 1
+    server = servers[0]
+    assert isinstance(server, MCPServerStdio)
+    assert server.command == 'python'
+
+
+def test_load_mcp_servers_with_default_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Test ${VAR:-default} syntax for environment variable expansion."""
+    config = tmp_path / 'mcp.json'
+
+    # Test with undefined variable using default
+    monkeypatch.delenv('UNDEFINED_VAR', raising=False)
+    config.write_text('{"mcpServers": {"server": {"command": "${UNDEFINED_VAR:-python3}", "args": []}}}')
+
+    servers = load_mcp_servers(config)
+    assert len(servers) == 1
+    server = servers[0]
+    assert isinstance(server, MCPServerStdio)
+    assert server.command == 'python3'
+
+    # Test with defined variable (should use actual value, not default)
+    monkeypatch.setenv('DEFINED_VAR', 'actual_value')
+    config.write_text('{"mcpServers": {"server": {"command": "${DEFINED_VAR:-default_value}", "args": []}}}')
+
+    servers = load_mcp_servers(config)
+    assert len(servers) == 1
+    server = servers[0]
+    assert isinstance(server, MCPServerStdio)
+    assert server.command == 'actual_value'
+
+    # Test with empty string as default
+    monkeypatch.delenv('UNDEFINED_VAR', raising=False)
+    config.write_text('{"mcpServers": {"server": {"command": "${UNDEFINED_VAR:-}", "args": []}}}')
+
+    servers = load_mcp_servers(config)
+    assert len(servers) == 1
+    server = servers[0]
+    assert isinstance(server, MCPServerStdio)
+    assert server.command == ''
+
+
+def test_load_mcp_servers_with_default_values_in_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Test ${VAR:-default} syntax in URLs."""
+    config = tmp_path / 'mcp.json'
+
+    # Test with default values in URL
+    monkeypatch.delenv('HOST', raising=False)
+    monkeypatch.setenv('PROTOCOL', 'https')
+    config.write_text('{"mcpServers": {"server": {"url": "${PROTOCOL:-http}://${HOST:-localhost}:${PORT:-8080}/mcp"}}}')
+
+    servers = load_mcp_servers(config)
+    assert len(servers) == 1
+    server = servers[0]
+    assert isinstance(server, MCPServerStreamableHTTP)
+    assert server.url == 'https://localhost:8080/mcp'
+
+
+def test_load_mcp_servers_with_default_values_in_env_dict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Test ${VAR:-default} syntax in env dictionary."""
+    config = tmp_path / 'mcp.json'
+
+    monkeypatch.delenv('API_KEY', raising=False)
+    monkeypatch.setenv('CUSTOM_VAR', 'custom_value')
+    config.write_text(
+        '{"mcpServers": {"server": {"command": "python", "args": [], '
+        '"env": {"API_KEY": "${API_KEY:-default_key}", "CUSTOM": "${CUSTOM_VAR:-fallback}"}}}}'
+    )
+
+    servers = load_mcp_servers(config)
+    assert len(servers) == 1
+    server = servers[0]
+    assert isinstance(server, MCPServerStdio)
+    assert server.env == {'API_KEY': 'default_key', 'CUSTOM': 'custom_value'}
+
+
+def test_load_mcp_servers_with_complex_default_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Test ${VAR:-default} syntax with special characters in default."""
+    config = tmp_path / 'mcp.json'
+
+    monkeypatch.delenv('PATH_VAR', raising=False)
+    # Test default with slashes, dots, and dashes
+    config.write_text('{"mcpServers": {"server": {"command": "${PATH_VAR:-/usr/local/bin/python-3.10}", "args": []}}}')
+
+    servers = load_mcp_servers(config)
+    assert len(servers) == 1
+    server = servers[0]
+    assert isinstance(server, MCPServerStdio)
+    assert server.command == '/usr/local/bin/python-3.10'
+
+
+def test_load_mcp_servers_with_mixed_syntax(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Test mixing ${VAR} and ${VAR:-default} syntax in the same config."""
+    config = tmp_path / 'mcp.json'
+
+    monkeypatch.setenv('REQUIRED_VAR', 'required_value')
+    monkeypatch.delenv('OPTIONAL_VAR', raising=False)
+    config.write_text(
+        '{"mcpServers": {"server": {"command": "${REQUIRED_VAR}", "args": ["${OPTIONAL_VAR:-default_arg}"]}}}'
+    )
+
+    servers = load_mcp_servers(config)
+    assert len(servers) == 1
+    server = servers[0]
+    assert isinstance(server, MCPServerStdio)
+    assert server.command == 'required_value'
+    assert server.args == ['default_arg']
+
+
 async def test_server_info(mcp_server: MCPServerStdio) -> None:
     with pytest.raises(
         AttributeError, match='The `MCPServerStdio.server_info` is only instantiated after initialization.'
