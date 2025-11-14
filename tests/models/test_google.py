@@ -3217,12 +3217,12 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
     
     try:
         store = await client.aio.file_search_stores.create(
-            display_name='test-file-search-store'
+            config={'display_name': 'test-file-search-store'}
         )
         
         with open(test_file_path, 'rb') as f:
             await client.aio.file_search_stores.upload_to_file_search_store(
-                file_search_store=store.name,
+                file_search_store_name=store.name,
                 file=f,
                 config={'mime_type': 'text/plain'}
             )
@@ -3241,7 +3241,7 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
         import os
         os.unlink(test_file_path)
         if 'store' in locals():
-            await client.aio.file_search_stores.delete(name=store.name)
+            await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
 
 
 @pytest.mark.vcr()
@@ -3258,12 +3258,12 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
     
     try:
         store = await client.aio.file_search_stores.create(
-            display_name='test-file-search-stream'
+            config={'display_name': 'test-file-search-stream'}
         )
         
         with open(test_file_path, 'rb') as f:
             await client.aio.file_search_stores.upload_to_file_search_store(
-                file_search_store=store.name,
+                file_search_store_name=store.name,
                 file=f,
                 config={'mime_type': 'text/plain'}
             )
@@ -3290,7 +3290,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
         import os
         os.unlink(test_file_path)
         if 'store' in locals():
-            await client.aio.file_search_stores.delete(name=store.name)
+            await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
 
 
 # Unit tests below validate the FileSearchTool parsing logic.

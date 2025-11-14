@@ -1,0 +1,200 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '41'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      displayName: test-file-search-store
+    uri: https://generativelanguage.googleapis.com/v1beta/fileSearchStores
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '203'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=455
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      createTime: '2025-11-14T13:06:44.036465Z'
+      displayName: test-file-search-store
+      name: fileSearchStores/testfilesearchstore-yc4nqyu6bkpo
+      updateTime: '2025-11-14T13:06:44.036465Z'
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '26'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      mimeType: text/plain
+    uri: https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchstore-yc4nqyu6bkpo:uploadToFileSearchStore
+  response:
+    body:
+      string: ''
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '0'
+      content-type:
+      - text/plain; charset=utf-8
+    status:
+      code: 200
+      message: OK
+- request:
+    body: Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '79'
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    uri: https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchstore-yc4nqyu6bkpo:uploadToFileSearchStore?upload_id=AOCedOGMFY9IXAkbC4iGTlw4gkakgbCCpXweCb8TJzUJMegDkFGYkygsxUAtdzCgKeOt3GTgFDmt9ynY1SQsUcVSSI2sK2rSi6i8RrGC7y276ls&upload_protocol=resumable
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '463'
+      content-type:
+      - application/json; charset=UTF-8
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      name: fileSearchStores/testfilesearchstore-yc4nqyu6bkpo/upload/operations/7k9hlotn1ptc-zy3bg6jfttw0
+      response:
+        '@type': type.googleapis.com/google.ai.generativelanguage.v1main.UploadToFileSearchStoreResponse
+        documentName: fileSearchStores/testfilesearchstore-yc4nqyu6bkpo/documents/7k9hlotn1ptc-zy3bg6jfttw0
+        mimeType: text/plain
+        parent: fileSearchStores/testfilesearchstore-yc4nqyu6bkpo
+        sizeBytes: '79'
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '274'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of France according to my files?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - fileSearch:
+          file_search_store_names:
+          - fileSearchStores/testfilesearchstore-yc4nqyu6bkpo
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '133'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=7289
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      error:
+        code: 503
+        message: The model is overloaded. Please try again later.
+        status: UNAVAILABLE
+    status:
+      code: 503
+      message: Service Unavailable
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: DELETE
+    uri: https://generativelanguage.googleapis.com/v1beta/fileSearchStores/testfilesearchstore-yc4nqyu6bkpo?force=True
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '3'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=858
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body: {}
+    status:
+      code: 200
+      message: OK
+version: 1
