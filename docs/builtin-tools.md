@@ -291,6 +291,10 @@ assert isinstance(result.output, BinaryImage)
 
 _(This example is complete, it can be run "as is")_
 
+OpenAI Responses models also respect the `aspect_ratio` parameter. Because the OpenAI API only exposes discrete image sizes,
+PydanticAI maps `'1:1'` -> `1024x1024`, `'2:3'` -> `1024x1536`, and `'3:2'` -> `1536x1024`. Providing any other aspect ratio
+results in an error, and if you also set `size` it must match the computed value.
+
 To control the aspect ratio when using Gemini image models, include the `ImageGenerationTool` explicitly:
 
 ```py {title="image_generation_google_aspect_ratio.py"}
@@ -322,7 +326,7 @@ For more details, check the [API documentation][pydantic_ai.builtin_tools.ImageG
 | `partial_images` | ✅ | ❌ |
 | `quality` | ✅ | ❌ |
 | `size` | ✅ | ❌ |
-| `aspect_ratio` | ❌ | ✅ |
+| `aspect_ratio` | ✅ (1:1, 2:3, 3:2) | ✅ |
 
 ## URL Context Tool
 

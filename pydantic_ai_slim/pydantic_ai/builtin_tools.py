@@ -264,6 +264,7 @@ class ImageGenerationTool(AbstractBuiltinTool):
     Supported by:
 
     * Google image-generation models (Gemini)
+    * OpenAI Responses (maps '1:1', '2:3', and '3:2' to supported sizes)
     """
 
     kind: str = 'image_generation'

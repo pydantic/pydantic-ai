@@ -1,7 +1,7 @@
 import json
 import re
 from dataclasses import replace
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -32,17 +32,19 @@ from pydantic_ai import (
     ToolCallPartDelta,
     ToolReturnPart,
     UnexpectedModelBehavior,
+    UserError,
     UserPromptPart,
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.openai import _resolve_openai_image_generation_size  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
@@ -122,6 +124,37 @@ async def test_openai_responses_image_detail_vendor_metadata(allow_model_request
     ]
     assert image_parts
     assert all(part['detail'] == 'high' for part in image_parts)
+
+
+@pytest.mark.parametrize(
+    ('aspect_ratio', 'explicit_size', 'expected_size'),
+    [
+        ('1:1', 'auto', '1024x1024'),
+        ('2:3', '1024x1536', '1024x1536'),
+        ('3:2', 'auto', '1536x1024'),
+    ],
+)
+def test_openai_responses_image_generation_tool_aspect_ratio_mapping(
+    aspect_ratio: ImageAspectRatio,
+    explicit_size: Literal['1024x1024', '1024x1536', '1536x1024', 'auto'],
+    expected_size: Literal['1024x1024', '1024x1536', '1536x1024'],
+) -> None:
+    tool = ImageGenerationTool(aspect_ratio=aspect_ratio, size=explicit_size)
+    assert _resolve_openai_image_generation_size(tool) == expected_size
+
+
+def test_openai_responses_image_generation_tool_aspect_ratio_invalid() -> None:
+    tool = ImageGenerationTool(aspect_ratio='16:9')
+
+    with pytest.raises(UserError, match='OpenAI image generation only supports `aspect_ratio` values'):
+        _resolve_openai_image_generation_size(tool)
+
+
+def test_openai_responses_image_generation_tool_aspect_ratio_conflicts_with_size() -> None:
+    tool = ImageGenerationTool(aspect_ratio='1:1', size='1536x1024')
+
+    with pytest.raises(UserError, match='cannot combine `aspect_ratio` with a conflicting `size`'):
+        _resolve_openai_image_generation_size(tool)
 
 
 async def test_openai_responses_model_simple_response_with_tool_call(allow_model_requests: None, openai_api_key: str):

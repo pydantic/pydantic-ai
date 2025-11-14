@@ -18,7 +18,7 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, ImageAspectRatio, ImageGenerationTool, MCPServerTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
@@ -133,6 +133,36 @@ _RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'
     'cancelled': 'error',
     'failed': 'error',
 }
+
+_OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x1536', '1536x1024']] = {
+    '1:1': '1024x1024',
+    '2:3': '1024x1536',
+    '3:2': '1536x1024',
+}
+
+
+def _resolve_openai_image_generation_size(
+    tool: ImageGenerationTool,
+) -> Literal['auto', '1024x1024', '1024x1536', '1536x1024']:
+    """Map `ImageGenerationTool.aspect_ratio` to an OpenAI size string when provided."""
+    aspect_ratio = tool.aspect_ratio
+    if aspect_ratio is None:
+        return tool.size
+
+    mapped_size = _OPENAI_ASPECT_RATIO_TO_SIZE.get(aspect_ratio)
+    if mapped_size is None:
+        supported = ', '.join(_OPENAI_ASPECT_RATIO_TO_SIZE)
+        raise UserError(
+            f'OpenAI image generation only supports `aspect_ratio` values: {supported}. '
+            'Specify one of those values or omit `aspect_ratio`.'
+        )
+
+    if tool.size not in ('auto', mapped_size):
+        raise UserError(
+            '`ImageGenerationTool` cannot combine `aspect_ratio` with a conflicting `size` when using OpenAI.'
+        )
+
+    return mapped_size
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -1298,6 +1328,7 @@ class OpenAIResponsesModel(Model):
                 tools.append(mcp_tool)
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                 has_image_generating_tool = True
+                size = _resolve_openai_image_generation_size(tool)
                 tools.append(
                     responses.tool_param.ImageGeneration(
                         type='image_generation',
@@ -1308,7 +1339,7 @@ class OpenAIResponsesModel(Model):
                         output_format=tool.output_format or 'png',
                         partial_images=tool.partial_images,
                         quality=tool.quality,
-                        size=tool.size,
+                        size=size,
                     )
                 )
             else:
