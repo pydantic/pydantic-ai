@@ -1,8 +1,7 @@
-import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any, Literal, cast
 
-from pydantic import AliasChoices, BaseModel, Field, TypeAdapter
+from pydantic import BaseModel
 from typing_extensions import TypedDict, assert_never, override
 
 from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
@@ -43,7 +42,7 @@ _CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_f
 }
 
 
-class OpenRouterMaxPrice(TypedDict, total=False):
+class _OpenRouterMaxPrice(TypedDict, total=False):
     """The object specifying the maximum price you want to pay for this request. USD price per million tokens, for prompt and completion."""
 
     prompt: int
@@ -128,14 +127,14 @@ allow any name in the type hints.
 See [the OpenRouter API](https://openrouter.ai/docs/api-reference/list-available-providers) for a full list.
 """
 
-Transforms = Literal['middle-out']
+_Transforms = Literal['middle-out']
 """Available messages transforms for OpenRouter models with limited token windows.
 
 Currently only supports 'middle-out', but is expected to grow in the future.
 """
 
 
-class OpenRouterProviderConfig(TypedDict, total=False):
+class _OpenRouterProviderConfig(TypedDict, total=False):
     """Represents the 'Provider' object from the OpenRouter API."""
 
     order: list[OpenRouterProviderName]
@@ -165,11 +164,11 @@ class OpenRouterProviderConfig(TypedDict, total=False):
     sort: Literal['price', 'throughput', 'latency']
     """Sort providers by price or throughput. (e.g. "price" or "throughput"). [See details](https://openrouter.ai/docs/features/provider-routing#provider-sorting)"""
 
-    max_price: OpenRouterMaxPrice
+    max_price: _OpenRouterMaxPrice
     """The maximum pricing you want to pay for this request. [See details](https://openrouter.ai/docs/features/provider-routing#max-price)"""
 
 
-class OpenRouterReasoning(TypedDict, total=False):
+class _OpenRouterReasoning(TypedDict, total=False):
     """Configuration for reasoning tokens in OpenRouter requests.
 
     Reasoning tokens allow models to show their step-by-step thinking process.
@@ -190,37 +189,7 @@ class OpenRouterReasoning(TypedDict, total=False):
     """Whether to enable reasoning with default parameters. Default is inferred from effort or max_tokens."""
 
 
-class WebPlugin(TypedDict, total=False):
-    """You can incorporate relevant web search results for any model on OpenRouter by activating and customizing the web plugin.
-
-    The web search plugin is powered by native search for Anthropic and OpenAI natively and by Exa for other models. For Exa, it uses their "auto" method (a combination of keyword search and embeddings-based web search) to find the most relevant results and augment/ground your prompt.
-    """
-
-    id: Literal['web']
-
-    engine: Literal['native', 'exa', 'undefined']
-    """The web search plugin supports the following options for the engine parameter:
-
-    `native`: Always uses the model provider's built-in web search capabilities
-    `exa`: Uses Exa's search API for web results
-    `undefined` (not specified): Uses native search if available for the provider, otherwise falls back to Exa
-
-    Native search is used by default for OpenAI and Anthropic models that support it
-    Exa search is used for all other models or when native search is not supported.
-
-    When you explicitly specify "engine": "native", it will always attempt to use the provider's native search, even if the model doesn't support it (which may result in an error)."""
-
-    max_results: int
-    """The maximum results allowed by the web plugin."""
-
-    search_prompt: str
-    """The prompt used to attach results to your message."""
-
-
-OpenRouterPlugin = WebPlugin
-
-
-class OpenRouterUsageConfig(TypedDict, total=False):
+class _OpenRouterUsageConfig(TypedDict, total=False):
     """Configuration for OpenRouter usage."""
 
     include: bool
@@ -237,7 +206,7 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     These models will be tried, in order, if the main model returns an error. [See details](https://openrouter.ai/docs/features/model-routing#the-models-parameter)
     """
 
-    openrouter_provider: OpenRouterProviderConfig
+    openrouter_provider: _OpenRouterProviderConfig
     """OpenRouter routes requests to the best available providers for your model. By default, requests are load balanced across the top providers to maximize uptime.
 
     You can customize how your requests are routed using the provider object. [See more](https://openrouter.ai/docs/features/provider-routing)"""
@@ -247,70 +216,64 @@ class OpenRouterModelSettings(ModelSettings, total=False):
 
     Create and manage presets through the OpenRouter web application to control provider routing, model selection, system prompts, and other parameters, then reference them in OpenRouter API requests. [See more](https://openrouter.ai/docs/features/presets)"""
 
-    openrouter_transforms: list[Transforms]
+    openrouter_transforms: list[_Transforms]
     """To help with prompts that exceed the maximum context size of a model.
 
     Transforms work by removing or truncating messages from the middle of the prompt, until the prompt fits within the model's context window. [See more](https://openrouter.ai/docs/features/message-transforms)
     """
 
-    openrouter_reasoning: OpenRouterReasoning
+    openrouter_reasoning: _OpenRouterReasoning
     """To control the reasoning tokens in the request.
 
     The reasoning config object consolidates settings for controlling reasoning strength across different models. [See more](https://openrouter.ai/docs/use-cases/reasoning-tokens)
     """
 
-    openrouter_plugins: list[OpenRouterPlugin]
-    """To enable plugins in the request.
-
-    Plugins are tools that can be used to extend the functionality of the model. [See more](https://openrouter.ai/docs/features/web-search)
-    """
-
-    openrouter_usage: OpenRouterUsageConfig
+    openrouter_usage: _OpenRouterUsageConfig
     """To control the usage of the model.
 
     The usage config object consolidates settings for enabling detailed usage information. [See more](https://openrouter.ai/docs/use-cases/usage-accounting)
     """
 
 
-class OpenRouterError(BaseModel):
+class _OpenRouterError(BaseModel):
     """Utility class to validate error messages from OpenRouter."""
 
     code: int
     message: str
 
 
-class _BaseReasoningDetail(BaseModel):
+class _BaseReasoningDetail(BaseModel, frozen=True):
     """Common fields shared across all reasoning detail types."""
 
     id: str | None = None
     format: Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1'] | None
     index: int | None
+    type: Literal['reasoning.text', 'reasoning.summary', 'reasoning.encrypted']
 
 
-class _ReasoningSummary(_BaseReasoningDetail):
+class _ReasoningSummary(_BaseReasoningDetail, frozen=True):
     """Represents a high-level summary of the reasoning process."""
 
     type: Literal['reasoning.summary']
-    summary: str = Field(validation_alias=AliasChoices('summary', 'content'))
+    summary: str
 
 
-class _ReasoningEncrypted(_BaseReasoningDetail):
+class _ReasoningEncrypted(_BaseReasoningDetail, frozen=True):
     """Represents encrypted reasoning data."""
 
     type: Literal['reasoning.encrypted']
-    data: str = Field(validation_alias=AliasChoices('data', 'signature'))
+    data: str
 
 
-class _ReasoningText(_BaseReasoningDetail):
+class _ReasoningText(_BaseReasoningDetail, frozen=True):
     """Represents raw text reasoning."""
 
     type: Literal['reasoning.text']
-    text: str = Field(validation_alias=AliasChoices('text', 'content'))
+    text: str
     signature: str | None = None
 
 
 _OpenRouterReasoningDetail = _ReasoningSummary | _ReasoningEncrypted | _ReasoningText
-_reasoning_detail_adapter: TypeAdapter[_OpenRouterReasoningDetail] = TypeAdapter(_OpenRouterReasoningDetail)
 
 
 def _from_reasoning_detail(reasoning: _OpenRouterReasoningDetail) -> ThinkingPart:
@@ -329,25 +292,54 @@ def _from_reasoning_detail(reasoning: _OpenRouterReasoningDetail) -> ThinkingPar
             content=reasoning.summary,
             provider_name=provider_name,
         )
-    else:
+    elif isinstance(reasoning, _ReasoningEncrypted):
         return ThinkingPart(
             id=reasoning_id,
             content='',
             signature=reasoning.data,
             provider_name=provider_name,
         )
+    else:
+        assert_never(reasoning)
 
 
 def _into_reasoning_detail(thinking_part: ThinkingPart) -> _OpenRouterReasoningDetail:
     if thinking_part.id is None:  # pragma: lax no cover
         raise UnexpectedModelBehavior('OpenRouter thinking part has no ID')
 
-    data = asdict(thinking_part)
-    data.update(json.loads(thinking_part.id))
-    return _reasoning_detail_adapter.validate_python(data)
+    data = _BaseReasoningDetail.model_validate_json(thinking_part.id)
+
+    if data.type == 'reasoning.text':
+        return _ReasoningText(
+            type=data.type,
+            id=data.id,
+            format=data.format,
+            index=data.index,
+            text=thinking_part.content,
+            signature=thinking_part.signature,
+        )
+    elif data.type == 'reasoning.summary':
+        return _ReasoningSummary(
+            type=data.type,
+            id=data.id,
+            format=data.format,
+            index=data.index,
+            summary=thinking_part.content,
+        )
+    elif data.type == 'reasoning.encrypted':
+        assert thinking_part.signature is not None
+        return _ReasoningEncrypted(
+            type=data.type,
+            id=data.id,
+            format=data.format,
+            index=data.index,
+            data=thinking_part.signature,
+        )
+    else:
+        assert_never(data.type)
 
 
-class OpenRouterCompletionMessage(chat.ChatCompletionMessage):
+class _OpenRouterCompletionMessage(chat.ChatCompletionMessage):
     """Wrapped chat completion message with OpenRouter specific attributes."""
 
     reasoning: str | None = None
@@ -357,7 +349,7 @@ class OpenRouterCompletionMessage(chat.ChatCompletionMessage):
     """The reasoning details associated with the message, if any."""
 
 
-class OpenRouterChoice(chat_completion.Choice):
+class _OpenRouterChoice(chat_completion.Choice):
     """Wraps OpenAI chat completion choice with OpenRouter specific attributes."""
 
     native_finish_reason: str
@@ -369,47 +361,47 @@ class OpenRouterChoice(chat_completion.Choice):
     Notably, removes 'function_call' and adds 'error'  finish reasons.
     """
 
-    message: OpenRouterCompletionMessage  # type: ignore[reportIncompatibleVariableOverride]
+    message: _OpenRouterCompletionMessage  # type: ignore[reportIncompatibleVariableOverride]
     """A wrapped chat completion message with OpenRouter specific attributes."""
 
 
-class OpenRouterCostDetails(BaseModel):
+class _OpenRouterCostDetails(BaseModel):
     """OpenRouter specific cost details."""
 
     upstream_inference_cost: int | None = None
 
 
-class OpenRouterCompletionTokenDetails(completion_usage.CompletionTokensDetails):
+class _OpenRouterCompletionTokenDetails(completion_usage.CompletionTokensDetails):
     """Wraps OpenAI completion token details with OpenRouter specific attributes."""
 
     image_tokens: int | None = None
 
 
-class OpenRouterUsage(completion_usage.CompletionUsage):
+class _OpenRouterUsage(completion_usage.CompletionUsage):
     """Wraps OpenAI completion usage with OpenRouter specific attributes."""
 
     cost: float | None = None
 
-    cost_details: OpenRouterCostDetails | None = None
+    cost_details: _OpenRouterCostDetails | None = None
 
     is_byok: bool | None = None
 
-    completion_tokens_details: OpenRouterCompletionTokenDetails | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    completion_tokens_details: _OpenRouterCompletionTokenDetails | None = None  # type: ignore[reportIncompatibleVariableOverride]
 
 
-class OpenRouterChatCompletion(chat.ChatCompletion):
+class _OpenRouterChatCompletion(chat.ChatCompletion):
     """Wraps OpenAI chat completion with OpenRouter specific attributes."""
 
     provider: str
     """The downstream provider that was used by OpenRouter."""
 
-    choices: list[OpenRouterChoice]  # type: ignore[reportIncompatibleVariableOverride]
+    choices: list[_OpenRouterChoice]  # type: ignore[reportIncompatibleVariableOverride]
     """A list of chat completion choices modified with OpenRouter specific attributes."""
 
-    error: OpenRouterError | None = None
+    error: _OpenRouterError | None = None
     """OpenRouter specific error attribute."""
 
-    usage: OpenRouterUsage | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    usage: _OpenRouterUsage | None = None  # type: ignore[reportIncompatibleVariableOverride]
     """OpenRouter specific usage attribute."""
 
 
@@ -446,7 +438,7 @@ def _map_usage(
     provider_url: str,
     model: str,
 ) -> RequestUsage:
-    assert isinstance(response, OpenRouterChatCompletion) or isinstance(response, OpenRouterChatCompletionChunk)
+    assert isinstance(response, _OpenRouterChatCompletion) or isinstance(response, _OpenRouterChatCompletionChunk)
     builder = RequestUsage()
 
     response_usage = response.usage
@@ -514,8 +506,8 @@ class OpenRouterModel(OpenAIChatModel):
         return new_settings, customized_parameters
 
     @override
-    def _validate_completion(self, response: chat.ChatCompletion) -> OpenRouterChatCompletion:
-        response = OpenRouterChatCompletion.model_validate(response.model_dump())
+    def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:
+        response = _OpenRouterChatCompletion.model_validate(response.model_dump())
 
         if error := response.error:
             raise ModelHTTPError(status_code=error.code, model_name=response.model, body=error.message)
@@ -524,7 +516,7 @@ class OpenRouterModel(OpenAIChatModel):
 
     @override
     def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:
-        assert isinstance(message, OpenRouterCompletionMessage)
+        assert isinstance(message, _OpenRouterCompletionMessage)
 
         if reasoning_details := message.reasoning_details:
             return [_from_reasoning_detail(detail) for detail in reasoning_details]
@@ -533,7 +525,7 @@ class OpenRouterModel(OpenAIChatModel):
 
     @override
     def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any]:
-        assert isinstance(response, OpenRouterChatCompletion)
+        assert isinstance(response, _OpenRouterChatCompletion)
 
         provider_details = super()._process_provider_details(response)
 
@@ -553,7 +545,10 @@ class OpenRouterModel(OpenAIChatModel):
             elif isinstance(item, ThinkingPart):
                 if item.provider_name == self.system:
                     reasoning_details.append(_into_reasoning_detail(item).model_dump())
-                else:  # pragma: no cover
+                elif content := item.content:  # pragma: no branch
+                    start_tag, end_tag = self.profile.thinking_tags
+                    texts.append('\n'.join([start_tag, content, end_tag]))
+                else:
                     pass
             elif isinstance(item, ToolCallPart):
                 tool_calls.append(self._map_tool_call(item))
@@ -590,7 +585,7 @@ class OpenRouterModel(OpenAIChatModel):
         return _CHAT_FINISH_REASON_MAP.get(key)
 
 
-class OpenRouterChoiceDelta(chat_completion_chunk.ChoiceDelta):
+class _OpenRouterChoiceDelta(chat_completion_chunk.ChoiceDelta):
     """Wrapped chat completion message with OpenRouter specific attributes."""
 
     reasoning: str | None = None
@@ -600,7 +595,7 @@ class OpenRouterChoiceDelta(chat_completion_chunk.ChoiceDelta):
     """The reasoning details associated with the message, if any."""
 
 
-class OpenRouterChunkChoice(chat_completion_chunk.Choice):
+class _OpenRouterChunkChoice(chat_completion_chunk.Choice):
     """Wraps OpenAI chat completion chunk choice with OpenRouter specific attributes."""
 
     native_finish_reason: str | None
@@ -612,20 +607,20 @@ class OpenRouterChunkChoice(chat_completion_chunk.Choice):
     Notably, removes 'function_call' and adds 'error' finish reasons.
     """
 
-    delta: OpenRouterChoiceDelta  # type: ignore[reportIncompatibleVariableOverride]
+    delta: _OpenRouterChoiceDelta  # type: ignore[reportIncompatibleVariableOverride]
     """A wrapped chat completion delta with OpenRouter specific attributes."""
 
 
-class OpenRouterChatCompletionChunk(chat.ChatCompletionChunk):
+class _OpenRouterChatCompletionChunk(chat.ChatCompletionChunk):
     """Wraps OpenAI chat completion with OpenRouter specific attributes."""
 
     provider: str
     """The downstream provider that was used by OpenRouter."""
 
-    choices: list[OpenRouterChunkChoice]  # type: ignore[reportIncompatibleVariableOverride]
+    choices: list[_OpenRouterChunkChoice]  # type: ignore[reportIncompatibleVariableOverride]
     """A list of chat completion chunk choices modified with OpenRouter specific attributes."""
 
-    usage: OpenRouterUsage | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    usage: _OpenRouterUsage | None = None  # type: ignore[reportIncompatibleVariableOverride]
     """Usage statistics for the completion request."""
 
 
@@ -637,14 +632,14 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
     async def _validate_response(self):
         try:
             async for chunk in self._response:
-                yield OpenRouterChatCompletionChunk.model_validate(chunk.model_dump())
+                yield _OpenRouterChatCompletionChunk.model_validate(chunk.model_dump())
         except APIError as e:
-            error = OpenRouterError.model_validate(e.body)
+            error = _OpenRouterError.model_validate(e.body)
             raise ModelHTTPError(status_code=error.code, model_name=self._model_name, body=error.message)
 
     @override
     def _map_thinking_delta(self, choice: chat_completion_chunk.Choice):
-        assert isinstance(choice, OpenRouterChunkChoice)
+        assert isinstance(choice, _OpenRouterChunkChoice)
 
         if reasoning_details := choice.delta.reasoning_details:
             for detail in reasoning_details:
@@ -658,7 +653,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
 
     @override
     def _map_provider_details(self, chunk: chat.ChatCompletionChunk) -> dict[str, str] | None:
-        assert isinstance(chunk, OpenRouterChatCompletionChunk)
+        assert isinstance(chunk, _OpenRouterChatCompletionChunk)
 
         if provider_details := super()._map_provider_details(chunk):
             if provider := chunk.provider:  # pragma: lax no cover
