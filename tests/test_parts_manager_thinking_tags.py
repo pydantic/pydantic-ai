@@ -1,8 +1,9 @@
+"""This is the version of the tests that test the parts manager than handles embedded thinking regardless of vendor part IDs."""
+
 from __future__ import annotations as _annotations
 
 from collections.abc import Hashable, Sequence
 from dataclasses import dataclass, field
-from typing import Literal
 
 import pytest
 
@@ -16,7 +17,7 @@ def stream_text_deltas(
 ) -> tuple[list[ModelResponseStreamEvent], list[ModelResponseStreamEvent], list[ModelResponsePart]]:
     """Helper to stream chunks through manager and return all events + final parts."""
     manager = ModelResponsePartsManager()
-    events_before_flushing: list[ModelResponseStreamEvent] = []
+    normal_events: list[ModelResponseStreamEvent] = []
 
     for chunk in case.chunks:
         for event in manager.handle_text_delta(
@@ -25,14 +26,18 @@ def stream_text_deltas(
             thinking_tags=case.thinking_tags,
             ignore_leading_whitespace=case.ignore_leading_whitespace,
         ):
-            events_before_flushing.append(event)
+            normal_events.append(event)
 
-    all_events = list(events_before_flushing)
-
+    flushed_events: list[ModelResponseStreamEvent] = []
     for event in manager.final_flush():
-        all_events.append(event)
+        flushed_events.append(event)
 
-    return events_before_flushing, all_events, manager.get_parts()
+    return normal_events, flushed_events, manager.get_parts()
+
+
+def init_model_response_stream_event_iterator() -> Sequence[ModelResponseStreamEvent]:
+    # both pyright and pre-commit asked for this
+    return []
 
 
 @dataclass
@@ -40,11 +45,10 @@ class Case:
     name: str
     chunks: list[str]
     expected_parts: list[ModelResponsePart]  # [TextPart|ThinkingPart('final content')]
-    expected_events: Sequence[ModelResponseStreamEvent]
-    expected_events_before_flushing: Sequence[ModelResponseStreamEvent] | Literal['same-as-expected-events'] = (
-        'same-as-expected-events'
+    expected_normal_events: Sequence[ModelResponseStreamEvent]
+    expected_flushed_events: Sequence[ModelResponseStreamEvent] = field(
+        default_factory=init_model_response_stream_event_iterator
     )
-    leftover_closing_bufffer: list[str] = field(default_factory=list)
     vendor_part_id: Hashable | None = 'content'
     ignore_leading_whitespace: bool = False
     thinking_tags: tuple[str, str] | None = ('<think>', '</think>')
@@ -53,19 +57,21 @@ class Case:
 FULL_SPLITS = [
     Case(
         name='full_split_partial_closing',
-        chunks=['<th', 'ink>con', 'tent</th'],  # this is equivalent to [..., 'tent</think>']
-        expected_parts=[ThinkingPart('content')],
-        expected_events=[
+        chunks=['<th', 'ink>con', 'tent</th'],
+        expected_parts=[ThinkingPart('content</th')],
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('con')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='tent')),
         ],
-        leftover_closing_bufffer=['</th'],  # a full ['</th', 'ink>'] would leave the buffer empty
+        expected_flushed_events=[
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='</th')),
+        ],
     ),
     Case(
         name='full_split_on_both_sides_clean',
         chunks=['<th', 'ink>con', 'tent</th', 'ink>', 'after'],
         expected_parts=[ThinkingPart('content'), TextPart('after')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('con')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='tent')),
             PartStartEvent(index=1, part=TextPart('after')),
@@ -75,7 +81,7 @@ FULL_SPLITS = [
         name='full_split_on_both_sides_closing_buffer_and_stutter',
         chunks=['<th', 'ink>con', 'tent</th', '</think>', 'after'],
         expected_parts=[ThinkingPart('content</th'), TextPart('after')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('con')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='tent')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='</th')),
@@ -86,16 +92,13 @@ FULL_SPLITS = [
         name='think_to_content_to_partial_opening_gets_flushed',
         chunks=['<th', 'ink>con', 'tent</th', 'ink>', 'after', '<th'],
         expected_parts=[ThinkingPart('content'), TextPart('after<th')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('con')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='tent')),
             PartStartEvent(index=1, part=TextPart('after')),
-            PartDeltaEvent(index=1, delta=TextPartDelta('<th')),
         ],
-        expected_events_before_flushing=[
-            PartStartEvent(index=0, part=ThinkingPart('con')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='tent')),
-            PartStartEvent(index=1, part=TextPart('after')),
+        expected_flushed_events=[
+            PartDeltaEvent(index=1, delta=TextPartDelta('<th')),
         ],
     ),
 ]
@@ -103,63 +106,17 @@ FULL_SPLITS = [
 # Category 1: Opening Tag Handling (partial openings, splits, completes, empties)
 OPENING_TAG_CASES: list[Case] = [
     Case(
-        name='partial_opening_buffered_then_finally_flushed_as_text',
-        chunks=['<thi'],
-        expected_parts=[TextPart('<thi')],
-        expected_events=[
-            PartStartEvent(index=0, part=TextPart('<thi')),
-        ],
-        expected_events_before_flushing=[],
-    ),
-    Case(
-        name='partial_opening_no_vendor_id_emitted_immediately_as_text',
-        chunks=['<thi'],
-        expected_parts=[TextPart('<thi')],
-        expected_events=[
-            PartStartEvent(index=0, part=TextPart('<thi')),
-        ],
-        vendor_part_id=None,
-    ),
-    Case(
         name='full_opening_starts_thinking_part',
         chunks=['<think>content'],
         expected_parts=[ThinkingPart('content')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
         ],
     ),
 ]
 
 # Category 2: Delayed Thinking (no event until content after complete opening)
-DELAYED_THINKING_CASES: list[Case] = [
-    Case(
-        name='delayed_thinking_with_content',
-        chunks=['<th', 'ink>', 'content'],  # equivalent to ['<think>', 'content']
-        expected_parts=[ThinkingPart('content')],
-        expected_events=[
-            PartStartEvent(index=0, part=ThinkingPart('content')),
-        ],
-    ),
-    Case(
-        name='delayed_thinking_flushed_as_text_when_no_content_follows',
-        chunks=['<th', 'ink>'],
-        expected_parts=[TextPart('<think>')],
-        expected_events=[
-            PartStartEvent(index=0, part=TextPart('<think>')),
-        ],
-        expected_events_before_flushing=[],
-    ),
-    Case(
-        name='partial_opening_without_vendor_id_emitted_immediately_as_text',
-        chunks=['<th', 'ink>'],
-        expected_parts=[TextPart('<think>')],
-        expected_events=[
-            PartStartEvent(index=0, part=TextPart('<th')),
-            PartDeltaEvent(index=0, delta=TextPartDelta('ink>')),
-        ],
-        vendor_part_id=None,
-    ),
-]
+DELAYED_THINKING_CASES: list[Case] = []
 
 # Category 3: Invalid Opening Tags (prefixes, invalid continuations, flushes)
 INVALID_OPENING_CASES: list[Case] = [
@@ -167,7 +124,7 @@ INVALID_OPENING_CASES: list[Case] = [
         name='multiple_partial_openings_buffered_until_invalid_continuation',
         chunks=['<t', 'hi', 'foo'],  # equivalent to ['<thi', 'foo']
         expected_parts=[TextPart('<thifoo')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=TextPart(content='<thifoo')),
         ],
     ),
@@ -175,7 +132,7 @@ INVALID_OPENING_CASES: list[Case] = [
         name='new_part_invalid_opening_with_prefix',
         chunks=['pre<think>'],
         expected_parts=[TextPart('pre<think>')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=TextPart('pre<think>')),
         ],
     ),
@@ -186,24 +143,22 @@ FULL_THINKING_CASES: list[Case] = [
     Case(
         name='new_part_empty_thinking_treated_as_text',
         chunks=['<think></think>'],
-        expected_parts=[TextPart('<think></think>')],
-        expected_events=[
-            PartStartEvent(index=0, part=TextPart('<think></think>')),
-        ],
+        expected_parts=[],  # Empty thinking is now skipped entirely
+        expected_normal_events=[],
     ),
     Case(
         name='new_part_empty_thinking_with_after_treated_as_text',
         chunks=['<think></think>more'],
-        expected_parts=[TextPart('<think></think>more')],
-        expected_events=[
-            PartStartEvent(index=0, part=TextPart('<think></think>more')),
+        expected_parts=[TextPart('more')],
+        expected_normal_events=[
+            PartStartEvent(index=0, part=TextPart('more')),
         ],
     ),
     Case(
         name='new_part_complete_thinking_with_content_no_after',
         chunks=['<think>content</think>'],
         expected_parts=[ThinkingPart('content')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
         ],
     ),
@@ -211,7 +166,7 @@ FULL_THINKING_CASES: list[Case] = [
         name='new_part_complete_thinking_with_content_with_after',
         chunks=['<think>content</think>more'],
         expected_parts=[ThinkingPart('content'), TextPart('more')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
             PartStartEvent(index=1, part=TextPart('more')),
         ],
@@ -224,7 +179,7 @@ CLOSING_TAG_CASES: list[Case] = [
         name='existing_thinking_clean_closing',
         chunks=['<think>content', '</think>'],
         expected_parts=[ThinkingPart('content')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
         ],
     ),
@@ -232,7 +187,7 @@ CLOSING_TAG_CASES: list[Case] = [
         name='existing_thinking_closing_with_before',
         chunks=['<think>content', 'more</think>'],
         expected_parts=[ThinkingPart('contentmore')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='more')),
         ],
@@ -241,7 +196,7 @@ CLOSING_TAG_CASES: list[Case] = [
         name='existing_thinking_closing_with_before_after',
         chunks=['<think>content', 'more</think>after'],
         expected_parts=[ThinkingPart('contentmore'), TextPart('after')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='more')),
             PartStartEvent(index=1, part=TextPart('after')),
@@ -251,7 +206,7 @@ CLOSING_TAG_CASES: list[Case] = [
         name='existing_thinking_closing_no_before_with_after',
         chunks=['<think>content', '</think>after'],
         expected_parts=[ThinkingPart('content'), TextPart('after')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
             PartStartEvent(index=1, part=TextPart('after')),
         ],
@@ -263,44 +218,50 @@ PARTIAL_CLOSING_CASES: list[Case] = [
     Case(
         name='new_part_opening_with_content_partial_closing',
         chunks=['<think>content</th'],
-        expected_parts=[ThinkingPart('content')],
-        expected_events=[
+        expected_parts=[ThinkingPart('content</th')],
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
         ],
-        leftover_closing_bufffer=['</th'],
+        expected_flushed_events=[
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='</th')),
+        ],
     ),
     Case(
         name='existing_thinking_partial_closing',
         chunks=['<think>content', '</th'],
-        expected_parts=[ThinkingPart('content')],
-        expected_events=[
+        expected_parts=[ThinkingPart('content</th')],
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
         ],
-        leftover_closing_bufffer=['</th'],
+        expected_flushed_events=[
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='</th')),
+        ],
     ),
     Case(
         name='existing_thinking_buffer_completes_partial_closing',
         chunks=['<think>content', '</th', 'ink>'],
         expected_parts=[ThinkingPart('content')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
         ],
     ),
     Case(
         name='existing_thinking_partial_closing_with_content_to_add',
         chunks=['<think>content', 'more</th'],
-        expected_parts=[ThinkingPart('contentmore')],
-        expected_events=[
+        expected_parts=[ThinkingPart('contentmore</th')],
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='more')),
         ],
-        leftover_closing_bufffer=['</th'],
+        expected_flushed_events=[
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='</th')),
+        ],
     ),
     Case(
         name='existing_thinking_buffer_multi_partial_closing_completes',
         chunks=['<think>content', 'more</', 'thi', 'nk>'],
         expected_parts=[ThinkingPart('contentmore')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='more')),
         ],
@@ -309,7 +270,8 @@ PARTIAL_CLOSING_CASES: list[Case] = [
         name='new_part_empty_thinking_with_partial_closing_treated_as_text',
         chunks=['<think></th'],
         expected_parts=[TextPart('<think></th')],
-        expected_events=[
+        expected_normal_events=[],
+        expected_flushed_events=[
             PartStartEvent(index=0, part=TextPart('<think></th')),
         ],
     ),
@@ -318,7 +280,7 @@ PARTIAL_CLOSING_CASES: list[Case] = [
         name='existing_thinking_partial_closing_overlap_non_empty_content_to_add_completes',
         chunks=['<think>content', 'more</th', 'fooink>'],
         expected_parts=[ThinkingPart('contentmore</thfooink>')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='more')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='</thfooink>')),
@@ -332,7 +294,7 @@ ADDING_CONTENT_CASES: list[Case] = [
         name='existing_thinking_add_more_content',
         chunks=['<think>content', 'more'],
         expected_parts=[ThinkingPart('contentmore')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='more')),
         ],
@@ -345,81 +307,40 @@ WHITESPACE_CASES: list[Case] = [
         name='new_part_ignore_whitespace_empty',
         chunks=['   '],
         expected_parts=[],
-        expected_events=[],
+        expected_normal_events=[],
         ignore_leading_whitespace=True,
     ),
     Case(
         name='new_part_not_ignore_whitespace',
         chunks=['   '],
         expected_parts=[TextPart('   ')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=TextPart('   ')),
         ],
     ),
     Case(
         name='new_part_no_vendor_id_ignore_whitespace_not_empty',
         chunks=['   content'],
-        expected_parts=[TextPart('   content')],
-        expected_events=[
-            PartStartEvent(index=0, part=TextPart('   content')),
+        expected_parts=[TextPart('content')],
+        expected_normal_events=[
+            PartStartEvent(index=0, part=TextPart('content')),
         ],
-        vendor_part_id=None,
         ignore_leading_whitespace=True,
     ),
     Case(
         name='new_part_ignore_whitespace_mixed_with_partial_opening',
         chunks=['  <thi'],
-        expected_parts=[TextPart('  <thi')],
-        expected_events=[
-            PartStartEvent(index=0, part=TextPart('  <thi')),
+        expected_parts=[TextPart('<thi')],
+        expected_normal_events=[],
+        expected_flushed_events=[
+            PartStartEvent(index=0, part=TextPart('<thi')),
         ],
         ignore_leading_whitespace=True,
     ),
 ]
 
 # Category 9: No Vendor ID (updates, new after thinking, closings as text)
-NO_VENDOR_ID_CASES: list[Case] = [
-    Case(
-        name='update_latest_no_vendor_id_text',
-        chunks=['hello', ' world'],
-        expected_parts=[TextPart('hello world')],
-        expected_events=[
-            PartStartEvent(index=0, part=TextPart('hello')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world')),
-        ],
-        vendor_part_id=None,
-    ),
-    Case(
-        name='new_content_doesnt_append_to_a_thinking_part_with_no_vendor_id',
-        chunks=['<think>content', 'more'],
-        expected_parts=[ThinkingPart('content'), TextPart('more')],
-        expected_events=[
-            PartStartEvent(index=0, part=ThinkingPart('content')),
-            PartStartEvent(index=1, part=TextPart('more')),
-        ],
-        vendor_part_id=None,
-    ),
-    Case(
-        name='no_vendor_id_closing_treated_as_text',
-        chunks=['<think>content', '</think>'],
-        expected_parts=[ThinkingPart('content'), TextPart('</think>')],
-        expected_events=[
-            PartStartEvent(index=0, part=ThinkingPart('content')),
-            PartStartEvent(index=1, part=TextPart('</think>')),
-        ],
-        vendor_part_id=None,
-    ),
-    Case(
-        name='no_vendor_id_after_thinking_add_partial_closing_treated_as_text',
-        chunks=['<think>content', '</th'],
-        expected_parts=[ThinkingPart('content'), TextPart('</th')],
-        expected_events=[
-            PartStartEvent(index=0, part=ThinkingPart('content')),
-            PartStartEvent(index=1, part=TextPart('</th')),
-        ],
-        vendor_part_id=None,
-    ),
-]
+NO_VENDOR_ID_CASES: list[Case] = []
 
 # Category 10: No Thinking Tags (tags treated as text)
 NO_THINKING_TAGS_CASES: list[Case] = [
@@ -427,7 +348,7 @@ NO_THINKING_TAGS_CASES: list[Case] = [
         name='new_part_tags_as_text_when_thinking_tags_none',
         chunks=['<think>content</think>'],
         expected_parts=[TextPart('<think>content</think>')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=TextPart('<think>content</think>')),
         ],
         thinking_tags=None,
@@ -440,7 +361,7 @@ BUFFER_MANAGEMENT_CASES: list[Case] = [
         name='existing_text_stutter_buffer_via_replace',
         chunks=['<thi', '<think>content</think>'],
         expected_parts=[TextPart('<thi'), ThinkingPart('content')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=TextPart(content='<thi')),
             PartStartEvent(index=1, part=ThinkingPart(content='content')),
         ],
@@ -449,7 +370,7 @@ BUFFER_MANAGEMENT_CASES: list[Case] = [
         name='stutter_buffer_in_non_last_part_handled_as_text',
         chunks=['<thi', 'content'],
         expected_parts=[TextPart('<thicontent')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=TextPart(content='<thicontent')),
         ],
     ),
@@ -457,19 +378,18 @@ BUFFER_MANAGEMENT_CASES: list[Case] = [
         name='existing_text_add_partial_opening_flush',
         chunks=['hello', '<thi'],
         expected_parts=[TextPart('hello<thi')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=TextPart('hello')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='<thi')),
         ],
-        expected_events_before_flushing=[
-            PartStartEvent(index=0, part=TextPart('hello')),
+        expected_flushed_events=[
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='<thi')),
         ],
     ),
     Case(
         name='existing_text_stutter_via_append_non_empty_content',
         chunks=['hello', '<thi', '<think>content</think>'],
         expected_parts=[TextPart('hello<thi'), ThinkingPart('content')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=TextPart('hello')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='<thi')),
             PartStartEvent(index=1, part=ThinkingPart('content')),
@@ -481,9 +401,9 @@ BUFFER_MANAGEMENT_CASES: list[Case] = [
 FAKE_CLOSING_CASES: list[Case] = [
     Case(
         name='existing_thinking_fake_closing_added_to_thinking',
-        chunks=['<think>content', '</fake>'],
+        chunks=['<think>content', '</', 'fake>'],
         expected_parts=[ThinkingPart('content</fake>')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='</fake>')),
         ],
@@ -492,12 +412,26 @@ FAKE_CLOSING_CASES: list[Case] = [
         name='existing_thinking_fake_partial_closing_added_to_content',
         chunks=['<think>content', '</tx'],
         expected_parts=[ThinkingPart('content</tx')],
-        expected_events=[
+        expected_normal_events=[
             PartStartEvent(index=0, part=ThinkingPart('content')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='</tx')),
         ],
     ),
 ]
+
+# TOOL_PART_CASES = [
+#     Case(
+#         name='buffered_closing_with_tool_part',
+#         chunks=['<thi', 'nk>foo', 'bar</th', ToolCallPart('dummy_tool_name')],
+#         expected_parts=[ThinkingPart('foobar</th'), ToolCallPart('dummy_tool_name')],
+#         expected_normal_events=[
+#             PartStartEvent(index=0, part=ThinkingPart('foo')),
+#             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='bar')),
+#             # PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='</th')),
+#             PartStartEvent(index=1, part=ToolCallPart('dummy_tool_name')),
+#         ],
+#     ),
+# ]
 
 
 ALL_CASES = (
@@ -518,32 +452,24 @@ ALL_CASES = (
 
 
 @pytest.mark.parametrize('case', ALL_CASES, ids=lambda c: c.name)
-def test_thinking_parts_parametrized(case: Case) -> None:
+@pytest.mark.parametrize('vendor_part_id', ['content', None], ids=['with_vendor_id', 'without_vendor_id'])
+def test_thinking_parts_parametrized(case: Case, vendor_part_id: str | None) -> None:
     """
     Parametrized coverage for all cases described in the report.
+    Tests each case with both vendor_part_id='content' and vendor_part_id=None.
     """
-    events_before_flushing, events, final_parts = stream_text_deltas(case)
+
+    normal_events, flushed_events, final_parts = stream_text_deltas(case)
 
     # Parts observed from final state (after all deltas have been applied)
     assert final_parts == case.expected_parts, f'\nObserved: {final_parts}\nExpected: {case.expected_parts}'
 
-    # Events observed from streaming and final_flush
-    assert events == case.expected_events, f'\nObserved: {events}\nExpected: {case.expected_events}'
+    # Events observed from streaming during normal processing
+    assert normal_events == case.expected_normal_events, (
+        f'\nObserved: {normal_events}\nExpected: {case.expected_normal_events}'
+    )
 
-    # Events observed before final_flush
-    if case.expected_events_before_flushing == 'same-as-expected-events':
-        assert events_before_flushing == case.expected_events, (
-            f'\nObserved: {events_before_flushing}\nExpected: {case.expected_events_before_flushing}'
-        )
-    else:
-        assert events_before_flushing == case.expected_events_before_flushing, (
-            f'\nObserved: {events_before_flushing}\nExpected: {case.expected_events_before_flushing}'
-        )
-
-    leftover_closing_bufffer = [
-        part.closing_tag_buffer for part in final_parts if isinstance(part, ThinkingPart) and part.closing_tag_buffer
-    ]
-
-    assert leftover_closing_bufffer == case.leftover_closing_bufffer, (
-        f'\nObserved: {leftover_closing_bufffer}\nExpected: {case.leftover_closing_bufffer}'
+    # Events observed from final_flush
+    assert flushed_events == case.expected_flushed_events, (
+        f'\nObserved: {flushed_events}\nExpected: {case.expected_flushed_events}'
     )

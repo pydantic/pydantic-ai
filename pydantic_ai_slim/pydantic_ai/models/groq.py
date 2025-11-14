@@ -579,6 +579,10 @@ class GroqStreamedResponse(StreamedResponse):
                         vendor_part_id='content',
                         content=content,
                         thinking_tags=self._model_profile.thinking_tags,
+                        # where does `ignore_leading_whitespace` come from?
+                        # `GroqModel._process_streamed_response()` returns a `GroqStreamedResponse(_model_profile=self.profile,)`
+                        # `Groq.profile`` is set at `super().__init__(settings=settings, profile=profile or provider.model_profile)`
+                        # so `_model_profile` comes either from `GroqModel(profile=...)` or `GroqModel(provider=GroqProvider(...))` where the provider infers a profile.
                         ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
                     ):
                         yield event

@@ -1973,7 +1973,6 @@ async def test_groq_model_thinking_part_iter(allow_model_requests: None, groq_ap
                 parts=[
                     ThinkingPart(
                         content="""\
-
 Okay, so I want to make Uruguayan alfajores. I've heard they're a type of South American cookie sandwich with dulce de leche. I'm not entirely sure about the exact steps, but I can try to figure it out based on what I know.
 
 First, I think alfajores are cookies, so I'll need to make the cookie part. From what I remember, the dough is probably made with flour, sugar, butter, eggs, vanilla, and maybe some baking powder or baking soda. I should look up a typical cookie dough recipe and adjust it for alfajores.
@@ -2061,8 +2060,7 @@ Enjoy your homemade Uruguayan alfajores!\
 
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=ThinkingPart(content='\n')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Okay')),
+            PartStartEvent(index=0, part=ThinkingPart(content='Okay')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=',')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' so')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' I')),
@@ -2582,7 +2580,6 @@ Enjoy your homemade Uruguayan alfajores!\
                 index=0,
                 part=ThinkingPart(
                     content="""\
-
 Okay, so I want to make Uruguayan alfajores. I've heard they're a type of South American cookie sandwich with dulce de leche. I'm not entirely sure about the exact steps, but I can try to figure it out based on what I know.
 
 First, I think alfajores are cookies, so I'll need to make the cookie part. From what I remember, the dough is probably made with flour, sugar, butter, eggs, vanilla, and maybe some baking powder or baking soda. I should look up a typical cookie dough recipe and adjust it for alfajores.

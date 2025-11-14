@@ -640,7 +640,12 @@ class StreamedResponse(ABC):
                 if end_event:
                     yield end_event
 
-            self._event_iterator = iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
+            self._event_iterator = iterator_with_part_end(
+                iterator_with_final_event(
+                    # TODO chain_async_and_sync_iters(iterator, self._parts_manager.final_flush())
+                    self._get_event_iterator()
+                )
+            )
         return self._event_iterator
 
     @abstractmethod

@@ -2116,10 +2116,14 @@ async def test_run_stream_finalize_with_incomplete_thinking_tag():
     async for event in agent.run_stream_events('Hello'):
         events.append(event)
 
-    part_start_events = [e for e in events if isinstance(e, PartStartEvent)]
-    assert len(part_start_events) == 1
-    assert isinstance(part_start_events[0].part, TextPart)
-    assert part_start_events[0].part.content == '<thi'
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='<thi')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(index=0, part=TextPart(content='<thi')),
+            AgentRunResultEvent(result=AgentRunResult(output='<thi')),
+        ]
+    )
 
 
 def test_structured_response_sync_validation():
