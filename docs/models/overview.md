@@ -21,6 +21,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [Ollama](openai.md#ollama)
 - [OpenRouter](openai.md#openrouter)
 - [Vercel AI Gateway](openai.md#vercel-ai-gateway)
+- [Cloudflare AI Gateway](openai.md#cloudflare-ai-gateway)
 - [Perplexity](openai.md#perplexity)
 - [Fireworks AI](openai.md#fireworks-ai)
 - [Together AI](openai.md#together-ai)

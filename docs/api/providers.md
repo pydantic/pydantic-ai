@@ -34,6 +34,8 @@
 
 ::: pydantic_ai.providers.vercel.VercelProvider
 
+::: pydantic_ai.providers.cloudflare.CloudflareProvider
+
 ::: pydantic_ai.providers.huggingface.HuggingFaceProvider
 
 ::: pydantic_ai.providers.moonshotai.MoonshotAIProvider
