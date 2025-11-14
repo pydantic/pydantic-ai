@@ -2,7 +2,7 @@
 
 Pydantic AI uses a dependency injection system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [output validators](output.md#output-validator-functions).
 
-Matching Pydantic AI's design philosophy, our dependency system tries to use existing best practice in Python development rather than inventing esoteric "magic", this should make dependencies type-safe, understandable easier to test and ultimately easier to deploy in production.
+Matching Pydantic AI's design philosophy, our dependency system tries to use existing best practice in Python development rather than inventing esoteric "magic", this should make dependencies type-safe, understandable, easier to test, and ultimately easier to deploy in production.
 
 ## Defining Dependencies
 
@@ -103,11 +103,11 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 [System prompt functions](agents.md#system-prompts), [function tools](tools.md) and [output validators](output.md#output-validator-functions) are all run in the async context of an agent run.
 
 If these functions are not coroutines (e.g. `async def`) they are called with
-[`run_in_executor`][asyncio.loop.run_in_executor] in a thread pool, it's therefore marginally preferable
+[`run_in_executor`][asyncio.loop.run_in_executor] in a thread pool. It's therefore marginally preferable
 to use `async` methods where dependencies perform IO, although synchronous dependencies should work fine too.
 
 !!! note "`run` vs. `run_sync` and Asynchronous vs. Synchronous dependencies"
-    Whether you use synchronous or asynchronous dependencies, is completely independent of whether you use `run` or `run_sync` — `run_sync` is just a wrapper around `run` and agents are always run in an async context.
+    Whether you use synchronous or asynchronous dependencies is completely independent of whether you use `run` or `run_sync` — `run_sync` is just a wrapper around `run` and agents are always run in an async context.
 
 Here's the same example as above, but with a synchronous dependency:
 
