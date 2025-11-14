@@ -21,6 +21,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     FilePart,
     FileUrl,
     ModelMessage,
@@ -391,6 +392,9 @@ class GeminiModel(Model):
                     else:  # pragma: lax no cover
                         file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                         content.append(file_data)
+                elif isinstance(item, CachePoint):
+                    # Gemini doesn't support prompt caching via CachePoint
+                    pass
                 else:
                     assert_never(item)  # pragma: lax no cover
         return content

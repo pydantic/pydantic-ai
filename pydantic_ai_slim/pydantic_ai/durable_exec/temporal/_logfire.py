@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from temporalio.client import ClientConfig, Plugin as ClientPlugin
+from temporalio.plugin import SimplePlugin
 from temporalio.runtime import OpenTelemetryConfig, Runtime, TelemetryConfig
 from temporalio.service import ConnectConfig, ServiceClient
 
@@ -19,12 +19,14 @@ def _default_setup_logfire() -> Logfire:
     return instance
 
 
-class LogfirePlugin(ClientPlugin):
+class LogfirePlugin(SimplePlugin):
     """Temporal client plugin for Logfire."""
 
     def __init__(self, setup_logfire: Callable[[], Logfire] = _default_setup_logfire, *, metrics: bool = True):
         try:
             import logfire  # noqa: F401 # pyright: ignore[reportUnusedImport]
+            from opentelemetry.trace import get_tracer
+            from temporalio.contrib.opentelemetry import TracingInterceptor
         except ImportError as _import_error:
             raise ImportError(
                 'Please install the `logfire` package to use the Logfire plugin, '
@@ -34,18 +36,14 @@ class LogfirePlugin(ClientPlugin):
         self.setup_logfire = setup_logfire
         self.metrics = metrics
 
-    def init_client_plugin(self, next: ClientPlugin) -> None:
-        self.next_client_plugin = next
+        super().__init__(  # type: ignore[reportUnknownMemberType]
+            name='LogfirePlugin',
+            client_interceptors=[TracingInterceptor(get_tracer('temporalio'))],
+        )
 
-    def configure_client(self, config: ClientConfig) -> ClientConfig:
-        from opentelemetry.trace import get_tracer
-        from temporalio.contrib.opentelemetry import TracingInterceptor
-
-        interceptors = config.get('interceptors', [])
-        config['interceptors'] = [*interceptors, TracingInterceptor(get_tracer('temporalio'))]
-        return self.next_client_plugin.configure_client(config)
-
-    async def connect_service_client(self, config: ConnectConfig) -> ServiceClient:
+    async def connect_service_client(
+        self, config: ConnectConfig, next: Callable[[ConnectConfig], Awaitable[ServiceClient]]
+    ) -> ServiceClient:
         logfire = self.setup_logfire()
 
         if self.metrics:
@@ -60,4 +58,4 @@ class LogfirePlugin(ClientPlugin):
                     telemetry=TelemetryConfig(metrics=OpenTelemetryConfig(url=metrics_url, headers=headers))
                 )
 
-        return await self.next_client_plugin.connect_service_client(config)
+        return await next(config)
