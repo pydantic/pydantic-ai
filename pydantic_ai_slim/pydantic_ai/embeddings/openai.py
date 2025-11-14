@@ -2,11 +2,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, overload
 
-from pydantic_ai.embeddings.embedding_model import EmbeddingModel
+from pydantic_ai.embeddings.base import EmbeddingModel
 from pydantic_ai.embeddings.settings import EmbeddingSettings
 from pydantic_ai.providers import Provider, infer_provider
 
-from .settings import merge_embedding_settings
+from . import OpenAIEmbeddingsCompatibleProvider
 
 try:
     from openai import NOT_GIVEN, AsyncOpenAI
@@ -21,8 +21,16 @@ OpenAIEmbeddingModelName = str | LatestOpenAIEmbeddingModelNames
 """Possible OpenAI embeddings model names."""
 
 
+class OpenAIEmbeddingSettings(EmbeddingSettings, total=False):
+    """Settings used for an OpenAI embedding model request."""
+
+    # ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+
+
 @dataclass(init=False)
 class OpenAIEmbeddingModel(EmbeddingModel):
+    """OpenAI embedding model."""
+
     _model_name: OpenAIEmbeddingModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
 
@@ -30,18 +38,17 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         self,
         model_name: OpenAIEmbeddingModelName,
         *,
-        provider: Literal['openai'] | Provider[AsyncOpenAI] = 'openai',
+        provider: OpenAIEmbeddingsCompatibleProvider | Literal['openai'] | Provider[AsyncOpenAI] = 'openai',
         settings: EmbeddingSettings | None = None,
     ):
         """Initialize an OpenAI model.
 
         Args:
             model_name: The name of the OpenAI model to use. List of model names
-                available [here](https://docs.OpenAI.com/docs/models#command).
+                available [here](https://platform.openai.com/docs/guides/embeddings#embedding-models).
             provider: The provider to use for authentication and API access. Can be either the string
                 'OpenAI' or an instance of `Provider[AsyncClientV2]`. If not provided, a new provider will be
                 created using the other parameters.
-            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: Model-specific settings that will be used as defaults for this model.
         """
         self._model_name = model_name
@@ -78,18 +85,16 @@ class OpenAIEmbeddingModel(EmbeddingModel):
     async def embed(
         self, documents: str | Sequence[str], *, settings: EmbeddingSettings | None = None
     ) -> list[float] | list[list[float]]:
-        input_is_string = isinstance(documents, str)
-        if input_is_string:
-            documents = [documents]
+        documents, is_single_document, settings = self.prepare_embed(documents, settings)
+        embeddings = await self._embed(documents, settings)
+        return embeddings[0] if is_single_document else embeddings
 
-        settings = merge_embedding_settings(self._settings, settings) or {}
+    async def _embed(self, documents: Sequence[str], settings: OpenAIEmbeddingSettings) -> list[list[float]]:
         response = await self._client.embeddings.create(
             input=documents,  # pyright: ignore[reportArgumentType]  # Sequence[str] not compatible with SequenceNotStr[str] :/
             model=self.model_name,
-            dimensions=settings.get('output_dimension') or NOT_GIVEN,
+            dimensions=settings.get('dimensions') or NOT_GIVEN,
+            extra_headers=settings.get('extra_headers'),
+            extra_body=settings.get('extra_body'),
         )
-        result = [item.embedding for item in response.data]
-
-        if input_is_string:
-            return result[0]
-        return result
+        return [item.embedding for item in response.data]

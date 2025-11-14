@@ -1,38 +1,39 @@
-from typing import Literal, TypedDict
+from typing_extensions import TypedDict
 
 
 class EmbeddingSettings(TypedDict, total=False):
-    # TODO: May want to add extra_headres, extra_query, extra_body, timeout, etc.
+    """Settings to configure an embedding model.
 
-    output_dimension: int
-    """The maximum number of tokens to generate before stopping.
+    Here we include only settings which apply to multiple models / model providers,
+    though not all of these settings are supported by all models.
+    """
+
+    dimensions: int
+    """The number of dimensions the resulting output embeddings should have.
 
     Supported by:
 
-    * Cohere
     * OpenAI
-    """
-
-    max_tokens: int
-    """The maximum number of tokens to generate before stopping.
-
-    Supported by:
-
     * Cohere
     """
 
-    # We don't support embedding_types for now because it doesn't affect the user-facing API today..
-    # embedding_types: Literal["float", "int8", "uint8", "binary", "ubinary", "base64"]
-
-    input_type: Literal['search_document', 'search_query', 'classification', 'clustering', 'image']
-    """The input type of the embedding.
+    extra_headers: dict[str, str]
+    """Extra headers to send to the model.
 
     Supported by:
 
-    * Cohere (See `cohere.EmbedInputType`)
+    * OpenAI
+    * Cohere
     """
 
-    # TODO: Add more?
+    extra_body: object
+    """Extra body to send to the model.
+
+    Supported by:
+
+    * OpenAI
+    * Cohere
+    """
 
 
 def merge_embedding_settings(
@@ -40,7 +41,7 @@ def merge_embedding_settings(
 ) -> EmbeddingSettings | None:
     """Merge two sets of embedding settings, preferring the overrides.
 
-    A common use case is: merge_embedding_settings(<agent settings>, <run settings>)
+    A common use case is: merge_embedding_settings(<embedder settings>, <run settings>)
     """
     # Note: we may want merge recursively if/when we add non-primitive values
     if base and overrides:

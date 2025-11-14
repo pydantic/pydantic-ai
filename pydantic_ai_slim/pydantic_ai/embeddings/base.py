@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import overload
 
-from pydantic_ai.embeddings.settings import EmbeddingSettings
+from pydantic_ai.embeddings.settings import EmbeddingSettings, merge_embedding_settings
 
 
 class EmbeddingModel(ABC):
@@ -29,17 +29,21 @@ class EmbeddingModel(ABC):
         return self._settings
 
     @property
+    def base_url(self) -> str | None:
+        """The base URL for the provider API, if available."""
+        return None
+
+    @property
     @abstractmethod
     def model_name(self) -> str:
         """The model name."""
         raise NotImplementedError()
 
-    # TODO: Add system?
-
     @property
-    def base_url(self) -> str | None:
-        """The base URL for the provider API, if available."""
-        return None
+    @abstractmethod
+    def system(self) -> str:
+        """The embedding model provider."""
+        raise NotImplementedError()
 
     @overload
     async def embed(self, documents: str, *, settings: EmbeddingSettings | None = None) -> list[float]:
@@ -49,7 +53,20 @@ class EmbeddingModel(ABC):
     async def embed(self, documents: Sequence[str], *, settings: EmbeddingSettings | None = None) -> list[list[float]]:
         pass
 
+    @abstractmethod
     async def embed(
         self, documents: str | Sequence[str], *, settings: EmbeddingSettings | None = None
     ) -> list[float] | list[list[float]]:
         raise NotImplementedError
+
+    def prepare_embed(
+        self, documents: str | Sequence[str], settings: EmbeddingSettings | None = None
+    ) -> tuple[Sequence[str], bool, EmbeddingSettings]:
+        """Prepare the documents and settings for the embedding."""
+        is_single_document = isinstance(documents, str)
+        if is_single_document:
+            documents = [documents]
+
+        settings = merge_embedding_settings(self._settings, settings) or {}
+
+        return documents, is_single_document, settings
