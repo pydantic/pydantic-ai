@@ -306,7 +306,7 @@ class MockMCPServer(AbstractToolset[Any]):
 
     @property
     def instructions(self) -> str | None:
-        return None  # pragma: no cover
+        return None
 
     async def __aenter__(self) -> MockMCPServer:
         return self
