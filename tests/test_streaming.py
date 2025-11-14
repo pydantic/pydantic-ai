@@ -10,7 +10,6 @@ from datetime import timezone
 from typing import Any
 
 import pytest
-from dirty_equals import IsStr
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
@@ -51,7 +50,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApp
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
-from .conftest import IsDatetime, IsInt, IsNow
+from .conftest import IsDatetime, IsInt, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 

@@ -7,7 +7,6 @@ from typing import Annotated, Any, Literal
 import pydantic_core
 import pytest
 from _pytest.logging import LogCaptureFixture
-from dirty_equals import IsStr
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, TypeAdapter, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
@@ -39,7 +38,7 @@ from pydantic_ai.output import ToolOutput
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime
+from .conftest import IsDatetime, IsStr
 
 
 def test_tool_no_ctx():

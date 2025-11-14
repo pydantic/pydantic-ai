@@ -10,7 +10,7 @@ from typing import Any, Generic, Literal, TypeVar, Union
 
 import httpx
 import pytest
-from dirty_equals import IsJson, IsStr
+from dirty_equals import IsJson
 from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter, field_validator
 from pydantic_core import to_json
@@ -66,7 +66,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsNow, TestEnv
+from .conftest import IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
