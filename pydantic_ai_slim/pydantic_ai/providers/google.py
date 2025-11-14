@@ -28,13 +28,11 @@ class GoogleProvider(Provider[Client]):
 
     @property
     def name(self) -> str:
-        # type: ignore[reportPrivateUsage]
-        return 'google-vertex' if self._client._api_client.vertexai else 'google-gla'
+        return 'google-vertex' if self._client._api_client.vertexai else 'google-gla'  # type: ignore[reportPrivateUsage]
 
     @property
     def base_url(self) -> str:
-        # type: ignore[reportPrivateUsage]
-        return str(self._client._api_client._http_options.base_url)
+        return str(self._client._api_client._http_options.base_url)  # type: ignore[reportPrivateUsage]
 
     @property
     def client(self) -> Client:
