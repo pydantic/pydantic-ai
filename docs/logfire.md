@@ -92,8 +92,6 @@ including how to instrument other libraries like [HTTPX](https://logfire.pydanti
 
 Since Logfire is built on [OpenTelemetry](https://opentelemetry.io/), you can use the Logfire Python SDK to send data to any OpenTelemetry collector, see [below](#using-opentelemetry).
 
-When instrumentation is enabled, the resolved metadata is recorded (JSON encoded) on the run span under the `logfire.agent.metadata` attribute.
-
 ### Debugging
 
 To demonstrate how Logfire can let you visualise the flow of a Pydantic AI run, here's the view you get from Logfire while running the [chat app examples](examples/chat-app.md):
@@ -373,3 +371,5 @@ agent = Agent(
     metadata=lambda ctx: {'deployment': 'staging', 'tenant': ctx.deps.tenant},
 )
 ```
+
+When instrumentation is enabled, the resolved metadata is recorded on the agent span under the `logfire.agent.metadata` attribute.
