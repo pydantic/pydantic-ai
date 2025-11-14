@@ -84,6 +84,11 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
 try:
+    from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+except ImportError:  # pragma: lax no cover
+    pytest.skip('fastmcp not installed', allow_module_level=True)
+
+try:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 except ImportError:  # pragma: lax no cover
@@ -153,7 +158,11 @@ BASE_ACTIVITY_CONFIG = ActivityConfig(
 
 @pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
-    async with await WorkflowEnvironment.start_local(port=TEMPORAL_PORT, ui=True) as env:  # pyright: ignore[reportUnknownMemberType]
+    async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
+        port=TEMPORAL_PORT,
+        ui=True,
+        dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+    ) as env:
         yield env
 
 
@@ -2180,3 +2189,42 @@ def test_temporal_run_context_preserves_run_id():
 
     reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
     assert reconstructed.run_id == 'run-123'
+
+
+fastmcp_agent = Agent(
+    model,
+    name='fastmcp_agent',
+    toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
+)
+
+# This needs to be done before the `TemporalAgent` is bound to the workflow.
+fastmcp_temporal_agent = TemporalAgent(
+    fastmcp_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class FastMCPAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await fastmcp_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_fastmcp_toolset(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FastMCPAgentWorkflow],
+        plugins=[AgentPlugin(fastmcp_temporal_agent)],
+    ):
+        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            FastMCPAgentWorkflow.run,
+            args=['Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'],
+            id=FastMCPAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot(
+            'The `pydantic/pydantic-ai` repository is a Python agent framework crafted for developing production-grade Generative AI applications. It emphasizes type safety, model-agnostic design, and extensibility. The framework supports various LLM providers, manages agent workflows using graph-based execution, and ensures structured, reliable LLM outputs. Key packages include core framework components, graph execution engines, evaluation tools, and example applications.'
+        )

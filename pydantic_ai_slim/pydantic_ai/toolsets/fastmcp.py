@@ -32,7 +32,6 @@ try:
         ResourceLink,
         TextContent,
         TextResourceContents,
-        Tool as MCPTool,
     )
 
     from pydantic_ai.mcp import TOOL_SCHEMA_VALIDATOR
@@ -131,11 +130,20 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         async with self:
-            mcp_tools: list[MCPTool] = await self.client.list_tools()
-
             return {
-                tool.name: _convert_mcp_tool_to_toolset_tool(toolset=self, mcp_tool=tool, retries=self.max_retries)
-                for tool in mcp_tools
+                mcp_tool.name: self.tool_for_tool_def(
+                    ToolDefinition(
+                        name=mcp_tool.name,
+                        description=mcp_tool.description,
+                        parameters_json_schema=mcp_tool.inputSchema,
+                        metadata={
+                            'meta': mcp_tool.meta,
+                            'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
+                            'output_schema': mcp_tool.outputSchema or None,
+                        },
+                    )
+                )
+                for mcp_tool in await self.client.list_tools()
             }
 
     async def call_tool(
@@ -157,28 +165,13 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         # Otherwise, return the content
         return _map_fastmcp_tool_results(parts=call_tool_result.content)
 
-
-def _convert_mcp_tool_to_toolset_tool(
-    toolset: FastMCPToolset[AgentDepsT],
-    mcp_tool: MCPTool,
-    retries: int,
-) -> ToolsetTool[AgentDepsT]:
-    """Convert an MCP tool to a toolset tool."""
-    return ToolsetTool[AgentDepsT](
-        tool_def=ToolDefinition(
-            name=mcp_tool.name,
-            description=mcp_tool.description,
-            parameters_json_schema=mcp_tool.inputSchema,
-            metadata={
-                'meta': mcp_tool.meta,
-                'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
-                'output_schema': mcp_tool.outputSchema or None,
-            },
-        ),
-        toolset=toolset,
-        max_retries=retries,
-        args_validator=TOOL_SCHEMA_VALIDATOR,
-    )
+    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+        return ToolsetTool[AgentDepsT](
+            tool_def=tool_def,
+            toolset=self,
+            max_retries=self.max_retries,
+            args_validator=TOOL_SCHEMA_VALIDATOR,
+        )
 
 
 def _map_fastmcp_tool_results(parts: list[ContentBlock]) -> list[FastMCPToolResult] | FastMCPToolResult:
