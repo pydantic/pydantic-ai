@@ -3221,7 +3221,6 @@ async def test_cache_point_filtering():
     assert content[1] == {'text': 'text after'}
 
 
-# API 에러 테스트 데이터
 @pytest.mark.parametrize(
     'error_class,error_response,expected_status',
     [
