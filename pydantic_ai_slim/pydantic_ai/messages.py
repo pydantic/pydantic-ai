@@ -622,6 +622,7 @@ class CachePoint:
     Supported by:
 
     - Anthropic
+    - Amazon Bedrock (Converse API)
     """
 
     kind: Literal['cache-point'] = 'cache-point'
