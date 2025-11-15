@@ -51,6 +51,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             'max_retries': ctx.max_retries,
             'run_step': ctx.run_step,
             'partial_output': ctx.partial_output,
+            'usage': ctx.usage,
         }
 
     @classmethod
