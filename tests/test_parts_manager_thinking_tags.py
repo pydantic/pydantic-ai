@@ -376,6 +376,16 @@ WHITESPACE_CASES: list[Case] = [
         ],
         ignore_leading_whitespace=True,
     ),
+    Case(
+        name='new_part_ignore_whitespace_mixed_with_full_opening',
+        chunks=['  <think>'],
+        expected_parts=[TextPart('<think>')],
+        expected_normal_events=[],
+        expected_flushed_events=[
+            PartStartEvent(index=0, part=TextPart('<think>')),
+        ],
+        ignore_leading_whitespace=True,
+    ),
 ]
 
 # Category 9: No Vendor ID (updates, new after thinking, closings as text)

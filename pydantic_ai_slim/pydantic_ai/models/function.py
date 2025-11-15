@@ -186,6 +186,7 @@ class FunctionModel(Model):
 
         yield FunctionStreamedResponse(
             model_request_parameters=model_request_parameters,
+            _model_profile=self.profile,
             _model_name=self._model_name,
             _iter=response_stream,
         )
@@ -286,6 +287,7 @@ class FunctionStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
 
     _model_name: str
+    _model_profile: ModelProfile
     _iter: AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
@@ -297,7 +299,9 @@ class FunctionStreamedResponse(StreamedResponse):
             if isinstance(item, str):
                 response_tokens = _estimate_string_tokens(item)
                 self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                for event in self._parts_manager.handle_text_delta(vendor_part_id='content', content=item):
+                for event in self._parts_manager.handle_text_delta(
+                    vendor_part_id='content', content=item, thinking_tags=self._model_profile.thinking_tags
+                ):
                     yield event
             elif isinstance(item, dict) and item:
                 for dtc_index, delta in item.items():

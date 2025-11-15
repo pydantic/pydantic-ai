@@ -569,7 +569,7 @@ class StreamedResponse(ABC):
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
 
-    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
 
         This proxies the `_event_iterator()` and emits all events, while also checking for matches
@@ -616,15 +616,7 @@ class StreamedResponse(ABC):
                         next_part_kind=next_part.part_kind if next_part else None,
                     )
 
-                async def chain_async_and_sync_iters(
-                    iter1: AsyncIterator[ModelResponseStreamEvent], iter2: Iterator[ModelResponseStreamEvent]
-                ) -> AsyncIterator[ModelResponseStreamEvent]:
-                    async for event in iter1:
-                        yield event
-                    for event in iter2:
-                        yield event
-
-                async for event in chain_async_and_sync_iters(iterator, self._parts_manager.final_flush()):
+                async for event in iterator:
                     if isinstance(event, PartStartEvent):
                         if last_start_event:
                             end_event = part_end_event(event.part)
@@ -642,8 +634,7 @@ class StreamedResponse(ABC):
 
             self._event_iterator = iterator_with_part_end(
                 iterator_with_final_event(
-                    # TODO chain_async_and_sync_iters(iterator, self._parts_manager.final_flush())
-                    self._get_event_iterator()
+                    chain_async_and_sync_iters(self._get_event_iterator(), self._parts_manager.final_flush())
                 )
             )
         return self._event_iterator
@@ -702,6 +693,16 @@ class StreamedResponse(ABC):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         raise NotImplementedError()
+
+
+async def chain_async_and_sync_iters(
+    iter1: AsyncIterator[ModelResponseStreamEvent], iter2: Iterator[ModelResponseStreamEvent]
+) -> AsyncIterator[ModelResponseStreamEvent]:
+    """Chain an async iterator with a sync iterator."""
+    async for event in iter1:
+        yield event
+    for event in iter2:
+        yield event
 
 
 ALLOW_MODEL_REQUESTS = True

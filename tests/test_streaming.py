@@ -2110,7 +2110,10 @@ async def test_run_stream_finalize_with_incomplete_thinking_tag():
     ) -> AsyncIterator[str]:
         yield '<thi'
 
-    agent = Agent(FunctionModel(stream_function=stream_with_incomplete_thinking))
+    function_model = FunctionModel(stream_function=stream_with_incomplete_thinking)
+    function_model.profile.thinking_tags = ('<think>', '</think>')
+
+    agent = Agent(function_model)
 
     events: list[Any] = []
     async for event in agent.run_stream_events('Hello'):
