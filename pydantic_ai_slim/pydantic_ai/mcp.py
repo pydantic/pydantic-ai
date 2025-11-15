@@ -204,7 +204,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     @property
     def instructions(self) -> str | None:
         """Access the instructions sent by the MCP server during initialization."""
-        if getattr(self, '_server_info', None) is None:
+        if getattr(self, '_instructions', None) is None:
             raise AttributeError(
                 f'The `{self.__class__.__name__}.instructions` is only available after initialization.'
             )
