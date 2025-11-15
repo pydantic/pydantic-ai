@@ -3230,7 +3230,11 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
         await asyncio.sleep(3)
 
         m = GoogleModel('gemini-2.5-pro', provider=google_provider)
-        agent = Agent(m, system_prompt='You are a helpful assistant.', builtin_tools=[FileSearchTool(vector_store_ids=[store.name])])
+        agent = Agent(
+            m,
+            system_prompt='You are a helpful assistant.',
+            builtin_tools=[FileSearchTool(vector_store_ids=[store.name])],
+        )
 
         result = await agent.run('What is the capital of France?')
         assert result.all_messages() == snapshot()
@@ -3250,7 +3254,6 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
     import asyncio
     import os
     import tempfile
-    from typing import Any
 
     from pydantic_ai.builtin_tools import FileSearchTool
 
@@ -3273,7 +3276,11 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
         await asyncio.sleep(3)
 
         m = GoogleModel('gemini-2.5-pro', provider=google_provider)
-        agent = Agent(m, system_prompt='You are a helpful assistant.', builtin_tools=[FileSearchTool(vector_store_ids=[store.name])])
+        agent = Agent(
+            m,
+            system_prompt='You are a helpful assistant.',
+            builtin_tools=[FileSearchTool(vector_store_ids=[store.name])],
+        )
 
         event_parts: list[Any] = []
         async with agent.iter(user_prompt='What is the capital of France?') as agent_run:
@@ -3293,3 +3300,19 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
         os.unlink(test_file_path)
         if store is not None and store.name is not None:
             await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
+
+
+async def test_cache_point_filtering():
+    """Test that CachePoint is filtered out in Google internal method."""
+    from pydantic_ai import CachePoint
+
+    # Create a minimal GoogleModel instance to test _map_user_prompt
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    # Test that CachePoint in a list is handled (triggers line 606)
+    content = await model._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
+
+    # CachePoint should be filtered out, only text content should remain
+    assert len(content) == 2
+    assert content[0] == {'text': 'text before'}
+    assert content[1] == {'text': 'text after'}

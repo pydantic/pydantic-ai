@@ -19,6 +19,7 @@ from pydantic_ai import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     FinishReason,
     ImageUrl,
@@ -240,7 +241,7 @@ class BedrockConverseModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider('gateway/converse' if provider == 'gateway' else provider)
+            provider = infer_provider('gateway/bedrock' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = cast('BedrockRuntimeClient', provider.client)
 
@@ -672,6 +673,9 @@ class BedrockConverseModel(Model):
                         content.append({'video': video})
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
+                elif isinstance(item, CachePoint):
+                    # Bedrock support has not been implemented yet: https://github.com/pydantic/pydantic-ai/issues/3418
+                    pass
                 else:
                     assert_never(item)
         return [{'role': 'user', 'content': content}]

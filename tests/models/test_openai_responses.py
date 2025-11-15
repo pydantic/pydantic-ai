@@ -1326,6 +1326,14 @@ async def test_reasoning_model_with_temperature(allow_model_requests: None, open
 
 
 @pytest.mark.vcr()
+async def test_gpt5_pro(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-5-pro', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+    result = await agent.run('What is the capital of Mexico?')
+    assert result.output == snapshot('Mexico City (Ciudad de México).')
+
+
+@pytest.mark.vcr()
 async def test_tool_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -7465,7 +7473,11 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
         await asyncio.sleep(2)
 
         m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
-        agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[FileSearchTool(vector_store_ids=[vector_store.id])])
+        agent = Agent(
+            m,
+            instructions='You are a helpful assistant.',
+            builtin_tools=[FileSearchTool(vector_store_ids=[vector_store.id])],
+        )
 
         result = await agent.run('What is the capital of France?')
         assert result.all_messages() == snapshot()
@@ -7513,7 +7525,11 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
         await asyncio.sleep(2)
 
         m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
-        agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[FileSearchTool(vector_store_ids=[vector_store.id])])
+        agent = Agent(
+            m,
+            instructions='You are a helpful assistant.',
+            builtin_tools=[FileSearchTool(vector_store_ids=[vector_store.id])],
+        )
 
         event_parts: list[Any] = []
         async with agent.iter(user_prompt='What is the capital of France?') as agent_run:

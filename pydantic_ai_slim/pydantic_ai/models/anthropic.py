@@ -19,6 +19,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -58,6 +59,7 @@ try:
     from anthropic.types.beta import (
         BetaBase64PDFBlockParam,
         BetaBase64PDFSourceParam,
+        BetaCacheControlEphemeralParam,
         BetaCitationsDelta,
         BetaCodeExecutionTool20250522Param,
         BetaCodeExecutionToolResultBlock,
@@ -146,6 +148,22 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """Determine whether the model should generate a thinking block.
 
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking) for more information.
+    """
+
+    anthropic_cache_tool_definitions: bool
+    """Whether to add `cache_control` to the last tool definition.
+
+    When enabled, the last tool in the `tools` array will have `cache_control` set,
+    allowing Anthropic to cache tool definitions and reduce costs.
+    See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
+    """
+
+    anthropic_cache_instructions: bool
+    """Whether to add `cache_control` to the last system prompt block.
+
+    When enabled, the last system prompt will have `cache_control` set,
+    allowing Anthropic to cache system instructions and reduce costs.
+    See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
 
@@ -289,7 +307,7 @@ class AnthropicModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
         # standalone function to make it easier to override
-        tools = self._get_tools(model_request_parameters)
+        tools = self._get_tools(model_request_parameters, model_settings)
         tools, mcp_servers, beta_features = self._add_builtin_tools(tools, model_request_parameters)
 
         tool_choice: BetaToolChoiceParam | None
@@ -305,7 +323,7 @@ class AnthropicModel(Model):
             if (allow_parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
                 tool_choice['disable_parallel_tool_use'] = not allow_parallel_tool_calls
 
-        system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters)
+        system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -411,8 +429,19 @@ class AnthropicModel(Model):
             _provider_url=self._provider.base_url,
         )
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[BetaToolUnionParam]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+    def _get_tools(
+        self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
+    ) -> list[BetaToolUnionParam]:
+        tools: list[BetaToolUnionParam] = [
+            self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()
+        ]
+
+        # Add cache_control to the last tool if enabled
+        if tools and model_settings.get('anthropic_cache_tool_definitions'):
+            last_tool = tools[-1]
+            last_tool['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral')
+
+        return tools
 
     def _add_builtin_tools(
         self, tools: list[BetaToolUnionParam], model_request_parameters: ModelRequestParameters
@@ -464,8 +493,11 @@ class AnthropicModel(Model):
         return tools, mcp_servers, beta_features
 
     async def _map_message(  # noqa: C901
-        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
-    ) -> tuple[str, list[BetaMessageParam]]:
+        self,
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+        model_settings: AnthropicModelSettings,
+    ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
@@ -477,7 +509,10 @@ class AnthropicModel(Model):
                         system_prompt_parts.append(request_part.content)
                     elif isinstance(request_part, UserPromptPart):
                         async for content in self._map_user_prompt(request_part):
-                            user_content_params.append(content)
+                            if isinstance(content, CachePoint):
+                                self._add_cache_control_to_last_param(user_content_params)
+                            else:
+                                user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
                         tool_result_block_param = BetaToolResultBlockParam(
                             tool_use_id=_guard_tool_call_id(t=request_part),
@@ -637,12 +672,46 @@ class AnthropicModel(Model):
         if instructions := self._get_instructions(messages, model_request_parameters):
             system_prompt_parts.insert(0, instructions)
         system_prompt = '\n\n'.join(system_prompt_parts)
+
+        # If anthropic_cache_instructions is enabled, return system prompt as a list with cache_control
+        if system_prompt and model_settings.get('anthropic_cache_instructions'):
+            system_prompt_blocks = [
+                BetaTextBlockParam(
+                    type='text', text=system_prompt, cache_control=BetaCacheControlEphemeralParam(type='ephemeral')
+                )
+            ]
+            return system_prompt_blocks, anthropic_messages
+
         return system_prompt, anthropic_messages
+
+    @staticmethod
+    def _add_cache_control_to_last_param(params: list[BetaContentBlockParam]) -> None:
+        """Add cache control to the last content block param.
+
+        See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
+        """
+        if not params:
+            raise UserError(
+                'CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to. '
+                'To cache system instructions or tool definitions, use the `anthropic_cache_instructions` or `anthropic_cache_tool_definitions` settings instead.'
+            )
+
+        # Only certain types support cache_control
+        # See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#what-can-be-cached
+        cacheable_types = {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result'}
+        # Cast needed because BetaContentBlockParam is a union including response Block types (Pydantic models)
+        # that don't support dict operations, even though at runtime we only have request Param types (TypedDicts).
+        last_param = cast(dict[str, Any], params[-1])
+        if last_param['type'] not in cacheable_types:
+            raise UserError(f'Cache control not supported for param type: {last_param["type"]}')
+
+        # Add cache_control to the last param
+        last_param['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral')
 
     @staticmethod
     async def _map_user_prompt(
         part: UserPromptPart,
-    ) -> AsyncGenerator[BetaContentBlockParam]:
+    ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
         if isinstance(part.content, str):
             if part.content:  # Only yield non-empty text
                 yield BetaTextBlockParam(text=part.content, type='text')
@@ -651,6 +720,8 @@ class AnthropicModel(Model):
                 if isinstance(item, str):
                     if item:  # Only yield non-empty text
                         yield BetaTextBlockParam(text=item, type='text')
+                elif isinstance(item, CachePoint):
+                    yield item
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
                         yield BetaImageBlockParam(
@@ -717,6 +788,8 @@ def _map_usage(
         key: value for key, value in response_usage.model_dump().items() if isinstance(value, int)
     }
 
+    # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
+    # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens
     return usage.RequestUsage.extract(
         dict(model=model, usage=details),
         provider=provider,
