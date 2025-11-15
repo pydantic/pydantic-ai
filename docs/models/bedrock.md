@@ -74,6 +74,79 @@ model = BedrockConverseModel(model_name='us.amazon.nova-pro-v1:0')
 agent = Agent(model=model, model_settings=bedrock_model_settings)
 ```
 
+## Prompt Caching
+
+Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) on Anthropic models so you can reuse expensive context across requests. Pydantic AI exposes the same three strategies as Anthropic:
+
+1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker to cache everything before it in the current user message.
+2. **Cache System Instructions**: Enable [`BedrockModelSettings.bedrock_cache_instructions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_instructions] to append a cache point after the system prompt.
+3. **Cache Tool Definitions**: Enable [`BedrockModelSettings.bedrock_cache_tool_definitions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_tool_definitions] to cache your tool schemas.
+
+> [!NOTE]
+> AWS only serves cached content once a segment crosses the provider-specific minimum token thresholds (see the [Bedrock prompt caching docs](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html)). Short prompts or tool definitions below those limits will bypass the cache, so don't expect savings for tiny payloads.
+
+You can combine all of them:
+
+```python
+from pydantic_ai import Agent, CachePoint, RunContext
+from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+
+model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
+agent = Agent(
+    model,
+    system_prompt='Detailed instructions...',
+    model_settings=BedrockModelSettings(
+        bedrock_cache_instructions=True,
+        bedrock_cache_tool_definitions=True,
+    ),
+)
+
+
+@agent.tool
+async def search_docs(ctx: RunContext, query: str) -> str:
+    return f'Results for {query}'
+
+
+async def main():
+    result1 = await agent.run(
+        [
+            'Long cached context...',
+            CachePoint(),
+            'First question',
+        ]
+    )
+    result2 = await agent.run(
+        [
+            'Long cached context...',
+            CachePoint(),
+            'Second question',
+        ]
+    )
+    print(result1.output, result1.usage())
+    print(result2.output, result2.usage())
+```
+
+Access cache usage statistics via [`RequestUsage`][pydantic_ai.usage.RequestUsage]:
+
+```python
+from pydantic_ai import Agent, CachePoint
+
+agent = Agent('bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0')
+
+
+async def main():
+    result = await agent.run(
+        [
+            'Reference material...',
+            CachePoint(),
+            'What changed since last time?',
+        ]
+    )
+    usage = result.usage()
+    print(f'Cache writes: {usage.cache_write_tokens}')
+    print(f'Cache reads: {usage.cache_read_tokens}')
+```
+
 ## `provider` argument
 
 You can provide a custom `BedrockProvider` via the `provider` argument. This is useful when you want to specify credentials directly or use a custom boto3 client:
