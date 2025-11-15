@@ -7438,15 +7438,16 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
 
 @pytest.mark.vcr()
 async def test_openai_responses_model_file_search_tool(allow_model_requests: None, openai_api_key: str):
-    """Integration test for FileSearchTool with OpenAI."""
+    import asyncio
+    import os
+    import tempfile
+
     from openai import AsyncOpenAI
 
     from pydantic_ai.builtin_tools import FileSearchTool
     from pydantic_ai.providers.openai import OpenAIProvider
 
     async_client = AsyncOpenAI(api_key=openai_api_key)
-
-    import tempfile
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
         f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
@@ -7461,20 +7462,19 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
         vector_store = await async_client.vector_stores.create(name='test-file-search')
         await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
 
-        import asyncio
-
         await asyncio.sleep(2)
 
-        model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
-        agent = Agent(model=model, builtin_tools=[FileSearchTool(vector_store_ids=[vector_store.id])])
+        m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[FileSearchTool(vector_store_ids=[vector_store.id])])
 
-        result = await agent.run('What is the capital of France according to my files?')
+        result = await agent.run('What is the capital of France?')
+        assert result.all_messages() == snapshot()
 
-        assert 'Paris' in result.output or 'paris' in result.output.lower()
+        messages = result.all_messages()
+        result = await agent.run(user_prompt='Tell me about the Eiffel Tower.', message_history=messages)
+        assert result.new_messages() == snapshot()
 
     finally:
-        import os
-
         os.unlink(test_file_path)
         if file is not None:
             await async_client.files.delete(file.id)
@@ -7485,7 +7485,11 @@ async def test_openai_responses_model_file_search_tool(allow_model_requests: Non
 
 @pytest.mark.vcr()
 async def test_openai_responses_model_file_search_tool_stream(allow_model_requests: None, openai_api_key: str):
-    """Integration test for FileSearchTool streaming with OpenAI."""
+    import asyncio
+    import os
+    import tempfile
+    from typing import Any
+
     from openai import AsyncOpenAI
 
     from pydantic_ai.builtin_tools import FileSearchTool
@@ -7493,10 +7497,8 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
 
     async_client = AsyncOpenAI(api_key=openai_api_key)
 
-    import tempfile
-
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-        f.write('The Eiffel Tower is located in Paris, France.')
+        f.write('Paris is the capital of France. It is known for the Eiffel Tower.')
         test_file_path = f.name
 
     file = None
@@ -7508,25 +7510,26 @@ async def test_openai_responses_model_file_search_tool_stream(allow_model_reques
         vector_store = await async_client.vector_stores.create(name='test-file-search-stream')
         await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
 
-        import asyncio
-
         await asyncio.sleep(2)
 
-        model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
-        agent = Agent(model=model, builtin_tools=[FileSearchTool(vector_store_ids=[vector_store.id])])
+        m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[FileSearchTool(vector_store_ids=[vector_store.id])])
 
-        result_text: list[str] = []
-        async with agent.run_stream('Where is the Eiffel Tower according to my files?') as result:
-            async for text in result.stream_text(delta=False):
-                result_text.append(text)
-            output = await result.get_output()
+        event_parts: list[Any] = []
+        async with agent.iter(user_prompt='What is the capital of France?') as agent_run:
+            async for node in agent_run:
+                if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                    async with node.stream(agent_run.ctx) as request_stream:
+                        async for event in request_stream:
+                            event_parts.append(event)
 
-        assert len(result_text) > 0
-        assert 'Paris' in output or 'France' in output or 'paris' in output.lower()
+        assert agent_run.result is not None
+        messages = agent_run.result.all_messages()
+        assert messages == snapshot()
+
+        assert event_parts == snapshot()
 
     finally:
-        import os
-
         os.unlink(test_file_path)
         if file is not None:
             await async_client.files.delete(file.id)
