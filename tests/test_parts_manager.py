@@ -13,6 +13,7 @@ from pydantic_ai import (
     TextPart,
     TextPartDelta,
     ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
     UnexpectedModelBehavior,
@@ -28,21 +29,11 @@ def test_handle_text_deltas(vendor_part_id: str | None):
     assert manager.get_parts() == []
 
     events = list(manager.handle_text_delta(vendor_part_id=vendor_part_id, content='hello '))
-    assert len(events) == 1
-    event = events[0]
-    assert event == snapshot(
-        PartStartEvent(index=0, part=TextPart(content='hello ', part_kind='text'), event_kind='part_start')
-    )
+    assert events == snapshot([PartStartEvent(index=0, part=TextPart(content='hello '))])
     assert manager.get_parts() == snapshot([TextPart(content='hello ', part_kind='text')])
 
     events = list(manager.handle_text_delta(vendor_part_id=vendor_part_id, content='world'))
-    assert len(events) == 1, 'Test returned more than one event.'
-    event = events[0]
-    assert event == snapshot(
-        PartDeltaEvent(
-            index=0, delta=TextPartDelta(content_delta='world', part_delta_kind='text'), event_kind='part_delta'
-        )
-    )
+    assert events == snapshot([PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='world'))])
     assert manager.get_parts() == snapshot([TextPart(content='hello world', part_kind='text')])
 
 
@@ -50,43 +41,23 @@ def test_handle_dovetailed_text_deltas():
     manager = ModelResponsePartsManager()
 
     events = list(manager.handle_text_delta(vendor_part_id='first', content='hello '))
-    assert len(events) == 1, 'Test returned more than one event.'
-    event = events[0]
-    assert event == snapshot(
-        PartStartEvent(index=0, part=TextPart(content='hello ', part_kind='text'), event_kind='part_start')
-    )
+    assert events == snapshot([PartStartEvent(index=0, part=TextPart(content='hello '))])
     assert manager.get_parts() == snapshot([TextPart(content='hello ', part_kind='text')])
 
     events = list(manager.handle_text_delta(vendor_part_id='second', content='goodbye '))
-    assert len(events) == 1, 'Test returned more than one event.'
-    event = events[0]
-    assert event == snapshot(
-        PartStartEvent(index=1, part=TextPart(content='goodbye ', part_kind='text'), event_kind='part_start')
-    )
+    assert events == snapshot([PartStartEvent(index=1, part=TextPart(content='goodbye '))])
     assert manager.get_parts() == snapshot(
         [TextPart(content='hello ', part_kind='text'), TextPart(content='goodbye ', part_kind='text')]
     )
 
     events = list(manager.handle_text_delta(vendor_part_id='first', content='world'))
-    assert len(events) == 1, 'Test returned more than one event.'
-    event = events[0]
-    assert event == snapshot(
-        PartDeltaEvent(
-            index=0, delta=TextPartDelta(content_delta='world', part_delta_kind='text'), event_kind='part_delta'
-        )
-    )
+    assert events == snapshot([PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='world'))])
     assert manager.get_parts() == snapshot(
         [TextPart(content='hello world', part_kind='text'), TextPart(content='goodbye ', part_kind='text')]
     )
 
     events = list(manager.handle_text_delta(vendor_part_id='second', content='Samuel'))
-    assert len(events) == 1, 'Test returned more than one event.'
-    event = events[0]
-    assert event == snapshot(
-        PartDeltaEvent(
-            index=1, delta=TextPartDelta(content_delta='Samuel', part_delta_kind='text'), event_kind='part_delta'
-        )
-    )
+    assert events == snapshot([PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Samuel'))])
     assert manager.get_parts() == snapshot(
         [TextPart(content='hello world', part_kind='text'), TextPart(content='goodbye Samuel', part_kind='text')]
     )
@@ -307,11 +278,7 @@ def test_handle_mixed_deltas_without_text_part_id(text_vendor_part_id: str | Non
     manager = ModelResponsePartsManager()
 
     events = list(manager.handle_text_delta(vendor_part_id=text_vendor_part_id, content='hello '))
-    assert len(events) == 1, 'Test returned more than one event.'
-    event = events[0]
-    assert event == snapshot(
-        PartStartEvent(index=0, part=TextPart(content='hello ', part_kind='text'), event_kind='part_start')
-    )
+    assert events == snapshot([PartStartEvent(index=0, part=TextPart(content='hello '))])
     assert manager.get_parts() == snapshot([TextPart(content='hello ', part_kind='text')])
 
     event = manager.handle_tool_call_delta(
@@ -326,16 +293,8 @@ def test_handle_mixed_deltas_without_text_part_id(text_vendor_part_id: str | Non
     )
 
     events = list(manager.handle_text_delta(vendor_part_id=text_vendor_part_id, content='world'))
-    assert len(events) == 1, 'Test returned more than one event.'
-    event = events[0]
     if text_vendor_part_id is None:
-        assert event == snapshot(
-            PartStartEvent(
-                index=2,
-                part=TextPart(content='world', part_kind='text'),
-                event_kind='part_start',
-            )
-        )
+        assert events == snapshot([PartStartEvent(index=2, part=TextPart(content='world'))])
         assert manager.get_parts() == snapshot(
             [
                 TextPart(content='hello ', part_kind='text'),
@@ -344,11 +303,7 @@ def test_handle_mixed_deltas_without_text_part_id(text_vendor_part_id: str | Non
             ]
         )
     else:
-        assert event == snapshot(
-            PartDeltaEvent(
-                index=0, delta=TextPartDelta(content_delta='world', part_delta_kind='text'), event_kind='part_delta'
-            )
-        )
+        assert events == snapshot([PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='world'))])
         assert manager.get_parts() == snapshot(
             [
                 TextPart(content='hello world', part_kind='text'),
@@ -465,14 +420,12 @@ def test_handle_thinking_delta_no_vendor_id_with_existing_thinking_part():
     manager = ModelResponsePartsManager()
 
     # Add a thinking part first
-    event = next(manager.handle_thinking_delta(vendor_part_id='first', content='initial thought', signature=None))
-    assert isinstance(event, PartStartEvent)
-    assert event.index == 0
+    events = list(manager.handle_thinking_delta(vendor_part_id='first', content='initial thought', signature=None))
+    assert events == snapshot([PartStartEvent(index=0, part=ThinkingPart(content='initial thought'))])
 
     # Now add another thinking delta with no vendor_part_id - should update the latest thinking part
-    event = next(manager.handle_thinking_delta(vendor_part_id=None, content=' more', signature=None))
-    assert isinstance(event, PartDeltaEvent)
-    assert event.index == 0
+    events = list(manager.handle_thinking_delta(vendor_part_id=None, content=' more', signature=None))
+    assert events == snapshot([PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' more'))])
 
     parts = manager.get_parts()
     assert parts == snapshot([ThinkingPart(content='initial thought more')])
@@ -494,9 +447,8 @@ def test_handle_thinking_delta_wrong_part_type():
 def test_handle_thinking_delta_new_part_with_vendor_id():
     manager = ModelResponsePartsManager()
 
-    event = next(manager.handle_thinking_delta(vendor_part_id='thinking', content='new thought', signature=None))
-    assert isinstance(event, PartStartEvent)
-    assert event.index == 0
+    events = list(manager.handle_thinking_delta(vendor_part_id='thinking', content='new thought', signature=None))
+    assert events == snapshot([PartStartEvent(index=0, part=ThinkingPart(content='new thought'))])
 
     parts = manager.get_parts()
     assert parts == snapshot([ThinkingPart(content='new thought')])
@@ -563,9 +515,9 @@ def test_handle_thinking_delta_when_latest_is_not_thinking():
 
     # Call handle_thinking_delta with vendor_part_id=None
     # Should create NEW ThinkingPart instead of trying to update TextPart
-    event = next(manager.handle_thinking_delta(vendor_part_id=None, content='thinking'))
+    events = list(manager.handle_thinking_delta(vendor_part_id=None, content='thinking'))
 
-    assert event == snapshot(PartStartEvent(index=1, part=ThinkingPart(content='thinking')))
+    assert events == snapshot([PartStartEvent(index=1, part=ThinkingPart(content='thinking'))])
     assert manager.get_parts() == snapshot([TextPart(content='text'), ThinkingPart(content='thinking')])
 
 
