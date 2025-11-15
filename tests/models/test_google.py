@@ -3205,12 +3205,13 @@ def _generate_response_with_texts(response_id: str, texts: list[str]) -> Generat
 
 @pytest.mark.vcr()
 async def test_google_model_file_search_tool(allow_model_requests: None, google_provider: GoogleProvider):
-    """Integration test for FileSearchTool with Google."""
+    import asyncio
+    import os
+    import tempfile
+
     from pydantic_ai.builtin_tools import FileSearchTool
 
     client = google_provider.client
-
-    import tempfile
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
         f.write('Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.')
@@ -3226,20 +3227,19 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                 file_search_store_name=store.name, file=f, config={'mime_type': 'text/plain'}
             )
 
-        import asyncio
-
         await asyncio.sleep(3)
 
-        model = GoogleModel('gemini-2.5-pro', provider=google_provider)
-        agent = Agent(model=model, builtin_tools=[FileSearchTool(vector_store_ids=[store.name])])
+        m = GoogleModel('gemini-2.5-pro', provider=google_provider)
+        agent = Agent(m, system_prompt='You are a helpful assistant.', builtin_tools=[FileSearchTool(vector_store_ids=[store.name])])
 
-        result = await agent.run('What is the capital of France according to my files?')
+        result = await agent.run('What is the capital of France?')
+        assert result.all_messages() == snapshot()
 
-        assert 'Paris' in result.output or 'paris' in result.output.lower()
+        messages = result.all_messages()
+        result = await agent.run(user_prompt='Tell me about the Eiffel Tower.', message_history=messages)
+        assert result.new_messages() == snapshot()
 
     finally:
-        import os
-
         os.unlink(test_file_path)
         if store is not None and store.name is not None:
             await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
@@ -3247,15 +3247,17 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
 
 @pytest.mark.vcr()
 async def test_google_model_file_search_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):
-    """Integration test for FileSearchTool streaming with Google."""
+    import asyncio
+    import os
+    import tempfile
+    from typing import Any
+
     from pydantic_ai.builtin_tools import FileSearchTool
 
     client = google_provider.client
 
-    import tempfile
-
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-        f.write('The Louvre Museum is located in Paris, France. It houses the Mona Lisa.')
+        f.write('Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.')
         test_file_path = f.name
 
     store = None
@@ -3268,25 +3270,26 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 file_search_store_name=store.name, file=f, config={'mime_type': 'text/plain'}
             )
 
-        import asyncio
-
         await asyncio.sleep(3)
 
-        model = GoogleModel('gemini-2.5-pro', provider=google_provider)
-        agent = Agent(model=model, builtin_tools=[FileSearchTool(vector_store_ids=[store.name])])
+        m = GoogleModel('gemini-2.5-pro', provider=google_provider)
+        agent = Agent(m, system_prompt='You are a helpful assistant.', builtin_tools=[FileSearchTool(vector_store_ids=[store.name])])
 
-        result_text: list[str] = []
-        async with agent.run_stream('Where is the Louvre Museum according to my files?') as result:
-            async for text in result.stream_text(delta=False):
-                result_text.append(text)
-            output = await result.get_output()
+        event_parts: list[Any] = []
+        async with agent.iter(user_prompt='What is the capital of France?') as agent_run:
+            async for node in agent_run:
+                if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                    async with node.stream(agent_run.ctx) as request_stream:
+                        async for event in request_stream:
+                            event_parts.append(event)
 
-        assert len(result_text) > 0
-        assert 'Paris' in output or 'France' in output or 'Louvre' in output or 'paris' in output.lower()
+        assert agent_run.result is not None
+        messages = agent_run.result.all_messages()
+        assert messages == snapshot()
+
+        assert event_parts == snapshot()
 
     finally:
-        import os
-
         os.unlink(test_file_path)
         if store is not None and store.name is not None:
             await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
