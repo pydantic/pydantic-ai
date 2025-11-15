@@ -9,7 +9,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '137'
+      - '234'
       content-type:
       - application/x-www-form-urlencoded
     method: POST
@@ -21,7 +21,7 @@ interactions:
       cache-control:
       - no-cache, no-store, max-age=0, must-revalidate
       content-length:
-      - '1520'
+      - '1518'
       content-type:
       - application/json; charset=utf-8
       expires:
@@ -37,9 +37,9 @@ interactions:
     parsed_body:
       access_token: scrubbed
       expires_in: 3599
-      id_token: eyJhbGciOiJSUzI1NiIsImtpZCI6IjRmZWI0NGYwZjdhN2UyN2M3YzQwMzM3OWFmZjIwYWY1YzhjZjUyZGMiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhenAiOiIzMjU1NTk0MDU1OS5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbSIsImF1ZCI6IjMyNTU1OTQwNTU5LmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29tIiwic3ViIjoiMTA0MDMyODc1Njg3NDUwNzA3NzUwIiwiaGQiOiJjYXB0dXJlZGtub3dsZWRnZS5haSIsImVtYWlsIjoiY29ucmFkQGNhcHR1cmVka25vd2xlZGdlLmFpIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsImF0X2hhc2giOiJ2emc3MEN0a1FhcnBJNVMzYWJZY1ZnIiwiaWF0IjoxNzYyOTU2NjUxLCJleHAiOjE3NjI5NjAyNTF9.P0kjqqgbGDIEfRkaCL76T1rRV1CC6ypQjWLlq8IWDgFhA6xMLOgcoN3eCU0yFg8lgoY_SI2C2oaQWMep9dNZbF4yil376ohzyuxkzyjjjfWmf-IuxDS9_s4IbIOut90XLM_R1SxWA-nc_nrki3OeYbvss0BWh28_BAvYLuMI4EVqW5QnlW1VmYj46kgn80YW9PEwSwei1h99ew9KLg7e9Fhb1LIXdU7zu1NkGjbvygirN3NKEZkry55w2U_h8ItPRes0MqJUFqpJzto92-GtpKhPjbIvmPJfmepxec9Tq-VU5IK24RqmYtNmzT5ZgyOXQtUni-9zhKjWsP8kIbGTEg
-      scope: openid https://www.googleapis.com/auth/accounts.reauth https://www.googleapis.com/auth/appengine.admin https://www.googleapis.com/auth/cloud-platform
-        https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/sqlservice.login
+      id_token: scrubbed
+      scope: https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/sqlservice.login openid https://www.googleapis.com/auth/compute
+        https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/accounts.reauth https://www.googleapis.com/auth/appengine.admin
       token_type: Bearer
     status:
       code: 200
@@ -57,7 +57,7 @@ interactions:
       content-type:
       - application/json
       host:
-      - aiplatform.googleapis.com
+      - us-central1-aiplatform.googleapis.com
     method: POST
     parsed_body:
       contents:
@@ -86,7 +86,7 @@ interactions:
         responseMimeType: application/json
         responseModalities:
         - TEXT
-    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.5-flash:generateContent
+    uri: https://us-central1-aiplatform.googleapis.com/v1beta1/projects/ck-nest-dev/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
@@ -103,7 +103,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -1.1582396030426025
+      - avgLogprobs: -0.5180281400680542
         content:
           parts:
           - text: |-
@@ -120,9 +120,9 @@ interactions:
               }
           role: model
         finishReason: STOP
-      createTime: '2025-11-12T14:10:52.206764Z'
+      createTime: '2025-11-15T10:04:52.070545Z'
       modelVersion: gemini-2.5-flash
-      responseId: bJUUaazPDI-Kn9kPwNOc-AQ
+      responseId: RFAYaZGnBIaBm9IPkPrjkA8
       usageMetadata:
         candidatesTokenCount: 48
         candidatesTokensDetails:
@@ -132,8 +132,8 @@ interactions:
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 19
-        thoughtsTokenCount: 153
-        totalTokenCount: 220
+        thoughtsTokenCount: 100
+        totalTokenCount: 167
         trafficType: ON_DEMAND
     status:
       code: 200
