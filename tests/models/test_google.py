@@ -3226,6 +3226,29 @@ async def test_google_recursive_schema_native_output_gemini_2_5(
     assert {child.value for child in result.output.children} == {'B', 'C'}
 
 
+async def test_google_recursive_schema_native_output_gemini_2_5_gla(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    """Test recursive schemas with gemini-2.5-flash on GLA.
+
+    This previously failed with 500 errors but should now work after Google's fix.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    class TreeNode(BaseModel):
+        """A node in a tree structure."""
+
+        value: str
+        children: list[TreeNode] = []
+
+    agent = Agent(m, output_type=NativeOutput(TreeNode))
+
+    result = await agent.run('Create a simple tree with root "A" and two children "B" and "C"')
+    assert result.output.value == snapshot('A')
+    assert len(result.output.children) == snapshot(2)
+    assert {child.value for child in result.output.children} == snapshot({'B', 'C'})
+
+
 async def test_google_dict_with_additional_properties_native_output(
     allow_model_requests: None, google_provider: GoogleProvider
 ):
