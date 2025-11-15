@@ -320,7 +320,8 @@ async def main():
                         content='What is the capital of France?',
                         timestamp=datetime.datetime(...),
                     )
-                ]
+                ],
+                run_id='...',
             )
         ),
         CallToolsNode(
@@ -329,6 +330,7 @@ async def main():
                 usage=RequestUsage(input_tokens=56, output_tokens=7),
                 model_name='gpt-5',
                 timestamp=datetime.datetime(...),
+                run_id='...',
             )
         ),
         End(data=FinalResult(output='The capital of France is Paris.')),
@@ -382,7 +384,8 @@ async def main():
                             content='What is the capital of France?',
                             timestamp=datetime.datetime(...),
                         )
-                    ]
+                    ],
+                    run_id='...',
                 )
             ),
             CallToolsNode(
@@ -391,6 +394,7 @@ async def main():
                     usage=RequestUsage(input_tokens=56, output_tokens=7),
                     model_name='gpt-5',
                     timestamp=datetime.datetime(...),
+                    run_id='...',
                 )
             ),
             End(data=FinalResult(output='The capital of France is Paris.')),
@@ -1044,7 +1048,8 @@ with capture_run_messages() as messages:  # (2)!
                         content='Please get me the volume of a box with size 6.',
                         timestamp=datetime.datetime(...),
                     )
-                ]
+                ],
+                run_id='...',
             ),
             ModelResponse(
                 parts=[
@@ -1057,6 +1062,7 @@ with capture_run_messages() as messages:  # (2)!
                 usage=RequestUsage(input_tokens=62, output_tokens=4),
                 model_name='gpt-5',
                 timestamp=datetime.datetime(...),
+                run_id='...',
             ),
             ModelRequest(
                 parts=[
@@ -1066,7 +1072,8 @@ with capture_run_messages() as messages:  # (2)!
                         tool_call_id='pyd_ai_tool_call_id',
                         timestamp=datetime.datetime(...),
                     )
-                ]
+                ],
+                run_id='...',
             ),
             ModelResponse(
                 parts=[
@@ -1079,6 +1086,7 @@ with capture_run_messages() as messages:  # (2)!
                 usage=RequestUsage(input_tokens=72, output_tokens=8),
                 model_name='gpt-5',
                 timestamp=datetime.datetime(...),
+                run_id='...',
             ),
         ]
         """

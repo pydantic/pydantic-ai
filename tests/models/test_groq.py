@@ -165,17 +165,10 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.usage() == snapshot(RunUsage(requests=1))
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse(
-                parts=[TextPart(content='world')],
-                model_name='llama-3.3-70b-versatile-123',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                provider_name='groq',
-                provider_details={'finish_reason': 'stop'},
-                provider_response_id='123',
-                finish_reason='stop',
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
             ),
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 model_name='llama-3.3-70b-versatile-123',
@@ -184,6 +177,21 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                model_name='llama-3.3-70b-versatile-123',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                provider_name='groq',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -224,7 +232,10 @@ async def test_request_structured_response(allow_model_requests: None):
     assert result.output == [1, 2, 123]
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -239,6 +250,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -248,7 +260,8 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -313,7 +326,8 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[
                     SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -330,6 +344,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -339,7 +354,8 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -356,6 +372,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -365,7 +382,8 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -375,6 +393,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -476,7 +495,10 @@ async def test_stream_structured(allow_model_requests: None):
     assert result.usage() == snapshot(RunUsage(requests=1))
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -489,6 +511,7 @@ async def test_stream_structured(allow_model_requests: None):
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='groq',
                 provider_response_id='x',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -498,7 +521,8 @@ async def test_stream_structured(allow_model_requests: None):
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -581,7 +605,8 @@ async def test_image_as_binary_content_tool_response(
                         ],
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_wkpd')],
@@ -592,6 +617,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id='chatcmpl-3c327c89-e9f5-4aac-a5d5-190e6f6f25c9',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -608,7 +634,8 @@ async def test_image_as_binary_content_tool_response(
                         ],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The fruit in the image is a kiwi.')],
@@ -619,6 +646,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-82dfad42-6a28-4089-82c3-c8633f626c0d',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -690,6 +718,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
@@ -700,6 +729,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-7586b6a9-fb4b-4ec7-86a0-59f0a77844cf',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -725,7 +755,8 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
                         content='What is the weather in San Francisco today?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -966,6 +997,7 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='stub',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -993,7 +1025,8 @@ async def test_groq_model_web_search_tool_stream(allow_model_requests: None, gro
                         content='What is the weather in San Francisco today?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1131,6 +1164,7 @@ search(What is the weather in San Francisco today?)
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='stub',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1884,6 +1918,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
             ModelRequest(
                 parts=[UserPromptPart(content='I want a recipe to cook Uruguayan alfajores.', timestamp=IsDatetime())],
                 instructions='You are a chef.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
@@ -1894,6 +1929,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1908,6 +1944,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
             ModelRequest(
                 parts=[UserPromptPart(content='I want a recipe to cook Uruguayan alfajores.', timestamp=IsDatetime())],
                 instructions='You are a chef.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
@@ -1918,6 +1955,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-9748c1af-1065-410a-969a-d7fb48039fbb',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1927,6 +1965,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                     )
                 ],
                 instructions='You are a chef.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
@@ -1937,6 +1976,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-994aa228-883a-498c-8b20-9655d770b697',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1968,6 +2008,7 @@ async def test_groq_model_thinking_part_iter(allow_model_requests: None, groq_ap
                     )
                 ],
                 instructions='You are a chef.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2054,6 +2095,7 @@ Enjoy your homemade Uruguayan alfajores!\
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-4ef92b12-fb9d-486f-8b98-af9b5ecac736',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3305,6 +3347,7 @@ Enjoy your homemade Uruguayan alfajores!\
                     )
                 ],
                 instructions='You are a chef.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3411,6 +3454,7 @@ By following these steps, you can create authentic Argentinian alfajores that sh
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-dd0af56b-f71d-4101-be2f-89efcf3f05ac',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -5249,6 +5293,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                     )
                 ],
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5262,6 +5307,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 finish_reason='error',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5286,6 +5332,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                     )
                 ],
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5305,6 +5352,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5316,6 +5364,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                     )
                 ],
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5331,6 +5380,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -5364,6 +5414,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                     )
                 ],
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5384,6 +5435,7 @@ We need to output the call.\
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_response_id='chatcmpl-4e0ca299-7515-490a-a98a-16d7664d4fba',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5408,6 +5460,7 @@ We need to output the call.\
                     )
                 ],
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5425,6 +5478,7 @@ We need to output the call.\
                 provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id='chatcmpl-fffa1d41-1763-493a-9ced-083bd3f2d98b',
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5436,6 +5490,7 @@ We need to output the call.\
                     )
                 ],
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The tool call succeeded with the name "test_name".')],
@@ -5446,6 +5501,7 @@ We need to output the call.\
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-fe6b5685-166f-4c71-9cd7-3d5a97301bf1',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -5483,7 +5539,8 @@ async def test_groq_native_output(allow_model_requests: None, groq_api_key: str)
                         content='What is the largest city in Mexico?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5499,6 +5556,7 @@ async def test_groq_native_output(allow_model_requests: None, groq_api_key: str)
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -5524,7 +5582,8 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
                         content='What is the largest city in Mexico?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5540,6 +5599,7 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
                 provider_details={'finish_reason': 'stop'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )

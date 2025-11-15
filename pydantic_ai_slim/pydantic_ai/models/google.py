@@ -19,6 +19,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     FilePart,
     FileUrl,
     FinishReason,
@@ -204,7 +205,7 @@ class GoogleModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider('gateway/gemini' if provider == 'gateway' else provider)
+            provider = infer_provider('gateway/google-vertex' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = provider.client
 
@@ -602,6 +603,9 @@ class GoogleModel(Model):
                     else:
                         file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
                         content.append({'file_data': file_data_dict})  # pragma: lax no cover
+                elif isinstance(item, CachePoint):
+                    # Google Gemini doesn't support prompt caching via CachePoint
+                    pass
                 else:
                     assert_never(item)
         return content
