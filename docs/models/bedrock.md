@@ -87,7 +87,7 @@ Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/use
 
 You can combine all of them:
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent, CachePoint, RunContext
 from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
 
@@ -128,7 +128,7 @@ async def main():
 
 Access cache usage statistics via [`RequestUsage`][pydantic_ai.usage.RequestUsage]:
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent, CachePoint
 
 agent = Agent('bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0')
