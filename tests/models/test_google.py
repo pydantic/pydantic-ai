@@ -3388,3 +3388,19 @@ def _generate_response_with_texts(response_id: str, texts: list[str]) -> Generat
             ],
         }
     )
+
+
+async def test_cache_point_filtering():
+    """Test that CachePoint is filtered out in Google internal method."""
+    from pydantic_ai import CachePoint
+
+    # Create a minimal GoogleModel instance to test _map_user_prompt
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    # Test that CachePoint in a list is handled (triggers line 606)
+    content = await model._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
+
+    # CachePoint should be filtered out, only text content should remain
+    assert len(content) == 2
+    assert content[0] == {'text': 'text before'}
+    assert content[1] == {'text': 'text after'}

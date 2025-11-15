@@ -158,7 +158,11 @@ BASE_ACTIVITY_CONFIG = ActivityConfig(
 
 @pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
-    async with await WorkflowEnvironment.start_local(port=TEMPORAL_PORT, ui=True) as env:  # pyright: ignore[reportUnknownMemberType]
+    async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
+        port=TEMPORAL_PORT,
+        ui=True,
+        dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+    ) as env:
         yield env
 
 
@@ -208,7 +212,7 @@ async def test_simple_agent_run_in_workflow(allow_model_requests: None, client: 
         workflows=[SimpleAgentWorkflow],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+        output = await client.execute_workflow(
             SimpleAgentWorkflow.run,
             args=['What is the capital of Mexico?'],
             id=SimpleAgentWorkflow.__name__,
@@ -316,7 +320,7 @@ async def test_complex_agent_run_in_workflow(
         workflows=[ComplexAgentWorkflow],
         plugins=[AgentPlugin(complex_temporal_agent)],
     ):
-        output = await client_with_logfire.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+        output = await client_with_logfire.execute_workflow(
             ComplexAgentWorkflow.run,
             args=[
                 'Tell me: the capital of the country; the weather there; the product name',
@@ -1033,7 +1037,7 @@ async def test_multiple_agents(allow_model_requests: None, client: Client):
         workflows=[SimpleAgentWorkflow, ComplexAgentWorkflow],
         plugins=[AgentPlugin(simple_temporal_agent), AgentPlugin(complex_temporal_agent)],
     ):
-        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+        output = await client.execute_workflow(
             SimpleAgentWorkflow.run,
             args=['What is the capital of Mexico?'],
             id=SimpleAgentWorkflow.__name__,
@@ -1041,7 +1045,7 @@ async def test_multiple_agents(allow_model_requests: None, client: Client):
         )
         assert output == snapshot('The capital of Mexico is Mexico City.')
 
-        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+        output = await client.execute_workflow(
             ComplexAgentWorkflow.run,
             args=[
                 'Tell me: the capital of the country; the weather there; the product name',
@@ -1235,7 +1239,7 @@ async def test_temporal_agent_run_sync_in_workflow(allow_model_requests: None, c
             UserError,
             snapshot('`agent.run_sync()` cannot be used inside a Temporal workflow. Use `await agent.run()` instead.'),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithRunSync.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunSync.__name__,
@@ -1265,7 +1269,7 @@ async def test_temporal_agent_run_stream_in_workflow(allow_model_requests: None,
                 '`agent.run_stream()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithRunStream.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunStream.__name__,
@@ -1293,7 +1297,7 @@ async def test_temporal_agent_run_stream_events_in_workflow(allow_model_requests
                 '`agent.run_stream_events()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithRunStreamEvents.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunStreamEvents.__name__,
@@ -1324,7 +1328,7 @@ async def test_temporal_agent_iter_in_workflow(allow_model_requests: None, clien
                 '`agent.iter()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithIter.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithIter.__name__,
@@ -1360,7 +1364,7 @@ async def test_temporal_agent_run_in_workflow_with_event_stream_handler(allow_mo
                 'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithEventStreamHandler.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithEventStreamHandler.__name__,
@@ -1389,7 +1393,7 @@ async def test_temporal_agent_run_in_workflow_with_model(allow_model_requests: N
                 'Model cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithRunModel.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunModel.__name__,
@@ -1418,7 +1422,7 @@ async def test_temporal_agent_run_in_workflow_with_toolsets(allow_model_requests
                 'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithRunToolsets.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunToolsets.__name__,
@@ -1447,7 +1451,7 @@ async def test_temporal_agent_override_model_in_workflow(allow_model_requests: N
                 'Model cannot be contextually overridden inside a Temporal workflow, it must be set at agent creation time.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithOverrideModel.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithOverrideModel.__name__,
@@ -1476,7 +1480,7 @@ async def test_temporal_agent_override_toolsets_in_workflow(allow_model_requests
                 'Toolsets cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithOverrideToolsets.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithOverrideToolsets.__name__,
@@ -1505,7 +1509,7 @@ async def test_temporal_agent_override_tools_in_workflow(allow_model_requests: N
                 'Tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 SimpleAgentWorkflowWithOverrideTools.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithOverrideTools.__name__,
@@ -1529,7 +1533,7 @@ async def test_temporal_agent_override_deps_in_workflow(allow_model_requests: No
         workflows=[SimpleAgentWorkflowWithOverrideDeps],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+        output = await client.execute_workflow(
             SimpleAgentWorkflowWithOverrideDeps.run,
             args=['What is the capital of Mexico?'],
             id=SimpleAgentWorkflowWithOverrideDeps.__name__,
@@ -1573,7 +1577,7 @@ async def test_temporal_agent_sync_tool_activity_disabled(allow_model_requests: 
                 "Temporal activity config for tool 'get_weather' has been explicitly set to `False` (activity disabled), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead."
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 AgentWorkflowWithSyncToolActivityDisabled.run,
                 args=['What is the weather in Mexico City?'],
                 id=AgentWorkflowWithSyncToolActivityDisabled.__name__,
@@ -1623,7 +1627,7 @@ async def test_temporal_model_stream_direct(client: Client):
                 'A Temporal model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 DirectStreamWorkflow.run,
                 args=['What is the capital of Mexico?'],
                 id=DirectStreamWorkflow.__name__,
@@ -1664,7 +1668,7 @@ async def test_temporal_agent_with_unserializable_deps_type(allow_model_requests
                 "The `deps` object failed to be serialized. Temporal requires all objects that are passed to activities to be serializable using Pydantic's `TypeAdapter`."
             ),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 UnserializableDepsAgentWorkflow.run,
                 args=['What is the model name?'],
                 id=UnserializableDepsAgentWorkflow.__name__,
@@ -1783,7 +1787,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
         workflows=[HitlAgentWorkflow],
         plugins=[AgentPlugin(hitl_temporal_agent)],
     ):
-        workflow = await client.start_workflow(  # pyright: ignore[reportUnknownMemberType]
+        workflow = await client.start_workflow(
             HitlAgentWorkflow.run,
             args=['Delete the file `.env` and create `test.txt`'],
             id=HitlAgentWorkflow.__name__,
@@ -1929,7 +1933,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
         workflows=[ModelRetryWorkflow],
         plugins=[AgentPlugin(model_retry_temporal_agent)],
     ):
-        workflow = await client.start_workflow(  # pyright: ignore[reportUnknownMemberType]
+        workflow = await client.start_workflow(
             ModelRetryWorkflow.run,
             args=['What is the weather in CDMX?'],
             id=ModelRetryWorkflow.__name__,
@@ -2078,7 +2082,7 @@ async def test_custom_model_settings(allow_model_requests: None, client: Client)
         workflows=[SettingsAgentWorkflow],
         plugins=[AgentPlugin(settings_temporal_agent)],
     ):
-        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+        output = await client.execute_workflow(
             SettingsAgentWorkflow.run,
             args=['Give me those settings'],
             id=SettingsAgentWorkflow.__name__,
@@ -2112,7 +2116,7 @@ async def test_image_agent(allow_model_requests: None, client: Client):
             UserError,
             snapshot('Image output is not supported with Temporal because of the 2MB payload size limit.'),
         ):
-            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            await client.execute_workflow(
                 ImageAgentWorkflow.run,
                 args=['Generate an image of an axolotl.'],
                 id=ImageAgentWorkflow.__name__,
@@ -2161,7 +2165,7 @@ async def test_web_search_agent_run_in_workflow(allow_model_requests: None, clie
         workflows=[WebSearchAgentWorkflow],
         plugins=[AgentPlugin(web_search_temporal_agent)],
     ):
-        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+        output = await client.execute_workflow(
             WebSearchAgentWorkflow.run,
             args=['In one sentence, what is the top news story in my country today?'],
             id=WebSearchAgentWorkflow.__name__,
@@ -2215,7 +2219,7 @@ async def test_fastmcp_toolset(allow_model_requests: None, client: Client):
         workflows=[FastMCPAgentWorkflow],
         plugins=[AgentPlugin(fastmcp_temporal_agent)],
     ):
-        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+        output = await client.execute_workflow(
             FastMCPAgentWorkflow.run,
             args=['Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'],
             id=FastMCPAgentWorkflow.__name__,
