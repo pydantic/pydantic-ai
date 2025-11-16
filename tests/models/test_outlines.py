@@ -129,9 +129,9 @@ def transformers_model() -> OutlinesModel:
     hf_tokenizer = transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini')
     chat_template = '{% for message in messages %}{{ message.role }}: {{ message.content }}{% endfor %}'
     hf_tokenizer.chat_template = chat_template
-    outlines_model = outlines.models.transformers.from_transformers(  # type: ignore[reportUnknownMemberType]
-        hf_model,  # type: ignore[reportUnknownArgumentType]
-        hf_tokenizer,  # type: ignore
+    outlines_model = outlines.models.transformers.from_transformers(
+        hf_model,
+        hf_tokenizer,
     )
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
 
@@ -143,9 +143,9 @@ def transformers_multimodal_model() -> OutlinesModel:
         device_map='cpu',
     )
     hf_processor = transformers.AutoProcessor.from_pretrained('trl-internal-testing/tiny-LlavaForConditionalGeneration')
-    outlines_model = outlines.models.transformers.from_transformers(  # type: ignore[reportUnknownMemberType]
+    outlines_model = outlines.models.transformers.from_transformers(
         hf_model,
-        hf_processor,  # type: ignore
+        hf_processor,
     )
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
 
