@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Any
 
 from . import modeling_utils, processing_utils, tokenization_utils
