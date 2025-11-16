@@ -179,9 +179,7 @@ def sglang_model() -> OutlinesModel:
 
 @pytest.fixture
 def vllm_model_offline() -> OutlinesModel:  # pragma: no cover
-    outlines_model = outlines.models.vllm_offline.from_vllm_offline(  # type: ignore
-        vllm.LLM('microsoft/Phi-3-mini-4k-instruct')  # type: ignore
-    )
+    outlines_model = outlines.models.vllm_offline.from_vllm_offline(vllm.LLM('microsoft/Phi-3-mini-4k-instruct'))
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
 
 
@@ -226,7 +224,7 @@ outlines_parameters = [
     ),
     pytest.param(
         'from_vllm_offline',
-        lambda: (vllm.LLM('microsoft/Phi-3-mini-4k-instruct'),),  # type: ignore
+        lambda: (vllm.LLM('microsoft/Phi-3-mini-4k-instruct'),),
         marks=skip_if_vllm_imports_unsuccessful,
     ),
 ]
@@ -285,7 +283,7 @@ pydantic_ai_parameters = [
     ),
     pytest.param(
         'from_vllm_offline',
-        lambda: (vllm.LLM('microsoft/Phi-3-mini-4k-instruct'),),  # type: ignore
+        lambda: (vllm.LLM('microsoft/Phi-3-mini-4k-instruct'),),
         marks=skip_if_vllm_imports_unsuccessful,
     ),
 ]
