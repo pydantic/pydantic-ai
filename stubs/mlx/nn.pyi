@@ -1,5 +1,3 @@
 from typing import Any
 
-
-class Module:
-    ...
+class Module: ...

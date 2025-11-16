@@ -1,10 +1,9 @@
-from typing import Any, AsyncIterable, Iterable
-
+from collections.abc import AsyncIterable, Iterable
+from typing import Any
 
 class Model:
     def __call__(self, *args: Any, **kwargs: Any) -> Any: ...
     def stream(self, *args: Any, **kwargs: Any) -> Iterable[Any]: ...
-
 
 class AsyncModel(Model):
     async def __call__(self, *args: Any, **kwargs: Any) -> Any: ...

@@ -1,6 +1,5 @@
 from typing import Any
 
-
 class SamplingParams:
     max_tokens: int | None
     temperature: float | None

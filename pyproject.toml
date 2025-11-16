@@ -142,6 +142,7 @@ include = [
     "clai/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
+    "stubs/**/*.pyi",
 ]
 
 [tool.ruff.lint]
@@ -186,6 +187,7 @@ quote-style = "single"
 "examples/**/*.py" = ["D101", "D103"]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
+"stubs/**/*.pyi" = ["F401"]
 
 [tool.pyright]
 stubPath = "stubs"

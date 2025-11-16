@@ -1,5 +1,3 @@
 from typing import Any
 
-
-class PreTrainedModel:
-    ...
+class PreTrainedModel: ...
