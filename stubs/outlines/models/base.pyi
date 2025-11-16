@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import AsyncIterable, Iterable
 from typing import Any
 
