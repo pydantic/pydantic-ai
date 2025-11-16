@@ -334,7 +334,9 @@ agent = Agent('anthropic:claude-sonnet-4-0', builtin_tools=[UrlContextTool()])
 
 result = agent.run_sync('What is the first sentence on https://ai.pydantic.dev?')
 print(result.output)
-#> Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.
+"""
+Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.
+"""
 ```
 
 _(This example is complete, it can be run "as is")_
