@@ -21,6 +21,7 @@ from pydantic_ai import (
     DocumentUrl,
     ImageUrl,
     ModelHTTPError,
+    ModelMessage,
     ModelProfile,
     ModelRequest,
     ModelResponse,
@@ -3085,3 +3086,57 @@ async def test_cache_point_filtering_responses_model():
     assert len(msg['content']) == 2
     assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
     assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'model_name,expected_token_count',
+    [
+        ('gpt-3.5-turbo', 115),
+        ('gpt-4-0613', 115),
+        ('gpt-4', 115),
+        ('gpt-4o', 110),
+        ('gpt-4o-mini', 110),
+    ],
+)
+async def test_count_tokens(model_name: str, expected_token_count: int):
+    """Test token counting with OpenAI Chat and Response models."""
+    test_messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(
+                    content='You are a helpful, pattern-following assistant that translates corporate jargon into plain English.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                SystemPromptPart(
+                    content='New synergies will help drive top-line growth.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                SystemPromptPart(
+                    content='Things working well together will increase revenue.',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                SystemPromptPart(
+                    content="Let's circle back when we have more bandwidth to touch base on opportunities for increased leverage.",
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                SystemPromptPart(
+                    content="Let's talk later when we're less busy about how to do better.",
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                UserPromptPart(
+                    content="This late pivot means we don't have time to boil the ocean for the client deliverable.",
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ],
+            run_id=IsStr(),
+        )
+    ]
+
+    chat_model = OpenAIChatModel(model_name, provider=OpenAIProvider(api_key='foobar'))
+    usage_result: RequestUsage = await chat_model.count_tokens(test_messages, {}, ModelRequestParameters())
+    assert usage_result.input_tokens == expected_token_count
+
+    responses_model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key='foobar'))
+    usage_result: RequestUsage = await responses_model.count_tokens(test_messages, {}, ModelRequestParameters())
+    assert usage_result.input_tokens == expected_token_count

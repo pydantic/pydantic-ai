@@ -17,7 +17,12 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
-from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
+from .._utils import (
+    guard_tool_call_id as _guard_tool_call_id,
+    now_utc as _now_utc,
+    num_tokens_from_messages,
+    number_to_datetime,
+)
 from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
@@ -907,6 +912,20 @@ class OpenAIChatModel(Model):
         )
         return ChatCompletionContentPartTextParam(text=text, type='text')
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> usage.RequestUsage:
+        """Make a request to the model for counting tokens."""
+        openai_messages = await self._map_messages(messages, model_request_parameters)
+        token_count = num_tokens_from_messages(openai_messages, self.model_name)
+
+        return usage.RequestUsage(
+            input_tokens=token_count,
+        )
+
 
 @deprecated(
     '`OpenAIModel` was renamed to `OpenAIChatModel` to clearly distinguish it from `OpenAIResponsesModel` which '
@@ -1700,6 +1719,22 @@ class OpenAIResponsesModel(Model):
                 else:
                     assert_never(item)
         return responses.EasyInputMessageParam(role='user', content=content)
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> usage.RequestUsage:
+        """Make a request to the model for counting tokens."""
+        _, openai_messages = await self._map_messages(
+            messages, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
+        )
+        token_count = num_tokens_from_messages(openai_messages, self.model_name)
+
+        return usage.RequestUsage(
+            input_tokens=token_count,
+        )
 
 
 @dataclass
