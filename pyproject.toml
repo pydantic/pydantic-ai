@@ -56,7 +56,7 @@ dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
 prefect = ["pydantic-ai-slim[prefect]=={{ version }}"]
 outlines-transformers = ["pydantic-ai-slim[outlines-transformers]=={{ version }}"]
 outlines-llamacpp = ["pydantic-ai-slim[outlines-llamacpp]=={{ version }}"]
-outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}"]
+outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 outlines-sglang = ["pydantic-ai-slim[outlines-sglang]=={{ version }}"]
 outlines-vllm-offline = ["pydantic-ai-slim[outlines-vllm-offline]=={{ version }}"]
 

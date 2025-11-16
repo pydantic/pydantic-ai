@@ -78,7 +78,7 @@ bedrock = ["boto3>=1.40.14"]
 huggingface = ["huggingface-hub[inference]>=0.33.5"]
 outlines-transformers = ["outlines[transformers]>=1.0.0, <1.3.0; (sys_platform != 'darwin' or platform_machine != 'x86_64')", "transformers>=4.0.0", "pillow", "torch; (sys_platform != 'darwin' or platform_machine != 'x86_64')"]
 outlines-llamacpp = ["outlines[llamacpp]>=1.0.0, <1.3.0"]
-outlines-mlxlm = ["outlines[mlxlm]>=1.0.0, <1.3.0; (sys_platform != 'darwin' or platform_machine != 'x86_64')"]
+outlines-mlxlm = ["outlines[mlxlm]>=1.0.0, <1.3.0; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 outlines-sglang = ["outlines[sglang]>=1.0.0, <1.3.0", "pillow"]
 outlines-vllm-offline = ["vllm; python_version < '3.12' and (sys_platform != 'darwin' or platform_machine != 'x86_64')", "torch; (sys_platform != 'darwin' or platform_machine != 'x86_64')", "outlines>=1.0.0, <1.3.0"]
 # Tools
