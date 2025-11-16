@@ -43,7 +43,7 @@ from ..conftest import IsBytes, IsDatetime, IsStr, try_import
 with try_import() as imports_successful:
     import outlines
 
-    from pydantic_ai.models.outlines import OutlinesModel
+    from pydantic_ai.models.outlines import OutlinesAsyncBaseModel, OutlinesModel
     from pydantic_ai.providers.outlines import OutlinesProvider
 
 with try_import() as transformer_imports_successful:
@@ -53,11 +53,11 @@ with try_import() as llama_cpp_imports_successful:
     import llama_cpp
 
 with try_import() as vllm_imports_successful:
-    import vllm  # type: ignore[reportMissingImports]
+    import vllm
 
     # We try to load the vllm model to ensure it is available
     try:  # pragma: no lax cover
-        vllm.LLM('microsoft/Phi-3-mini-4k-instruct')  # type: ignore
+        vllm.LLM('microsoft/Phi-3-mini-4k-instruct')
     except RuntimeError as e:  # pragma: lax no cover
         if 'Found no NVIDIA driver' in str(e) or 'Device string must not be empty' in str(e):
             # Treat as import failure
@@ -93,28 +93,29 @@ skip_if_mlxlm_imports_unsuccessful = pytest.mark.skipif(not mlxlm_imports_succes
 
 @pytest.fixture
 def mock_async_model() -> OutlinesModel:
-    class MockOutlinesAsyncModel(outlines.models.base.AsyncModel):
+    class MockOutlinesAsyncModel(OutlinesAsyncBaseModel):
         """Mock an OutlinesAsyncModel because no Outlines local models have an async version.
 
         The `__call__` and `stream` methods will be called by the Pydantic AI model while the other methods are
         only implemented because they are abstract methods in the OutlinesAsyncModel class.
         """
 
-        async def __call__(self, model_input, output_type, backend, **inference_kwargs):  # type: ignore[reportMissingParameterType]
+        async def __call__(self, model_input: Any, output_type: Any, backend: Any, **inference_kwargs: Any) -> str:
             return 'test'
 
-        async def stream(self, model_input, output_type, backend, **inference_kwargs):  # type: ignore[reportMissingParameterType]
+        async def stream(self, model_input: Any, output_type: Any, backend: Any, **inference_kwargs: Any):
             for _ in range(2):
                 yield 'test'
 
-        async def generate(self, model_input, output_type, **inference_kwargs):  # type: ignore[reportMissingParameterType]
-            ...  # pragma: no cover
+        async def generate(self, model_input: Any, output_type: Any, **inference_kwargs: Any): ...  # pragma: no cover
 
-        async def generate_batch(self, model_input, output_type, **inference_kwargs):  # type: ignore[reportMissingParameterType]
-            ...  # pragma: no cover
+        async def generate_batch(
+            self, model_input: Any, output_type: Any, **inference_kwargs: Any
+        ): ...  # pragma: no cover
 
-        async def generate_stream(self, model_input, output_type, **inference_kwargs):  # type: ignore[reportMissingParameterType]
-            ...  # pragma: no cover
+        async def generate_stream(
+            self, model_input: Any, output_type: Any, **inference_kwargs: Any
+        ): ...  # pragma: no cover
 
     return OutlinesModel(MockOutlinesAsyncModel(), provider=OutlinesProvider())
 
@@ -128,7 +129,7 @@ def transformers_model() -> OutlinesModel:
     hf_tokenizer = transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini')  # type: ignore
     chat_template = '{% for message in messages %}{{ message.role }}: {{ message.content }}{% endfor %}'
     hf_tokenizer.chat_template = chat_template
-    outlines_model = outlines.models.transformers.from_transformers(
+    outlines_model = outlines.models.transformers.from_transformers(  # type: ignore[reportUnknownMemberType]
         hf_model,  # type: ignore[reportUnknownArgumentType]
         hf_tokenizer,  # type: ignore
     )
@@ -144,7 +145,7 @@ def transformers_multimodal_model() -> OutlinesModel:
     hf_processor = transformers.AutoProcessor.from_pretrained(  # type: ignore
         'trl-internal-testing/tiny-LlavaForConditionalGeneration'
     )
-    outlines_model = outlines.models.transformers.from_transformers(
+    outlines_model = outlines.models.transformers.from_transformers(  # type: ignore[reportUnknownMemberType]
         hf_model,
         hf_processor,  # type: ignore
     )
@@ -164,7 +165,7 @@ def llamacpp_model() -> OutlinesModel:
 
 @pytest.fixture
 def mlxlm_model() -> OutlinesModel:  # pragma: no cover
-    outlines_model = outlines.models.mlxlm.from_mlxlm(
+    outlines_model = outlines.models.mlxlm.from_mlxlm(  # type: ignore[reportUnknownMemberType]
         *mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit')  # type: ignore
     )
     return OutlinesModel(outlines_model, provider=OutlinesProvider())

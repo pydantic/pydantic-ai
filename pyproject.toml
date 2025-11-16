@@ -188,6 +188,7 @@ quote-style = "single"
 "docs/**/*.py" = ["D"]
 
 [tool.pyright]
+stubPath = "stubs"
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
@@ -217,6 +218,7 @@ exclude = [
 [tool.mypy]
 files = "tests/typed_agent.py,tests/typed_graph.py"
 strict = true
+mypy_path = "stubs"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "docs/.hooks"]
