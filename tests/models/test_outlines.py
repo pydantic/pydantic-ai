@@ -122,11 +122,11 @@ def mock_async_model() -> OutlinesModel:
 
 @pytest.fixture
 def transformers_model() -> OutlinesModel:
-    hf_model = transformers.AutoModelForCausalLM.from_pretrained(  # type: ignore
+    hf_model = transformers.AutoModelForCausalLM.from_pretrained(
         'erwanf/gpt2-mini',
         device_map='cpu',
     )
-    hf_tokenizer = transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini')  # type: ignore
+    hf_tokenizer = transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini')
     chat_template = '{% for message in messages %}{{ message.role }}: {{ message.content }}{% endfor %}'
     hf_tokenizer.chat_template = chat_template
     outlines_model = outlines.models.transformers.from_transformers(  # type: ignore[reportUnknownMemberType]
@@ -138,13 +138,11 @@ def transformers_model() -> OutlinesModel:
 
 @pytest.fixture
 def transformers_multimodal_model() -> OutlinesModel:
-    hf_model = transformers.LlavaForConditionalGeneration.from_pretrained(  # type: ignore
+    hf_model = transformers.LlavaForConditionalGeneration.from_pretrained(
         'trl-internal-testing/tiny-LlavaForConditionalGeneration',
         device_map='cpu',
     )
-    hf_processor = transformers.AutoProcessor.from_pretrained(  # type: ignore
-        'trl-internal-testing/tiny-LlavaForConditionalGeneration'
-    )
+    hf_processor = transformers.AutoProcessor.from_pretrained('trl-internal-testing/tiny-LlavaForConditionalGeneration')
     outlines_model = outlines.models.transformers.from_transformers(  # type: ignore[reportUnknownMemberType]
         hf_model,
         hf_processor,  # type: ignore
@@ -198,11 +196,11 @@ outlines_parameters = [
     pytest.param(
         'from_transformers',
         lambda: (
-            transformers.AutoModelForCausalLM.from_pretrained(  # type: ignore
+            transformers.AutoModelForCausalLM.from_pretrained(
                 'erwanf/gpt2-mini',
                 device_map='cpu',
             ),
-            transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),  # type: ignore
+            transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),
         ),
         marks=skip_if_transformers_imports_unsuccessful,
     ),
@@ -257,11 +255,11 @@ pydantic_ai_parameters = [
     pytest.param(
         'from_transformers',
         lambda: (
-            transformers.AutoModelForCausalLM.from_pretrained(  # type: ignore
+            transformers.AutoModelForCausalLM.from_pretrained(
                 'erwanf/gpt2-mini',
                 device_map='cpu',
             ),
-            transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),  # type: ignore
+            transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),
         ),
         marks=skip_if_transformers_imports_unsuccessful,
     ),
