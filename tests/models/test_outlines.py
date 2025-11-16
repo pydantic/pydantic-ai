@@ -153,7 +153,7 @@ def transformers_multimodal_model() -> OutlinesModel:
 @pytest.fixture
 def llamacpp_model() -> OutlinesModel:
     outlines_model_llamacpp = outlines.models.llamacpp.from_llamacpp(
-        llama_cpp.Llama.from_pretrained(  # type: ignore
+        llama_cpp.Llama.from_pretrained(
             repo_id='M4-ai/TinyMistral-248M-v2-Instruct-GGUF',
             filename='TinyMistral-248M-v2-Instruct.Q4_K_M.gguf',
         )
@@ -203,7 +203,7 @@ outlines_parameters = [
     pytest.param(
         'from_llamacpp',
         lambda: (
-            llama_cpp.Llama.from_pretrained(  # type: ignore
+            llama_cpp.Llama.from_pretrained(
                 repo_id='M4-ai/TinyMistral-248M-v2-Instruct-GGUF',
                 filename='TinyMistral-248M-v2-Instruct.Q4_K_M.gguf',
             ),
@@ -262,7 +262,7 @@ pydantic_ai_parameters = [
     pytest.param(
         'from_llamacpp',
         lambda: (
-            llama_cpp.Llama.from_pretrained(  # type: ignore
+            llama_cpp.Llama.from_pretrained(
                 repo_id='M4-ai/TinyMistral-248M-v2-Instruct-GGUF',
                 filename='TinyMistral-248M-v2-Instruct.Q4_K_M.gguf',
             ),
