@@ -163,9 +163,7 @@ def llamacpp_model() -> OutlinesModel:
 
 @pytest.fixture
 def mlxlm_model() -> OutlinesModel:  # pragma: no cover
-    outlines_model = outlines.models.mlxlm.from_mlxlm(  # type: ignore[reportUnknownMemberType]
-        *mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit')  # type: ignore
-    )
+    outlines_model = outlines.models.mlxlm.from_mlxlm(*mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit'))
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
 
 
@@ -214,7 +212,7 @@ outlines_parameters = [
     ),
     pytest.param(
         'from_mlxlm',
-        lambda: mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit'),  # type: ignore
+        lambda: mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit'),
         marks=skip_if_mlxlm_imports_unsuccessful,
     ),
     pytest.param(
@@ -273,7 +271,7 @@ pydantic_ai_parameters = [
     ),
     pytest.param(
         'from_mlxlm',
-        lambda: mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit'),  # type: ignore
+        lambda: mlx_lm.load('mlx-community/SmolLM-135M-Instruct-4bit'),
         marks=skip_if_mlxlm_imports_unsuccessful,
     ),
     pytest.param(
