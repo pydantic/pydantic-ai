@@ -18,7 +18,7 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._tool_manager import ToolManager
+from pydantic_ai._tool_manager import ToolManager, build_validation_context
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, GraphRunContext
@@ -605,7 +605,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                                         text = ''  # pragma: no cover
                                 if text:
                                     try:
-                                        self._next_node = await self._handle_text_response(ctx, text, text_processor)
+                                        self._next_node = await self._handle_text_response(
+                                            ctx, ctx.deps.tool_manager.validation_ctx, text, text_processor
+                                        )
                                         return
                                     except ToolRetryError:  # pragma: no cover
                                         # If the text from the previous response was invalid, ignore it.
@@ -669,7 +671,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                     if text_processor := output_schema.text_processor:
                         if text:
-                            self._next_node = await self._handle_text_response(ctx, text, text_processor)
+                            self._next_node = await self._handle_text_response(
+                                ctx, ctx.deps.tool_manager.validation_ctx, text, text_processor
+                            )
                             return
                         alternatives.insert(0, 'return text')
 
@@ -731,12 +735,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     async def _handle_text_response(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        validation_ctx: Any | Callable[[RunContext[DepsT]], Any],
         text: str,
         text_processor: _output.BaseOutputProcessor[NodeRunEndT],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         run_context = build_run_context(ctx)
+        validation_context = build_validation_context(validation_ctx, run_context)
 
-        result_data = await text_processor.process(text, run_context)
+        result_data = await text_processor.process(text, run_context, validation_context)
 
         for validator in ctx.deps.output_validators:
             result_data = await validator.validate(result_data, run_context)
