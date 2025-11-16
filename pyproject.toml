@@ -187,7 +187,7 @@ quote-style = "single"
 "examples/**/*.py" = ["D101", "D103"]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
-"stubs/**/*.pyi" = ["F401", "PYI044", "PYI035", "ANN401"]
+"stubs/**/*.pyi" = ["F401", "ANN401"]
 
 [tool.pyright]
 stubPath = "stubs"
