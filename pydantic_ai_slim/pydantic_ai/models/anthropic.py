@@ -510,7 +510,7 @@ class AnthropicModel(Model):
                     elif isinstance(request_part, UserPromptPart):
                         async for content in self._map_user_prompt(request_part):
                             if isinstance(content, CachePoint):
-                                self._add_cache_control_to_last_param(user_content_params)
+                                self._add_cache_control_to_last_param(user_content_params, ttl=content.ttl)
                             else:
                                 user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
@@ -685,7 +685,7 @@ class AnthropicModel(Model):
         return system_prompt, anthropic_messages
 
     @staticmethod
-    def _add_cache_control_to_last_param(params: list[BetaContentBlockParam]) -> None:
+    def _add_cache_control_to_last_param(params: list[BetaContentBlockParam], ttl: Literal['5m', '1h'] = '5m') -> None:
         """Add cache control to the last content block param.
 
         See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
@@ -706,7 +706,7 @@ class AnthropicModel(Model):
             raise UserError(f'Cache control not supported for param type: {last_param["type"]}')
 
         # Add cache_control to the last param
-        last_param['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral')
+        last_param['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
 
     @staticmethod
     async def _map_user_prompt(
