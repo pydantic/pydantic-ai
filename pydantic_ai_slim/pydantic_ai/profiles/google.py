@@ -4,7 +4,7 @@ import warnings
 
 from pydantic_ai.exceptions import UserError
 
-from .._json_schema import JsonSchema, JsonSchemaTransformer
+from .._json_schema import JsonSchema, JsonSchemaTransformer, flatten_allof
 from . import ModelProfile
 
 
@@ -35,6 +35,8 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
         super().__init__(schema, strict=strict, prefer_inlined_defs=True, simplify_nullable_unions=True)
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
+        # Flatten object-only allOf to improve compatibility
+        schema = flatten_allof(schema)
         # Note: we need to remove `additionalProperties: False` since it is currently mishandled by Gemini
         additional_properties = schema.pop(
             'additionalProperties', None

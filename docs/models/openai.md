@@ -99,6 +99,10 @@ agent = Agent(model)
 ```
 
 ## OpenAI Responses API
+### Tips for JSON Schema compatibility
+
+Strict Structured Outputs prefer flat object schemas without combinators. If your tool or output schema contains `allOf`/`oneOf`, consider flattening `allOf` ahead of time. See the Tools documentation section "Flattening allOf for provider compatibility" for a sample prepare hook.
+
 
 Pydantic AI also supports OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) through the
 

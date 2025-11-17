@@ -4,11 +4,13 @@ import re
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from .exceptions import UserError
 
 JsonSchema = dict[str, Any]
+
+__all__ = ['JsonSchemaTransformer', 'InlineDefsJsonSchemaTransformer', 'flatten_allof']
 
 
 @dataclass(init=False)
@@ -30,7 +32,9 @@ class JsonSchemaTransformer(ABC):
         self.schema = schema
 
         self.strict = strict
-        self.is_strict_compatible = True  # Can be set to False by subclasses to set `strict` on `ToolDefinition` when set not set by user explicitly
+        # Can be set to False by subclasses to set `strict` on `ToolDefinition`
+        # when not set explicitly by the user.
+        self.is_strict_compatible = True
 
         self.prefer_inlined_defs = prefer_inlined_defs
         self.simplify_nullable_unions = simplify_nullable_unions
@@ -188,3 +192,108 @@ class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         return schema
+
+
+def _allof_is_object_like(member: JsonSchema) -> bool:
+    member_type = member.get('type')
+    if member_type is None:
+        keys = ('properties', 'additionalProperties', 'patternProperties')
+        return bool(any(k in member for k in keys))
+    return member_type == 'object'
+
+
+def _merge_additional_properties_values(values: list[Any]) -> bool | JsonSchema:
+    if any(isinstance(v, dict) for v in values):
+        return True
+    return False if values and all(v is False for v in values) else True
+
+
+def _flatten_current_level(s: JsonSchema) -> JsonSchema:
+    raw_members = s.get('allOf')
+    if not isinstance(raw_members, list) or not raw_members:
+        return s
+
+    members = cast(list[JsonSchema], raw_members)
+    for raw in members:
+        if not isinstance(raw, dict):
+            return s
+    if not all(_allof_is_object_like(member) for member in members):
+        return s
+
+    processed_members = [_recurse_flatten_allof(member) for member in members]
+    merged: JsonSchema = {k: v for k, v in s.items() if k != 'allOf'}
+    merged['type'] = 'object'
+
+    properties: dict[str, JsonSchema] = {}
+    if isinstance(merged.get('properties'), dict):
+        properties.update(merged['properties'])
+
+    required: set[str] = set(merged.get('required', []) or [])
+    pattern_properties: dict[str, JsonSchema] = dict(merged.get('patternProperties', {}) or {})
+    additional_values: list[Any] = []
+
+    for m in processed_members:
+        if isinstance(m.get('properties'), dict):
+            properties.update(m['properties'])
+        if isinstance(m.get('required'), list):
+            required.update(m['required'])
+        if isinstance(m.get('patternProperties'), dict):
+            pattern_properties.update(m['patternProperties'])
+        if 'additionalProperties' in m:
+            additional_values.append(m['additionalProperties'])
+
+    if properties:
+        merged['properties'] = {k: _recurse_flatten_allof(v) for k, v in properties.items()}
+    if required:
+        merged['required'] = sorted(required)
+    if pattern_properties:
+        merged['patternProperties'] = {k: _recurse_flatten_allof(v) for k, v in pattern_properties.items()}
+
+    if additional_values:
+        merged['additionalProperties'] = _merge_additional_properties_values(additional_values)
+
+    return merged
+
+
+def _recurse_children(s: JsonSchema) -> JsonSchema:
+    t = s.get('type')
+    if t == 'object':
+        if isinstance(s.get('properties'), dict):
+            s['properties'] = {
+                k: _recurse_flatten_allof(cast(JsonSchema, v))
+                for k, v in s['properties'].items()
+                if isinstance(v, dict)
+            }
+        ap = s.get('additionalProperties')
+        if isinstance(ap, dict):
+            ap_schema = cast(JsonSchema, ap)
+            s['additionalProperties'] = _recurse_flatten_allof(ap_schema)
+        if isinstance(s.get('patternProperties'), dict):
+            s['patternProperties'] = {
+                k: _recurse_flatten_allof(cast(JsonSchema, v))
+                for k, v in s['patternProperties'].items()
+                if isinstance(v, dict)
+            }
+    elif t == 'array':
+        items = s.get('items')
+        if isinstance(items, dict):
+            s['items'] = _recurse_flatten_allof(cast(JsonSchema, items))
+    return s
+
+
+def _recurse_flatten_allof(schema: JsonSchema) -> JsonSchema:
+    s = deepcopy(schema)
+    s = _flatten_current_level(s)
+    s = _recurse_children(s)
+    return s
+
+
+def flatten_allof(schema: JsonSchema) -> JsonSchema:
+    """Flatten simple object-only allOf combinations by merging object members.
+
+    - Merges properties and unions required lists.
+    - Combines additionalProperties conservatively: only False if all are False; otherwise True.
+    - Recurses into nested object/array members.
+    - Leaves non-object allOfs untouched.
+    """
+    return _recurse_flatten_allof(schema)

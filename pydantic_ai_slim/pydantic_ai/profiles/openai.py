@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .._json_schema import JsonSchema, JsonSchemaTransformer
+from .._json_schema import JsonSchema, JsonSchemaTransformer, flatten_allof
 from . import ModelProfile
 
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
@@ -162,6 +162,8 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         return result
 
     def transform(self, schema: JsonSchema) -> JsonSchema:  # noqa C901
+        # First, flatten object-only allOf constructs to avoid unsupported combinators in strict mode
+        schema = flatten_allof(schema)
         # Remove unnecessary keys
         schema.pop('title', None)
         schema.pop('$schema', None)
