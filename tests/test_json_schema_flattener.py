@@ -250,3 +250,59 @@ def test_flatten_allof_empty_properties_after_merge() -> None:
     # Should not have properties/required if they're empty
     assert 'properties' not in flattened or not flattened.get('properties')
     assert 'required' not in flattened or not flattened.get('required')
+
+
+def test_flatten_allof_with_initial_properties() -> None:
+    """Test flattening when root schema has initial properties (line 229)."""
+    from pydantic_ai._json_schema import flatten_allof
+
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'root_prop': {'type': 'string'}},  # Initial properties
+        'allOf': [
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'integer'}},
+                'required': ['a'],
+            },
+        ],
+    }
+
+    flattened = flatten_allof(copy.deepcopy(schema))
+    assert 'allOf' not in flattened
+    assert 'root_prop' in flattened['properties']
+    assert 'a' in flattened['properties']
+    assert flattened['required'] == ['a']
+
+
+def test_flatten_allof_with_pattern_properties() -> None:
+    """Test flattening when members have patternProperties (lines 241, 250)."""
+    from pydantic_ai._json_schema import flatten_allof
+
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'allOf': [
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'string'}},
+                'patternProperties': {
+                    '^prefix_': {'type': 'string'},
+                },
+            },
+            {
+                'type': 'object',
+                'properties': {'b': {'type': 'integer'}},
+                'patternProperties': {
+                    '^suffix_': {'type': 'number'},
+                },
+            },
+        ],
+    }
+
+    flattened = flatten_allof(copy.deepcopy(schema))
+    assert 'allOf' not in flattened
+    assert 'patternProperties' in flattened
+    assert '^prefix_' in flattened['patternProperties']
+    assert '^suffix_' in flattened['patternProperties']
+    assert flattened['patternProperties']['^prefix_']['type'] == 'string'
+    assert flattened['patternProperties']['^suffix_']['type'] == 'number'
