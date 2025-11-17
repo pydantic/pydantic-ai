@@ -154,6 +154,7 @@ Anthropic offers [Structured Outputs](https://docs.claude.com/en/docs/build-with
 
 ```python {test="skip"}
 from pydantic import BaseModel
+
 from pydantic_ai import Agent, NativeOutput
 from pydantic_ai.models.anthropic import AnthropicModel
 
