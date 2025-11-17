@@ -45,6 +45,9 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
     "pydantic-ai-slim[openai,vertexai,groq,anthropic,ag-ui]=={{ version }}",
@@ -62,6 +65,7 @@ dependencies = [
     "duckdb>=1.3.2",
     "datasets>=4.0.0",
     "pandas>=2.2.3",
+    "surrealdb @ git+https://github.com/surrealdb/surrealdb.py.git",
 ]
 
 [tool.hatch.build.targets.wheel]
