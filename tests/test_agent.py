@@ -6152,8 +6152,8 @@ async def test_native_output_json_schema():
         return ModelResponse(parts=[TextPart('')])
 
     agent = Agent(
-        FunctionModel(llm), 
-        output_type=NativeOutput([bool], name='native_output_name', description='native_output_description')
+        FunctionModel(llm),
+        output_type=NativeOutput([bool], name='native_output_name', description='native_output_description'),
     )
     assert agent.output_json_schema
 
@@ -6163,8 +6163,8 @@ async def test_prompted_output_json_schema():
         return ModelResponse(parts=[TextPart('')])
 
     agent = Agent(
-        FunctionModel(llm), 
-        output_type=PromptedOutput([bool], name='prompted_output_name', description='prompted_output_description')
+        FunctionModel(llm),
+        output_type=PromptedOutput([bool], name='prompted_output_name', description='prompted_output_description'),
     )
     assert agent.output_json_schema
 
@@ -6176,11 +6176,8 @@ async def test_custom_output_json_schema():
     HumanDict = StructuredDict(
         {
             'type': 'object',
-            'properties': {
-                'name': {'type': 'string'},
-                'age': {'type': 'integer'}
-            },
-            'required': ['name', 'age']
+            'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+            'required': ['name', 'age'],
         },
         name='Human',
         description='A human with a name and age',

@@ -465,7 +465,7 @@ class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
         self.processor = processor
 
     def dump(self) -> JsonSchema:
-        return self.object_def.json_schema
+        return self.object_def.json_schema # pyright: ignore[reportOptionalMemberAccess]
 
 
 class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
@@ -541,9 +541,9 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
         return 'tool'
 
     def dump(self) -> JsonSchema:
-        toolset_processors = [self.toolset.processors[k] for k in self.toolset.processors]
-        processors_union = UnionOutputProcessor(toolset_processors).object_def.json_schema
-        return processors_union
+        toolset_processors = [self.toolset.processors[k] for k in self.toolset.processors] # pyright: ignore[reportOptionalMemberAccess]
+        processors_union = UnionOutputProcessor(toolset_processors)
+        return processors_union.object_def.json_schema
 
 
 class BaseOutputProcessor(ABC, Generic[OutputDataT]):
@@ -736,7 +736,7 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
     def __init__(
         self,
-        outputs: Sequence[OutputTypeOrFunction[OutputDataT]],
+        outputs: Sequence[OutputTypeOrFunction[OutputDataT]|ObjectOutputProcessor[OutputDataT]],
         *,
         name: str | None = None,
         description: str | None = None,
