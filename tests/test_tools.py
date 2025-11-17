@@ -1318,9 +1318,7 @@ def test_tool_raises_call_deferred():
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(
-        DeferredToolRequests(
-            calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-        )
+        DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
     )
 
 
@@ -1396,6 +1394,184 @@ def test_tool_raises_approval_required():
         ]
     )
     assert result.output == snapshot('Done!')
+
+
+def test_call_deferred_with_metadata():
+    """Test that CallDeferred exception can carry metadata."""
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        raise CallDeferred(metadata={'task_id': 'task-123', 'estimated_cost': 25.50})
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+            metadata={'pyd_ai_tool_call_id__my_tool': {'task_id': 'task-123', 'estimated_cost': 25.5}},
+        )
+    )
+
+
+def test_approval_required_with_metadata():
+    """Test that ApprovalRequired exception can carry metadata."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
+                ]
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Done!'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired(
+                metadata={
+                    'reason': 'High compute cost',
+                    'estimated_time': '5 minutes',
+                    'cost_usd': 100.0,
+                }
+            )
+        return x * 42
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id=IsStr())],
+            metadata={'my_tool': {'reason': 'High compute cost', 'estimated_time': '5 minutes', 'cost_usd': 100.0}},
+        )
+    )
+
+    # Continue with approval
+    messages = result.all_messages()
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': ToolApproved()}),
+    )
+    assert result.output == 'Done!'
+
+
+def test_call_deferred_without_metadata():
+    """Test backward compatibility: CallDeferred without metadata still works."""
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        raise CallDeferred  # No metadata
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.calls) == 1
+
+    tool_call_id = result.output.calls[0].tool_call_id
+    # Should have an empty metadata dict for this tool
+    assert result.output.metadata.get(tool_call_id, {}) == {}
+
+
+def test_approval_required_without_metadata():
+    """Test backward compatibility: ApprovalRequired without metadata still works."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
+                ]
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Done!'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired  # No metadata
+        return x * 42
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+
+    # Should have an empty metadata dict for this tool
+    assert result.output.metadata.get('my_tool', {}) == {}
+
+    # Continue with approval
+    messages = result.all_messages()
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': ToolApproved()}),
+    )
+    assert result.output == 'Done!'
+
+
+def test_mixed_deferred_tools_with_metadata():
+    """Test multiple deferred tools with different metadata."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('tool_a', {'x': 1}, tool_call_id='call_a'),
+                    ToolCallPart('tool_b', {'y': 2}, tool_call_id='call_b'),
+                    ToolCallPart('tool_c', {'z': 3}, tool_call_id='call_c'),
+                ]
+            )
+        else:
+            return ModelResponse(parts=[TextPart('Done!')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def tool_a(ctx: RunContext[None], x: int) -> int:
+        raise CallDeferred(metadata={'type': 'external', 'priority': 'high'})
+
+    @agent.tool
+    def tool_b(ctx: RunContext[None], y: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired(metadata={'reason': 'Needs approval', 'level': 'manager'})
+        return y * 10
+
+    @agent.tool
+    def tool_c(ctx: RunContext[None], z: int) -> int:
+        raise CallDeferred  # No metadata
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, DeferredToolRequests)
+
+    # Check that we have the right tools deferred
+    assert len(result.output.calls) == 2  # tool_a and tool_c
+    assert len(result.output.approvals) == 1  # tool_b
+
+    # Check metadata
+    assert result.output.metadata['call_a'] == {'type': 'external', 'priority': 'high'}
+    assert result.output.metadata['call_b'] == {'reason': 'Needs approval', 'level': 'manager'}
+    assert result.output.metadata.get('call_c', {}) == {}
+
+    # Continue with results for all three tools
+    messages = result.all_messages()
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            calls={'call_a': 10, 'call_c': 30},
+            approvals={'call_b': ToolApproved()},
+        ),
+    )
+    assert result.output == 'Done!'
 
 
 def test_deferred_tool_with_output_type():
@@ -1590,7 +1766,7 @@ def test_parallel_tool_return_with_deferred():
                 ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
                 ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
                 ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
-            ],
+            ]
         )
     )
 
