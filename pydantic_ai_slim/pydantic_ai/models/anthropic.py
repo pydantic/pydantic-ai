@@ -158,12 +158,28 @@ class AnthropicModelSettings(ModelSettings, total=False):
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
+    anthropic_cache_tool_definitions_ttl: Literal['5m', '1h']
+    """The TTL for tool definitions cache control.
+
+    When enabled, the last tool in the `tools` array will have `cache_control` set,
+    allowing Anthropic to cache tool definitions and reduce costs.
+    See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
+    """
+
     anthropic_cache_instructions: bool
     """Whether to add `cache_control` to the last system prompt block.
 
     When enabled, the last system prompt will have `cache_control` set,
     allowing Anthropic to cache system instructions and reduce costs.
-    See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
+    See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information.
+    """
+
+    anthropic_cache_instructions_ttl: Literal['5m', '1h']
+    """The TTL for system instructions cache control.
+
+    When enabled, the last system prompt will have `cache_control` set,
+    allowing Anthropic to cache system instructions and reduce costs.
+    See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information.
     """
 
 
@@ -439,7 +455,9 @@ class AnthropicModel(Model):
         # Add cache_control to the last tool if enabled
         if tools and model_settings.get('anthropic_cache_tool_definitions'):
             last_tool = tools[-1]
-            last_tool['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral')
+            last_tool['cache_control'] = BetaCacheControlEphemeralParam(
+                type='ephemeral', ttl=model_settings.get('anthropic_cache_tool_definitions_ttl', '5m')
+            )
 
         return tools
 
@@ -677,7 +695,11 @@ class AnthropicModel(Model):
         if system_prompt and model_settings.get('anthropic_cache_instructions'):
             system_prompt_blocks = [
                 BetaTextBlockParam(
-                    type='text', text=system_prompt, cache_control=BetaCacheControlEphemeralParam(type='ephemeral')
+                    type='text',
+                    text=system_prompt,
+                    cache_control=BetaCacheControlEphemeralParam(
+                        type='ephemeral', ttl=model_settings.get('anthropic_cache_instructions_ttl', '5m')
+                    ),
                 )
             ]
             return system_prompt_blocks, anthropic_messages

@@ -314,7 +314,11 @@ async def test_cache_point_adds_cache_control(allow_model_requests: None):
             {
                 'role': 'user',
                 'content': [
-                    {'text': 'Some context to cache', 'type': 'text', 'cache_control': {'type': 'ephemeral'}},
+                    {
+                        'text': 'Some context to cache',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    },
                     {'text': 'Now the question', 'type': 'text'},
                 ],
             }
@@ -339,8 +343,8 @@ async def test_cache_point_multiple_markers(allow_model_requests: None):
 
     assert content == snapshot(
         [
-            {'text': 'First chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral'}},
-            {'text': 'Second chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral'}},
+            {'text': 'First chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+            {'text': 'Second chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
             {'text': 'Question', 'type': 'text'},
         ]
     )
@@ -389,7 +393,7 @@ async def test_cache_point_with_image_content(allow_model_requests: None):
             {
                 'source': {'type': 'url', 'url': 'https://example.com/image.jpg'},
                 'type': 'image',
-                'cache_control': {'type': 'ephemeral'},
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             },
             {'text': 'What is in this image?', 'type': 'text'},
         ]
@@ -466,7 +470,7 @@ async def test_anthropic_cache_tools(allow_model_requests: None):
                 'name': 'tool_two',
                 'description': '',
                 'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
-                'cache_control': {'type': 'ephemeral'},
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             },
         ]
     )
@@ -496,7 +500,7 @@ async def test_anthropic_cache_instructions(allow_model_requests: None):
             {
                 'type': 'text',
                 'text': 'This is a test system prompt with instructions.',
-                'cache_control': {'type': 'ephemeral'},
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             }
         ]
     )
@@ -540,12 +544,12 @@ async def test_anthropic_cache_tools_and_instructions(allow_model_requests: None
                     'required': ['value'],
                     'type': 'object',
                 },
-                'cache_control': {'type': 'ephemeral'},
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             }
         ]
     )
     assert system == snapshot(
-        [{'type': 'text', 'text': 'System instructions to cache.', 'cache_control': {'type': 'ephemeral'}}]
+        [{'type': 'text', 'text': 'System instructions to cache.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
     )
 
 
