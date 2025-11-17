@@ -290,7 +290,10 @@ class MCPServer(AbstractToolset[Any], ABC):
             else:
                 user_contents.append(part)
 
-        if len(parts_metadata) > 0:
+        # The following branching cannot be tested until FastMCP is updated to version 2.13.1
+        # such that the MCP server can generate ToolResult and result.meta can be specified.
+        # TODO: Add tests for the following branching once FastMCP is updated.
+        if len(parts_metadata) > 0:  # pragma: no cover
             if result.meta is not None and len(result.meta) > 0:
                 # Merge the tool result metadata and parts metadata into the return metadata
                 return_metadata = {'result': result.meta, 'content': parts_metadata}
@@ -301,7 +304,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     return_metadata = parts_metadata[0]
                 else:
                     return_metadata = {'content': parts_metadata}
-        else:
+        else:  # pragma: no cover
             if result.meta is not None and len(result.meta) > 0:
                 return_metadata = result.meta
         # TODO: What else should we cover here?
@@ -450,7 +453,10 @@ class MCPServer(AbstractToolset[Any], ABC):
             return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType), metadata
         elif isinstance(part, mcp_types.EmbeddedResource):
             return self._get_content(part.resource), metadata
-        elif isinstance(part, mcp_types.ResourceLink):
+        # The following branching cannot be tested until FastMCP is updated to version 2.13.1
+        # such that the MCP server can generate ToolResult and result.meta can be specified.
+        # TODO: Add tests for the following branching once FastMCP is updated.
+        elif isinstance(part, mcp_types.ResourceLink):  # pragma: no cover
             resource_result: mcp_types.ReadResourceResult = await self._client.read_resource(part.uri)
             # Check if metadata already exists. If so, merge it with nested the resource metadata.
             parts_metadata: dict[int, dict[str, Any]] = {}
