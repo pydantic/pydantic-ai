@@ -6125,3 +6125,65 @@ async def test_message_history():
             ]
         )
         assert run.all_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
+
+
+async def test_text_output_json_schema():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('')])
+
+    agent = Agent(FunctionModel(llm))
+    output_schema = {'type': 'string'}
+    assert agent.output_json_schema == output_schema
+
+
+async def test_tool_output_json_schema():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('')])
+
+    agent = Agent(FunctionModel(llm), output_type=[ToolOutput(bool)])
+    assert agent.output_json_schema
+
+    agent = Agent(FunctionModel(llm), output_type=[ToolOutput(bool), ToolOutput(bool)])
+    assert agent.output_json_schema
+
+
+async def test_native_output_json_schema():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('')])
+
+    agent = Agent(
+        FunctionModel(llm), 
+        output_type=NativeOutput([bool], name='native_output_name', description='native_output_description')
+    )
+    assert agent.output_json_schema
+
+
+async def test_prompted_output_json_schema():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('')])
+
+    agent = Agent(
+        FunctionModel(llm), 
+        output_type=PromptedOutput([bool], name='prompted_output_name', description='prompted_output_description')
+    )
+    assert agent.output_json_schema
+
+
+async def test_custom_output_json_schema():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('')])
+
+    HumanDict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string'},
+                'age': {'type': 'integer'}
+            },
+            'required': ['name', 'age']
+        },
+        name='Human',
+        description='A human with a name and age',
+    )
+    agent = Agent(FunctionModel(llm), output_type=HumanDict)
+    assert agent.output_json_schema
