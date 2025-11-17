@@ -157,7 +157,12 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         if self.root_ref is not None:
             result.pop('$ref', None)  # We replace references to the self.root_ref with just '#' in the transform method
             root_key = re.sub(r'^#/\$defs/', '', self.root_ref)
-            result.update(self.defs.get(root_key) or {})
+            # Use the transformed schema from $defs, not the original self.defs
+            if '$defs' in result and root_key in result['$defs']:
+                result.update(result['$defs'][root_key])
+            else:
+                # Fallback to original if transformed version not available (shouldn't happen in normal flow)
+                result.update(self.defs.get(root_key) or {})
 
         return result
 
