@@ -334,20 +334,15 @@ class GraphTask(GraphTaskRequest):
     and has a unique ID to identify the task within the graph run.
     """
 
-    node_id: NodeID
-    """The ID of the node to execute."""
-
-    inputs: Any
-    """The input data for the node."""
-
-    fork_stack: ForkStack = field(repr=False)
-    """Stack of forks that have been entered.
-
-    Used by the GraphRun to decide when to proceed through joins.
-    """
-
     task_id: TaskID
     """Unique identifier for this task."""
+
+    @staticmethod
+    def from_request(request: GraphTaskRequest, get_task_id: Callable[[], TaskID]) -> GraphTask:
+        # Don't call the get_task_id callable, this is already a task
+        if isinstance(request, GraphTask):
+            return request
+        return GraphTask(request.node_id, request.inputs, request.fork_stack, get_task_id())
 
 
 class GraphRun(Generic[StateT, DepsT, OutputT]):
@@ -498,7 +493,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             if isinstance(value, EndMarker):
                 self._next = value
             else:
-                self._next = [GraphTask(gt.node_id, gt.inputs, gt.fork_stack, self._get_next_task_id()) for gt in value]
+                self._next = [GraphTask.from_request(gtr, self._get_next_task_id) for gtr in value]
         return await anext(self)
 
     @property
