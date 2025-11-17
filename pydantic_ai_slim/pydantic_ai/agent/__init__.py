@@ -1507,6 +1507,35 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._get_toolset().apply(_set_sampling_model)
 
+    def to_web(self) -> Any:
+        """Create a FastAPI app that serves a web chat UI for this agent.
+
+        This method returns a pre-configured FastAPI application that provides a web-based
+        chat interface for interacting with the agent. The UI is served from a CDN and
+        includes support for model selection and builtin tool configuration.
+
+        Returns:
+            A configured FastAPI application ready to be served (e.g., with uvicorn)
+
+        Example:
+            ```python
+            from pydantic_ai import Agent
+
+            agent = Agent('openai:gpt-5')
+
+            @agent.tool
+            def get_weather(city: str) -> str:
+                return f"The weather in {city} is sunny"
+
+            app = agent.to_web()
+
+            # Then run with: uvicorn app:app --reload
+            ```
+        """
+        from ..ui.web import create_chat_app
+
+        return create_chat_app(self)
+
     @asynccontextmanager
     @deprecated(
         '`run_mcp_servers` is deprecated, use `async with agent:` instead. If you need to set a sampling model on all MCP servers, use `agent.set_mcp_sampling_model()`.'
