@@ -161,9 +161,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     anthropic_cache_tool_definitions_ttl: Literal['5m', '1h']
     """The TTL for tool definitions cache control.
 
-    When enabled, the last tool in the `tools` array will have `cache_control` set,
-    allowing Anthropic to cache tool definitions and reduce costs.
-    See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
+    See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information.
     """
 
     anthropic_cache_instructions: bool
@@ -171,14 +169,12 @@ class AnthropicModelSettings(ModelSettings, total=False):
 
     When enabled, the last system prompt will have `cache_control` set,
     allowing Anthropic to cache system instructions and reduce costs.
-    See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information.
+    See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
     anthropic_cache_instructions_ttl: Literal['5m', '1h']
     """The TTL for system instructions cache control.
 
-    When enabled, the last system prompt will have `cache_control` set,
-    allowing Anthropic to cache system instructions and reduce costs.
     See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information.
     """
 
