@@ -412,8 +412,8 @@ class AutoOutputSchema(OutputSchema[OutputDataT]):
 
     def dump(self) -> JsonSchema:
         if self.toolset:
-            processors = []
-            for tool_def in self.toolset._tool_defs:
+            processors: list[ObjectOutputProcessor[OutputDataT]] = []
+            for tool_def in self.toolset._tool_defs:  # pyright: ignore [reportPrivateUsage]
                 processor = copy.copy(self.toolset.processors[tool_def.name])
                 processor.object_def.name = tool_def.name
                 processor.object_def.description = tool_def.description
@@ -546,13 +546,16 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
         return 'tool'
 
     def dump(self) -> JsonSchema:
-        processors = []
-        for tool_def in self.toolset._tool_defs:
-            processor = copy.copy(self.toolset.processors[tool_def.name])
-            processor.object_def.name = tool_def.name
-            processor.object_def.description = tool_def.description
-            processors.append(processor)
-        return UnionOutputProcessor(processors).object_def.json_schema
+        if self.toolset:
+            processors: list[ObjectOutputProcessor[OutputDataT]] = []
+            for tool_def in self.toolset._tool_defs:  # pyright: ignore [reportPrivateUsage]
+                processor = copy.copy(self.toolset.processors[tool_def.name])
+                processor.object_def.name = tool_def.name
+                processor.object_def.description = tool_def.description
+                processors.append(processor)
+            return UnionOutputProcessor(processors).object_def.json_schema
+        else:
+            raise RuntimeError('ToolOutputSchema has no toolset.')
 
 
 class BaseOutputProcessor(ABC, Generic[OutputDataT]):
