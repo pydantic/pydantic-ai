@@ -5,7 +5,7 @@ status: new
 
 # Pydantic AI Gateway
 
-**[Pydantic AI Gateway](https://pydantic.dev/ai-gateway)** (PAIG) is a unified interface for accessing multiple AI providers with a single key. Features include built-in OpenTelemetry observability, real-time cost monitoring, failover management, and native integration with the other tools in the [Pydantic stack](https://pydantic.dev/).
+**[Pydantic AI Gateway](https://pydantic.dev/ai-gateway)** is a unified interface for accessing multiple AI providers with a single key. Features include built-in OpenTelemetry observability, real-time cost monitoring, failover management, and native integration with the other tools in the [Pydantic stack](https://pydantic.dev/).
 
 !!! note "Free while in Beta"
     The Pydantic AI Gateway is currently in Beta. You can bring your own key (BYOK) or buy inference through the Gateway (we will eat the card fee for now).
@@ -26,8 +26,8 @@ To help you get started with [Pydantic AI Gateway](https://gateway.pydantic.dev)
 - **BYOK and managed providers:** Bring your own API keys (BYOK) from LLM providers, or pay for inference directly through the platform.
 - **Multi-provider support:** Access models from OpenAI, Anthropic, Google Vertex, Groq, and AWS Bedrock. _More providers coming soon_.
 - **Backend observability:** Log every request through [Pydantic Logfire](https://pydantic.dev/logfire) or any OpenTelemetry backend (_coming soon_).
-- **Zero translation**: Unlike traditional AI gateways that translate everything to one common schema, PAIG allows requests to flow through directly in each provider's native format. This gives you immediate access to the new model features as soon as they are released.
-- **Open source with self-hosting**: PAIG's core is [open source](https://github.com/pydantic/pydantic-ai-gateway/) (under [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.en.html)), allowing self-hosting with file-based configuration, instead of using the managed service.
+- **Zero translation**: Unlike traditional AI gateways that translate everything to one common schema, **Pydantic AI Gateway** allows requests to flow through directly in each provider's native format. This gives you immediate access to the new model features as soon as they are released.
+- **Open source with self-hosting**: Pydantic AI Gateway core is [open source](https://github.com/pydantic/pydantic-ai-gateway/) (under [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.en.html)), allowing self-hosting with file-based configuration, instead of using the managed service.
 - **Enterprise ready**: Includes SSO (with OIDC support), granular permissions, and flexible deployment options. Deploy to your Cloudflare account, or run on-premises with our [consulting support](https://pydantic.dev/contact).
 
 ```python {title="hello_world.py"}
@@ -80,7 +80,7 @@ Users can only create personal keys, that will inherit spending caps from both U
 ## Usage
 
 After setting up your account with the instructions above, you will be able to make an AI model request with the Pydantic AI Gateway.
-The code snippets below show how you can use PAIG with different frameworks and SDKs.
+The code snippets below show how you can use Pydantic AI Gateway with different frameworks and SDKs.
 You can add `gateway/` as prefix on every known provider that
 
 To use different models, change the model string `gateway/<api_format>:<model_name>` to other models offered by the supported providers.
@@ -114,7 +114,7 @@ Before you start, make sure you are on version 1.16 or later of `pydantic-ai`. T
 Set the `PYDANTIC_AI_GATEWAY_API_KEY`  environment variable to your Gateway API key:
 
 ```bash
-export PYDANTIC_AI_GATEWAY_API_KEY="YOUR_PAIG_TOKEN"
+export PYDANTIC_AI_GATEWAY_API_KEY="YOUR_PYDANTIC_AI_GATEWAY_API_KEY"
 ```
 
 You can access multiple models with the same API key, as shown in the code snippet below.
@@ -140,10 +140,10 @@ Set your gateway credentials as environment variables:
 
 ```bash
 export ANTHROPIC_BASE_URL="https://gateway.pydantic.dev/proxy/anthropic"
-export ANTHROPIC_AUTH_TOKEN="YOUR_PAIG_TOKEN"
+export ANTHROPIC_AUTH_TOKEN="YOUR_PYDANTIC_AI_GATEWAY_API_KEY"
 ```
 
-Replace `YOUR_PAIG_TOKEN` with the API key from the Keys page.
+Replace `YOUR_PYDANTIC_AI_GATEWAY_API_KEY` with the API key from the Keys page.
 
 Launch Claude Code by typing `claude`. All requests will now route through the Pydantic AI Gateway.
 
