@@ -2326,7 +2326,7 @@ async def test_beta_graph_parallel_execution_in_workflow(client: Client):
         task_queue=TASK_QUEUE,
         workflows=[ParallelGraphWorkflow],
     ):
-        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+        output = await client.execute_workflow(
             ParallelGraphWorkflow.run,
             args=[10],
             id=ParallelGraphWorkflow.__name__,
