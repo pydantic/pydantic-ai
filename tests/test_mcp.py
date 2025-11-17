@@ -99,7 +99,8 @@ async def test_tool_response_metadata(run_context: RunContext[int]):
 
         result = await server.direct_call_tool('get_collatz_conjecture', {'n': 7})
         assert isinstance(result, ToolReturn)
-        assert result.return_value == snapshot([7, 22, 11, 34, 17, 52, 26, 13, 40, 20, 10, 5, 16, 8, 4, 2, 1])
+        assert isinstance(result.content, list)
+        assert result.content[0] == snapshot([7, 22, 11, 34, 17, 52, 26, 13, 40, 20, 10, 5, 16, 8, 4, 2, 1])
         assert result.metadata == snapshot({'pydantic_ai': {'tool': 'collatz_conjecture', 'n': 7, 'length': 17}})
 
 
@@ -113,9 +114,11 @@ async def test_tool_structured_response_metadata(run_context: RunContext[int]):
         assert tools[5].description.startswith('Return structured dict with metadata.')
 
         result = await server.direct_call_tool('get_structured_text_content_with_metadata', {})
-        assert isinstance(result, ToolReturn)
-        assert result.return_value == 'This is some text content.'
-        assert result.metadata == snapshot({'pydantic_ai': {'source': 'get_structured_text_content_with_metadata'}})
+        assert isinstance(result, dict)
+        assert 'result' in result
+        assert result['result'] == 'This is some text content.'
+        assert '_meta' in result
+        assert result['_meta'] == snapshot({'pydantic_ai': {'source': 'get_structured_text_content_with_metadata'}})
 
 
 async def test_reentrant_context_manager():
