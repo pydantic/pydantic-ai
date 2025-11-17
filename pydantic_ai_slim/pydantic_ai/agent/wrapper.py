@@ -10,6 +10,7 @@ from .. import (
     models,
     usage as _usage,
 )
+from .._json_schema import JsonSchema
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun
@@ -44,6 +45,10 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
     @name.setter
     def name(self, value: str | None) -> None:
         self.wrapped.name = value
+
+    @property
+    def output_json_schema(self) -> JsonSchema:
+        return self.wrapped.output_json_schema
 
     @property
     def deps_type(self) -> type:

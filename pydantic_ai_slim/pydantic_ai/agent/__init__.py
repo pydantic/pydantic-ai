@@ -34,6 +34,7 @@ from .._agent_graph import (
     UserPromptNode,
     capture_run_messages,
 )
+from .._json_schema import JsonSchema
 from .._output import OutputToolset
 from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
@@ -390,6 +391,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def deps_type(self) -> type:
         """The type of dependencies used by the agent."""
         return self._deps_type
+
+    @property
+    def output_json_schema(self) -> JsonSchema:
+        """The output JSON schema."""
+        return self._output_schema.dump()
 
     @property
     def output_type(self) -> OutputSpec[OutputDataT]:

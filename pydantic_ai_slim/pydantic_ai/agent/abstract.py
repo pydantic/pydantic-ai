@@ -23,6 +23,7 @@ from .. import (
     result,
     usage as _usage,
 )
+from .._json_schema import JsonSchema
 from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
@@ -99,6 +100,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     @abstractmethod
     def deps_type(self) -> type:
         """The type of dependencies used by the agent."""
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def output_json_schema(self) -> JsonSchema:
+        """The output JSON schema."""
         raise NotImplementedError
 
     @property

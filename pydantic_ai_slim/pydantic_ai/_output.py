@@ -15,6 +15,7 @@ from typing_extensions import Self, TypedDict, TypeVar
 from pydantic_ai._instrumentation import InstrumentationNames
 
 from . import _function_schema, _utils, messages as _messages
+from ._json_schema import JsonSchema
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UserError
 from .output import (
@@ -226,6 +227,9 @@ class OutputSchema(ABC, Generic[OutputDataT]):
     def allows_text(self) -> bool:
         return self.text_processor is not None
 
+    def dump(self) -> JsonSchema:
+        raise NotImplementedError()
+
     @classmethod
     def build(  # noqa: C901
         cls,
@@ -405,6 +409,13 @@ class AutoOutputSchema(OutputSchema[OutputDataT]):
     def mode(self) -> OutputMode:
         return 'auto'
 
+    def dump(self) -> JsonSchema:
+        if self.toolset:
+            toolset_processors = [self.toolset.processors[k] for k in self.toolset.processors]
+            processors_union = UnionOutputProcessor(toolset_processors).object_def.json_schema
+            return processors_union
+        return self.processor.object_def.json_schema
+
 
 @dataclass(init=False)
 class TextOutputSchema(OutputSchema[OutputDataT]):
@@ -424,6 +435,9 @@ class TextOutputSchema(OutputSchema[OutputDataT]):
     @property
     def mode(self) -> OutputMode:
         return 'text'
+
+    def dump(self) -> JsonSchema:
+        return {'type': 'string'}
 
 
 class ImageOutputSchema(OutputSchema[OutputDataT]):
@@ -449,6 +463,9 @@ class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
             allows_image=allows_image,
         )
         self.processor = processor
+
+    def dump(self) -> JsonSchema:
+        return self.object_def.json_schema
 
 
 class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
@@ -522,6 +539,11 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
     @property
     def mode(self) -> OutputMode:
         return 'tool'
+
+    def dump(self) -> JsonSchema:
+        toolset_processors = [self.toolset.processors[k] for k in self.toolset.processors]
+        processors_union = UnionOutputProcessor(toolset_processors).object_def.json_schema
+        return processors_union
 
 
 class BaseOutputProcessor(ABC, Generic[OutputDataT]):
@@ -725,7 +747,10 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         json_schemas: list[ObjectJsonSchema] = []
         self._processors = {}
         for output in outputs:
-            processor = ObjectOutputProcessor(output=output, strict=strict)
+            if isinstance(output, ObjectOutputProcessor):
+                processor = output
+            else:
+                processor = ObjectOutputProcessor(output=output, strict=strict)
             object_def = processor.object_def
 
             object_key = object_def.name or output.__name__
