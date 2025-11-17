@@ -53,6 +53,9 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'refusal': 'content_filter',
 }
 
+# TODO: remove once anthropic moves it out of beta
+_STRUCTURED_OUTPUTS_BETA = 'structured-outputs-2025-11-13'
+
 
 try:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncStream, omit as OMIT
@@ -307,8 +310,10 @@ class AnthropicModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
         # standalone function to make it easier to override
-        tools = self._get_tools(model_request_parameters, model_settings)
+        tools, strict_tools_requested = self._get_tools(model_request_parameters, model_settings)
         tools, mcp_servers, beta_features = self._add_builtin_tools(tools, model_request_parameters)
+        output_format = self._build_output_format(model_request_parameters)
+        structured_output_beta_required = strict_tools_requested or bool(output_format)
 
         tool_choice: BetaToolChoiceParam | None
 
@@ -328,10 +333,18 @@ class AnthropicModel(Model):
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
-            if beta_features:
-                if 'anthropic-beta' in extra_headers:
-                    beta_features.insert(0, extra_headers['anthropic-beta'])
-                extra_headers['anthropic-beta'] = ','.join(beta_features)
+            if beta_features or structured_output_beta_required:
+                new_features = list(beta_features)
+                if structured_output_beta_required:
+                    new_features.append(_STRUCTURED_OUTPUTS_BETA)
+                extra_headers['anthropic-beta'] = self._format_beta_header(
+                    extra_headers.get('anthropic-beta'),
+                    new_features,
+                )
+
+            extra_body = cast(dict[str, Any] | None, model_settings.get('extra_body'))
+            if output_format is not None:
+                extra_body = self._merge_output_format_extra_body(extra_body, output_format)
 
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
@@ -349,7 +362,7 @@ class AnthropicModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 metadata=model_settings.get('anthropic_metadata', OMIT),
                 extra_headers=extra_headers,
-                extra_body=model_settings.get('extra_body'),
+                extra_body=extra_body,
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
@@ -431,17 +444,20 @@ class AnthropicModel(Model):
 
     def _get_tools(
         self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
-    ) -> list[BetaToolUnionParam]:
-        tools: list[BetaToolUnionParam] = [
-            self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()
-        ]
+    ) -> tuple[list[BetaToolUnionParam], bool]:
+        tools: list[BetaToolUnionParam] = []
+        strict_tools_requested = False
+        for tool_def in model_request_parameters.tool_defs.values():
+            tools.append(self._map_tool_definition(tool_def))
+            if tool_def.strict:
+                strict_tools_requested = True
 
         # Add cache_control to the last tool if enabled
         if tools and model_settings.get('anthropic_cache_tool_definitions'):
             last_tool = tools[-1]
             last_tool['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral')
 
-        return tools
+        return tools, strict_tools_requested
 
     def _add_builtin_tools(
         self, tools: list[BetaToolUnionParam], model_request_parameters: ModelRequestParameters
@@ -759,11 +775,49 @@ class AnthropicModel(Model):
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> BetaToolParam:
-        return {
+        tool_param: BetaToolParam = {
             'name': f.name,
             'description': f.description or '',
             'input_schema': f.parameters_json_schema,
         }
+        if f.strict is not None:
+            tool_param['strict'] = f.strict  # type: ignore[assignment]
+        return tool_param
+
+    @staticmethod
+    def _build_output_format(model_request_parameters: ModelRequestParameters) -> dict[str, Any] | None:
+        if model_request_parameters.output_mode != 'native':
+            return None
+        output_object = model_request_parameters.output_object
+        if output_object is None:
+            return None
+        return {'type': 'json_schema', 'schema': output_object.json_schema}
+
+    @staticmethod
+    def _merge_output_format_extra_body(
+        existing: dict[str, Any] | None, output_format: dict[str, Any]
+    ) -> dict[str, Any]:
+        merged = dict(existing or {})
+        if 'output_format' in merged:
+            raise UserError(
+                '`model_settings.extra_body` cannot define `output_format` when using native structured output.'
+            )
+        merged['output_format'] = output_format
+        return merged
+
+    @staticmethod
+    def _format_beta_header(existing: str | None, new_features: list[str]) -> str:
+        values: list[str] = []
+        if existing:
+            values.extend(value.strip() for value in existing.split(',') if value.strip())
+        values.extend(new_features)
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if value not in seen:
+                ordered.append(value)
+                seen.add(value)
+        return ','.join(ordered)
 
 
 def _map_usage(
