@@ -176,7 +176,7 @@ print(result.all_messages())
 """
 ```
 
-1. The `metadata` parameter can attach arbitrary context to deferred tool calls, accessible in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
+1. The optional `metadata` parameter can attach arbitrary context to deferred tool calls, accessible in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
 
 _(This example is complete, it can be run "as is")_
 
