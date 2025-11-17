@@ -357,30 +357,6 @@ print(test_model.last_model_request_parameters.function_tools)
 _(This example is complete, it can be run "as is")_
 
 
-### Flattening allOf for provider compatibility
-
-Some providers (especially when using strict Structured Outputs) reject JSON Schema combinators like `allOf/oneOf`.
-If your tool parameter schema includes `allOf`, you can flatten it before sending to the model using a prepare hook.
-
-Example prepare hook that flattens `allOf`:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.tools import RunContext, ToolDefinition
-from pydantic_ai._json_schema import flatten_allof
-
-async def flatten_prepare(ctx: RunContext[None], tool: ToolDefinition) -> ToolDefinition:
-    tool.parameters_json_schema = flatten_allof(tool.parameters_json_schema)
-    return tool
-
-# Register your tools normally, then pass `prepare_tools=flatten_prepare` to Agent if you want to apply globally.
-agent = Agent('openai:gpt-4o', prepare_tools=lambda ctx, tools: [
-    await flatten_prepare(ctx, t) or t for t in tools
-])
-```
-
-Alternatively, you can construct tools with a flattened schema at source (e.g., for MCP-exposed tools) using `Tool.from_schema`.
-
 ## See Also
 
 For more tool features and integrations, see:
