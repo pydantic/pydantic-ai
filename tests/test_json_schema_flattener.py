@@ -108,3 +108,145 @@ def test_flatten_allof_non_object_members_are_left_as_is() -> None:
     # Expect: we cannot sensibly merge non-object members; keep allOf
     flattened = flatten_allof(copy.deepcopy(schema))
     assert 'allOf' in flattened
+
+
+def test_flatten_allof_object_like_without_type() -> None:
+    """Test that object-like schemas without explicit type are recognized."""
+    from pydantic_ai._json_schema import flatten_allof
+
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'allOf': [
+            {
+                # No type, but has properties - should be recognized as object-like
+                'properties': {'a': {'type': 'string'}},
+                'required': ['a'],
+            },
+            {
+                'type': 'object',
+                'properties': {'b': {'type': 'integer'}},
+                'required': ['b'],
+            },
+        ],
+    }
+
+    flattened = flatten_allof(copy.deepcopy(schema))
+    assert 'allOf' not in flattened
+    assert set(flattened['required']) == {'a', 'b'}
+
+
+def test_flatten_allof_with_dict_additional_properties() -> None:
+    """Test merging when additionalProperties is a dict schema."""
+    from pydantic_ai._json_schema import flatten_allof
+
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'allOf': [
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'string'}},
+                'additionalProperties': {'type': 'string'},  # dict schema
+            },
+            {
+                'type': 'object',
+                'properties': {'b': {'type': 'integer'}},
+                'additionalProperties': False,
+            },
+        ],
+    }
+
+    flattened = flatten_allof(copy.deepcopy(schema))
+    assert 'allOf' not in flattened
+    # When any member has dict additionalProperties, result should be True
+    assert flattened.get('additionalProperties') is True
+
+
+def test_flatten_allof_with_non_dict_member() -> None:
+    """Test that allOf with non-dict members is left untouched."""
+    from pydantic_ai._json_schema import flatten_allof
+
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'allOf': [
+            {'type': 'object', 'properties': {'a': {'type': 'string'}}},
+            'not a dict',  # Non-dict member
+        ],
+    }
+
+    flattened = flatten_allof(copy.deepcopy(schema))
+    # Should be left untouched because one member is not a dict
+    assert 'allOf' in flattened
+
+
+def test_flatten_allof_no_initial_properties() -> None:
+    """Test flattening when root schema has no initial properties."""
+    from pydantic_ai._json_schema import flatten_allof
+
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'allOf': [
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'string'}},
+                'required': ['a'],
+            },
+        ],
+    }
+
+    flattened = flatten_allof(copy.deepcopy(schema))
+    assert 'allOf' not in flattened
+    assert flattened['properties']['a']['type'] == 'string'
+    assert flattened['required'] == ['a']
+
+
+def test_flatten_allof_members_without_properties() -> None:
+    """Test flattening when some members don't have properties/required/patternProperties."""
+    from pydantic_ai._json_schema import flatten_allof
+
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'allOf': [
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'string'}},
+                'required': ['a'],
+            },
+            {
+                'type': 'object',
+                # No properties, required, or patternProperties
+                'additionalProperties': False,
+            },
+            {
+                'type': 'object',
+                'properties': {'b': {'type': 'integer'}},
+                # No required
+            },
+        ],
+    }
+
+    flattened = flatten_allof(copy.deepcopy(schema))
+    assert 'allOf' not in flattened
+    assert set(flattened['properties'].keys()) == {'a', 'b'}
+    assert flattened['required'] == ['a']  # Only from first member
+    assert flattened.get('additionalProperties') is False
+
+
+def test_flatten_allof_empty_properties_after_merge() -> None:
+    """Test edge case where properties/required/patternProperties might be empty."""
+    from pydantic_ai._json_schema import flatten_allof
+
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'allOf': [
+            {
+                'type': 'object',
+                # No properties, required, or patternProperties
+            },
+        ],
+    }
+
+    flattened = flatten_allof(copy.deepcopy(schema))
+    assert 'allOf' not in flattened
+    # Should not have properties/required if they're empty
+    assert 'properties' not in flattened or not flattened.get('properties')
+    assert 'required' not in flattened or not flattened.get('required')

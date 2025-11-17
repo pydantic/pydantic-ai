@@ -1915,6 +1915,36 @@ def test_strict_schema():
     )
 
 
+def test_openai_transformer_fallback_when_defs_missing() -> None:
+    """Test that OpenAIJsonSchemaTransformer falls back to original defs when root_key not in $defs."""
+    from unittest.mock import patch
+
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+
+    # Create a schema with $ref pointing to a key that exists in original
+    schema: dict[str, Any] = {
+        '$ref': '#/$defs/MyModel',
+        '$defs': {
+            'MyModel': {
+                'type': 'object',
+                'properties': {'foo': {'type': 'string'}},
+                'required': ['foo'],
+            },
+        },
+    }
+
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=True)
+
+    # Mock super().walk() to return a result without $defs to test the fallback path
+    with patch.object(transformer.__class__.__bases__[0], 'walk', return_value={'$ref': '#/$defs/MyModel'}):
+        result = transformer.walk()
+        # The fallback should use self.defs.get(root_key) or {}
+        # Since we mocked to return just $ref, the fallback should trigger
+        assert isinstance(result, dict)
+        # Result should have been updated with the original defs content
+        assert 'properties' in result or 'type' in result
+
+
 def test_native_output_strict_mode(allow_model_requests: None):
     class CityLocation(BaseModel):
         city: str
