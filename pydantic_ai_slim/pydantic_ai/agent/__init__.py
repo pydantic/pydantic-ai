@@ -1523,7 +1523,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             agent = Agent('openai:gpt-5')
 
-            @agent.tool
+            @agent.tool_plain
             def get_weather(city: str) -> str:
                 return f'The weather in {city} is sunny'
 
