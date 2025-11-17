@@ -5,13 +5,14 @@ from __future__ import annotations
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.ui.web import AI_MODELS, BUILTIN_TOOLS, create_chat_app
 
 from .conftest import try_import
 
 with try_import() as fastapi_import_successful:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
+    from pydantic_ai.ui.web import AI_MODELS, BUILTIN_TOOLS, create_chat_app
 
 pytestmark = [
     pytest.mark.skipif(not fastapi_import_successful, reason='fastapi not installed'),
