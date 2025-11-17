@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import copy
 import inspect
 import json
 import re
@@ -411,9 +412,13 @@ class AutoOutputSchema(OutputSchema[OutputDataT]):
 
     def dump(self) -> JsonSchema:
         if self.toolset:
-            toolset_processors = [self.toolset.processors[k] for k in self.toolset.processors]
-            processors_union = UnionOutputProcessor(toolset_processors).object_def.json_schema
-            return processors_union
+            processors = []
+            for tool_def in self.toolset._tool_defs:
+                processor = copy.copy(self.toolset.processors[tool_def.name])
+                processor.object_def.name = tool_def.name
+                processor.object_def.description = tool_def.description
+                processors.append(processor)
+            return UnionOutputProcessor(processors).object_def.json_schema
         return self.processor.object_def.json_schema
 
 
@@ -465,7 +470,7 @@ class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
         self.processor = processor
 
     def dump(self) -> JsonSchema:
-        return self.object_def.json_schema  # pyright: ignore[reportOptionalMemberAccess]
+        return self.processor.object_def.json_schema
 
 
 class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
@@ -541,9 +546,13 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
         return 'tool'
 
     def dump(self) -> JsonSchema:
-        toolset_processors = [self.toolset.processors[k] for k in self.toolset.processors]  # pyright: ignore[reportOptionalMemberAccess]
-        processors_union = UnionOutputProcessor(toolset_processors)
-        return processors_union.object_def.json_schema
+        processors = []
+        for tool_def in self.toolset._tool_defs:
+            processor = copy.copy(self.toolset.processors[tool_def.name])
+            processor.object_def.name = tool_def.name
+            processor.object_def.description = tool_def.description
+            processors.append(processor)
+        return UnionOutputProcessor(processors).object_def.json_schema
 
 
 class BaseOutputProcessor(ABC, Generic[OutputDataT]):
