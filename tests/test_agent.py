@@ -6132,19 +6132,93 @@ async def test_text_output_json_schema():
         return ModelResponse(parts=[TextPart('')])
 
     agent = Agent(FunctionModel(llm))
-    output_schema = {'type': 'string'}
-    assert agent.output_json_schema == output_schema
+    assert agent.output_json_schema == snapshot({'type': 'string'})
 
 
 async def test_tool_output_json_schema():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('')])
 
-    agent = Agent(FunctionModel(llm), output_type=[ToolOutput(bool)])
-    assert agent.output_json_schema
+    agent = Agent(
+        FunctionModel(llm),
+        output_type=[ToolOutput(bool, name='alice', description='Dreaming...')],
+    )
+    assert agent.output_json_schema == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'result': {
+                    'anyOf': [
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'kind': {'type': 'string', 'const': 'alice'},
+                                'data': {
+                                    'properties': {'response': {'type': 'boolean'}},
+                                    'required': ['response'],
+                                    'type': 'object',
+                                },
+                            },
+                            'required': ['kind', 'data'],
+                            'additionalProperties': False,
+                            'title': 'alice',
+                            'description': 'Dreaming...',
+                        }
+                    ]
+                }
+            },
+            'required': ['result'],
+            'additionalProperties': False,
+        }
+    )
 
-    agent = Agent(FunctionModel(llm), output_type=[ToolOutput(bool), ToolOutput(bool)])
-    assert agent.output_json_schema
+    agent = Agent(
+        FunctionModel(llm),
+        output_type=[ToolOutput(bool, name='alice'), ToolOutput(bool, name='bob')],
+    )
+    assert agent.output_json_schema == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'result': {
+                    'anyOf': [
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'kind': {'type': 'string', 'const': 'alice'},
+                                'data': {
+                                    'properties': {'response': {'type': 'boolean'}},
+                                    'required': ['response'],
+                                    'type': 'object',
+                                },
+                            },
+                            'required': ['kind', 'data'],
+                            'additionalProperties': False,
+                            'title': 'alice',
+                            'description': 'bool: The final response which ends this conversation',
+                        },
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'kind': {'type': 'string', 'const': 'bob'},
+                                'data': {
+                                    'properties': {'response': {'type': 'boolean'}},
+                                    'required': ['response'],
+                                    'type': 'object',
+                                },
+                            },
+                            'required': ['kind', 'data'],
+                            'additionalProperties': False,
+                            'title': 'bob',
+                            'description': 'bool: The final response which ends this conversation',
+                        },
+                    ]
+                }
+            },
+            'required': ['result'],
+            'additionalProperties': False,
+        }
+    )
 
 
 async def test_native_output_json_schema():
@@ -6155,7 +6229,9 @@ async def test_native_output_json_schema():
         FunctionModel(llm),
         output_type=NativeOutput([bool], name='native_output_name', description='native_output_description'),
     )
-    assert agent.output_json_schema
+    assert agent.output_json_schema == snapshot(
+        {'properties': {'response': {'type': 'boolean'}}, 'required': ['response'], 'type': 'object'}
+    )
 
 
 async def test_prompted_output_json_schema():
@@ -6166,7 +6242,9 @@ async def test_prompted_output_json_schema():
         FunctionModel(llm),
         output_type=PromptedOutput([bool], name='prompted_output_name', description='prompted_output_description'),
     )
-    assert agent.output_json_schema
+    assert agent.output_json_schema == snapshot(
+        {'properties': {'response': {'type': 'boolean'}}, 'required': ['response'], 'type': 'object'}
+    )
 
 
 async def test_custom_output_json_schema():
@@ -6183,4 +6261,31 @@ async def test_custom_output_json_schema():
         description='A human with a name and age',
     )
     agent = Agent(FunctionModel(llm), output_type=HumanDict)
-    assert agent.output_json_schema
+    assert agent.output_json_schema == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'result': {
+                    'anyOf': [
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'kind': {'type': 'string', 'const': 'final_result'},
+                                'data': {
+                                    'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+                                    'required': ['name', 'age'],
+                                    'type': 'object',
+                                },
+                            },
+                            'required': ['kind', 'data'],
+                            'additionalProperties': False,
+                            'title': 'final_result',
+                            'description': 'A human with a name and age',
+                        }
+                    ]
+                }
+            },
+            'required': ['result'],
+            'additionalProperties': False,
+        }
+    )
