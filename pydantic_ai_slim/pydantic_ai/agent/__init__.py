@@ -1525,7 +1525,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             @agent.tool
             def get_weather(city: str) -> str:
-                return f"The weather in {city} is sunny"
+                return f'The weather in {city} is sunny'
 
             app = agent.to_web()
 
