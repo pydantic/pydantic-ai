@@ -110,6 +110,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         return self.run_input.state
 
     @classmethod
+    def dump_messages(cls, messages: Sequence[ModelMessage]) -> list[Message]:
+        """Transform Pydantic AI messages into AG-UI messages."""
+        raise NotImplementedError('TODO: implement dump_messages method')  # TODO: implement dump_messages method
+
+    @classmethod
     def load_messages(cls, messages: Sequence[Message]) -> list[ModelMessage]:
         """Transform AG-UI messages into Pydantic AI messages."""
         builder = MessagesBuilder()
