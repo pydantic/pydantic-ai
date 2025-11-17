@@ -179,7 +179,6 @@ def test_docs_examples(
     env.set('MOONSHOTAI_API_KEY', 'testing')
     env.set('DEEPSEEK_API_KEY', 'testing')
     env.set('OVHCLOUD_API_KEY', 'testing')
-    env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
@@ -259,9 +258,7 @@ def test_docs_examples(
 def print_callback(s: str) -> str:
     s = re.sub(r'datetime\.datetime\(.+?\)', 'datetime.datetime(...)', s, flags=re.DOTALL)
     s = re.sub(r'\d\.\d{4,}e-0\d', '0.0...', s)
-    s = re.sub(r'datetime.date\(', 'date(', s)
-    s = re.sub(r"run_id='.+?'", "run_id='...'", s)
-    return s
+    return re.sub(r'datetime.date\(', 'date(', s)
 
 
 def mock_render_duration(seconds: float, force_signed: bool) -> str:
@@ -874,13 +871,9 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
         )
-    if isinstance(m, ToolReturnPart):
+    else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')
-
-    # Fallback for any other message type
-    sys.stdout.write(str(debug.format(messages, info)))
-    raise RuntimeError(f'Unexpected message type: {type(m).__name__}')
 
 
 async def stream_model_logic(  # noqa C901

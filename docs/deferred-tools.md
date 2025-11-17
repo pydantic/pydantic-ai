@@ -329,7 +329,7 @@ async def main():
 ```
 
 1. Generate a task ID that can be tracked independently of the tool call ID.
-2. The `metadata` parameter passes the `task_id` so it can be matched with results later, accessible in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
+2. The optional `metadata` parameter passes the `task_id` so it can be matched with results later, accessible in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
 3. In reality, this would typically happen in a separate process that polls for the task status or is notified when all pending tasks are complete.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
