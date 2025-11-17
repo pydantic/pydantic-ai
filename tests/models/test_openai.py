@@ -1915,13 +1915,11 @@ def test_strict_schema():
     )
 
 
-def test_openai_transformer_fallback_when_defs_missing() -> None:
-    """Test that OpenAIJsonSchemaTransformer falls back to original defs when root_key not in $defs."""
-    from unittest.mock import patch
-
+def test_openai_transformer_with_recursive_ref() -> None:
+    """Test that OpenAIJsonSchemaTransformer correctly handles recursive models with $ref root."""
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
-    # Create a schema with $ref pointing to a key that exists in original
+    # Create a schema with $ref root (recursive model scenario)
     schema: dict[str, Any] = {
         '$ref': '#/$defs/MyModel',
         '$defs': {
@@ -1934,15 +1932,55 @@ def test_openai_transformer_fallback_when_defs_missing() -> None:
     }
 
     transformer = OpenAIJsonSchemaTransformer(schema, strict=True)
+    result = transformer.walk()
 
-    # Mock super().walk() to return a result without $defs to test the fallback path
-    with patch.object(transformer.__class__.__bases__[0], 'walk', return_value={'$ref': '#/$defs/MyModel'}):
-        result = transformer.walk()
-        # The fallback should use self.defs.get(root_key) or {}
-        # Since we mocked to return just $ref, the fallback should trigger
-        assert isinstance(result, dict)
-        # Result should have been updated with the original defs content
-        assert 'properties' in result or 'type' in result
+    # The transformer should resolve the $ref and use the transformed schema from $defs
+    # (not the original self.defs, which was the bug we fixed)
+    assert isinstance(result, dict)
+    # In strict mode, all properties should be required
+    assert 'properties' in result
+    assert 'required' in result
+    # The transformed schema should have strict mode applied (additionalProperties: False)
+    assert result.get('additionalProperties') is False
+    # All properties should be in required list (strict mode requirement)
+    assert 'foo' in result['required']
+
+
+def test_openai_transformer_flattens_allof() -> None:
+    """Test that OpenAIJsonSchemaTransformer flattens allOf schemas."""
+    from pydantic_ai._json_schema import JsonSchema
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+
+    schema: JsonSchema = {
+        'type': 'object',
+        'allOf': [
+            {
+                'type': 'object',
+                'properties': {'foo': {'type': 'string'}},
+                'required': ['foo'],
+            },
+            {
+                'type': 'object',
+                'properties': {'bar': {'type': 'integer'}},
+                'required': ['bar'],
+            },
+        ],
+    }
+
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=True)
+    transformed = transformer.walk()
+
+    assert transformed == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'foo': {'type': 'string'},
+                'bar': {'type': 'integer'},
+            },
+            'required': ['foo', 'bar'],
+            'additionalProperties': False,
+        }
+    )
 
 
 def test_native_output_strict_mode(allow_model_requests: None):

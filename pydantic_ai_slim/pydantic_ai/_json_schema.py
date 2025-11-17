@@ -28,6 +28,7 @@ class JsonSchemaTransformer(ABC):
         strict: bool | None = None,
         prefer_inlined_defs: bool = False,
         simplify_nullable_unions: bool = False,
+        flatten_allof: bool = False,
     ):
         self.schema = schema
 
@@ -38,6 +39,7 @@ class JsonSchemaTransformer(ABC):
 
         self.prefer_inlined_defs = prefer_inlined_defs
         self.simplify_nullable_unions = simplify_nullable_unions
+        self.flatten_allof = flatten_allof
 
         self.defs: dict[str, JsonSchema] = self.schema.get('$defs', {})
         self.refs_stack: list[str] = []
@@ -77,6 +79,10 @@ class JsonSchemaTransformer(ABC):
         return handled
 
     def _handle(self, schema: JsonSchema) -> JsonSchema:
+        # Flatten allOf if requested, before processing the schema
+        if self.flatten_allof:
+            schema = flatten_allof(schema)
+
         nested_refs = 0
         if self.prefer_inlined_defs:
             while ref := schema.get('$ref'):
