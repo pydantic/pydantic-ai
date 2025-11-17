@@ -15,7 +15,7 @@ with try_import() as fastapi_import_successful:
     from pydantic_ai.ui.web import AI_MODELS, BUILTIN_TOOLS, create_chat_app
 
 pytestmark = [
-    pytest.mark.skipif(not fastapi_import_successful, reason='fastapi not installed'),
+    pytest.mark.skipif(not fastapi_import_successful(), reason='fastapi not installed'),
 ]
 
 
