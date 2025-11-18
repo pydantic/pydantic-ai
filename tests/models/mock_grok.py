@@ -147,17 +147,20 @@ def create_response(
     tool_calls: list[Any] | None = None,
     finish_reason: str = 'stop',
     usage: Any | None = None,
-) -> MockGrokResponse:
+) -> chat_types.Response:
     """Create a mock Response object for testing.
 
     Returns a MockGrokResponse that mimics the xai_sdk.chat.Response interface.
     """
-    return MockGrokResponse(
-        id='grok-123',
-        content=content,
-        tool_calls=tool_calls or [],
-        finish_reason=finish_reason,
-        usage=usage,
+    return cast(
+        chat_types.Response,
+        MockGrokResponse(
+            id='grok-123',
+            content=content,
+            tool_calls=tool_calls or [],
+            finish_reason=finish_reason,
+            usage=usage,
+        ),
     )
 
 

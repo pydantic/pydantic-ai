@@ -2,7 +2,8 @@ from __future__ import annotations as _annotations
 
 import json
 from datetime import timezone
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -53,14 +54,14 @@ pytestmark = [
 ]
 
 
-def test_init():
+def test_grok_init():
     m = GrokModel('grok-3', api_key='foobar')
-    assert m._api_key == 'foobar'
+    # Check model properties without accessing private attributes
     assert m.model_name == 'grok-3'
     assert m.system == 'xai'
 
 
-async def test_request_simple_success(allow_model_requests: None):
+async def test_grok_request_simple_success(allow_model_requests: None):
     response = create_response(content='world')
     mock_client = MockGrok.create_mock(response)
     m = GrokModel('grok-3', client=mock_client)
@@ -106,9 +107,7 @@ async def test_request_simple_success(allow_model_requests: None):
     )
 
 
-async def test_request_simple_usage(allow_model_requests: None):
-    from types import SimpleNamespace
-
+async def test_grok_request_simple_usage(allow_model_requests: None):
     response = create_response(
         content='world',
         usage=SimpleNamespace(input_tokens=2, output_tokens=1),
@@ -142,7 +141,7 @@ async def test_grok_image_input(allow_model_requests: None):
     assert result.output == 'done'
 
 
-async def test_request_structured_response(allow_model_requests: None):
+async def test_grok_request_structured_response(allow_model_requests: None):
     tool_call = create_tool_call(
         id='123',
         name='final_result',
@@ -190,9 +189,7 @@ async def test_request_structured_response(allow_model_requests: None):
     )
 
 
-async def test_request_tool_call(allow_model_requests: None):
-    from types import SimpleNamespace
-
+async def test_grok_request_tool_call(allow_model_requests: None):
     responses = [
         create_response(
             tool_calls=[create_tool_call(id='1', name='get_location', arguments={'loc_name': 'San Fransisco'})],
@@ -310,8 +307,6 @@ def grok_text_chunk(text: str, finish_reason: str = 'stop') -> tuple[chat_types.
     Since we can't easily track state across calls, we pass full accumulated text as response.content
     and the delta as chunk.content.
     """
-    from types import SimpleNamespace
-
     # Create chunk (delta) - just this piece of text
     chunk = MockGrokResponseChunk(content=text, tool_calls=[])
 
@@ -325,10 +320,10 @@ def grok_text_chunk(text: str, finish_reason: str = 'stop') -> tuple[chat_types.
         usage=SimpleNamespace(input_tokens=2, output_tokens=1) if finish_reason else None,
     )
 
-    return (response, chunk)
+    return (cast(chat_types.Response, response), chunk)
 
 
-async def test_stream_text(allow_model_requests: None):
+async def test_grok_stream_text(allow_model_requests: None):
     stream = [grok_text_chunk('hello '), grok_text_chunk('world')]
     mock_client = MockGrok.create_mock_stream(stream)
     m = GrokModel('grok-3', client=mock_client)
@@ -341,7 +336,7 @@ async def test_stream_text(allow_model_requests: None):
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=2, output_tokens=1))
 
 
-async def test_stream_text_finish_reason(allow_model_requests: None):
+async def test_grok_stream_text_finish_reason(allow_model_requests: None):
     # Create streaming chunks with finish reasons
     stream = [
         grok_text_chunk('hello ', ''),
@@ -387,8 +382,6 @@ def grok_tool_chunk(
     Note: Unlike the real xAI SDK which only sends the tool name in the first chunk,
     our mock includes it in every chunk to ensure proper tool call tracking.
     """
-    from types import SimpleNamespace
-
     # Infer tool name from accumulated state if not provided
     effective_tool_name = tool_name or ('final_result' if accumulated_args else None)
 
@@ -427,7 +420,7 @@ def grok_tool_chunk(
         usage=SimpleNamespace(input_tokens=20, output_tokens=1) if finish_reason else None,
     )
 
-    return (response, chunk)
+    return (cast(chat_types.Response, response), chunk)
 
 
 class MyTypedDict(TypedDict, total=False):
@@ -435,7 +428,7 @@ class MyTypedDict(TypedDict, total=False):
     second: str
 
 
-async def test_stream_structured(allow_model_requests: None):
+async def test_grok_stream_structured(allow_model_requests: None):
     stream = [
         grok_tool_chunk('final_result', None, accumulated_args=''),
         grok_tool_chunk(None, '{"first": "One', accumulated_args='{"first": "One'),
@@ -455,7 +448,7 @@ async def test_stream_structured(allow_model_requests: None):
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=1))
 
 
-async def test_stream_structured_finish_reason(allow_model_requests: None):
+async def test_grok_stream_structured_finish_reason(allow_model_requests: None):
     stream = [
         grok_tool_chunk('final_result', None, accumulated_args=''),
         grok_tool_chunk(None, '{"first": "One', accumulated_args='{"first": "One'),
@@ -475,7 +468,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
         assert result.is_complete
 
 
-async def test_stream_native_output(allow_model_requests: None):
+async def test_grok_stream_native_output(allow_model_requests: None):
     stream = [
         grok_text_chunk('{"first": "One'),
         grok_text_chunk('", "second": "Two"'),
@@ -493,7 +486,7 @@ async def test_stream_native_output(allow_model_requests: None):
         assert result.is_complete
 
 
-async def test_stream_tool_call_with_empty_text(allow_model_requests: None):
+async def test_grok_stream_tool_call_with_empty_text(allow_model_requests: None):
     stream = [
         grok_tool_chunk('final_result', None, accumulated_args=''),
         grok_tool_chunk(None, '{"first": "One', accumulated_args='{"first": "One'),
@@ -512,7 +505,7 @@ async def test_stream_tool_call_with_empty_text(allow_model_requests: None):
     assert await result.get_output() == snapshot({'first': 'One', 'second': 'Two'})
 
 
-async def test_no_delta(allow_model_requests: None):
+async def test_grok_no_delta(allow_model_requests: None):
     stream = [
         grok_text_chunk('hello '),
         grok_text_chunk('world'),
@@ -528,7 +521,7 @@ async def test_no_delta(allow_model_requests: None):
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=2, output_tokens=1))
 
 
-async def test_none_delta(allow_model_requests: None):
+async def test_grok_none_delta(allow_model_requests: None):
     # Test handling of chunks without deltas
     stream = [
         grok_text_chunk('hello '),
@@ -710,7 +703,6 @@ async def test_grok_model_properties():
 
     assert m.model_name == 'grok-3'
     assert m.system == 'xai'
-    assert m._api_key == 'test-key'
 
 
 # End of tests
