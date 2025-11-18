@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Generic, cast, overload
 
@@ -117,8 +117,14 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         else:
             async for text in self._stream_response_text(delta=False, debounce_by=debounce_by):
                 for validator in self._output_validators:
-                    text = await validator.validate(text, self._run_ctx)  # pragma: no cover
+                    text = await validator.validate(text, replace(self._run_ctx, partial_output=True))
                 yield text
+
+    @property
+    def run_id(self) -> str:
+        """The unique identifier for the agent run."""
+        assert self._run_ctx.run_id is not None
+        return self._run_ctx.run_id
 
     # TODO (v2): Drop in favor of `response` property
     def get(self) -> _messages.ModelResponse:
@@ -195,7 +201,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
             )
             for validator in self._output_validators:
-                result_data = await validator.validate(result_data, self._run_ctx)
+                result_data = await validator.validate(
+                    result_data, replace(self._run_ctx, partial_output=allow_partial)
+                )
             return result_data
         else:
             raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
@@ -531,6 +539,16 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
+    @property
+    def run_id(self) -> str:
+        """The unique identifier for the agent run."""
+        if self._run_result is not None:
+            return self._run_result.run_id
+        elif self._stream_response is not None:
+            return self._stream_response.run_id
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
+
     @deprecated('`validate_structured_output` is deprecated, use `validate_response_output` instead.')
     async def validate_structured_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
@@ -551,6 +569,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     async def _marked_completed(self, message: _messages.ModelResponse | None = None) -> None:
         self.is_complete = True
         if message is not None:
+            if self._stream_response:  # pragma: no branch
+                message.run_id = self._stream_response.run_id
             self._all_messages.append(message)
         if self._on_complete is not None:
             await self._on_complete()
@@ -688,6 +708,11 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._streamed_run_result.timestamp()
+
+    @property
+    def run_id(self) -> str:
+        """The unique identifier for the agent run."""
+        return self._streamed_run_result.run_id
 
     def validate_response_output(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
         """Validate a structured result message."""

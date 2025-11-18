@@ -570,7 +570,12 @@ async def test_a2a_multiple_tasks_same_context():
             assert len(messages_received) == 1
             first_run_history = messages_received[0]
             assert first_run_history == snapshot(
-                [ModelRequest(parts=[UserPromptPart(content='First message', timestamp=IsDatetime())])]
+                [
+                    ModelRequest(
+                        parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
+                        run_id=IsStr(),
+                    )
+                ]
             )
 
             # Second message - reuse the same context_id
@@ -605,7 +610,10 @@ async def test_a2a_multiple_tasks_same_context():
 
             assert second_run_history == snapshot(
                 [
-                    ModelRequest(parts=[UserPromptPart(content='First message', timestamp=IsDatetime())]),
+                    ModelRequest(
+                        parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
+                        run_id=IsStr(),
+                    ),
                     ModelResponse(
                         parts=[
                             ToolCallPart(
@@ -615,6 +623,7 @@ async def test_a2a_multiple_tasks_same_context():
                         usage=RequestUsage(input_tokens=52, output_tokens=7),
                         model_name='function:track_messages:',
                         timestamp=IsDatetime(),
+                        run_id=IsStr(),
                     ),
                     ModelRequest(
                         parts=[
@@ -626,6 +635,7 @@ async def test_a2a_multiple_tasks_same_context():
                             ),
                             UserPromptPart(content='Second message', timestamp=IsDatetime()),
                         ],
+                        run_id=IsStr(),
                     ),
                 ]
             )
