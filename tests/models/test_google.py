@@ -362,7 +362,7 @@ print(result)\
                 ],
                 usage=RequestUsage(
                     input_tokens=46,
-                    output_tokens=528,
+                    output_tokens=1429,
                     details={
                         'thoughts_tokens': 396,
                         'tool_use_prompt_tokens': 901,
@@ -1001,7 +1001,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                 ],
                 usage=RequestUsage(
                     input_tokens=17,
-                    output_tokens=414,
+                    output_tokens=533,
                     details={
                         'thoughts_tokens': 213,
                         'tool_use_prompt_tokens': 119,
@@ -1078,7 +1078,7 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                 ],
                 usage=RequestUsage(
                     input_tokens=209,
-                    output_tokens=337,
+                    output_tokens=623,
                     details={
                         'thoughts_tokens': 131,
                         'tool_use_prompt_tokens': 286,
@@ -1145,7 +1145,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                 ],
                 usage=RequestUsage(
                     input_tokens=17,
-                    output_tokens=653,
+                    output_tokens=755,
                     details={
                         'thoughts_tokens': 412,
                         'tool_use_prompt_tokens': 102,
@@ -1322,7 +1322,7 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                 ],
                 usage=RequestUsage(
                     input_tokens=249,
-                    output_tokens=541,
+                    output_tokens=860,
                     details={
                         'thoughts_tokens': 301,
                         'tool_use_prompt_tokens': 319,
@@ -1411,7 +1411,7 @@ print(f"Today in Utrecht is {formatted_date}.")
                 ],
                 usage=RequestUsage(
                     input_tokens=15,
-                    output_tokens=660,
+                    output_tokens=1335,
                     details={
                         'thoughts_tokens': 483,
                         'tool_use_prompt_tokens': 675,
@@ -1467,7 +1467,7 @@ print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
                 ],
                 usage=RequestUsage(
                     input_tokens=39,
-                    output_tokens=598,
+                    output_tokens=1235,
                     details={
                         'thoughts_tokens': 540,
                         'tool_use_prompt_tokens': 637,
@@ -2719,7 +2719,15 @@ async def test_google_vertexai_model_usage_limit_exceeded(
 
 
 def test_map_usage():
-    assert _metadata_as_usage(GenerateContentResponse()) == RequestUsage()
+    assert (
+        _metadata_as_usage(
+            GenerateContentResponse(),
+            # Test the 'google' provider fallback
+            provider='',
+            provider_url='',
+        )
+        == RequestUsage()
+    )
 
     response = GenerateContentResponse(
         usage_metadata=GenerateContentResponseUsageMetadata(
@@ -2732,7 +2740,7 @@ def test_map_usage():
             candidates_tokens_details=[ModalityTokenCount(modality=MediaModality.AUDIO, token_count=9400)],
         )
     )
-    assert _metadata_as_usage(response) == snapshot(
+    assert _metadata_as_usage(response, provider='', provider_url='') == snapshot(
         RequestUsage(
             input_tokens=1,
             cache_read_tokens=9100,
@@ -3175,6 +3183,7 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
         _response=response_iterator(),
         _timestamp=datetime.datetime.now(datetime.timezone.utc),
         _provider_name='test-provider',
+        _provider_url='',
     )
 
     events = [event async for event in streamed_response._get_event_iterator()]  # pyright: ignore[reportPrivateUsage]
