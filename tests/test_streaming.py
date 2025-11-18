@@ -42,7 +42,12 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage
@@ -2168,6 +2173,33 @@ async def test_run_stream_events():
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
             PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
             AgentRunResultEvent(result=AgentRunResult(output='{"ret_a":"a-apple"}')),
+        ]
+    )
+
+
+async def test_run_stream_finalize_with_incomplete_thinking_tag():
+    """Test that incomplete thinking tags are flushed via finalize when using run_stream()."""
+
+    async def stream_with_incomplete_thinking(
+        _messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[str]:
+        yield '<thi'
+
+    function_model = FunctionModel(stream_function=stream_with_incomplete_thinking)
+    function_model.profile.thinking_tags = ('<think>', '</think>')
+
+    agent = Agent(function_model)
+
+    events: list[Any] = []
+    async for event in agent.run_stream_events('Hello'):
+        events.append(event)
+
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='<thi')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(index=0, part=TextPart(content='<thi')),
+            AgentRunResultEvent(result=AgentRunResult(output='<thi')),
         ]
     )
 

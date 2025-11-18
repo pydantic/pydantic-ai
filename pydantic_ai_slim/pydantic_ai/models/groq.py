@@ -549,9 +549,10 @@ class GroqStreamedResponse(StreamedResponse):
                         reasoning = True
 
                     # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
-                    yield self._parts_manager.handle_thinking_delta(
+                    for e in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=f'reasoning-{reasoning_index}', content=choice.delta.reasoning
-                    )
+                    ):
+                        yield e
                 else:
                     reasoning = False
 
@@ -574,14 +575,17 @@ class GroqStreamedResponse(StreamedResponse):
                 # Handle the text part of the response
                 content = choice.delta.content
                 if content:
-                    maybe_event = self._parts_manager.handle_text_delta(
+                    for event in self._parts_manager.handle_text_delta(
                         vendor_part_id='content',
                         content=content,
                         thinking_tags=self._model_profile.thinking_tags,
+                        # where does `ignore_leading_whitespace` come from?
+                        # `GroqModel._process_streamed_response()` returns a `GroqStreamedResponse(_model_profile=self.profile,)`
+                        # `Groq.profile`` is set at `super().__init__(settings=settings, profile=profile or provider.model_profile)`
+                        # so `_model_profile` comes either from `GroqModel(profile=...)` or `GroqModel(provider=GroqProvider(...))` where the provider infers a profile.
                         ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event
 
                 # Handle the tool calls
                 for dtc in choice.delta.tool_calls or []:

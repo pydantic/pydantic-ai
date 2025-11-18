@@ -675,24 +675,25 @@ class GeminiStreamedResponse(StreamedResponse):
             for part in parts:
                 if part.thought_signature:
                     signature = base64.b64encode(part.thought_signature).decode('utf-8')
-                    yield self._parts_manager.handle_thinking_delta(
+                    for e in self._parts_manager.handle_thinking_delta(
                         vendor_part_id='thinking',
                         signature=signature,
                         provider_name=self.provider_name,
-                    )
+                    ):
+                        yield e
 
                 if part.text is not None:
                     if len(part.text) > 0:
                         if part.thought:
-                            yield self._parts_manager.handle_thinking_delta(
+                            for event in self._parts_manager.handle_thinking_delta(
                                 vendor_part_id='thinking', content=part.text
-                            )
+                            ):
+                                yield event
                         else:
-                            maybe_event = self._parts_manager.handle_text_delta(
+                            for event in self._parts_manager.handle_text_delta(
                                 vendor_part_id='content', content=part.text
-                            )
-                            if maybe_event is not None:  # pragma: no branch
-                                yield maybe_event
+                            ):
+                                yield event
                 elif part.function_call:
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=uuid4(),

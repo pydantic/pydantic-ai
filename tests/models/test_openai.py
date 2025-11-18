@@ -625,9 +625,51 @@ async def test_stream_text_empty_think_tag_and_text_before_tool_call(allow_model
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [{}, {'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
+            [{'first': 'One'}, {'first': 'One', 'second': 'Two'}, {'first': 'One', 'second': 'Two'}]
         )
     assert await result.get_output() == snapshot({'first': 'One', 'second': 'Two'})
+
+
+async def test_stream_with_embedded_thinking_sets_metadata(allow_model_requests: None):
+    """Test that embedded thinking creates ThinkingPart with id='content' and provider_name='openai'.
+
+    COVERAGE: This test covers openai.py lines 1748-1749 which set:
+        event.part.id = 'content'
+        event.part.provider_name = self.provider_name
+    """
+    stream = [
+        text_chunk('<think>'),
+        text_chunk('reasoning'),
+        text_chunk('</think>'),
+        text_chunk('response'),
+        chunk([]),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['response'])
+
+    # Verify ThinkingPart has id='content' and provider_name='openai' (covers lines 1748-1749)
+    messages = result.all_messages()
+    assert len(messages) == 2
+    assert isinstance(messages[0], ModelRequest)
+    assert isinstance(messages[1], ModelResponse)
+
+    response = messages[1]
+    assert len(response.parts) == 2
+
+    # This is what we're testing - the ThinkingPart should have these metadata fields set
+    thinking_part = response.parts[0]
+    assert isinstance(thinking_part, ThinkingPart)
+    assert thinking_part.id == 'content'  # Line 1748 in openai.py
+    assert thinking_part.provider_name == 'openai'  # Line 1749 in openai.py
+    assert thinking_part.content == 'reasoning'
+
+    text_part = response.parts[1]
+    assert isinstance(text_part, TextPart)
+    assert text_part.content == 'response'
 
 
 async def test_no_delta(allow_model_requests: None):

@@ -29,3 +29,8 @@ def split_content_into_text_and_thinking(content: str, thinking_tags: tuple[str,
     if content:
         parts.append(TextPart(content=content))
     return parts
+
+
+# NOTE: this utility is used by models/: `groq`, `huggingface`, `openai`, `outlines` and `tests/test_thinking_part.py`
+# not sure if it could be replaced by the new handling in the `_parts_manager.py` but it's worth taking a closer look.
+# if that's the case we could use this file to partly isolate the embedded thinking handling logic and declutter the parts manager.

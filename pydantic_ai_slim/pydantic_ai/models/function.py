@@ -186,6 +186,7 @@ class FunctionModel(Model):
 
         yield FunctionStreamedResponse(
             model_request_parameters=model_request_parameters,
+            _model_profile=self.profile,
             _model_name=self._model_name,
             _iter=response_stream,
         )
@@ -286,32 +287,35 @@ class FunctionStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
 
     _model_name: str
+    _model_profile: ModelProfile
     _iter: AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     def __post_init__(self):
         self._usage += _estimate_usage([])
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for item in self._iter:
             if isinstance(item, str):
                 response_tokens = _estimate_string_tokens(item)
                 self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=item)
-                if maybe_event is not None:  # pragma: no branch
-                    yield maybe_event
+                for event in self._parts_manager.handle_text_delta(
+                    vendor_part_id='content', content=item, thinking_tags=self._model_profile.thinking_tags
+                ):
+                    yield event
             elif isinstance(item, dict) and item:
                 for dtc_index, delta in item.items():
                     if isinstance(delta, DeltaThinkingPart):
                         if delta.content:  # pragma: no branch
                             response_tokens = _estimate_string_tokens(delta.content)
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                        yield self._parts_manager.handle_thinking_delta(
+                        for e in self._parts_manager.handle_thinking_delta(
                             vendor_part_id=dtc_index,
                             content=delta.content,
                             signature=delta.signature,
                             provider_name='function' if delta.signature else None,
-                        )
+                        ):
+                            yield e
                     elif isinstance(delta, DeltaToolCall):
                         if delta.json_args:
                             response_tokens = _estimate_string_tokens(delta.json_args)
