@@ -81,7 +81,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
         tool_activity_config = self.activity_config | tool_activity_config
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         return self._unwrap_call_tool_result(
-            await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
+            await workflow.execute_activity(
                 activity=self.call_tool_activity,
                 args=[
                     CallToolParams(
