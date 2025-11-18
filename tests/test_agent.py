@@ -6137,10 +6137,7 @@ async def test_message_history():
 def test_message_history_cannot_start_with_model_response():
     """Test that message history starting with ModelResponse raises UserError."""
 
-    def simple_response(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart(content='Final response')])  # pragma: no cover
-
-    agent = Agent(FunctionModel(simple_response))
+    agent = Agent('test')
 
     invalid_history = [
         ModelResponse(parts=[TextPart(content='ai response')]),
