@@ -299,7 +299,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 return_metadata = {'result': result.meta, 'content': parts_metadata}
             else:
                 # Only parts metadata exists
-                if len(parts_metadata) == 1:  # pragma: no cover
+                if len(parts_metadata) == 1:
                     # If there is only one content metadata, unwrap it
                     return_metadata = parts_metadata[0]
                 else:
@@ -480,7 +480,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     nested_metadata = resource_result.meta
             # FIXME: Is this a correct assumption? If metadata was read from the part then that is the same as resource_result.meta
             metadata = nested_metadata
-            if len(resource_result.contents) == 1:  # pragma: no cover
+            if len(resource_result.contents) == 1:
                 return self._get_content(resource_result.contents[0]), metadata
             else:  # pragma: no cover
                 return [self._get_content(resource) for resource in resource_result.contents], metadata
