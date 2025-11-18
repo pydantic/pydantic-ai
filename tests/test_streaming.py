@@ -1712,9 +1712,7 @@ async def test_tool_raises_call_deferred():
             [DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])]
         )
         assert await result.get_output() == snapshot(
-            DeferredToolRequests(
-                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-            )
+            DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
         )
         responses = [c async for c, _is_last in result.stream_responses(debounce_by=None)]
         assert responses == snapshot(
@@ -1757,9 +1755,7 @@ async def test_tool_raises_approval_required():
         messages = result.all_messages()
         output = await result.get_output()
         assert output == snapshot(
-            DeferredToolRequests(
-                approvals=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id=IsStr())],
-            )
+            DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id=IsStr())])
         )
         assert result.is_complete
 

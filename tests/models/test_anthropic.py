@@ -41,6 +41,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UsageLimitExceeded,
     UserPromptPart,
 )
 from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebSearchTool
@@ -53,7 +54,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from ..parts_from_messages import part_types_from_messages
@@ -6443,3 +6444,75 @@ async def test_anthropic_memory_tool(allow_model_requests: None, anthropic_api_k
 
 According to my memory, you live in **Mexico City**.\
 """)
+
+
+async def test_anthropic_model_usage_limit_exceeded(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+):
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match='The next request would exceed the input_tokens_limit of 18 \\(input_tokens=19\\)',
+    ):
+        await agent.run(
+            'The quick brown fox jumps over the lazydog.',
+            usage_limits=UsageLimits(input_tokens_limit=18, count_tokens_before_request=True),
+        )
+
+
+async def test_anthropic_model_usage_limit_not_exceeded(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+):
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'The quick brown fox jumps over the lazydog.',
+        usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
+    )
+    assert result.output == snapshot(
+        """\
+I noticed a small typo in that famous pangram! It should be:
+
+"The quick brown fox jumps over the **lazy dog**."
+
+(There should be a space between "lazy" and "dog")
+
+This sentence is often used for testing typewriters, fonts, and keyboards because it contains every letter of the English alphabet at least once.\
+"""
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_count_tokens_error(allow_model_requests: None, anthropic_api_key: str):
+    """Test that errors convert to ModelHTTPError."""
+    model_id = 'claude-does-not-exist'
+    model = AnthropicModel(model_id, provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.model_name == model_id
+
+
+async def test_anthropic_bedrock_count_tokens_not_supported(env: TestEnv):
+    """Test that AsyncAnthropicBedrock raises UserError for count_tokens."""
+    from anthropic import AsyncAnthropicBedrock
+
+    bedrock_client = AsyncAnthropicBedrock(
+        aws_access_key='test-access-key',
+        aws_secret_key='test-secret-key',
+        aws_region='us-east-1',
+    )
+    provider = AnthropicProvider(anthropic_client=bedrock_client)
+    model = AnthropicModel('anthropic.claude-3-5-sonnet-20241022-v2:0', provider=provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='AsyncAnthropicBedrock client does not support `count_tokens` api.'):
+        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
