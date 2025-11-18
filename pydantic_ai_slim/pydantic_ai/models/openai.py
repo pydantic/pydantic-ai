@@ -272,6 +272,12 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     Corresponds to the `web_search_call.action.sources` value of the `include` parameter in the Responses API.
     """
 
+    openai_model_name: OpenAIModelName | str
+    """The name of the OpenAI model to use.
+    
+    This is used to override the model name used for the request.
+    """
+
 
 @dataclass(init=False)
 class OpenAIChatModel(Model):
@@ -1228,7 +1234,7 @@ class OpenAIResponsesModel(Model):
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.responses.create(
                 input=openai_messages,
-                model=self._model_name,
+                model=model_settings.get('openai_model_name', self._model_name),
                 instructions=instructions,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
                 tools=tools or OMIT,
