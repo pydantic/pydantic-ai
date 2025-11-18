@@ -247,7 +247,8 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         content='What is the location of Londos and London?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -271,6 +272,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_67e547c48c9481918c5c4394464ce0c60ae6111e84dd5c08',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -286,7 +288,8 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -306,6 +309,7 @@ For **London**, it's located at approximately latitude 51° N and longitude 0° 
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_67e547c5a2f08191802a1f43620f348503a2086afed73b47',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -331,7 +335,8 @@ async def test_image_as_binary_content_tool_response(
                         content=['What fruit is in the image you can get from the get_image tool?'],
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -349,6 +354,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_681134d3aa3481919ca581a267db1e510fe7a5a4e2123dc3',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -365,7 +371,8 @@ async def test_image_as_binary_content_tool_response(
                         ],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -381,6 +388,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_681134d53c48819198ce7b89db78dffd02cbfeaababb040c',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -512,7 +520,8 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         content='Give me the top 3 news in the world today',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -659,6 +668,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0e3d55e9502941380068c4aa9a62f48195a373978ed720ac63',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -675,6 +685,7 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -690,6 +701,7 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_67f3fdfd9fa08191a3d5825db81b8df6003bc73febb56d77',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -710,6 +722,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     )
                 ],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -752,6 +765,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_028829e50fbcad090068c9c82e1e0081958ddc581008b39428',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -768,6 +782,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     )
                 ],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -810,6 +825,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_028829e50fbcad090068c9c83b9fb88195b6b84a32e1fc83c0',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -836,6 +852,7 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                     )
                 ],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -878,6 +895,7 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0b385a0fdc82fd920068c4aaf3ced88197a88711e356b032c4',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -905,6 +923,7 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                     )
                 ],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -947,6 +966,7 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0b4f29854724a3120068c4ab0b660081919707b95b47552782',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -981,6 +1001,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     )
                 ],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1029,6 +1050,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_00a60507bf41223d0068c9d2fbf93481a0ba2a7796ae2cab4c',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1198,6 +1220,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     )
                 ],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1246,6 +1269,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_00a60507bf41223d0068c9d31574d881a090c232646860a771',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1302,6 +1326,14 @@ async def test_reasoning_model_with_temperature(allow_model_requests: None, open
 
 
 @pytest.mark.vcr()
+async def test_gpt5_pro(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-5-pro', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+    result = await agent.run('What is the capital of Mexico?')
+    assert result.output == snapshot('Mexico City (Ciudad de México).')
+
+
+@pytest.mark.vcr()
 async def test_tool_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -1326,7 +1358,8 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1344,6 +1377,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0b40a8819cb8d55594bc2c232a001fd29e2d5573f7',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1353,7 +1387,8 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         tool_call_id='call_ZWkVhdUjupo528U9dqgFeRkH',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1371,6 +1406,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0bfda8819ea65458cd7cc389b801dc81d4bc91f560',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1380,7 +1416,8 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1410,7 +1447,8 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1428,6 +1466,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0d9494819ea4f123bba707c9ee0356a60c98816d6a',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1437,7 +1476,8 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                         tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1453,6 +1493,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0e2b28819d9c828ef4ee526d6a03434b607c02582d',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1485,7 +1526,8 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1503,6 +1545,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0f220081a1a621d6bcdc7f31a50b8591d9001d2329',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1512,7 +1555,8 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                         tool_call_id='call_tTAThu8l2S9hNky2krdwijGP',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1528,6 +1572,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0fde708192989000a62809c6e5020197534e39cc1f',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1562,7 +1607,8 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1580,6 +1626,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f10f2d081a39b3438f413b3bafc0dd57d732903c563',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1589,7 +1636,8 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                         tool_call_id='call_UaLahjOtaM2tTyYZLxTCbOaP',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1605,6 +1653,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f119830819da162aa6e10552035061ad97e2eef7871',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1635,7 +1684,8 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1653,6 +1703,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68482f12d63881a1830201ed101ecfbf02f8ef7f2fb42b50',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1662,7 +1713,8 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                         tool_call_id='call_FrlL4M0CbAy8Dhv4VqF1Shom',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1678,6 +1730,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68482f1b556081918d64c9088a470bf0044fdb7d019d4115',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1712,7 +1765,8 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1730,6 +1784,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68482f1d38e081a1ac828acda978aa6b08e79646fe74d5ee',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1739,7 +1794,8 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                         tool_call_id='call_my4OyoVXRT0m7bLWmsxcaCQI',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1755,6 +1811,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68482f28c1b081a1ae73cbbee012ee4906b4ab2d00d03024',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1953,7 +2010,8 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
                         content='What is 2+2?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='4', id='123')],
@@ -1962,6 +2020,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_response_id='123',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1979,7 +2038,10 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ThinkingPart(
@@ -2005,6 +2067,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42c902794819cb9335264c342f65407460311b0c8d3de',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2021,7 +2084,8 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2047,6 +2111,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42cb3d520819c9d28b07036e9059507460311b0c8d3de',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2071,7 +2136,8 @@ async def test_openai_responses_thinking_part_from_other_model(
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2098,6 +2164,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                 provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_0114iHK2ditgTf1N8FWomc4E',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2119,7 +2186,8 @@ async def test_openai_responses_thinking_part_from_other_model(
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2143,6 +2211,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42ce277ac8193ba08881bcefabaf70ad492c7955fc6fc',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2170,7 +2239,8 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                         content='How do I cross the street?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2204,6 +2274,7 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42d0fb418819dbfa579f69406b49508fbf9b1584184ff',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2247,6 +2318,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                     )
                 ],
                 instructions="You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update it as you make progress against the user's prompt",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2274,6 +2346,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42d28772c819684459966ee2201ed0e8bc41441c948f6',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2285,6 +2358,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                     )
                 ],
                 instructions="You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update it as you make progress against the user's prompt",
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr(), id='msg_68c42d408eec8196ae1c5883e07c093e0e8bc41441c948f6')],
@@ -2297,6 +2371,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42d3fd6a08196bce23d6be960ff8a0e8bc41441c948f6',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2333,7 +2408,8 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
                         content='What is 2+2?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2344,6 +2420,7 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_response_id='123',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2404,7 +2481,8 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
                         content='What is 2+2?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2418,6 +2496,7 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_response_id='123',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2467,7 +2546,8 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                         content='What is the meaning of life?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2486,6 +2566,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42ddf9bbc8194aa7b97304dd909cb0202c9ad459e0d23',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2518,7 +2599,8 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                         content='Anything to add?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2537,6 +2619,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c42de4afcc819f995a1c59fe87c9d5051f82c608a83beb',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2564,7 +2647,8 @@ async def test_openai_responses_thinking_with_code_execution_tool(allow_model_re
                         content='what is 65465-6544 * 65464-6+1.02255',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2619,6 +2703,7 @@ If you intended different grouping with parentheses, let me know.\
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cdba511c7081a389e67b16621029c609b7445677780c8f',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2633,7 +2718,8 @@ If you intended different grouping with parentheses, let me know.\
                         content='how about 2 to the power of 8?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2652,6 +2738,7 @@ If you intended different grouping with parentheses, let me know.\
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cdba6a610481a3b4533f345bea8a7b09b7445677780c8f',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -2685,7 +2772,8 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                         content="what's 123456 to the power of 123?",
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2748,6 +2836,7 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68c35098e6fc819e80fb94b25b7d031b0f2d670b80edc507',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3503,7 +3592,8 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                         content='What is the meaning of life?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3521,6 +3611,7 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cc4fa5603481958e2143685133fe530548824120ffcf74',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3530,7 +3621,8 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                         tool_call_id='call_3WCunBU7lCG1HHaLmnnRJn8I',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3550,6 +3642,7 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cc4fa6a8a881a187b0fe1603057bff0307c6d4d2ee5985',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3595,6 +3688,7 @@ async def test_openai_responses_code_execution_return_image(allow_model_requests
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _identifier='653a61',
             identifier='653a61',
         )
     )
@@ -3607,7 +3701,8 @@ async def test_openai_responses_code_execution_return_image(allow_model_requests
                         content='Create a chart of y=x^2 for x=-5 to 5',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3653,6 +3748,7 @@ plt.show()\r
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _identifier='653a61',
                             identifier='653a61',
                         ),
                         id='ci_68cdc39029a481909399d54b0a3637a10187028ba77f15f7',
@@ -3678,6 +3774,7 @@ plt.show()\r
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cdc382bc98819083a5b47ec92e077b0187028ba77f15f7',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3687,6 +3784,7 @@ plt.show()\r
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _identifier='81863d',
             identifier='81863d',
         )
     )
@@ -3698,7 +3796,8 @@ plt.show()\r
                         content='Style it more futuristically.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3793,6 +3892,7 @@ out_path\
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _identifier='81863d',
                             identifier='81863d',
                         ),
                         id='ci_68cdc3be6f3481908f64d8f0a71dc6bb0187028ba77f15f7',
@@ -3833,6 +3933,7 @@ If you want different colors or a holographic gradient background, tell me your 
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cdc39da72481909e0512fef9d646240187028ba77f15f7',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -3860,6 +3961,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
         BinaryImage(
             data=IsBytes(),
             media_type='image/png',
+            _identifier='df0d78',
             identifier='df0d78',
         )
     )
@@ -3871,7 +3973,8 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                         content='Create a chart of y=x^2 for x=-5 to 5',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3891,6 +3994,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                         content=BinaryImage(
                             data=IsBytes(),
                             media_type='image/png',
+                            _identifier='df0d78',
                             identifier='df0d78',
                         ),
                         id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
@@ -3914,6 +4018,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_06c1a26fd89d07f20068dd9367869c819788cb28e6f19eff9b',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -5245,10 +5350,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             PartStartEvent(
                 index=2,
                 part=FilePart(
-                    content=BinaryImage(
-                        data=IsBytes(),
-                        media_type='image/png',
-                    ),
+                    content=BinaryImage(data=IsBytes(), media_type='image/png', _identifier='df0d78'),
                     id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
                 ),
                 previous_part_kind='builtin-tool-call',
@@ -5359,7 +5461,8 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         content='Generate an image of an axolotl.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5409,6 +5512,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -5429,7 +5533,8 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         content='Now give it a sombrero.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5479,6 +5584,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -5521,7 +5627,8 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                         content='Generate an image of an axolotl.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5569,6 +5676,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -5699,7 +5807,8 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         content='Generate an image of an axolotl.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5746,6 +5855,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cdec1f3290819f99d9caba8703b251079003437d26d0c0',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5754,7 +5864,8 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5801,6 +5912,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68cdec61d0a0819fac14ed057a9946a1079003437d26d0c0',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -5858,7 +5970,8 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         content='Generate an image of an axolotl.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5903,6 +6016,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0360827931d9421b0068dd8328c08c81a0ba854f245883906f',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5911,7 +6025,8 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5935,6 +6050,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0360827931d9421b0068dd8370a70081a09d6de822ee43bbc4',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5944,7 +6060,8 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         tool_call_id='call_eE7MHM5WMJnMt5srV69NmBJk',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -5968,7 +6085,8 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                         content='Generate an image of an axolotl.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6016,6 +6134,7 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_09b7ce6df817433c0068dd8407c37881a0ad817ef3cc3a3600',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -6039,7 +6158,8 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                         content='Generate an image of an axolotl.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6087,6 +6207,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0d14a5e3c26c21180068dd871d439081908dc36e63fab0cedf',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -6116,7 +6237,8 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         content='Generate an image of the animal returned by the get_animal tool.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6140,6 +6262,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0481074da98340df0068dd88dceb1481918b1d167d99bc51cd',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -6149,7 +6272,8 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         tool_call_id='call_t76xO1K2zqrJkawkU3tur8vj',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6188,6 +6312,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0481074da98340df0068dd88f0ba04819185a168065ef28040',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -6214,7 +6339,8 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         content='Generate two separate images of axolotls.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6289,6 +6415,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0b6169df6e16e9690068dd80d64aec81919c65f238307673bb',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -6315,7 +6442,8 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                         content='Generate an image of axolotl.',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6360,6 +6488,7 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_08acbdf1ae54befc0068dd9ced226c8197a2e974b29c565407',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -6416,7 +6545,8 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                         content='What is the largest city in the user country?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6440,6 +6570,7 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_001fd29e2d5573f70068ece2e6dfbc819c96557f0de72802be',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -6449,7 +6580,8 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                         tool_call_id='call_LIXPi261Xx3dGYzlDsOoyHGk',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                run_id=IsStr(),
             ),
         ]
     )
@@ -6485,6 +6617,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                     )
                 ],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6611,6 +6744,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-brief-summar
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0083938b3a28070e0068fabd81970881a0a1195f2cab45bd04',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -6627,6 +6761,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-brief-summar
                     )
                 ],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6656,6 +6791,7 @@ The monorepo is organized into these main packages:  \n\
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0083938b3a28070e0068fabd9d414881a089cf24784f80e021',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -6702,6 +6838,7 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                     )
                 ],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6874,6 +7011,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_00b9cc7a23d047270068faa0e25934819f9c3bfdec80065bc4',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -7090,6 +7228,7 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                     UserPromptPart(content='What do I have on my Google Calendar for today?', timestamp=IsDatetime())
                 ],
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7250,6 +7389,7 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_0558010cf1416a490068faa0f945bc81a0b6a6dfb7391030d5',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )

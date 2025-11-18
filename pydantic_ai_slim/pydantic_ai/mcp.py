@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import functools
+import os
+import re
 import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
@@ -187,6 +189,13 @@ TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
         pydantic_core.core_schema.str_schema(), pydantic_core.core_schema.any_schema()
     )
 )
+
+# Environment variable expansion pattern
+# Supports both ${VAR_NAME} and ${VAR_NAME:-default} syntax
+# Group 1: variable name
+# Group 2: the ':-' separator (to detect if default syntax is used)
+# Group 3: the default value (can be empty)
+_ENV_VAR_PATTERN = re.compile(r'\$\{([^}:]+)(:-([^}]*))?\}')
 
 
 class MCPServer(AbstractToolset[Any], ABC):
@@ -1156,8 +1165,56 @@ class MCPServerConfig(BaseModel):
     ]
 
 
+def _expand_env_vars(value: Any) -> Any:
+    """Recursively expand environment variables in a JSON structure.
+
+    Environment variables can be referenced using `${VAR_NAME}` syntax,
+    or `${VAR_NAME:-default}` syntax to provide a default value if the variable is not set.
+
+    Args:
+        value: The value to expand (can be str, dict, list, or other JSON types).
+
+    Returns:
+        The value with all environment variables expanded.
+
+    Raises:
+        ValueError: If an environment variable is not defined and no default value is provided.
+    """
+    if isinstance(value, str):
+        # Find all environment variable references in the string
+        # Supports both ${VAR_NAME} and ${VAR_NAME:-default} syntax
+        def replace_match(match: re.Match[str]) -> str:
+            var_name = match.group(1)
+            has_default = match.group(2) is not None
+            default_value = match.group(3) if has_default else None
+
+            # Check if variable exists in environment
+            if var_name in os.environ:
+                return os.environ[var_name]
+            elif has_default:
+                # Use default value if the :- syntax was present (even if empty string)
+                return default_value or ''
+            else:
+                # No default value and variable not set - raise error
+                raise ValueError(f'Environment variable ${{{var_name}}} is not defined')
+
+        value = _ENV_VAR_PATTERN.sub(replace_match, value)
+
+        return value
+    elif isinstance(value, dict):
+        return {k: _expand_env_vars(v) for k, v in value.items()}  # type: ignore[misc]
+    elif isinstance(value, list):
+        return [_expand_env_vars(item) for item in value]  # type: ignore[misc]
+    else:
+        return value
+
+
 def load_mcp_servers(config_path: str | Path) -> list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE]:
     """Load MCP servers from a configuration file.
+
+    Environment variables can be referenced in the configuration file using:
+    - `${VAR_NAME}` syntax - expands to the value of VAR_NAME, raises error if not defined
+    - `${VAR_NAME:-default}` syntax - expands to VAR_NAME if set, otherwise uses the default value
 
     Args:
         config_path: The path to the configuration file.
@@ -1168,13 +1225,16 @@ def load_mcp_servers(config_path: str | Path) -> list[MCPServerStdio | MCPServer
     Raises:
         FileNotFoundError: If the configuration file does not exist.
         ValidationError: If the configuration file does not match the schema.
+        ValueError: If an environment variable referenced in the configuration is not defined and no default value is provided.
     """
     config_path = Path(config_path)
 
     if not config_path.exists():
         raise FileNotFoundError(f'Config file {config_path} not found')
 
-    config = MCPServerConfig.model_validate_json(config_path.read_bytes())
+    config_data = pydantic_core.from_json(config_path.read_bytes())
+    expanded_config_data = _expand_env_vars(config_data)
+    config = MCPServerConfig.model_validate(expanded_config_data)
 
     servers: list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE] = []
     for name, server in config.mcp_servers.items():

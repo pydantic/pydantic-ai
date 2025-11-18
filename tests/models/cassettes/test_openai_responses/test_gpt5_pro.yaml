@@ -1,0 +1,109 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '147'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the capital of Mexico?
+        role: user
+      model: gpt-5-pro
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3276'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '45869'
+      openai-project:
+      - proj_wlzE3wrTAwGKSsoZUKNhfDgz
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1762973171
+      error: null
+      id: resp_0715fbcff7ba1d57006914d5f34eb881a384862fa55f301aa3
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-pro-2025-10-06
+      object: response
+      output:
+      - encrypted_content: gAAAAABpFNYhYtErnkhOgG02VyB-dBDevWaCXLrq2OTPbjhEVh1ZY67Sb5wdtirUDVRsV1FIgeJGqh-3JpdTgh8pbq3FPaIMyPZBw0tks8hTxWriBtOl1PLLPhMMPWT_KBa5kVjSX_1IabEZMWnYJzJF95_ZTI1TWpouZBbZNmoYO9vm5r_BZy3q27fHXFJ0Q1er4HEpOI3f_UXOjt9SgKBFmSvsMFfgPXplc8Y5Nr6bqT7rXkC1r2QMdsuCOwbj9wmyBy209dGC8q8O8AOXY1Jobgy26dZe7WFRUTUAajAB5TbxXAVeTCGvDBwvs15X75Bj132FgglWHCtM2lAF2uOjNU7CJD_yHRydl9RUffEnlTtXd0w6EddRR2YT3yuNDappqB4I0MnAEc8Bgersd8YlplsTWPFtRMWaMSI7zJ-b5ZeVcUMsall5iG-qC0TxGSGC35xPFgwQd_6vEyeiRUVGDopabS16iWPzJyfZRbP6pAZoAKB84NxBNYHNJkPOnRoCkA4XyZ1ZHqpcSUM2g3wTpPmXLTuaO6kwx39ceUAH3M6Noo4UMEUg75B-2f-pN05Esz3ITA4awhxiJ15jMaQWpv67on5MXUibSF486jjLaeCM7f91IAD03qHXLmYzCg0FeVHAkAPeMVYhmweWbmeZfbpEBJcxC5xy2NK2wJbDjbwPXS32Krhos8Tl1xIkiyNKmQfeMbG04cO4xUptP9h8WIYOb8ODgqpbMVDFtQdGCzz_sVx0KXj_t8ErNM_hWGlmJly4O8XTMxtiAdnjPLMv33Xu6-IgDh6StisHp4RWKERrOhh5myN8M0SrSKLIgQDeDB2iFt0z4zBm7ETPTzesbxMK74b7d0tKzCLYL8luondem9BWFFg7_B21IaUA-33ZJpZpKa9Ww9hxp6hd9GVcLO34pWTbimXvtqUuaxtg5nlvPosvYmNL_p_asmzwu96ByUFEJpFzQyUusxcAwy6DyeqFQ94bFVGzztBqW5kOAgUZYjylu7fIQNElUrqLRsf9JmplLrO9cuJl9ztzrsLdQRPVNFkdnCZCRUBTosV2ZmC7Cp6w5CDS3bFw1tnuNVr9AfaO8ZGrfCSVBKPU7gHjP7ZzvXnaTXV3XeauIjJ71taJpMP4J-dulXIUoozCKdoVGsZTEUypzdZT4KKqz8RQYXsXEXmxkzwZgX4GgcyaUR0ApvVKXF0fKGET_oJpZL0zbqjoZ2Zuk-vDRabeVnCZvrxHxuVoArHtNY3f-jL85ajBrpNaY4q2h566Mt0L8mDliNxCwsDLUys5Zk0OL66Pxs4HAVfUSARNzmmMZmNwBgtWuGNqKpp320Y_8P3BTIc_SRspSRj_9VH_RIZgd-abEpSl8n_PDS0HyhKzVyIv8hVu74lrpzst3LbH8BJWQEZLa5SI0nFXaQtlFxFB8xqSNaanIC4JyFed3YAbO_yYjLPsFED4gv1OOg4mxtcFgRH87i_pH4UenNcf54nRsrVyBE-6qn0kH7ERYVgs-3nCYFjwEFLeqeXCJxaiEX5PnNFIF8D0O1eGUtnchxNuawfdvZxPgiKF16ZTn6Fo64ubu3lXQWDd8e_t6JkKea8ta34prCdceXz5uEuFAr2UtlKmUXK1mBJ3Vw==
+        id: rs_0715fbcff7ba1d57006914d620d27881a38e947417ca3fd85d
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Mexico City (Ciudad de México).
+          type: output_text
+        id: msg_0715fbcff7ba1d57006914d620d3b481a399c51d4b50d74b67
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: high
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 13
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 77
+        output_tokens_details:
+          reasoning_tokens: 64
+        total_tokens: 90
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import inspect
+import uuid
 from asyncio import Task
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
@@ -92,6 +93,7 @@ class GraphAgentState:
     usage: _usage.RunUsage = dataclasses.field(default_factory=_usage.RunUsage)
     retries: int = 0
     run_step: int = 0
+    run_id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4()))
 
     def increment_retries(
         self,
@@ -469,6 +471,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     async def _prepare_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> tuple[ModelSettings | None, models.ModelRequestParameters, list[_messages.ModelMessage], RunContext[DepsT]]:
+        self.request.run_id = self.request.run_id or ctx.state.run_id
         ctx.state.message_history.append(self.request)
 
         ctx.state.run_step += 1
@@ -510,6 +513,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
     ) -> CallToolsNode[DepsT, NodeRunEndT]:
+        response.run_id = response.run_id or ctx.state.run_id
         # Update usage
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
@@ -741,7 +745,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         # For backwards compatibility, append a new ModelRequest using the tool returns and retries
         if tool_responses:
-            messages.append(_messages.ModelRequest(parts=tool_responses))
+            messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id))
 
         return End(final_result)
 
@@ -775,7 +779,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         if ctx.deps.instrumentation_settings
         else DEFAULT_INSTRUMENTATION_VERSION,
         run_step=ctx.state.run_step,
-        tool_call_approved=ctx.state.run_step == 0,
+        run_id=ctx.state.run_id,
     )
 
 
@@ -884,6 +888,7 @@ async def process_tool_calls(  # noqa: C901
         calls_to_run = [call for call in calls_to_run if call.tool_call_id in calls_to_run_results]
 
     deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = defaultdict(list)
+    deferred_metadata: dict[str, dict[str, Any]] = {}
 
     if calls_to_run:
         async for event in _call_tools(
@@ -895,6 +900,7 @@ async def process_tool_calls(  # noqa: C901
             usage_limits=ctx.deps.usage_limits,
             output_parts=output_parts,
             output_deferred_calls=deferred_calls,
+            output_deferred_metadata=deferred_metadata,
         ):
             yield event
 
@@ -928,6 +934,7 @@ async def process_tool_calls(  # noqa: C901
         deferred_tool_requests = _output.DeferredToolRequests(
             calls=deferred_calls['external'],
             approvals=deferred_calls['unapproved'],
+            metadata=deferred_metadata,
         )
 
         final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_requests), None, None)
@@ -945,10 +952,12 @@ async def _call_tools(
     usage_limits: _usage.UsageLimits,
     output_parts: list[_messages.ModelRequestPart],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
+    output_deferred_metadata: dict[str, dict[str, Any]],
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
     tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
     user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
+    deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
     if usage_limits.tool_calls_limit is not None:
         projected_usage = deepcopy(usage)
@@ -983,10 +992,12 @@ async def _call_tools(
                 tool_part, tool_user_content = (
                     (await coro_or_task) if inspect.isawaitable(coro_or_task) else coro_or_task.result()
                 )
-            except exceptions.CallDeferred:
+            except exceptions.CallDeferred as e:
                 deferred_calls_by_index[index] = 'external'
-            except exceptions.ApprovalRequired:
+                deferred_metadata_by_index[index] = e.metadata
+            except exceptions.ApprovalRequired as e:
                 deferred_calls_by_index[index] = 'unapproved'
+                deferred_metadata_by_index[index] = e.metadata
             else:
                 tool_parts_by_index[index] = tool_part
                 if tool_user_content:
@@ -1024,8 +1035,25 @@ async def _call_tools(
     output_parts.extend([tool_parts_by_index[k] for k in sorted(tool_parts_by_index)])
     output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
+    _populate_deferred_calls(
+        tool_calls, deferred_calls_by_index, deferred_metadata_by_index, output_deferred_calls, output_deferred_metadata
+    )
+
+
+def _populate_deferred_calls(
+    tool_calls: list[_messages.ToolCallPart],
+    deferred_calls_by_index: dict[int, Literal['external', 'unapproved']],
+    deferred_metadata_by_index: dict[int, dict[str, Any] | None],
+    output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
+    output_deferred_metadata: dict[str, dict[str, Any]],
+) -> None:
+    """Populate deferred calls and metadata from indexed mappings."""
     for k in sorted(deferred_calls_by_index):
-        output_deferred_calls[deferred_calls_by_index[k]].append(tool_calls[k])
+        call = tool_calls[k]
+        output_deferred_calls[deferred_calls_by_index[k]].append(call)
+        metadata = deferred_metadata_by_index[k]
+        if metadata is not None:
+            output_deferred_metadata[call.tool_call_id] = metadata
 
 
 async def _call_tool(
@@ -1039,7 +1067,7 @@ async def _call_tool(
         elif isinstance(tool_call_result, ToolApproved):
             if tool_call_result.override_args is not None:
                 tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
-            tool_result = await tool_manager.handle_call(tool_call)
+            tool_result = await tool_manager.handle_call(tool_call, approved=True)
         elif isinstance(tool_call_result, ToolDenied):
             return _messages.ToolReturnPart(
                 tool_name=tool_call.tool_name,

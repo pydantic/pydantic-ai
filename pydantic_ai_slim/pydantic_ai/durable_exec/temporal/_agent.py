@@ -219,7 +219,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     ) -> None:
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         async for event in stream:
-            await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
+            await workflow.execute_activity(
                 activity=self.event_stream_handler_activity,
                 args=[
                     _EventStreamHandlerParams(
@@ -841,7 +841,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                                 content='What is the capital of France?',
                                 timestamp=datetime.datetime(...),
                             )
-                        ]
+                        ],
+                        run_id='...',
                     )
                 ),
                 CallToolsNode(
@@ -850,6 +851,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                         usage=RequestUsage(input_tokens=56, output_tokens=7),
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
+                        run_id='...',
                     )
                 ),
                 End(data=FinalResult(output='The capital of France is Paris.')),
