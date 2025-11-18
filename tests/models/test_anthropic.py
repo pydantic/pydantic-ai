@@ -3678,6 +3678,132 @@ async def test_anthropic_url_context_tool_stream(
 
 
 @pytest.mark.vcr()
+async def test_anthropic_url_context_tool_multi_turn(allow_model_requests: None, anthropic_api_key: str):
+    """Test multi-turn conversation with UrlContextTool to ensure message replay works correctly.
+
+    This test covers the code paths in _map_message that convert BuiltinToolCallPart and
+    BuiltinToolReturnPart back to Anthropic format when replaying previous messages.
+    """
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    agent = Agent(m, builtin_tools=[UrlContextTool()], model_settings=settings)
+
+    # First turn: Fetch URL content
+    result1 = await agent.run(
+        'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.',
+        message_history=None,
+    )
+
+    assert result1.output == snapshot(
+        'Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
+    )
+
+    # Verify first turn had URL context tool calls
+    messages1 = result1.all_messages()
+    tool_calls1 = [p for m in messages1 for p in m.parts if isinstance(p, BuiltinToolCallPart)]
+    tool_returns1 = [p for m in messages1 for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
+    assert len(tool_calls1) >= 1
+    assert len(tool_returns1) >= 1
+    assert any(tc.tool_name == 'url_context' for tc in tool_calls1)
+    assert any(tr.tool_name == 'url_context' for tr in tool_returns1)
+
+    # Verify that the URL and retrieved_at are preserved in the tool return part
+    url_context_return = next(tr for tr in tool_returns1 if tr.tool_name == 'url_context')
+    assert isinstance(url_context_return.content, dict)
+    assert 'content' in url_context_return.content
+    inner_content = url_context_return.content['content']
+    assert 'url' in inner_content
+    assert inner_content['url'] == 'https://ai.pydantic.dev'
+    assert 'retrieved_at' in inner_content
+    assert 'type' in inner_content
+    assert inner_content['type'] == 'web_fetch_result'
+
+    # Second turn: Ask follow-up question using previous message history
+    # This will trigger the code paths that serialize BuiltinToolCallPart and BuiltinToolReturnPart
+    result2 = await agent.run(
+        'Based on the page you just fetched, what framework does it mention?',
+        message_history=result1.all_messages(),
+    )
+
+    assert 'Pydantic AI' in result2.output or 'pydantic' in result2.output.lower()
+
+    # Verify the second turn's messages include the replayed tool calls and results
+    messages2 = result2.all_messages()
+    tool_calls2 = [p for m in messages2 for p in m.parts if isinstance(p, BuiltinToolCallPart)]
+    tool_returns2 = [p for m in messages2 for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
+
+    # Should have at least the tool calls/returns from the first turn
+    assert len(tool_calls2) >= len(tool_calls1)
+    assert len(tool_returns2) >= len(tool_returns1)
+    assert any(tc.tool_name == 'url_context' for tc in tool_calls2)
+
+
+async def test_anthropic_url_context_tool_message_replay():
+    """Test that BuiltinToolCallPart and BuiltinToolReturnPart for UrlContextTool are correctly serialized."""
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    # Create a model instance
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
+
+    # Create message history with BuiltinToolCallPart and BuiltinToolReturnPart
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Test')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    provider_name=m.system,
+                    tool_name=UrlContextTool.kind,
+                    args={'url': 'https://example.com'},
+                    tool_call_id='test_id_1',
+                ),
+                BuiltinToolReturnPart(
+                    provider_name=m.system,
+                    tool_name=UrlContextTool.kind,
+                    content={
+                        'content': {
+                            'content': {'type': 'document'},
+                            'type': 'web_fetch_result',
+                            'url': 'https://example.com',
+                            'retrieved_at': '2025-01-01T00:00:00Z',
+                        }
+                    },
+                    tool_call_id='test_id_1',
+                ),
+            ],
+            model_name='claude-sonnet-4-0',
+        ),
+    ]
+
+    # Call _map_message to trigger serialization
+    model_settings = {}
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[UrlContextTool()],
+        output_tools=[],
+    )
+
+    system_prompt, anthropic_messages = await m._map_message(messages, model_request_parameters, model_settings)
+
+    # Verify the messages were serialized correctly
+    assert len(anthropic_messages) == 2
+    assert anthropic_messages[1]['role'] == 'assistant'
+
+    # Check that server_tool_use block is present
+    content = anthropic_messages[1]['content']
+    assert any(item.get('type') == 'server_tool_use' and item.get('name') == 'web_fetch' for item in content)
+
+    # Check that web_fetch_tool_result block is present and contains URL and retrieved_at
+    web_fetch_result = next(item for item in content if item.get('type') == 'web_fetch_tool_result')
+    assert 'content' in web_fetch_result
+    result_content = web_fetch_result['content']
+    assert result_content['type'] == 'web_fetch_result'
+    assert result_content['url'] == 'https://example.com'
+    assert result_content['retrieved_at'] == '2025-01-01T00:00:00Z'
+    assert 'content' in result_content  # The actual document content
+
+
+@pytest.mark.vcr()
 async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
