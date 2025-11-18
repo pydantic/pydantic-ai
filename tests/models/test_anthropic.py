@@ -3625,14 +3625,782 @@ async def test_anthropic_web_fetch_tool(allow_model_requests: None, anthropic_ap
         'Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
     )
 
-    messages = result.all_messages()
-    # Verify we received web_fetch tool call and result
-    tool_calls = [p for m in messages for p in m.parts if isinstance(p, BuiltinToolCallPart)]
-    tool_returns = [p for m in messages for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
-    assert len(tool_calls) >= 1
-    assert len(tool_returns) >= 1
-    assert any(tc.tool_name == 'url_context' for tc in tool_calls)
-    assert any(tr.tool_name == 'url_context' for tr in tool_returns)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking me to fetch the content from https://ai.pydantic.dev and return only the first sentence on that page. I need to use the web_fetch tool to get the content from this URL, then identify the first sentence and return only that sentence.
+
+Let me fetch the page first.\
+""",
+                        signature='EsIDCkYICRgCKkAKi/j4a8lGN12CjyS27ZXcPkXHGyTbn1vJENJz+AjinyTnsrynMEhidWT5IMNAs0TDgwSwPLNmgq4MsPkVekB8EgxetaK+Nhg8wUdhTEAaDMukODgr3JaYHZwVEiIwgKBckFLJ/C7wCD9oGCIECbqpaeEuWQ8BH3Hev6wpuc+66Wu7AJM1jGH60BpsUovnKqkCrHNq6b1SDT41cm2w7cyxZggrX6crzYh0fAkZ+VC6FBjy6mJikZtX6reKD+064KZ4F1oe4Qd40EBp/wHvD7oPV/fhGut1fzwl48ZgB8uzJb3tHr9MBjs4PVTsvKstpHKpOo6NLvCknQJ/0730OTENp/JOR6h6RUl6kMl5OrHTvsDEYpselUBPtLikm9p4t+d8CxqGm/B1kg1wN3FGJK31PD3veYIOO4hBirFPXWd+AiB1rZP++2QjToZ9lD2xqP/Q3vWEU+/Ryp6uzaRFWPVQkIr+mzpIaJsYuKDiyduxF4LD/hdMTV7IVDtconeQIPQJRhuO6nICBEuqb0uIotPDnCU6iI2l9OyEeKJM0RS6/NTNG8DZnvyVJ8gGKbtZKSHK6KKsdH0f7d+DGAE=',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='url_context',
+                        args={'url': 'https://ai.pydantic.dev'},
+                        tool_call_id=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='url_context',
+                        content={
+                            'content': {
+                                'citations': None,
+                                'source': {
+                                    'data': '''\
+Pydantic AI
+GenAI Agent Framework, the Pydantic way
+Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
+Yet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
+Why use Pydantic AI
+-
+Built by the Pydantic Team:
+[Pydantic Validation](https://docs.pydantic.dev/latest/)is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. Why use the derivative when you can go straight to the source? -
+Model-agnostic: Supports virtually every
+[model](models/overview/)and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a[custom model](models/overview/#custom-models). -
+Seamless Observability: Tightly
+[integrates](logfire/)with[Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can[use that too](logfire/#alternative-observability-backends). -
+Fully Type-safe: Designed to give your IDE or AI coding agent as much context as possible for auto-completion and
+[type checking](agents/#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel. -
+Powerful Evals: Enables you to systematically test and
+[evaluate](evals/)the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire. -
+MCP, A2A, and UI: Integrates the
+[Model Context Protocol](mcp/overview/),[Agent2Agent](a2a/), and various[UI event stream](ui/overview/)standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication. -
+Human-in-the-Loop Tool Approval: Easily lets you flag that certain tool calls
+[require approval](deferred-tools/#human-in-the-loop-tool-approval)before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences. -
+Durable Execution: Enables you to build
+[durable agents](durable_execution/overview/)that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. -
+Streamed Outputs: Provides the ability to
+[stream](output/#streamed-results)structured output continuously, with immediate validation, ensuring real time access to generated data. -
+Graph Support: Provides a powerful way to define
+[graphs](graph/)using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
+Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
+Sign up for our newsletter, The Pydantic Stack, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:
+Hello World Example
+Here's a minimal example of Pydantic AI:
+[Learn about Gateway](gateway)hello_world.py
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'gateway/anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+(This example is complete, it can be run "as is", assuming you've [installed the pydantic_ai package](install/))
+The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
+Not very interesting yet, but we can easily add [tools](tools/), [dynamic instructions](agents/#instructions), and [structured outputs](output/) to build more powerful agents.
+Tools & Dependency Injection Example
+Here is a concise example using Pydantic AI to build a support agent for a bank:
+[Learn about Gateway](gateway)bank_support.py
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'gateway/openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+Complete bank_support.py
+example
+The code included here is incomplete for the sake of brevity (the definition of DatabaseConn
+is missing); you can find the complete bank_support.py
+example [here](examples/bank-support/).
+Instrumentation with Pydantic Logfire
+Even a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code. To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
+To do this, we need to [set up Logfire](logfire/#using-logfire), and add the following to our code:
+[Learn about Gateway](gateway)bank_support_with_logfire.py
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'gateway/openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+That's enough to get the following view of your agent in action:
+See [Monitoring and Performance](logfire/) to learn more.
+llms.txt
+The Pydantic AI documentation is available in the [llms.txt](https://llmstxt.org/) format.
+This format is defined in Markdown and suited for LLMs and AI coding assistants and agents.
+Two formats are available:
+: a file containing a brief description of the project, along with links to the different sections of the documentation. The structure of this file is described in detailsllms.txt
+[here](https://llmstxt.org/#format).: Similar to thellms-full.txt
+llms.txt
+file, but every link content is included. Note that this file may be too large for some LLMs.
+As of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.
+Next Steps
+To try Pydantic AI for yourself, [install it](install/) and follow the instructions [in the examples](examples/setup/).
+Read the [docs](agents/) to learn more about building applications with Pydantic AI.
+Read the [API Reference](api/agent/) to understand Pydantic AI's interface.
+Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [ GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.\
+''',
+                                    'media_type': 'text/plain',
+                                    'type': 'text',
+                                },
+                                'title': 'Pydantic AI',
+                                'type': 'document',
+                            },
+                            'retrieved_at': IsStr(),
+                            'type': 'web_fetch_result',
+                            'url': 'https://ai.pydantic.dev',
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content='Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=7262,
+                    output_tokens=171,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 7262,
+                        'output_tokens': 171,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Second run to test message replay (multi-turn conversation)
+    result2 = await agent.run(
+        'Based on the page you just fetched, what framework does it mention?',
+        message_history=result.all_messages(),
+    )
+
+    assert 'Pydantic AI' in result2.output or 'pydantic' in result2.output.lower()
+    assert result2.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking me to fetch the content from https://ai.pydantic.dev and return only the first sentence on that page. I need to use the web_fetch tool to get the content from this URL, then identify the first sentence and return only that sentence.
+
+Let me fetch the page first.\
+""",
+                        signature='EsIDCkYICRgCKkAKi/j4a8lGN12CjyS27ZXcPkXHGyTbn1vJENJz+AjinyTnsrynMEhidWT5IMNAs0TDgwSwPLNmgq4MsPkVekB8EgxetaK+Nhg8wUdhTEAaDMukODgr3JaYHZwVEiIwgKBckFLJ/C7wCD9oGCIECbqpaeEuWQ8BH3Hev6wpuc+66Wu7AJM1jGH60BpsUovnKqkCrHNq6b1SDT41cm2w7cyxZggrX6crzYh0fAkZ+VC6FBjy6mJikZtX6reKD+064KZ4F1oe4Qd40EBp/wHvD7oPV/fhGut1fzwl48ZgB8uzJb3tHr9MBjs4PVTsvKstpHKpOo6NLvCknQJ/0730OTENp/JOR6h6RUl6kMl5OrHTvsDEYpselUBPtLikm9p4t+d8CxqGm/B1kg1wN3FGJK31PD3veYIOO4hBirFPXWd+AiB1rZP++2QjToZ9lD2xqP/Q3vWEU+/Ryp6uzaRFWPVQkIr+mzpIaJsYuKDiyduxF4LD/hdMTV7IVDtconeQIPQJRhuO6nICBEuqb0uIotPDnCU6iI2l9OyEeKJM0RS6/NTNG8DZnvyVJ8gGKbtZKSHK6KKsdH0f7d+DGAE=',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='url_context',
+                        args={'url': 'https://ai.pydantic.dev'},
+                        tool_call_id=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='url_context',
+                        content={
+                            'content': {
+                                'citations': None,
+                                'source': {
+                                    'data': '''\
+Pydantic AI
+GenAI Agent Framework, the Pydantic way
+Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
+Yet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
+Why use Pydantic AI
+-
+Built by the Pydantic Team:
+[Pydantic Validation](https://docs.pydantic.dev/latest/)is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. Why use the derivative when you can go straight to the source? -
+Model-agnostic: Supports virtually every
+[model](models/overview/)and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a[custom model](models/overview/#custom-models). -
+Seamless Observability: Tightly
+[integrates](logfire/)with[Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can[use that too](logfire/#alternative-observability-backends). -
+Fully Type-safe: Designed to give your IDE or AI coding agent as much context as possible for auto-completion and
+[type checking](agents/#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel. -
+Powerful Evals: Enables you to systematically test and
+[evaluate](evals/)the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire. -
+MCP, A2A, and UI: Integrates the
+[Model Context Protocol](mcp/overview/),[Agent2Agent](a2a/), and various[UI event stream](ui/overview/)standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication. -
+Human-in-the-Loop Tool Approval: Easily lets you flag that certain tool calls
+[require approval](deferred-tools/#human-in-the-loop-tool-approval)before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences. -
+Durable Execution: Enables you to build
+[durable agents](durable_execution/overview/)that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. -
+Streamed Outputs: Provides the ability to
+[stream](output/#streamed-results)structured output continuously, with immediate validation, ensuring real time access to generated data. -
+Graph Support: Provides a powerful way to define
+[graphs](graph/)using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
+Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
+Sign up for our newsletter, The Pydantic Stack, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:
+Hello World Example
+Here's a minimal example of Pydantic AI:
+[Learn about Gateway](gateway)hello_world.py
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'gateway/anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+(This example is complete, it can be run "as is", assuming you've [installed the pydantic_ai package](install/))
+The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
+Not very interesting yet, but we can easily add [tools](tools/), [dynamic instructions](agents/#instructions), and [structured outputs](output/) to build more powerful agents.
+Tools & Dependency Injection Example
+Here is a concise example using Pydantic AI to build a support agent for a bank:
+[Learn about Gateway](gateway)bank_support.py
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'gateway/openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+Complete bank_support.py
+example
+The code included here is incomplete for the sake of brevity (the definition of DatabaseConn
+is missing); you can find the complete bank_support.py
+example [here](examples/bank-support/).
+Instrumentation with Pydantic Logfire
+Even a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code. To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
+To do this, we need to [set up Logfire](logfire/#using-logfire), and add the following to our code:
+[Learn about Gateway](gateway)bank_support_with_logfire.py
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'gateway/openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+That's enough to get the following view of your agent in action:
+See [Monitoring and Performance](logfire/) to learn more.
+llms.txt
+The Pydantic AI documentation is available in the [llms.txt](https://llmstxt.org/) format.
+This format is defined in Markdown and suited for LLMs and AI coding assistants and agents.
+Two formats are available:
+: a file containing a brief description of the project, along with links to the different sections of the documentation. The structure of this file is described in detailsllms.txt
+[here](https://llmstxt.org/#format).: Similar to thellms-full.txt
+llms.txt
+file, but every link content is included. Note that this file may be too large for some LLMs.
+As of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.
+Next Steps
+To try Pydantic AI for yourself, [install it](install/) and follow the instructions [in the examples](examples/setup/).
+Read the [docs](agents/) to learn more about building applications with Pydantic AI.
+Read the [API Reference](api/agent/) to understand Pydantic AI's interface.
+Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [ GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.\
+''',
+                                    'media_type': 'text/plain',
+                                    'type': 'text',
+                                },
+                                'title': 'Pydantic AI',
+                                'type': 'document',
+                            },
+                            'retrieved_at': IsStr(),
+                            'type': 'web_fetch_result',
+                            'url': 'https://ai.pydantic.dev',
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content='Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=7262,
+                    output_tokens=171,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 7262,
+                        'output_tokens': 171,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Based on the page you just fetched, what framework does it mention?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking about what framework is mentioned on the Pydantic AI page that I just fetched. Looking at the content, I can see several frameworks mentioned:
+
+1. Pydantic AI itself - described as "a Python agent framework"
+2. FastAPI - mentioned as having "revolutionized web development by offering an innovative and ergonomic design"
+3. Various other frameworks/libraries mentioned like LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor
+4. Pydantic Validation is mentioned as being used by many frameworks
+5. OpenTelemetry is mentioned in relation to observability
+
+But the most prominently featured framework that seems to be the main comparison point is FastAPI, as the page talks about bringing "that FastAPI feeling to GenAI app and agent development."\
+""",
+                        signature='ErIHCkYICRgCKkDZrwipmaxoEat4WffzPSjVzIuSQWM2sHE6FLC2wt5S2qiJN2MQh//EImuLE9I2ssZjTMxGXZV+esnf5ipnzbvnEgxfcXs2ax8vnLdroxMaDCpqvdPKpCP3Qi0txCIw55NdOjY30P3/yRL9RF8sPGioyitlzkhSpf+PuC3YXwz4N0hoy8zVY1MHecwc60vcKpkGxtZsfqmAuJwjeGRr/Ugxcxd69+0X/Y9pojMiklNHq9otW+ehDX0rR0EzfdN/2jNOs3bOrzfy9jmvYE5FU2c5e0JpMP3LH0LrFvZYkSh7RkbhYuHvrOqohlE3BhpflrszowmiozUk+aG4wSqx5Dtxo9W7jfeU4wduy6OyEFdIqdYdTMR8VVf9Qnd5bLX4rY09xcGQc4JcX2mFjdSR2WgEJM7p5lytlN5unH3selWBVPbCj7ogU8DbT9zhY3zkDW1dMt2vNbWNaY4gVrLwi42qBJvjC5eJTADckvXAt+MCT9AAe1kmH9NlsgBnRy13O4lhXv9SPNDfk2tU5Tdco4h/I/fXh+WuPe6/MKk+tJuoBQTGVQ5ryFmomsNiwhwtLbQ44fLVHhyqEKSEdo/107xvbzhjmY/MAzn1Pmc9rd+OhFsjUCvgqI8cWNc/E694eJqg3J2S+I6YRzG3d2tR7laUivf+J38c2XmwSyXfdRoJpyZ9TixubpPk04WSchdFlEkxPBGEWLDkWOVL1PG5ztY48di7EzM1tvAwiT1BOxl4WRZ78Ewc+C5BVHwT658rIrcKJXXI/zBMsoReQT9xsRhpozbb576wNXggJdZsd2ysQY0O6Pihz54emwigm+zPbO5n8HvlrGKf6dSsrwusUJ1BIY4wI6qjz7gweRryReDEvEzMT8Ul4mIrigRy4yL2w+03qAclz8oGwxinMvcu8vJzXg+uRm/WbOgyco4gTPQiN4NcXbzwhVtJlNWZYXCiiMb/i6IXuOzZmSjI7LqxLubD9RgOy/2890RLvVJQBBVnOowW8q+iE93CoVBr1l5D54opLS9fHYcM7ezV0Ul34qMu6K0uoBG0+aLVlZHKEecN2/VE4fh0zYEDaeqRZfNH2gnAGmokdmPtEHlp33pvJ0IFDAbxKq2CVFFdB+lCGlaLQuZ5v6Mhq4b6H8DjaGZqo/vcB/MK4pr/F1SRjLzSHyh7Ey4ogBYSOXWfaeXQiZZFoEfxIUG9PzofIA1CCFk+eZSG7bGY4wXe2Whhh5bs+cJ3duYI9SL+49WBABgB',
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content="""\
+Based on the page I fetched, the main framework it mentions and compares itself to is **FastAPI**. The page states that "FastAPI revolutionized web development by offering an innovative and ergonomic design" and that Pydantic AI was built with the aim "to bring that FastAPI feeling to GenAI app and agent development."
+
+The page also mentions several other frameworks and libraries including:
+- LangChain
+- LlamaIndex  \n\
+- AutoGPT
+- Transformers
+- CrewAI
+- Instructor
+
+It notes that "virtually every Python agent framework and LLM library" uses Pydantic Validation, which is the foundation that Pydantic AI builds upon.\
+"""
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=6346,
+                    output_tokens=354,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 6346,
+                        'output_tokens': 354,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 @pytest.mark.vcr()
@@ -3665,79 +4433,742 @@ async def test_anthropic_web_fetch_tool_stream(
         'Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
     )
 
-    messages = agent_run.result.all_messages()
-    # Verify we received web_fetch tool call and result
-    tool_calls = [p for m in messages for p in m.parts if isinstance(p, BuiltinToolCallPart)]
-    tool_returns = [p for m in messages for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
-    assert len(tool_calls) >= 1
-    assert len(tool_returns) >= 1
-    assert any(tc.tool_name == 'url_context' for tc in tool_calls)  # pragma: lax no cover
-    assert any(tr.tool_name == 'url_context' for tr in tool_returns)
-    # Verify we collected some streaming events
-    assert len(event_parts) > 0
-
-
-@pytest.mark.vcr()
-async def test_anthropic_web_fetch_tool_multi_turn(allow_model_requests: None, anthropic_api_key: str):
-    """Test multi-turn conversation with WebFetchTool to ensure message replay works correctly.
-
-    This test covers the code paths in _map_message that convert BuiltinToolCallPart and
-    BuiltinToolReturnPart back to Anthropic format when replaying previous messages.
-    """
-    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
-    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[WebFetchTool()], model_settings=settings)
-
-    # First turn: Fetch URL content
-    result1 = await agent.run(
-        'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.',
-        message_history=None,
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user wants me to fetch the content from the URL https://ai.pydantic.dev and provide only the first sentence from that page. I need to use the web_fetch tool to get the content from this URL.',
+                        signature='EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE=',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='url_context',
+                        args='{"url": "https://ai.pydantic.dev"}',
+                        tool_call_id=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='url_context',
+                        content={
+                            'content': {
+                                'citations': None,
+                                'source': {
+                                    'data': '''\
+Pydantic AI
+GenAI Agent Framework, the Pydantic way
+Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
+Yet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
+Why use Pydantic AI
+-
+Built by the Pydantic Team:
+[Pydantic Validation](https://docs.pydantic.dev/latest/)is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. Why use the derivative when you can go straight to the source? -
+Model-agnostic: Supports virtually every
+[model](models/overview/)and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a[custom model](models/overview/#custom-models). -
+Seamless Observability: Tightly
+[integrates](logfire/)with[Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can[use that too](logfire/#alternative-observability-backends). -
+Fully Type-safe: Designed to give your IDE or AI coding agent as much context as possible for auto-completion and
+[type checking](agents/#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel. -
+Powerful Evals: Enables you to systematically test and
+[evaluate](evals/)the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire. -
+MCP, A2A, and UI: Integrates the
+[Model Context Protocol](mcp/overview/),[Agent2Agent](a2a/), and various[UI event stream](ui/overview/)standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication. -
+Human-in-the-Loop Tool Approval: Easily lets you flag that certain tool calls
+[require approval](deferred-tools/#human-in-the-loop-tool-approval)before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences. -
+Durable Execution: Enables you to build
+[durable agents](durable_execution/overview/)that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. -
+Streamed Outputs: Provides the ability to
+[stream](output/#streamed-results)structured output continuously, with immediate validation, ensuring real time access to generated data. -
+Graph Support: Provides a powerful way to define
+[graphs](graph/)using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
+Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
+Sign up for our newsletter, The Pydantic Stack, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:
+Hello World Example
+Here's a minimal example of Pydantic AI:
+[Learn about Gateway](gateway)hello_world.py
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'gateway/anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+(This example is complete, it can be run "as is", assuming you've [installed the pydantic_ai package](install/))
+The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
+Not very interesting yet, but we can easily add [tools](tools/), [dynamic instructions](agents/#instructions), and [structured outputs](output/) to build more powerful agents.
+Tools & Dependency Injection Example
+Here is a concise example using Pydantic AI to build a support agent for a bank:
+[Learn about Gateway](gateway)bank_support.py
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'gateway/openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+Complete bank_support.py
+example
+The code included here is incomplete for the sake of brevity (the definition of DatabaseConn
+is missing); you can find the complete bank_support.py
+example [here](examples/bank-support/).
+Instrumentation with Pydantic Logfire
+Even a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code. To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
+To do this, we need to [set up Logfire](logfire/#using-logfire), and add the following to our code:
+[Learn about Gateway](gateway)bank_support_with_logfire.py
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'gateway/openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+That's enough to get the following view of your agent in action:
+See [Monitoring and Performance](logfire/) to learn more.
+llms.txt
+The Pydantic AI documentation is available in the [llms.txt](https://llmstxt.org/) format.
+This format is defined in Markdown and suited for LLMs and AI coding assistants and agents.
+Two formats are available:
+: a file containing a brief description of the project, along with links to the different sections of the documentation. The structure of this file is described in detailsllms.txt
+[here](https://llmstxt.org/#format).: Similar to thellms-full.txt
+llms.txt
+file, but every link content is included. Note that this file may be too large for some LLMs.
+As of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.
+Next Steps
+To try Pydantic AI for yourself, [install it](install/) and follow the instructions [in the examples](examples/setup/).
+Read the [docs](agents/) to learn more about building applications with Pydantic AI.
+Read the [API Reference](api/agent/) to understand Pydantic AI's interface.
+Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [ GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.\
+''',
+                                    'media_type': 'text/plain',
+                                    'type': 'text',
+                                },
+                                'title': 'Pydantic AI',
+                                'type': 'document',
+                            },
+                            'retrieved_at': IsStr(),
+                            'type': 'web_fetch_result',
+                            'url': 'https://ai.pydantic.dev',
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content='Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=7244,
+                    output_tokens=153,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 7244,
+                        'output_tokens': 153,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
     )
-
-    assert result1.output == snapshot(
-        'Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.'
+    assert event_parts == snapshot(
+        [
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='The user wants', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' me to fetch', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the content', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' from the URL https', provider_name='anthropic')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta='://ai.pydantic.dev', provider_name='anthropic')
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and provide', provider_name='anthropic')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' only', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' the first sentence from', provider_name='anthropic')
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that page.', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' I need to use the web_fetch', provider_name='anthropic'),
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' tool to', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' get the content from', provider_name='anthropic')
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' this URL.', provider_name='anthropic')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    signature_delta='EusCCkYICRgCKkAG/7zhRcmUoiMtml5iZUXVv3nqupp8kgk0nrq9zOoklaXzVCnrb9kwLNWGETIcCaAnLd0cd0ESwjslkVKdV9n8EgxKKdu8LlEvh9VGIWIaDAJ2Ja2NEacp1Am6jSIwyNO36tV+Sj+q6dWf79U+3KOIa1khXbIYarpkIViCuYQaZwpJ4Vtedrd7dLWTY2d5KtIB9Pug5UPuvepSOjyhxLaohtGxmdvZN8crGwBdTJYF9GHSli/rzvkR6CpH+ixd8iSopwFcsJgQ3j68fr/yD7cHmZ06jU3LaESVEBwTHnlK0ABiYnGvD3SvX6PgImMSQxQ1ThARFTA7DePoWw+z5DI0L2vgSun2qTYHkmGxzaEskhNIBlK9r7wS3tVcO0Di4lD/rhYV61tklL2NBWJqvm7ZCtJTN09CzPFJy7HDkg7bSINVL4kuu9gTWEtb/o40tw1b+sO62UcfxQTVFQ4Cj8D8XFZbGAE=',
+                    provider_name='anthropic',
+                ),
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolCallPart(tool_name='url_context', tool_call_id=IsStr(), provider_name='anthropic'),
+                previous_part_kind='thinking',
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='{"url": "', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='https://ai', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='.p', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk')
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='yd', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='antic.dev"}', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
+            ),
+            PartStartEvent(
+                index=2,
+                part=BuiltinToolReturnPart(
+                    tool_name='url_context',
+                    content={
+                        'content': {
+                            'citations': None,
+                            'source': {
+                                'data': '''\
+Pydantic AI
+GenAI Agent Framework, the Pydantic way
+Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
+Yet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
+Why use Pydantic AI
+-
+Built by the Pydantic Team:
+[Pydantic Validation](https://docs.pydantic.dev/latest/)is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. Why use the derivative when you can go straight to the source? -
+Model-agnostic: Supports virtually every
+[model](models/overview/)and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a[custom model](models/overview/#custom-models). -
+Seamless Observability: Tightly
+[integrates](logfire/)with[Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can[use that too](logfire/#alternative-observability-backends). -
+Fully Type-safe: Designed to give your IDE or AI coding agent as much context as possible for auto-completion and
+[type checking](agents/#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel. -
+Powerful Evals: Enables you to systematically test and
+[evaluate](evals/)the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire. -
+MCP, A2A, and UI: Integrates the
+[Model Context Protocol](mcp/overview/),[Agent2Agent](a2a/), and various[UI event stream](ui/overview/)standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication. -
+Human-in-the-Loop Tool Approval: Easily lets you flag that certain tool calls
+[require approval](deferred-tools/#human-in-the-loop-tool-approval)before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences. -
+Durable Execution: Enables you to build
+[durable agents](durable_execution/overview/)that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. -
+Streamed Outputs: Provides the ability to
+[stream](output/#streamed-results)structured output continuously, with immediate validation, ensuring real time access to generated data. -
+Graph Support: Provides a powerful way to define
+[graphs](graph/)using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
+Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
+Sign up for our newsletter, The Pydantic Stack, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:
+Hello World Example
+Here's a minimal example of Pydantic AI:
+[Learn about Gateway](gateway)hello_world.py
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'gateway/anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+from pydantic_ai import Agent
+agent = Agent( # (1)!
+'anthropic:claude-sonnet-4-0',
+instructions='Be concise, reply with one sentence.', # (2)!
+)
+result = agent.run_sync('Where does "hello world" come from?') # (3)!
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+- We configure the agent to use
+[Anthropic's Claude Sonnet 4.0](api/models/anthropic/)model, but you can also set the model when running the agent. - Register static
+[instructions](agents/#instructions)using a keyword argument to the agent. [Run the agent](agents/#running-agents)synchronously, starting a conversation with the LLM.
+(This example is complete, it can be run "as is", assuming you've [installed the pydantic_ai package](install/))
+The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
+Not very interesting yet, but we can easily add [tools](tools/), [dynamic instructions](agents/#instructions), and [structured outputs](output/) to build more powerful agents.
+Tools & Dependency Injection Example
+Here is a concise example using Pydantic AI to build a support agent for a bank:
+[Learn about Gateway](gateway)bank_support.py
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'gateway/openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+from dataclasses import dataclass
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+@dataclass
+class SupportDependencies: # (3)!
+customer_id: int
+db: DatabaseConn # (12)!
+class SupportOutput(BaseModel): # (13)!
+support_advice: str = Field(description='Advice returned to the customer')
+block_card: bool = Field(description="Whether to block the customer's card")
+risk: int = Field(description='Risk level of query', ge=0, le=10)
+support_agent = Agent( # (1)!
+'openai:gpt-5', # (2)!
+deps_type=SupportDependencies,
+output_type=SupportOutput, # (9)!
+instructions=( # (4)!
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+@support_agent.instructions # (5)!
+async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
+customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
+return f"The customer's name is {customer_name!r}"
+@support_agent.tool # (6)!
+async def customer_balance(
+ctx: RunContext[SupportDependencies], include_pending: bool
+) -> float:
+"""Returns the customer's current account balance.""" # (7)!
+return await ctx.deps.db.customer_balance(
+id=ctx.deps.customer_id,
+include_pending=include_pending,
+)
+... # (11)!
+async def main():
+deps = SupportDependencies(customer_id=123, db=DatabaseConn())
+result = await support_agent.run('What is my balance?', deps=deps) # (8)!
+print(result.output) # (10)!
+"""
+support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+"""
+result = await support_agent.run('I just lost my card!', deps=deps)
+print(result.output)
+"""
+support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+"""
+- This
+[agent](agents/)will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has typeAgent[SupportDependencies, SupportOutput]
+. - Here we configure the agent to use
+[OpenAI's GPT-5 model](api/models/openai/), you can also set the model when running the agent. - The
+SupportDependencies
+dataclass is used to pass data, connections, and logic into the model that will be needed when running[instructions](agents/#instructions)and[tool](tools/)functions. Pydantic AI's system of dependency injection provides a[type-safe](agents/#static-type-checking)way to customise the behavior of your agents, and can be especially useful when running[unit tests](testing/)and evals. - Static
+[instructions](agents/#instructions)can be registered with theto the agent.instructions
+keyword argument - Dynamic
+[instructions](agents/#instructions)can be registered with thedecorator, and can make use of dependency injection. Dependencies are carried via the@agent.instructions
+argument, which is parameterized with theRunContext
+deps_type
+from above. If the type annotation here is wrong, static type checkers will catch it. - The
+decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via@agent.tool
+, any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.RunContext
+- The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are
+[extracted](tools/#function-tools-and-schema)from the docstring and added to the parameter schema sent to the LLM. [Run the agent](agents/#running-agents)asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.- The response from the agent will be guaranteed to be a
+SupportOutput
+. If validation fails[reflection](agents/#reflection-and-self-correction), the agent is prompted to try again. - The output will be validated with Pydantic to guarantee it is a
+SupportOutput
+, since the agent is generic, it'll also be typed as aSupportOutput
+to aid with static type checking. - In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+- This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
+- This
+[Pydantic](https://docs.pydantic.dev)model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+Complete bank_support.py
+example
+The code included here is incomplete for the sake of brevity (the definition of DatabaseConn
+is missing); you can find the complete bank_support.py
+example [here](examples/bank-support/).
+Instrumentation with Pydantic Logfire
+Even a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code. To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
+To do this, we need to [set up Logfire](logfire/#using-logfire), and add the following to our code:
+[Learn about Gateway](gateway)bank_support_with_logfire.py
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'gateway/openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+...
+from pydantic_ai import Agent, RunContext
+from bank_database import DatabaseConn
+import logfire
+logfire.configure() # (1)!
+logfire.instrument_pydantic_ai() # (2)!
+logfire.instrument_asyncpg() # (3)!
+...
+support_agent = Agent(
+'openai:gpt-5',
+deps_type=SupportDependencies,
+output_type=SupportOutput,
+system_prompt=(
+'You are a support agent in our bank, give the '
+'customer support and judge the risk level of their query.'
+),
+)
+- Configure the Logfire SDK, this will fail if project is not set up.
+- This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the
+to the agent.instrument=True
+keyword argument - In our demo,
+DatabaseConn
+usesto connect to a PostgreSQL database, soasyncpg
+is used to log the database queries.logfire.instrument_asyncpg()
+That's enough to get the following view of your agent in action:
+See [Monitoring and Performance](logfire/) to learn more.
+llms.txt
+The Pydantic AI documentation is available in the [llms.txt](https://llmstxt.org/) format.
+This format is defined in Markdown and suited for LLMs and AI coding assistants and agents.
+Two formats are available:
+: a file containing a brief description of the project, along with links to the different sections of the documentation. The structure of this file is described in detailsllms.txt
+[here](https://llmstxt.org/#format).: Similar to thellms-full.txt
+llms.txt
+file, but every link content is included. Note that this file may be too large for some LLMs.
+As of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.
+Next Steps
+To try Pydantic AI for yourself, [install it](install/) and follow the instructions [in the examples](examples/setup/).
+Read the [docs](agents/) to learn more about building applications with Pydantic AI.
+Read the [API Reference](api/agent/) to understand Pydantic AI's interface.
+Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [ GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.\
+''',
+                                'media_type': 'text/plain',
+                                'type': 'text',
+                            },
+                            'title': 'Pydantic AI',
+                            'type': 'document',
+                        },
+                        'retrieved_at': IsStr(),
+                        'type': 'web_fetch_result',
+                        'url': 'https://ai.pydantic.dev',
+                    },
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ydantic AI is a')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Python')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' agent')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' framework')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' designe')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d to help')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' you quickly')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' confi')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='dently,')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' and pain')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='lessly build production')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' grade')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' applications')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' an')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d workflows')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' with')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Gener')),
+            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ative AI.')),
+        ]
     )
-
-    # Verify first turn had URL context tool calls
-    messages1 = result1.all_messages()
-    tool_calls1 = [p for m in messages1 for p in m.parts if isinstance(p, BuiltinToolCallPart)]
-    tool_returns1 = [p for m in messages1 for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
-    assert len(tool_calls1) >= 1
-    assert len(tool_returns1) >= 1
-    assert any(tc.tool_name == 'url_context' for tc in tool_calls1)
-    assert any(tr.tool_name == 'url_context' for tr in tool_returns1)
-
-    # Verify that the URL and retrieved_at are preserved in the tool return part
-    url_context_return = next(tr for tr in tool_returns1 if tr.tool_name == 'url_context')
-    assert isinstance(url_context_return.content, dict)
-    # content is the BetaWebFetchBlock dict directly: {content, type, url, retrieved_at}
-    assert 'content' in url_context_return.content  # pyright: ignore[reportUnknownMemberType]
-    assert 'source' in url_context_return.content['content']  # type: ignore[typeddict-item]
-    assert 'data' in url_context_return.content['content']['source']  # type: ignore[typeddict-item,index]
-    assert 'Pydantic AI is a Python agent framework' in url_context_return.content['content']['source']['data']  # type: ignore[typeddict-item,index]
-    assert url_context_return.content['url'] == 'https://ai.pydantic.dev'  # type: ignore[typeddict-item]
-    # retrieved_at is optional but should be present
-    assert url_context_return.content.get('retrieved_at') is not None  # pyright: ignore[reportUnknownMemberType]
-    assert url_context_return.content['type'] == 'web_fetch_result'  # type: ignore[typeddict-item]
-
-    # Second turn: Ask follow-up question using previous message history
-    # This will trigger the code paths that serialize BuiltinToolCallPart and BuiltinToolReturnPart
-    result2 = await agent.run(
-        'Based on the page you just fetched, what framework does it mention?',
-        message_history=result1.all_messages(),
-    )
-
-    assert 'Pydantic AI' in result2.output or 'pydantic' in result2.output.lower()
-
-    # Verify the second turn's messages include the replayed tool calls and results
-    messages2 = result2.all_messages()
-    tool_calls2 = [p for m in messages2 for p in m.parts if isinstance(p, BuiltinToolCallPart)]
-    tool_returns2 = [p for m in messages2 for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
-
-    # Should have at least the tool calls/returns from the first turn
-    assert len(tool_calls2) >= len(tool_calls1)
-    assert len(tool_returns2) >= len(tool_returns1)
-    assert any(tc.tool_name == 'url_context' for tc in tool_calls2)
 
 
 async def test_anthropic_web_fetch_tool_message_replay():
