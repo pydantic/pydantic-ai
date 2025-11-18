@@ -3716,7 +3716,7 @@ async def test_anthropic_url_context_tool_multi_turn(allow_model_requests: None,
     assert 'data' in url_context_return.content['content']['source']
     assert 'Pydantic AI is a Python agent framework' in url_context_return.content['content']['source']['data']
     assert url_context_return.content['url'] == 'https://ai.pydantic.dev'
-    assert 'retrieved_at' in url_context_return.content
+    assert url_context_return.content.get('retrieved_at') is not None  # retrieved_at is optional but should be present
     assert url_context_return.content['type'] == 'web_fetch_result'
 
     # Second turn: Ask follow-up question using previous message history
@@ -3796,9 +3796,10 @@ async def test_anthropic_url_context_tool_message_replay():
     web_fetch_result = next(item for item in content if item.get('type') == 'web_fetch_tool_result')
     assert 'content' in web_fetch_result
     result_content = web_fetch_result['content']
+    assert isinstance(result_content, dict)  # Type narrowing for mypy
     assert result_content['type'] == 'web_fetch_result'
     assert result_content['url'] == 'https://example.com'
-    assert result_content['retrieved_at'] == '2025-01-01T00:00:00Z'
+    assert result_content.get('retrieved_at') == '2025-01-01T00:00:00Z'  # retrieved_at is optional
     assert 'content' in result_content  # The actual document content
 
 
