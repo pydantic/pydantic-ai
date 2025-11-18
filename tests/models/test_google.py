@@ -3202,37 +3202,9 @@ async def test_google_recursive_schema_native_output(allow_model_requests: None,
 
 
 async def test_google_recursive_schema_native_output_gemini_2_5(
-    allow_model_requests: None, vertex_provider: GoogleProvider
-):  # pragma: lax no cover
-    """Test recursive schemas with $ref and $defs using gemini-2.5-flash on Vertex AI.
-
-    NOTE: Recursive schemas with gemini-2.5-flash FAIL on GLA (500 error) but PASS on Vertex AI.
-    This test uses vertex_provider to demonstrate the feature works on Vertex AI.
-    The GLA issue needs to be reported to Google.
-    """
-    m = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
-
-    class TreeNode(BaseModel):
-        """A node in a tree structure."""
-
-        value: str
-        children: list[TreeNode] = []
-
-    agent = Agent(m, output_type=NativeOutput(TreeNode))
-
-    result = await agent.run('Create a simple tree with root "A" and two children "B" and "C"')
-    assert result.output.value == 'A'
-    assert len(result.output.children) == 2
-    assert {child.value for child in result.output.children} == {'B', 'C'}
-
-
-async def test_google_recursive_schema_native_output_gemini_2_5_gla(
     allow_model_requests: None, google_provider: GoogleProvider
 ):
-    """Test recursive schemas with gemini-2.5-flash on GLA.
-
-    This previously failed with 500 errors but should now work after Google's fix.
-    """
+    """Test recursive schemas with $ref and $defs using gemini-2.5-flash."""
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
 
     class TreeNode(BaseModel):

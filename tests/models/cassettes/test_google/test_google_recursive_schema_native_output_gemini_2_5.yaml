@@ -1,50 +1,5 @@
 interactions:
 - request:
-    body: grant_type=%5B%27refresh_token%27%5D&client_id=%5B%27scrubbed%27%5D&client_secret=%5B%27scrubbed%27%5D&refresh_token=%5B%27scrubbed%27%5D
-    headers:
-      accept:
-      - '*/*'
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '234'
-      content-type:
-      - application/x-www-form-urlencoded
-    method: POST
-    uri: https://oauth2.googleapis.com/token
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      cache-control:
-      - no-cache, no-store, max-age=0, must-revalidate
-      content-length:
-      - '646'
-      content-type:
-      - application/json; charset=utf-8
-      expires:
-      - Mon, 01 Jan 1990 00:00:00 GMT
-      pragma:
-      - no-cache
-      transfer-encoding:
-      - chunked
-      vary:
-      - Origin
-      - X-Origin
-      - Referer
-    parsed_body:
-      access_token: scrubbed
-      expires_in: 3599
-      id_token: scrubbed
-      scope: https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/sqlservice.login openid https://www.googleapis.com/auth/compute
-        https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/accounts.reauth https://www.googleapis.com/auth/appengine.admin
-      token_type: Bearer
-    status:
-      code: 200
-      message: OK
-- request:
     headers:
       accept:
       - '*/*'
@@ -57,7 +12,7 @@ interactions:
       content-type:
       - application/json
       host:
-      - aiplatform.googleapis.com
+      - generativelanguage.googleapis.com
     method: POST
     parsed_body:
       contents:
@@ -86,15 +41,17 @@ interactions:
         responseMimeType: application/json
         responseModalities:
         - TEXT
-    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.5-flash:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '882'
+      - '612'
       content-type:
       - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1444
       transfer-encoding:
       - chunked
       vary:
@@ -103,38 +60,22 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.5180281400680542
-        content:
+      - content:
           parts:
-          - text: |-
-              {
-                "value": "A",
-                "children": [
-                  {
-                    "value": "B"
-                  },
-                  {
-                    "value": "C"
-                  }
-                ]
-              }
+          - text: '{"value":"A","children":[{"value":"B"},{"value":"C"}]}'
           role: model
         finishReason: STOP
-      createTime: '2025-11-15T10:04:52.070545Z'
+        index: 0
       modelVersion: gemini-2.5-flash
-      responseId: RFAYaZGnBIaBm9IPkPrjkA8
+      responseId: D08Yaa3eKYmznsEPt4u8gAk
       usageMetadata:
-        candidatesTokenCount: 48
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 48
-        promptTokenCount: 19
+        candidatesTokenCount: 16
+        promptTokenCount: 20
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 19
-        thoughtsTokenCount: 100
-        totalTokenCount: 167
-        trafficType: ON_DEMAND
+          tokenCount: 20
+        thoughtsTokenCount: 183
+        totalTokenCount: 219
     status:
       code: 200
       message: OK
