@@ -3712,6 +3712,10 @@ async def test_anthropic_url_context_tool_multi_turn(allow_model_requests: None,
     assert isinstance(url_context_return.content, dict)
     assert 'content' in url_context_return.content
     inner_content = url_context_return.content['content']
+    assert 'content' in inner_content
+    assert 'source' in inner_content['content']
+    assert 'data' in inner_content['content']['source']
+    assert 'Pydantic AI is a Python agent framework' in inner_content['content']['source']['data']
     assert 'url' in inner_content
     assert inner_content['url'] == 'https://ai.pydantic.dev'
     assert 'retrieved_at' in inner_content
