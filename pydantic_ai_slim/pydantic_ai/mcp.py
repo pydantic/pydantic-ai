@@ -303,7 +303,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     # If there is only one content metadata, unwrap it
                     return_metadata = parts_metadata[0]
                 else:
-                    return_metadata = {'content': parts_metadata}
+                    return_metadata = {'content': parts_metadata}  # pragma: no cover
         else:
             if result.meta is not None and len(result.meta) > 0:  # pragma: no cover
                 return_metadata = result.meta
