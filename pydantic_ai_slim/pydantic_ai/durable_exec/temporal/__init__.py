@@ -67,6 +67,7 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             'rich',
             'httpx',
             'anyio',
+            'sniffio',
             'httpcore',
             # Used by fastmcp via py-key-value-aio
             'beartype',
