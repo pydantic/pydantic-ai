@@ -38,13 +38,14 @@ from pydantic_ai import (
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, try_import
 from .mock_openai import (
@@ -3099,7 +3100,10 @@ async def test_cache_point_filtering_responses_model():
         ('gpt-4o-mini', 110),
     ],
 )
-async def test_count_tokens(model_name: str, expected_token_count: int):
+async def test_count_tokens(
+    model_name: str,
+    expected_token_count: int,
+):
     """Test token counting with OpenAI Chat and Response models."""
     test_messages: list[ModelMessage] = [
         ModelRequest(
@@ -3140,3 +3144,54 @@ async def test_count_tokens(model_name: str, expected_token_count: int):
     responses_model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key='foobar'))
     usage_result: RequestUsage = await responses_model.count_tokens(test_messages, {}, ModelRequestParameters())
     assert usage_result.input_tokens == expected_token_count
+
+
+async def test_openai_model_usage_limit_not_exceeded(
+    allow_model_requests: None,
+    openai_api_key: str,
+):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    model = OpenAIResponsesModel('gpt-4', provider=provider)
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'The quick brown fox jumps over the lazydog.',
+        usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
+    )
+    assert result.output == snapshot(
+        """This statement is a pangram, meaning it contains every letter of the English alphabet at least once. Fun fact: it is often used to display different types of fonts because it uses all the letters."""
+    )
+
+
+async def test_openai_model_usage_limit_exceeded(
+    allow_model_requests: None,
+    openai_api_key: str,
+):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    model = OpenAIResponsesModel('gpt-4', provider=provider)
+    agent = Agent(model=model)
+
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        _ = await agent.run(
+            'The quick brown fox jumps over the lazydog. The quick brown fox jumps over the lazydog.',
+            usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
+        )
+
+    assert 'exceed the input_tokens_limit of' in str(exc_info.value)
+
+
+async def test_openai_model_usage_unsupported_model(
+    allow_model_requests: None,
+    openai_api_key: str,
+):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    model = OpenAIResponsesModel('unsupported-model', provider=provider)
+    agent = Agent(model=model)
+
+    with pytest.raises(NotImplementedError) as exc_info:
+        _ = await agent.run(
+            'The quick brown fox jumps over the lazydog.',
+            usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
+        )
+
+    assert 'not implemented' in str(exc_info.value)
