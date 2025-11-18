@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from . import ModelProfile
 
+
 @dataclass(kw_only=True)
 class GrokModelProfile(ModelProfile):
     """Profile for models used with GroqModel.
@@ -13,7 +14,6 @@ class GrokModelProfile(ModelProfile):
 
     builtin_tool: bool = False
     """Whether the model always has the web search built-in tool available."""
-
 
 
 def grok_model_profile(model_name: str) -> ModelProfile | None:

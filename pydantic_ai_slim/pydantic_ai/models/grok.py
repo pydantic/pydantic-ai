@@ -1,34 +1,40 @@
 """Grok model implementation using xAI SDK."""
 
 import os
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from dataclasses import dataclass
+from typing import Any
+
+import xai_sdk.chat as chat_types
+
+# Import xai_sdk components
+from xai_sdk import AsyncClient
+from xai_sdk.chat import assistant, system, tool, tool_result, user
 
 from .._run_context import RunContext
+from .._utils import now_utc
 from ..messages import (
+    FinishReason,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
+    ModelResponseStreamEvent,
     SystemPromptPart,
-    UserPromptPart,
-    ToolReturnPart,
     TextPart,
     ToolCallPart,
-    FinishReason,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from ..models import (
     Model,
     ModelRequestParameters,
-    ModelSettings,
     StreamedResponse,
 )
+from ..settings import ModelSettings
 from ..usage import RequestUsage
-from .._utils import now_utc
-
-# Import xai_sdk components
-from xai_sdk import AsyncClient
-from xai_sdk.chat import system, user, assistant, tool, tool_result
-import xai_sdk.chat as chat_types
 
 
 class GrokModel(Model):
@@ -53,9 +59,9 @@ class GrokModel(Model):
         """
         super().__init__(settings=settings)
         self._model_name = model_name
-        self._api_key = api_key or os.getenv("XAI_API_KEY") or ""
+        self._api_key = api_key or os.getenv('XAI_API_KEY') or ''
         if not self._api_key:
-            raise ValueError("XAI API key is required")
+            raise ValueError('XAI API key is required')
 
     @property
     def model_name(self) -> str:
@@ -65,55 +71,64 @@ class GrokModel(Model):
     @property
     def system(self) -> str:
         """The model provider."""
-        return "xai"
+        return 'xai'
 
     def _map_messages(self, messages: list[ModelMessage]) -> list[chat_types.chat_pb2.Message]:
         """Convert pydantic_ai messages to xAI SDK messages."""
-        xai_messages = []
+        xai_messages: list[chat_types.chat_pb2.Message] = []
 
         for message in messages:
             if isinstance(message, ModelRequest):
-                for part in message.parts:
-                    if isinstance(part, SystemPromptPart):
-                        xai_messages.append(system(part.content))
-                    elif isinstance(part, UserPromptPart):
-                        # Handle user prompt content
-                        if isinstance(part.content, str):
-                            xai_messages.append(user(part.content))
-                        else:
-                            # Handle complex content (images, etc.)
-                            # For now, just concatenate text content
-                            text_parts = []
-                            for item in part.content:
-                                if isinstance(item, str):
-                                    text_parts.append(item)
-                            if text_parts:
-                                xai_messages.append(user(" ".join(text_parts)))
-                    elif isinstance(part, ToolReturnPart):
-                        xai_messages.append(tool_result(part.model_response_str()))
+                xai_messages.extend(self._map_request_parts(message.parts))
             elif isinstance(message, ModelResponse):
-                content_parts = []
-                for part in message.parts:
-                    if isinstance(part, TextPart):
-                        content_parts.append(part.content)
-                    elif isinstance(part, ToolCallPart):
-                        # Tool calls will be handled separately in the response processing
-                        pass
-
-                if content_parts:
-                    xai_messages.append(assistant(" ".join(content_parts)))
+                if response_msg := self._map_response_parts(message.parts):
+                    xai_messages.append(response_msg)
 
         return xai_messages
 
-    def _map_tools(
-        self, model_request_parameters: ModelRequestParameters
-    ) -> list[chat_types.chat_pb2.Tool]:
+    def _map_request_parts(self, parts: Sequence[ModelRequestPart]) -> list[chat_types.chat_pb2.Message]:
+        """Map ModelRequest parts to xAI messages."""
+        xai_messages: list[chat_types.chat_pb2.Message] = []
+
+        for part in parts:
+            if isinstance(part, SystemPromptPart):
+                xai_messages.append(system(part.content))
+            elif isinstance(part, UserPromptPart):
+                if user_msg := self._map_user_prompt(part):
+                    xai_messages.append(user_msg)
+            elif isinstance(part, ToolReturnPart):
+                xai_messages.append(tool_result(part.model_response_str()))
+
+        return xai_messages
+
+    def _map_user_prompt(self, part: UserPromptPart) -> chat_types.chat_pb2.Message | None:
+        """Map a UserPromptPart to an xAI user message."""
+        if isinstance(part.content, str):
+            return user(part.content)
+
+        # Handle complex content (images, etc.)
+        text_parts: list[str] = [item for item in part.content if isinstance(item, str)]
+        if text_parts:
+            return user(' '.join(text_parts))
+
+        return None
+
+    def _map_response_parts(self, parts: Sequence[ModelResponsePart]) -> chat_types.chat_pb2.Message | None:
+        """Map ModelResponse parts to an xAI assistant message."""
+        content_parts: list[str] = [part.content for part in parts if isinstance(part, TextPart)]
+
+        if content_parts:
+            return assistant(' '.join(content_parts))
+
+        return None
+
+    def _map_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat_types.chat_pb2.Tool]:
         """Convert pydantic_ai tool definitions to xAI SDK tools."""
-        tools = []
+        tools: list[chat_types.chat_pb2.Tool] = []
         for tool_def in model_request_parameters.tool_defs.values():
             xai_tool = tool(
                 name=tool_def.name,
-                description=tool_def.description or "",
+                description=tool_def.description or '',
                 parameters=tool_def.parameters_json_schema,
             )
             tools.append(xai_tool)
@@ -133,31 +148,25 @@ class GrokModel(Model):
         xai_messages = self._map_messages(messages)
 
         # Convert tools if any
-        tools = (
-            self._map_tools(model_request_parameters)
-            if model_request_parameters.tool_defs
-            else None
-        )
+        tools = self._map_tools(model_request_parameters) if model_request_parameters.tool_defs else None
 
         # Filter model settings to only include xAI SDK compatible parameters
-        xai_settings = {}
+        xai_settings: dict[str, Any] = {}
         if model_settings:
             # Map pydantic_ai settings to xAI SDK parameters
-            if "temperature" in model_settings:
-                xai_settings["temperature"] = model_settings["temperature"]
-            if "top_p" in model_settings:
-                xai_settings["top_p"] = model_settings["top_p"]
-            if "max_tokens" in model_settings:
-                xai_settings["max_tokens"] = model_settings["max_tokens"]
-            if "stop_sequences" in model_settings:
-                xai_settings["stop"] = model_settings["stop_sequences"]
-            if "seed" in model_settings:
-                xai_settings["seed"] = model_settings["seed"]
+            if 'temperature' in model_settings:
+                xai_settings['temperature'] = model_settings['temperature']
+            if 'top_p' in model_settings:
+                xai_settings['top_p'] = model_settings['top_p']
+            if 'max_tokens' in model_settings:
+                xai_settings['max_tokens'] = model_settings['max_tokens']
+            if 'stop_sequences' in model_settings:
+                xai_settings['stop'] = model_settings['stop_sequences']
+            if 'seed' in model_settings:
+                xai_settings['seed'] = model_settings['seed']
 
         # Create chat instance
-        chat = client.chat.create(
-            model=self._model_name, messages=xai_messages, tools=tools, **xai_settings
-        )
+        chat = client.chat.create(model=self._model_name, messages=xai_messages, tools=tools, **xai_settings)
 
         # Sample the response
         response = await chat.sample()
@@ -181,46 +190,42 @@ class GrokModel(Model):
         xai_messages = self._map_messages(messages)
 
         # Convert tools if any
-        tools = (
-            self._map_tools(model_request_parameters)
-            if model_request_parameters.tool_defs
-            else None
-        )
+        tools = self._map_tools(model_request_parameters) if model_request_parameters.tool_defs else None
 
         # Filter model settings to only include xAI SDK compatible parameters
-        xai_settings = {}
+        xai_settings: dict[str, Any] = {}
         if model_settings:
             # Map pydantic_ai settings to xAI SDK parameters
-            if "temperature" in model_settings:
-                xai_settings["temperature"] = model_settings["temperature"]
-            if "top_p" in model_settings:
-                xai_settings["top_p"] = model_settings["top_p"]
-            if "max_tokens" in model_settings:
-                xai_settings["max_tokens"] = model_settings["max_tokens"]
-            if "stop_sequences" in model_settings:
-                xai_settings["stop"] = model_settings["stop_sequences"]
-            if "seed" in model_settings:
-                xai_settings["seed"] = model_settings["seed"]
+            if 'temperature' in model_settings:
+                xai_settings['temperature'] = model_settings['temperature']
+            if 'top_p' in model_settings:
+                xai_settings['top_p'] = model_settings['top_p']
+            if 'max_tokens' in model_settings:
+                xai_settings['max_tokens'] = model_settings['max_tokens']
+            if 'stop_sequences' in model_settings:
+                xai_settings['stop'] = model_settings['stop_sequences']
+            if 'seed' in model_settings:
+                xai_settings['seed'] = model_settings['seed']
 
         # Create chat instance
-        chat = client.chat.create(
-            model=self._model_name, messages=xai_messages, tools=tools, **xai_settings
-        )
+        chat = client.chat.create(model=self._model_name, messages=xai_messages, tools=tools, **xai_settings)
 
         # Stream the response
         response_stream = chat.stream()
-        streamed_response = GrokStreamedResponse(model_request_parameters)
-        streamed_response._model_name = self._model_name
-        streamed_response._response = response_stream
-        streamed_response._timestamp = now_utc()
-        streamed_response._provider_name = "xai"
+        streamed_response = GrokStreamedResponse(
+            model_request_parameters=model_request_parameters,
+            _model_name=self._model_name,
+            _response=response_stream,
+            _timestamp=now_utc(),
+            _provider_name='xai',
+        )
         yield streamed_response
 
     def _process_response(self, response: chat_types.Response) -> ModelResponse:
         """Convert xAI SDK response to pydantic_ai ModelResponse."""
         from typing import cast
 
-        parts = []
+        parts: list[ModelResponsePart] = []
 
         # Add text content
         if response.content:
@@ -237,24 +242,22 @@ class GrokModel(Model):
             )
 
         # Convert usage - try to access attributes, default to 0 if not available
-        input_tokens = getattr(response.usage, "input_tokens", 0)
-        output_tokens = getattr(response.usage, "output_tokens", 0)
+        input_tokens = getattr(response.usage, 'input_tokens', 0)
+        output_tokens = getattr(response.usage, 'output_tokens', 0)
         usage = RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens)
 
         # Map finish reason
         finish_reason_map = {
-            "stop": "stop",
-            "length": "length",
-            "content_filter": "content_filter",
-            "max_output_tokens": "length",
-            "cancelled": "error",
-            "failed": "error",
+            'stop': 'stop',
+            'length': 'length',
+            'content_filter': 'content_filter',
+            'max_output_tokens': 'length',
+            'cancelled': 'error',
+            'failed': 'error',
         }
         raw_finish_reason = response.finish_reason
         mapped_reason = (
-            finish_reason_map.get(raw_finish_reason, "stop")
-            if isinstance(raw_finish_reason, str)
-            else "stop"
+            finish_reason_map.get(raw_finish_reason, 'stop') if isinstance(raw_finish_reason, str) else 'stop'
         )
         finish_reason = cast(FinishReason, mapped_reason)
 
@@ -263,11 +266,12 @@ class GrokModel(Model):
             usage=usage,
             model_name=self._model_name,
             timestamp=now_utc(),
-            provider_name="xai",
+            provider_name='xai',
             finish_reason=finish_reason,
         )
 
 
+@dataclass
 class GrokStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for xAI SDK."""
 
@@ -275,47 +279,46 @@ class GrokStreamedResponse(StreamedResponse):
     _response: Any  # xai_sdk chat stream
     _timestamp: Any
     _provider_name: str
-    _usage: RequestUsage
-    provider_response_id: str | None
-    finish_reason: Any
 
-    async def _get_event_iterator(self):
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Iterate over streaming events from xAI SDK."""
         from typing import cast
 
         async for response, chunk in self._response:
             # Update usage if available
-            if hasattr(response, "usage"):
-                input_tokens = getattr(response.usage, "input_tokens", 0)
-                output_tokens = getattr(response.usage, "output_tokens", 0)
+            if hasattr(response, 'usage'):
+                input_tokens = getattr(response.usage, 'input_tokens', 0)
+                output_tokens = getattr(response.usage, 'output_tokens', 0)
                 self._usage = RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens)
 
             # Set provider response ID
-            if hasattr(response, "id") and self.provider_response_id is None:
+            if hasattr(response, 'id') and self.provider_response_id is None:
                 self.provider_response_id = response.id
 
             # Handle finish reason
-            if hasattr(response, "finish_reason") and response.finish_reason:
+            if hasattr(response, 'finish_reason') and response.finish_reason:
                 finish_reason_map = {
-                    "stop": "stop",
-                    "length": "length",
-                    "content_filter": "content_filter",
-                    "max_output_tokens": "length",
-                    "cancelled": "error",
-                    "failed": "error",
+                    'stop': 'stop',
+                    'length': 'length',
+                    'content_filter': 'content_filter',
+                    'max_output_tokens': 'length',
+                    'cancelled': 'error',
+                    'failed': 'error',
                 }
-                mapped_reason = finish_reason_map.get(response.finish_reason, "stop")
+                mapped_reason = finish_reason_map.get(response.finish_reason, 'stop')
                 self.finish_reason = cast(FinishReason, mapped_reason)
 
             # Handle text content
-            if hasattr(chunk, "content") and chunk.content:
-                yield self._parts_manager.handle_text_delta(
-                    vendor_part_id="content",
+            if hasattr(chunk, 'content') and chunk.content:
+                event = self._parts_manager.handle_text_delta(
+                    vendor_part_id='content',
                     content=chunk.content,
                 )
+                if event is not None:
+                    yield event
 
             # Handle tool calls
-            if hasattr(chunk, "tool_calls"):
+            if hasattr(chunk, 'tool_calls'):
                 for tool_call in chunk.tool_calls:
                     yield self._parts_manager.handle_tool_call_part(
                         vendor_part_id=tool_call.id,
