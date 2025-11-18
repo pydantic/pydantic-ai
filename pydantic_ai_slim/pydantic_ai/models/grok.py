@@ -10,12 +10,14 @@ import xai_sdk.chat as chat_types
 
 # Import xai_sdk components
 from xai_sdk import AsyncClient
-from xai_sdk.chat import assistant, system, tool, tool_result, user
+from xai_sdk.chat import assistant, image, system, tool, tool_result, user
 
 from .._run_context import RunContext
 from .._utils import now_utc
 from ..messages import (
+    BinaryContent,
     FinishReason,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -113,10 +115,28 @@ class GrokModel(Model):
         if isinstance(part.content, str):
             return user(part.content)
 
-        # Handle complex content (images, etc.)
-        text_parts: list[str] = [item for item in part.content if isinstance(item, str)]
-        if text_parts:
-            return user(' '.join(text_parts))
+        # Handle complex content (images, text, etc.)
+        content_items: list[chat_types.Content] = []
+
+        for item in part.content:
+            if isinstance(item, str):
+                content_items.append(item)
+            elif isinstance(item, ImageUrl):
+                # Get detail from vendor_metadata if available
+                detail: chat_types.ImageDetail = 'auto'
+                if item.vendor_metadata and 'detail' in item.vendor_metadata:
+                    detail = item.vendor_metadata['detail']
+                content_items.append(image(item.url, detail=detail))
+            elif isinstance(item, BinaryContent):
+                if item.is_image:
+                    # Convert binary content to data URI and use image()
+                    content_items.append(image(item.data_uri, detail='auto'))
+                else:
+                    # xAI SDK doesn't support non-image binary content yet
+                    pass
+
+        if content_items:
+            return user(*content_items)
 
         return None
 
@@ -171,6 +191,12 @@ class GrokModel(Model):
                 xai_settings['stop'] = model_settings['stop_sequences']
             if 'seed' in model_settings:
                 xai_settings['seed'] = model_settings['seed']
+            if 'parallel_tool_calls' in model_settings:
+                xai_settings['parallel_tool_calls'] = model_settings['parallel_tool_calls']
+            if 'presence_penalty' in model_settings:
+                xai_settings['presence_penalty'] = model_settings['presence_penalty']
+            if 'frequency_penalty' in model_settings:
+                xai_settings['frequency_penalty'] = model_settings['frequency_penalty']
 
         # Create chat instance
         chat = client.chat.create(model=self._model_name, messages=xai_messages, tools=tools, **xai_settings)
@@ -213,6 +239,12 @@ class GrokModel(Model):
                 xai_settings['stop'] = model_settings['stop_sequences']
             if 'seed' in model_settings:
                 xai_settings['seed'] = model_settings['seed']
+            if 'parallel_tool_calls' in model_settings:
+                xai_settings['parallel_tool_calls'] = model_settings['parallel_tool_calls']
+            if 'presence_penalty' in model_settings:
+                xai_settings['presence_penalty'] = model_settings['presence_penalty']
+            if 'frequency_penalty' in model_settings:
+                xai_settings['frequency_penalty'] = model_settings['frequency_penalty']
 
         # Create chat instance
         chat = client.chat.create(model=self._model_name, messages=xai_messages, tools=tools, **xai_settings)

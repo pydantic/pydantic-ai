@@ -86,6 +86,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI (some models, not o1)
     * Groq
     * Anthropic
+    * Grok
     """
 
     seed: int
@@ -112,6 +113,7 @@ class ModelSettings(TypedDict, total=False):
     * Gemini
     * Mistral
     * Outlines (LlamaCpp, SgLang, VLLMOffline)
+    * Grok
     """
 
     frequency_penalty: float
@@ -125,6 +127,7 @@ class ModelSettings(TypedDict, total=False):
     * Gemini
     * Mistral
     * Outlines (LlamaCpp, SgLang, VLLMOffline)
+    * Grok
     """
 
     logit_bias: dict[str, int]
@@ -149,6 +152,7 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     * Cohere
     * Google
+    * Grok
     """
 
     extra_headers: dict[str, str]
@@ -159,6 +163,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Anthropic
     * Groq
+    * Grok
     """
 
     extra_body: object

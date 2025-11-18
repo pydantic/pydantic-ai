@@ -413,6 +413,11 @@ def cerebras_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def xai_api_key() -> str:
+    return os.getenv('XAI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def bedrock_provider():
     try:
         import boto3

@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
+import os
 from datetime import timezone
 from types import SimpleNamespace
 from typing import Any, cast
@@ -545,23 +546,155 @@ async def test_grok_none_delta(allow_model_requests: None):
 # test_openai_o1_mini_system_role - OpenAI specific
 
 
+@pytest.mark.parametrize('parallel_tool_calls', [True, False])
+async def test_grok_parallel_tool_calls(allow_model_requests: None, parallel_tool_calls: bool) -> None:
+    tool_call = create_tool_call(
+        id='123',
+        name='final_result',
+        arguments={'response': [1, 2, 3]},
+    )
+    response = create_response(content='', tool_calls=[tool_call], finish_reason='tool_calls')
+    mock_client = MockGrok.create_mock(response)
+    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    agent = Agent(m, output_type=list[int], model_settings=ModelSettings(parallel_tool_calls=parallel_tool_calls))
+
+    await agent.run('Hello')
+    assert get_mock_chat_create_kwargs(mock_client)[0]['parallel_tool_calls'] == parallel_tool_calls
+
+
+async def test_grok_penalty_parameters(allow_model_requests: None) -> None:
+    response = create_response(content='test response')
+    mock_client = MockGrok.create_mock(response)
+    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+
+    settings = ModelSettings(
+        temperature=0.7,
+        presence_penalty=0.5,
+        frequency_penalty=0.3,
+        parallel_tool_calls=False,
+    )
+
+    agent = Agent(m, model_settings=settings)
+    result = await agent.run('Hello')
+
+    # Check that all settings were passed to the xAI SDK
+    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+    assert kwargs['temperature'] == 0.7
+    assert kwargs['presence_penalty'] == 0.5
+    assert kwargs['frequency_penalty'] == 0.3
+    assert kwargs['parallel_tool_calls'] is False
+    assert result.output == 'test response'
+
+
+async def test_grok_image_url_input(allow_model_requests: None):
+    response = create_response(content='world')
+    mock_client = MockGrok.create_mock(response)
+    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'hello',
+            ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
+        ]
+    )
+    assert result.output == 'world'
+    # Verify that the image URL was included in the messages
+    assert len(get_mock_chat_create_kwargs(mock_client)) == 1
+
+
+@pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
+async def test_grok_image_url_tool_response(allow_model_requests: None, xai_api_key: str):
+    m = GrokModel('grok-4-fast-non-reasoning', api_key=xai_api_key)
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_image() -> ImageUrl:
+        return ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg')
+
+    result = await agent.run(['What food is in the image you can get from the get_image tool?'])
+
+    # Verify structure with matchers for dynamic values
+    messages = result.all_messages()
+    assert len(messages) == 4
+
+    # Verify message types and key content
+    assert isinstance(messages[0], ModelRequest)
+    assert isinstance(messages[1], ModelResponse)
+    assert isinstance(messages[2], ModelRequest)
+    assert isinstance(messages[3], ModelResponse)
+
+    # Verify tool was called
+    assert isinstance(messages[1].parts[0], ToolCallPart)
+    assert messages[1].parts[0].tool_name == 'get_image'
+
+    # Verify image was passed back to model
+    assert isinstance(messages[2].parts[1], UserPromptPart)
+    assert isinstance(messages[2].parts[1].content, list)
+    assert any(isinstance(item, ImageUrl) for item in messages[2].parts[1].content)
+
+    # Verify model responded about the image
+    assert isinstance(messages[3].parts[0], TextPart)
+    assert 'potato' in messages[3].parts[0].content.lower()
+
+
+@pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
+async def test_grok_image_as_binary_content_tool_response(
+    allow_model_requests: None, image_content: BinaryContent, xai_api_key: str
+):
+    m = GrokModel('grok-4-fast-non-reasoning', api_key=xai_api_key)
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        return image_content
+
+    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
+
+    # Verify structure with matchers for dynamic values
+    messages = result.all_messages()
+    assert len(messages) == 4
+
+    # Verify message types and key content
+    assert isinstance(messages[0], ModelRequest)
+    assert isinstance(messages[1], ModelResponse)
+    assert isinstance(messages[2], ModelRequest)
+    assert isinstance(messages[3], ModelResponse)
+
+    # Verify tool was called
+    assert isinstance(messages[1].parts[0], ToolCallPart)
+    assert messages[1].parts[0].tool_name == 'get_image'
+
+    # Verify binary image content was passed back to model
+    assert isinstance(messages[2].parts[1], UserPromptPart)
+    assert isinstance(messages[2].parts[1].content, list)
+    has_binary_image = any(isinstance(item, BinaryContent) and item.is_image for item in messages[2].parts[1].content)
+    assert has_binary_image, 'Expected BinaryContent image in tool response'
+
+    # Verify model responded about the image
+    assert isinstance(messages[3].parts[0], TextPart)
+    response_text = messages[3].parts[0].content.lower()
+    assert 'kiwi' in response_text or 'fruit' in response_text
+
+
+@pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
+async def test_grok_image_as_binary_content_input(
+    allow_model_requests: None, image_content: BinaryContent, xai_api_key: str
+):
+    """Test passing binary image content directly as input (not from a tool)."""
+    m = GrokModel('grok-4-fast-non-reasoning', api_key=xai_api_key)
+    agent = Agent(m)
+
+    result = await agent.run(['What fruit is in the image?', image_content])
+
+    # Verify the model received and processed the image
+    assert result.output
+    response_text = result.output.lower()
+    assert 'kiwi' in response_text or 'fruit' in response_text
+
+
 # Skip tests that are not applicable to Grok model
 # The following tests were removed as they are OpenAI-specific:
-# - test_system_prompt_role (OpenAI-specific system prompt roles)
-# - test_system_prompt_role_o1_mini (OpenAI o1 specific)
-# - test_openai_pass_custom_system_prompt_role (OpenAI-specific)
-# - test_openai_o1_mini_system_role (OpenAI-specific)
-# - test_parallel_tool_calls (OpenAI-specific parameter)
-# - test_image_url_input (OpenAI-specific image handling - would need VCR cassettes for Grok)
-# - test_image_url_input_force_download (OpenAI-specific)
-# - test_image_url_input_force_download_response_api (OpenAI-specific)
-# - test_openai_audio_url_input (OpenAI-specific audio)
-# - test_document_url_input (OpenAI-specific documents)
-# - test_image_url_tool_response (OpenAI-specific)
-# - test_image_as_binary_content_tool_response (OpenAI-specific)
-# - test_image_as_binary_content_input (OpenAI-specific)
-# - test_audio_as_binary_content_input (OpenAI-specific)
-# - test_binary_content_input_unknown_media_type (OpenAI-specific)
 
 
 # Continue with model request/response tests
@@ -691,6 +824,7 @@ async def test_grok_stream_with_tool_calls(allow_model_requests: None):
 
 
 # Test for error handling
+@pytest.mark.skipif(os.getenv('XAI_API_KEY') is not None, reason='Skipped when XAI_API_KEY is set')
 async def test_grok_model_invalid_api_key():
     """Test Grok model with invalid API key."""
     with pytest.raises(ValueError, match='XAI API key is required'):
