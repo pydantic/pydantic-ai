@@ -3648,13 +3648,13 @@ Let me fetch the page first.\
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='url_context',
+                        tool_name='web_fetch',
                         args={'url': 'https://ai.pydantic.dev'},
                         tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='url_context',
+                        tool_name='web_fetch',
                         content={
                             'content': {
                                 'citations': None,
@@ -3729,13 +3729,13 @@ Let me fetch the page first.\
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='url_context',
+                        tool_name='web_fetch',
                         args={'url': 'https://ai.pydantic.dev'},
                         tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='url_context',
+                        tool_name='web_fetch',
                         content={
                             'content': {
                                 'citations': None,
@@ -3890,13 +3890,13 @@ async def test_anthropic_web_fetch_tool_stream(
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='url_context',
+                        tool_name='web_fetch',
                         args='{"url": "https://ai.pydantic.dev"}',
                         tool_call_id=IsStr(),
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='url_context',
+                        tool_name='web_fetch',
                         content={
                             'content': {
                                 'citations': None,
@@ -3975,7 +3975,7 @@ async def test_anthropic_web_fetch_tool_stream(
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(tool_name='url_context', tool_call_id=IsStr(), provider_name='anthropic'),
+                part=BuiltinToolCallPart(tool_name='web_fetch', tool_call_id=IsStr(), provider_name='anthropic'),
                 previous_part_kind='thinking',
             ),
             PartDeltaEvent(
@@ -4002,7 +4002,7 @@ async def test_anthropic_web_fetch_tool_stream(
             PartStartEvent(
                 index=2,
                 part=BuiltinToolReturnPart(
-                    tool_name='url_context',
+                    tool_name='web_fetch',
                     content={
                         'content': {
                             'citations': None,
@@ -4927,7 +4927,7 @@ Agents support various execution methods:
 The framework provides a unified interface for integrating with various LLM providers, including OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Bedrock, and HuggingFace.  Each model integration follows a consistent settings pattern with provider-specific prefixes (e.g., `google_*`, `anthropic_*`). \n\
 
 Examples of supported models and their capabilities include:
-*   `GoogleModel`: Integrates with Google's Gemini API, supporting both Gemini API (`google-gla`) and Vertex AI (`google-vertex`) providers.  It supports token counting, streaming, built-in tools like `WebSearchTool`, `WebFetchTool`, `CodeExecutionTool`, and native JSON schema output. \n\
+*   `GoogleModel`: Integrates with Google's Gemini API, supporting both Gemini API (`google-gla`) and Vertex AI (`google-vertex`) providers.  It supports token counting, streaming, built-in tools like `WebSearchTool`, `UrlContextTool`, `CodeExecutionTool`, and native JSON schema output. \n\
 *   `AnthropicModel`: Uses Anthropic's beta API for advanced features like "Thinking Blocks" and built-in tools. \n\
 *   `GroqModel`: Offers high-speed inference and specialized reasoning support with configurable reasoning formats. \n\
 *   `MistralModel`: Supports customizable JSON schema prompting and thinking support. \n\
@@ -4944,7 +4944,7 @@ Function tools enable models to perform actions and retrieve additional informat
 
 Tools can return various types of output, including anything Pydantic can serialize to JSON, as well as multimodal content like `AudioUrl`, `VideoUrl`, `ImageUrl`, or `DocumentUrl`.  The `ToolReturn` object allows for separating the `return_value` (for the model), `content` (for additional context), and `metadata` (for application-specific use). \n\
 
-Built-in tools like `WebFetchTool` allow agents to pull web content into their context. \n\
+Built-in tools like `UrlContextTool` allow agents to pull web content into their context. \n\
 
 ### 5. Output Handling
 The framework supports various output types:

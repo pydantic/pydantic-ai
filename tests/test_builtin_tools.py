@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import (  # pyright: ignore[reportDeprecated]
+from pydantic_ai.builtin_tools import (
     CodeExecutionTool,
-    UrlContextTool,
+    UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebSearchTool,
 )
 from pydantic_ai.exceptions import UserError

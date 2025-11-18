@@ -222,7 +222,7 @@ class WebFetchTool(AbstractBuiltinTool):
     * Anthropic
     """
 
-    kind: str = 'url_context'
+    kind: str = 'web_fetch'
     """The kind of tool."""
 
 

@@ -81,7 +81,7 @@ def test_model_request_parameters_are_serializable():
                 },
                 {'kind': 'code_execution'},
                 {
-                    'kind': 'url_context',
+                    'kind': 'web_fetch',
                     'max_uses': None,
                     'allowed_domains': None,
                     'blocked_domains': None,
