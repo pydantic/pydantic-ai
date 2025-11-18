@@ -1946,6 +1946,43 @@ def test_openai_transformer_with_recursive_ref() -> None:
     assert 'foo' in result['required']
 
 
+def test_openai_transformer_fallback_when_defs_missing() -> None:
+    """Test fallback path when root_key is not in result['$defs'] (line 165).
+
+    This tests the safety net fallback that shouldn't happen in normal flow.
+    The fallback uses self.defs (original schema) when the transformed $defs
+    doesn't contain the root_key. This edge case is simulated using a mock.
+    """
+    from unittest.mock import patch
+
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+
+    schema: dict[str, Any] = {
+        '$ref': '#/$defs/MyModel',
+        '$defs': {
+            'MyModel': {
+                'type': 'object',
+                'properties': {'foo': {'type': 'string'}},
+                'required': ['foo'],
+            },
+        },
+    }
+
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=True)
+
+    # Simulate edge case: super().walk() returns $defs without root_key
+    # This shouldn't happen in normal flow, but we test the fallback path
+    with patch.object(
+        transformer.__class__.__bases__[0],
+        'walk',
+        return_value={'$defs': {'OtherModel': {'type': 'object'}}},
+    ):
+        result = transformer.walk()
+        # Fallback should use self.defs.get(root_key) which contains MyModel
+        assert isinstance(result, dict)
+        assert 'properties' in result or 'type' in result
+
+
 def test_openai_transformer_flattens_allof() -> None:
     """Test that OpenAIJsonSchemaTransformer flattens allOf schemas."""
     from pydantic_ai._json_schema import JsonSchema
