@@ -612,8 +612,24 @@ class BinaryImage(BinaryContent):
             raise ValueError('`BinaryImage` must be have a media type that starts with "image/"')  # pragma: no cover
 
 
+@dataclass
+class CachePoint:
+    """A cache point marker for prompt caching.
+
+    Can be inserted into UserPromptPart.content to mark cache boundaries.
+    Models that don't support caching will filter these out.
+
+    Supported by:
+
+    - Anthropic
+    """
+
+    kind: Literal['cache-point'] = 'cache-point'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
-UserContent: TypeAlias = str | MultiModalContent
+UserContent: TypeAlias = str | MultiModalContent | CachePoint
 
 
 @dataclass(repr=False)
@@ -730,6 +746,9 @@ class UserPromptPart:
                 if settings.include_content and settings.include_binary_content:
                     converted_part['content'] = base64.b64encode(part.data).decode()
                 parts.append(converted_part)
+            elif isinstance(part, CachePoint):
+                # CachePoint is a marker, not actual content - skip it for otel
+                pass
             else:
                 parts.append({'type': part.kind})  # pragma: no cover
         return parts
@@ -947,6 +966,9 @@ class ModelRequest:
 
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
+
+    run_id: str | None = None
+    """The unique identifier of the agent run in which this message originated."""
 
     @classmethod
     def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
@@ -1188,6 +1210,9 @@ class ModelResponse:
 
     finish_reason: FinishReason | None = None
     """Reason the model finished generating the response, normalized to OpenTelemetry values."""
+
+    run_id: str | None = None
+    """The unique identifier of the agent run in which this message originated."""
 
     @property
     def text(self) -> str | None:
