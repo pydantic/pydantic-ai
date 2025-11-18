@@ -42,12 +42,14 @@ class GrokModel(Model):
 
     _model_name: str
     _api_key: str
+    _client: AsyncClient | None
 
     def __init__(
         self,
         model_name: str,
         *,
         api_key: str | None = None,
+        client: AsyncClient | None = None,
         settings: ModelSettings | None = None,
     ):
         """Initialize the Grok model.
@@ -55,13 +57,18 @@ class GrokModel(Model):
         Args:
             model_name: The name of the Grok model to use (e.g., "grok-3", "grok-4-fast-non-reasoning")
             api_key: The xAI API key. If not provided, uses XAI_API_KEY environment variable.
+            client: Optional AsyncClient instance for testing. If provided, api_key is ignored.
             settings: Optional model settings.
         """
         super().__init__(settings=settings)
         self._model_name = model_name
-        self._api_key = api_key or os.getenv('XAI_API_KEY') or ''
-        if not self._api_key:
-            raise ValueError('XAI API key is required')
+        self._client = client
+        if client is None:
+            self._api_key = api_key or os.getenv('XAI_API_KEY') or ''
+            if not self._api_key:
+                raise ValueError('XAI API key is required')
+        else:
+            self._api_key = api_key or ''
 
     @property
     def model_name(self) -> str:
@@ -141,8 +148,8 @@ class GrokModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         """Make a request to the Grok model."""
-        # Create client in the current async context to avoid event loop issues
-        client = AsyncClient(api_key=self._api_key)
+        # Use injected client or create one in the current async context
+        client = self._client or AsyncClient(api_key=self._api_key)
 
         # Convert messages to xAI format
         xai_messages = self._map_messages(messages)
@@ -183,8 +190,8 @@ class GrokModel(Model):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         """Make a streaming request to the Grok model."""
-        # Create client in the current async context to avoid event loop issues
-        client = AsyncClient(api_key=self._api_key)
+        # Use injected client or create one in the current async context
+        client = self._client or AsyncClient(api_key=self._api_key)
 
         # Convert messages to xAI format
         xai_messages = self._map_messages(messages)
@@ -318,14 +325,17 @@ class GrokStreamedResponse(StreamedResponse):
                     yield event
 
             # Handle tool calls
-            if hasattr(chunk, 'tool_calls'):
-                for tool_call in chunk.tool_calls:
-                    yield self._parts_manager.handle_tool_call_part(
-                        vendor_part_id=tool_call.id,
-                        tool_name=tool_call.function.name,
-                        args=tool_call.function.arguments,
-                        tool_call_id=tool_call.id,
-                    )
+            # Note: We use the accumulated Response tool calls, not the Chunk deltas,
+            # because pydantic validation needs complete JSON, not partial deltas
+            if hasattr(response, 'tool_calls'):
+                for tool_call in response.tool_calls:
+                    if hasattr(tool_call.function, 'name') and tool_call.function.name:
+                        yield self._parts_manager.handle_tool_call_part(
+                            vendor_part_id=tool_call.id,
+                            tool_name=tool_call.function.name,
+                            args=tool_call.function.arguments,
+                            tool_call_id=tool_call.id,
+                        )
 
     @property
     def model_name(self) -> str:
