@@ -334,7 +334,7 @@ class GraphTask(GraphTaskRequest):
     and has a unique ID to identify the task within the graph run.
     """
 
-    task_id: TaskID
+    task_id: TaskID = field(repr=False)
     """Unique identifier for this task."""
 
     @staticmethod
