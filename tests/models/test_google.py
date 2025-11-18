@@ -2388,7 +2388,7 @@ async def test_google_native_output_with_tools(allow_model_requests: None, googl
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Google does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+            'Google does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
         ),
     ):
         await agent.run('What is the largest city in the user country?')
@@ -2781,6 +2781,37 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
         await agent.run('What is the largest city in Mexico?')
 
     # Will default to prompted output
+    agent = Agent(m, output_type=CityLocation, builtin_tools=[UrlContextTool()])
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+
+async def test_google_native_output_with_builtin_tools_gemini_3(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    m = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[UrlContextTool()])
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Google does not support output tools and built-in tools at the same time. Use `output_type=NativeOutput(...)` instead.'
+        ),
+    ):
+        await agent.run('What is the largest city in Mexico?')
+
+    agent = Agent(m, output_type=NativeOutput(CityLocation), builtin_tools=[UrlContextTool()])
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    # Will default to native output
     agent = Agent(m, output_type=CityLocation, builtin_tools=[UrlContextTool()])
 
     result = await agent.run('What is the largest city in Mexico?')
