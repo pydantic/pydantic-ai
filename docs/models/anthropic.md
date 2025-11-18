@@ -144,32 +144,3 @@ async def main():
     print(f'Cache write tokens: {usage.cache_write_tokens}')
     print(f'Cache read tokens: {usage.cache_read_tokens}')
 ```
-
-## Structured outputs & strict tool calls
-
-Anthropic offers [Structured Outputs](https://docs.claude.com/en/docs/build-with-claude/structured-outputs), which force the model to emit JSON matching a supplied schema and to validate tool inputs before they reach your code. Pydantic AI enables this automatically:
-
-- When you use [`NativeOutput`][pydantic_ai.output.NativeOutput] (or set `output_mode='native'`), the agent sends Anthropic the JSON schema as an `output_format` payload and adds the required `structured-outputs-2025-11-13` beta header. The model's response will be validated just like on other providers, and `result.output` will contain your typed object.
-- Tool definitions that are strict-compatible are sent with `strict: true`, which enables Anthropic's parameter validation. You can opt out for a specific tool by passing `strict=False` to `Tool(...)` or an agent decorator.
-
-```python {test="skip"}
-from pydantic import BaseModel
-
-from pydantic_ai import Agent, NativeOutput
-from pydantic_ai.models.anthropic import AnthropicModel
-
-
-class Contact(BaseModel):
-    name: str
-    email: str
-
-
-model = AnthropicModel('claude-sonnet-4-5')
-agent = Agent(model, output_type=NativeOutput(Contact))
-result = agent.run_sync('Extract the contact info for Ada Lovelace.')
-print(result.output)
-#> Contact(name='Ada Lovelace', email='ada@example.com')
-```
-
-!!! note
-    Pydantic AI automatically sets the beta headers, so you do not need to modify `model_settings.extra_headers`. If you also need to send custom `extra_body` fields, avoid supplying your own `output_format` as it will be generated for you.

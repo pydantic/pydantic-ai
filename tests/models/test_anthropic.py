@@ -50,7 +50,7 @@ from pydantic_ai.messages import (
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
@@ -549,6 +549,38 @@ async def test_anthropic_cache_tools_and_instructions(allow_model_requests: None
     )
     assert system == snapshot(
         [{'type': 'text', 'text': 'System instructions to cache.', 'cache_control': {'type': 'ephemeral'}}]
+    )
+
+
+async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthropic_api_key: str):
+    """Exercise both strict=True and strict=False tool definitions against the live API."""
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        system_prompt='Always call `country_source` first, then call `capital_lookup` with that result before replying.',
+    )
+
+    @agent.tool_plain(strict=True)
+    async def country_source() -> str:
+        return 'Japan'
+
+    capital_called = {'value': False}
+
+    @agent.tool_plain(strict=False)
+    async def capital_lookup(country: str) -> str:
+        capital_called['value'] = True
+        if country == 'Japan':
+            return 'Tokyo'
+        return f'Unknown capital for {country}'
+
+    result = await agent.run('Use the registered tools and respond exactly as `Capital: <city>`.')
+    assert capital_called['value'] is True
+    assert result.output.startswith('Capital:')
+    assert any(
+        isinstance(part, ToolCallPart) and part.tool_name == 'capital_lookup'
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
     )
 
 
@@ -5319,170 +5351,6 @@ async def test_anthropic_prompted_output_multiple(allow_model_requests: None, an
             ),
         ]
     )
-
-
-async def test_anthropic_native_output_uses_output_format(allow_model_requests: None):
-    response = completion_message(
-        [BetaTextBlock(text='{"name": "John Doe", "email": "john@example.com"}', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(response)
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-
-    class ContactInfo(BaseModel):
-        name: str
-        email: str
-
-    agent = Agent(m, output_type=NativeOutput(ContactInfo))
-
-    result = await agent.run('Extract the contact info for John Doe.')
-    assert result.output == snapshot(ContactInfo(name='John Doe', email='john@example.com'))
-
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['extra_body'] == snapshot(
-        {
-            'output_format': {
-                'schema': {
-                    'properties': {
-                        'email': {'type': 'string'},
-                        'name': {'type': 'string'},
-                    },
-                    'required': ['name', 'email'],
-                    'type': 'object',
-                },
-                'type': 'json_schema',
-            }
-        }
-    )
-    assert completion_kwargs['extra_headers']['anthropic-beta'] == 'structured-outputs-2025-11-13'
-
-
-async def test_anthropic_native_output_merges_extra_body(allow_model_requests: None):
-    response = completion_message(
-        [BetaTextBlock(text='{"name": "Ada Lovelace", "email": "ada@example.com"}', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(response)
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-
-    class ContactInfo(BaseModel):
-        name: str
-        email: str
-
-    agent = Agent(m, output_type=NativeOutput(ContactInfo))
-
-    await agent.run(
-        'Extract the contact info for Ada.',
-        model_settings=ModelSettings(extra_body={'metadata': {'request_id': 'abc-123'}}),
-    )
-
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['extra_body'] == snapshot(
-        {
-            'metadata': {'request_id': 'abc-123'},
-            'output_format': {
-                'schema': {
-                    'properties': {
-                        'email': {'type': 'string'},
-                        'name': {'type': 'string'},
-                    },
-                    'required': ['name', 'email'],
-                    'type': 'object',
-                },
-                'type': 'json_schema',
-            },
-        }
-    )
-
-
-async def test_anthropic_native_output_conflicting_extra_body(allow_model_requests: None):
-    response = completion_message(
-        [BetaTextBlock(text='{"name": "Grace", "email": "grace@example.com"}', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(response)
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-
-    class ContactInfo(BaseModel):
-        name: str
-        email: str
-
-    agent = Agent(m, output_type=NativeOutput(ContactInfo))
-
-    with pytest.raises(
-        UserError,
-        match='`model_settings.extra_body` cannot define `output_format` when using native structured output.',
-    ):
-        await agent.run(
-            'Extract the contact info for Grace.',
-            model_settings=ModelSettings(extra_body={'output_format': {'type': 'json_schema'}}),
-        )
-
-
-async def test_anthropic_tool_strict_sets_beta_header(allow_model_requests: None):
-    response = completion_message(
-        [BetaTextBlock(text='No tool call needed.', type='text')], BetaUsage(input_tokens=5, output_tokens=5)
-    )
-    mock_client = MockAnthropic.create_mock(response)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
-
-    @agent.tool_plain
-    async def get_weather(city: str) -> str:
-        """Return mock weather data."""
-        return f'{city}: sunny'
-
-    await agent.run('What is the weather in Paris?')
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['tools'][0]['strict'] is True
-    assert completion_kwargs['extra_headers']['anthropic-beta'] == 'structured-outputs-2025-11-13'
-
-
-async def test_anthropic_beta_header_merges_existing_value(allow_model_requests: None):
-    response = completion_message(
-        [BetaTextBlock(text='{"name": "Ben", "email": "ben@example.com"}', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(response)
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-
-    class ContactInfo(BaseModel):
-        name: str
-        email: str
-
-    agent = Agent(m, output_type=NativeOutput(ContactInfo))
-    await agent.run(
-        'Extract contact info.',
-        model_settings=ModelSettings(extra_headers={'anthropic-beta': 'prompt-caching-2024-10-22'}),
-    )
-
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert (
-        completion_kwargs['extra_headers']['anthropic-beta']
-        == 'prompt-caching-2024-10-22,structured-outputs-2025-11-13'
-    )
-
-
-async def test_anthropic_beta_header_deduplicates(allow_model_requests: None):
-    response = completion_message(
-        [BetaTextBlock(text='{"name": "Ivy", "email": "ivy@example.com"}', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(response)
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-
-    class ContactInfo(BaseModel):
-        name: str
-        email: str
-
-    agent = Agent(m, output_type=NativeOutput(ContactInfo))
-    await agent.run(
-        'Extract contact info.',
-        model_settings=ModelSettings(extra_headers={'anthropic-beta': 'structured-outputs-2025-11-13'}),
-    )
-
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['extra_headers']['anthropic-beta'] == 'structured-outputs-2025-11-13'
 
 
 async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, anthropic_api_key: str):

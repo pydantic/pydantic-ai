@@ -57,9 +57,6 @@ KnownModelName = TypeAliasType(
     Literal[
         'anthropic:claude-3-5-haiku-20241022',
         'anthropic:claude-3-5-haiku-latest',
-        'anthropic:claude-3-5-sonnet-20240620',
-        'anthropic:claude-3-5-sonnet-20241022',
-        'anthropic:claude-3-5-sonnet-latest',
         'anthropic:claude-3-7-sonnet-20250219',
         'anthropic:claude-3-7-sonnet-latest',
         'anthropic:claude-3-haiku-20240307',
