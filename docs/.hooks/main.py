@@ -16,12 +16,12 @@ DOCS_ROOT = Path(__file__).parent.parent
 
 def on_page_markdown(markdown: str, page: Page, config: Config, files: Files) -> str:
     """Called on each file after it is read and before it is converted to HTML."""
-    relative_path_root = (DOCS_ROOT / page.file.src_uri).parent
-    markdown = inject_snippets(markdown, relative_path_root)
+    relative_path = DOCS_ROOT / page.file.src_uri
+    markdown = inject_snippets(markdown, relative_path.parent)
     markdown = replace_uv_python_run(markdown)
     markdown = render_examples(markdown)
     markdown = render_video(markdown)
-    markdown = create_gateway_toggle(markdown, relative_path_root)
+    markdown = create_gateway_toggle(markdown, relative_path)
     return markdown
 
 
@@ -120,13 +120,13 @@ def sub_cf_video(m: re.Match[str]) -> str:
 """
 
 
-def create_gateway_toggle(markdown: str, relative_path_root: Path) -> str:
+def create_gateway_toggle(markdown: str, relative_path: Path) -> str:
     """Transform Python code blocks with Agent() calls to show both Pydantic AI and Gateway versions."""
     # Pattern matches Python code blocks with or without attributes, and optional annotation definitions after
     # Annotation definitions are numbered list items like "1. Some text" that follow the code block
     return re.sub(
         r'```py(?:thon)?(?: *\{?([^}\n]*)\}?)?\n(.*?)\n```(\n\n(?:\d+\..+?\n)+?\n)?',
-        lambda m: transform_gateway_code_block(m, relative_path_root),
+        lambda m: transform_gateway_code_block(m, relative_path),
         markdown,
         flags=re.MULTILINE | re.DOTALL,
     )
@@ -136,7 +136,7 @@ def create_gateway_toggle(markdown: str, relative_path_root: Path) -> str:
 GATEWAY_MODELS = ('anthropic', 'openai', 'openai-responses', 'openai-chat', 'bedrock', 'google-vertex', 'groq')
 
 
-def transform_gateway_code_block(m: re.Match[str], relative_path_root: Path) -> str:
+def transform_gateway_code_block(m: re.Match[str], relative_path: Path) -> str:
     """Transform a single code block to show both versions if it contains Agent() calls."""
     attrs = m.group(1) or ''
     code = m.group(2)
@@ -186,9 +186,9 @@ def transform_gateway_code_block(m: re.Match[str], relative_path_root: Path) -> 
 
     # Build attributes string
     docs_path = DOCS_ROOT / 'gateway'
-    relative_path = docs_path.relative_to(relative_path_root, walk_up=True)
-    link = f"<a href='{relative_path}' style='float: right;'>Learn about Gateway</a>"
 
+    relative_path_to_gateway = docs_path.relative_to(relative_path, walk_up=True)
+    link = f"<a href='{relative_path_to_gateway}' style='float: right;'>Learn about Gateway</a>"
     attrs_str = f' {{{attrs}}}' if attrs else ''
 
     if 'title="' in attrs:
