@@ -3155,12 +3155,43 @@ async def test_google_httpx_client_is_not_closed(allow_model_requests: None, gem
 
 
 async def test_google_discriminated_union_native_output(allow_model_requests: None, google_provider: GoogleProvider):
-    """Test discriminated unions with oneOf and discriminator field."""
+    """Test discriminated unions with oneOf and discriminator field using gemini-2.5-flash."""
     from typing import Literal
 
     from pydantic import Field
 
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    class Cat(BaseModel):
+        pet_type: Literal['cat'] = 'cat'
+        meow_volume: int
+
+    class Dog(BaseModel):
+        pet_type: Literal['dog'] = 'dog'
+        bark_volume: int
+
+    class PetResponse(BaseModel):
+        """A response containing a pet."""
+
+        pet: Cat | Dog = Field(discriminator='pet_type')
+
+    agent = Agent(m, output_type=NativeOutput(PetResponse))
+
+    result = await agent.run('Tell me about a cat with a meow volume of 5')
+    assert result.output.pet.pet_type == 'cat'
+    assert isinstance(result.output.pet, Cat)
+    assert result.output.pet.meow_volume == snapshot(5)
+
+
+async def test_google_discriminated_union_native_output_gemini_2_0(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    """Test discriminated unions with oneOf and discriminator field using gemini-2.0-flash."""
+    from typing import Literal
+
+    from pydantic import Field
+
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
 
     class Cat(BaseModel):
         pet_type: Literal['cat'] = 'cat'
@@ -3224,7 +3255,7 @@ async def test_google_recursive_schema_native_output_gemini_2_5(
 async def test_google_dict_with_additional_properties_native_output(
     allow_model_requests: None, google_provider: GoogleProvider
 ):
-    """Test dicts with additionalProperties."""
+    """Test dicts with additionalProperties using gemini-2.5-flash."""
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
 
     class ConfigResponse(BaseModel):
@@ -3240,8 +3271,27 @@ async def test_google_dict_with_additional_properties_native_output(
     assert result.output.metadata == snapshot({'author': 'Alice', 'version': '1.0'})
 
 
+async def test_google_dict_with_additional_properties_native_output_gemini_2_0(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    """Test dicts with additionalProperties using gemini-2.0-flash."""
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+
+    class ConfigResponse(BaseModel):
+        """A response with configuration metadata."""
+
+        name: str
+        metadata: dict[str, str]
+
+    agent = Agent(m, output_type=NativeOutput(ConfigResponse))
+
+    result = await agent.run('Create a config named "api-config" with metadata author="Alice" and version="1.0"')
+    assert result.output.name == snapshot('api-config')
+    assert result.output.metadata == snapshot({'author': 'Alice', 'version': '1.0'})
+
+
 async def test_google_optional_fields_native_output(allow_model_requests: None, google_provider: GoogleProvider):
-    """Test optional/nullable fields with type: 'null'."""
+    """Test optional/nullable fields with type: 'null' using gemini-2.5-flash."""
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
 
     class CityLocation(BaseModel):
@@ -3264,8 +3314,34 @@ async def test_google_optional_fields_native_output(allow_model_requests: None, 
     assert result2.output.city == snapshot('Paris')
 
 
+async def test_google_optional_fields_native_output_gemini_2_0(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    """Test optional/nullable fields with type: 'null' using gemini-2.0-flash."""
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+
+    class CityLocation(BaseModel):
+        """A city and its country."""
+
+        city: str
+        country: str | None = None
+        population: int | None = None
+
+    agent = Agent(m, output_type=NativeOutput(CityLocation))
+
+    # Test with all fields provided
+    result = await agent.run('Tell me about London, UK with population 9 million')
+    assert result.output.city == snapshot('London')
+    assert result.output.country == snapshot('UK')
+    assert result.output.population is not None
+
+    # Test with optional fields as None
+    result2 = await agent.run('Just tell me a city: Paris')
+    assert result2.output.city == snapshot('Paris')
+
+
 async def test_google_integer_enum_native_output(allow_model_requests: None, google_provider: GoogleProvider):
-    """Test integer enums work natively without string conversion."""
+    """Test integer enums work natively without string conversion using gemini-2.5-flash."""
     from enum import IntEnum
 
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
@@ -3292,9 +3368,62 @@ async def test_google_integer_enum_native_output(allow_model_requests: None, goo
     assert isinstance(result.output.priority.value, int)
 
 
+async def test_google_integer_enum_native_output_gemini_2_0(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    """Test integer enums work natively without string conversion using gemini-2.0-flash."""
+    from enum import IntEnum
+
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+
+    class Priority(IntEnum):
+        LOW = 1
+        MEDIUM = 2
+        HIGH = 3
+
+    class Task(BaseModel):
+        """A task with a priority level."""
+
+        name: str
+        priority: Priority
+
+    agent = Agent(m, output_type=NativeOutput(Task))
+
+    result = await agent.run('Create a task named "Fix bug" with a priority')
+    assert result.output.name == snapshot('Fix bug')
+    # Verify it returns a valid Priority enum (any value is fine, we're testing schema support)
+    assert isinstance(result.output.priority, Priority)
+    assert result.output.priority in {Priority.LOW, Priority.MEDIUM, Priority.HIGH}
+    # Verify it's an actual integer value
+    assert isinstance(result.output.priority.value, int)
+
+
 async def test_google_prefix_items_native_output(allow_model_requests: None, google_provider: GoogleProvider):
-    """Test prefixItems (tuple types) work natively without conversion to items."""
+    """Test prefixItems (tuple types) work natively without conversion to items using gemini-2.5-flash."""
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    class Coordinate(BaseModel):
+        """A 2D coordinate with latitude and longitude."""
+
+        point: tuple[float, float]  # This generates prefixItems in JSON schema
+
+    agent = Agent(m, output_type=NativeOutput(Coordinate))
+
+    result = await agent.run('Give me coordinates for New York City: latitude 40.7128, longitude -74.0060')
+    assert len(result.output.point) == snapshot(2)
+    # Verify both values are floats
+    assert isinstance(result.output.point[0], float)
+    assert isinstance(result.output.point[1], float)
+    # Rough check for NYC coordinates (latitude ~40, longitude ~-74)
+    assert 40 <= result.output.point[0] <= 41
+    assert -75 <= result.output.point[1] <= -73
+
+
+async def test_google_prefix_items_native_output_gemini_2_0(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    """Test prefixItems (tuple types) work natively without conversion to items using gemini-2.0-flash."""
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
 
     class Coordinate(BaseModel):
         """A 2D coordinate with latitude and longitude."""
