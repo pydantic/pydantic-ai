@@ -553,6 +553,40 @@ async def test_anthropic_cache_tools_and_instructions(allow_model_requests: None
     )
 
 
+async def test_anthropic_cache_with_custom_ttl(allow_model_requests: None):
+    """Test that cache settings support custom TTL values ('5m' or '1h')."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='System instructions to cache.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_tool_definitions='1h',  # Custom 1h TTL
+            anthropic_cache_instructions='5m',  # Explicit 5m TTL
+        ),
+    )
+
+    @agent.tool_plain
+    def my_tool(value: str) -> str:  # pragma: no cover
+        return f'Result: {value}'
+
+    await agent.run('test prompt')
+
+    # Verify custom TTL values are applied
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = completion_kwargs['tools']
+    system = completion_kwargs['system']
+
+    # Tool definitions should have 1h TTL
+    assert tools[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
+    # System instructions should have 5m TTL
+    assert system[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
+
+
 async def test_async_request_text_response(allow_model_requests: None):
     c = completion_message(
         [BetaTextBlock(text='world', type='text')],
