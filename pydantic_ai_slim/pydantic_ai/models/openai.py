@@ -30,6 +30,7 @@ from ..messages import (
     DocumentUrl,
     FilePart,
     FinishReason,
+    ImageOptions,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -810,8 +811,12 @@ class OpenAIChatModel(Model):
                     content.append(ChatCompletionContentPartTextParam(text=item, type='text'))
                 elif isinstance(item, ImageUrl):
                     image_url: ImageURL = {'url': item.url}
-                    if metadata := item.vendor_metadata:
-                        image_url['detail'] = metadata.get('detail', 'auto')
+                    if (
+                        (metadata := cast(ImageOptions, item.vendor_metadata))
+                        and (detail := metadata.get('detail'))
+                        and detail in ('auto', 'low', 'high')
+                    ):
+                        image_url['detail'] = detail
                     if item.force_download:
                         image_content = await download_item(item, data_format='base64_uri', type_format='extension')
                         image_url['url'] = image_content['data']
@@ -828,8 +833,12 @@ class OpenAIChatModel(Model):
                         )
                     elif item.is_image:
                         image_url = ImageURL(url=item.data_uri)
-                        if metadata := item.vendor_metadata:
-                            image_url['detail'] = metadata.get('detail', 'auto')
+                        if (
+                            (metadata := cast(ImageOptions, item.vendor_metadata))
+                            and (detail := metadata.get('detail'))
+                            and detail in ('auto', 'low', 'high')
+                        ):
+                            image_url['detail'] = detail
                         content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     elif item.is_audio:
                         assert item.format in ('wav', 'mp3')
@@ -1631,11 +1640,12 @@ class OpenAIResponsesModel(Model):
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
                         detail: Literal['auto', 'low', 'high'] = 'auto'
-                        if metadata := item.vendor_metadata:
-                            detail = cast(
-                                Literal['auto', 'low', 'high'],
-                                metadata.get('detail', 'auto'),
-                            )
+                        if (
+                            (metadata := cast(ImageOptions, item.vendor_metadata))
+                            and (metadata_detail := metadata.get('detail'))
+                            and metadata_detail in ('auto', 'low', 'high')
+                        ):
+                            detail = metadata_detail
                         content.append(
                             responses.ResponseInputImageParam(
                                 image_url=item.data_uri,
@@ -1660,9 +1670,14 @@ class OpenAIResponsesModel(Model):
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, ImageUrl):
                     detail: Literal['auto', 'low', 'high'] = 'auto'
+                    if (
+                        (metadata := cast(ImageOptions, item.vendor_metadata))
+                        and (metadata_detail := metadata.get('detail'))
+                        and metadata_detail in ('auto', 'low', 'high')
+                    ):
+                        detail = metadata_detail
+
                     image_url = item.url
-                    if metadata := item.vendor_metadata:
-                        detail = cast(Literal['auto', 'low', 'high'], metadata.get('detail', 'auto'))
                     if item.force_download:
                         downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
                         image_url = downloaded_item['data']

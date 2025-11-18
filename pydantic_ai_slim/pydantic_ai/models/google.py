@@ -20,9 +20,13 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    DocumentOptions,
+    DocumentUrl,
     FilePart,
     FileUrl,
     FinishReason,
+    ImageOptions,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -35,6 +39,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoOptions,
     VideoUrl,
 )
 from ..profiles import ModelProfileSpec
@@ -78,6 +83,8 @@ try:
         Modality,
         Part,
         PartDict,
+        PartMediaResolutionDict,
+        PartMediaResolutionLevel,
         SafetySettingDict,
         ThinkingConfigDict,
         ToolCodeExecutionDict,
@@ -132,6 +139,12 @@ _FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
     GoogleFinishReason.UNEXPECTED_TOOL_CALL: 'error',
     GoogleFinishReason.IMAGE_PROHIBITED_CONTENT: 'content_filter',
     GoogleFinishReason.NO_IMAGE: 'error',
+}
+
+_PART_MEDIA_RESOLUTIONS: dict[Literal['low', 'medium', 'high'], PartMediaResolutionDict] = {
+    'low': PartMediaResolutionDict(level=PartMediaResolutionLevel.MEDIA_RESOLUTION_LOW),
+    'medium': PartMediaResolutionDict(level=PartMediaResolutionLevel.MEDIA_RESOLUTION_MEDIUM),
+    'high': PartMediaResolutionDict(level=PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH),
 }
 
 
@@ -576,7 +589,8 @@ class GoogleModel(Model):
         system_instruction = ContentDict(role='user', parts=system_parts) if system_parts else None
         return system_instruction, contents
 
-    async def _map_user_prompt(self, part: UserPromptPart) -> list[PartDict]:
+    async def _map_user_prompt(self, part: UserPromptPart) -> list[PartDict]:  # noqa: C901
+        profile = GoogleModelProfile.from_profile(self.profile)
         if isinstance(part.content, str):
             return [{'text': part.content}]
         else:
@@ -587,31 +601,61 @@ class GoogleModel(Model):
                 elif isinstance(item, BinaryContent):
                     inline_data_dict: BlobDict = {'data': item.data, 'mime_type': item.media_type}
                     part_dict: PartDict = {'inline_data': inline_data_dict}
-                    if item.vendor_metadata:
-                        part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
-                    content.append(part_dict)
-                elif isinstance(item, VideoUrl) and item.is_youtube:
-                    file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
-                    part_dict: PartDict = {'file_data': file_data_dict}
-                    if item.vendor_metadata:  # pragma: no branch
-                        part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                    if (item.is_image or item.is_video or item.is_document) and (
+                        metadata := cast(ImageOptions | VideoOptions | DocumentOptions, item.vendor_metadata)
+                    ):
+                        if (detail := metadata.get('detail')) and profile.google_supports_part_media_resolution:
+                            part_dict['media_resolution'] = _PART_MEDIA_RESOLUTIONS[detail]
+
+                        if item.is_video:
+                            video_metadata: VideoMetadataDict = {}
+                            if fps := metadata.get('fps'):
+                                video_metadata['fps'] = fps
+                            if start_offset := metadata.get('start_offset'):
+                                video_metadata['start_offset'] = start_offset
+                            if end_offset := metadata.get('end_offset'):
+                                video_metadata['end_offset'] = end_offset
+                            if video_metadata:
+                                part_dict['video_metadata'] = video_metadata
+
                     content.append(part_dict)
                 elif isinstance(item, FileUrl):
+                    part_dict: PartDict = {}
                     if item.force_download or (
                         # google-gla does not support passing file urls directly, except for youtube videos
-                        # (see above) and files uploaded to the file API (which cannot be downloaded anyway)
+                        # and files uploaded to the file API (which cannot be downloaded anyway)
                         self.system == 'google-gla'
                         and not item.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
+                        and not (isinstance(item, VideoUrl) and item.is_youtube)
                     ):
                         downloaded_item = await download_item(item, data_format='bytes')
                         inline_data: BlobDict = {
                             'data': downloaded_item['data'],
                             'mime_type': downloaded_item['data_type'],
                         }
-                        content.append({'inline_data': inline_data})
+                        part_dict['inline_data'] = inline_data
                     else:
                         file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
-                        content.append({'file_data': file_data_dict})  # pragma: lax no cover
+                        part_dict['file_data'] = file_data_dict
+
+                    if isinstance(item, ImageUrl | VideoUrl | DocumentUrl) and (
+                        metadata := cast(ImageOptions | VideoOptions | DocumentOptions, item.vendor_metadata)
+                    ):
+                        if (detail := metadata.get('detail')) and profile.google_supports_part_media_resolution:
+                            part_dict['media_resolution'] = _PART_MEDIA_RESOLUTIONS[detail]
+
+                        if isinstance(item, VideoUrl):
+                            video_metadata: VideoMetadataDict = {}
+                            if fps := metadata.get('fps'):
+                                video_metadata['fps'] = fps
+                            if start_offset := metadata.get('start_offset'):
+                                video_metadata['start_offset'] = start_offset
+                            if end_offset := metadata.get('end_offset'):
+                                video_metadata['end_offset'] = end_offset
+                            if video_metadata:
+                                part_dict['video_metadata'] = video_metadata
+
+                    content.append(part_dict)  # pragma: lax no cover
                 elif isinstance(item, CachePoint):
                     # Google Gemini doesn't support prompt caching via CachePoint
                     pass
