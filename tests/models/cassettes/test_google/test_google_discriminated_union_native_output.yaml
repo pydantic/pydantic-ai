@@ -1,0 +1,102 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '807'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Tell me about a cat with a meow volume of 5
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          $defs:
+            Cat:
+              properties:
+                meow_volume:
+                  type: integer
+                pet_type:
+                  default: cat
+                  enum:
+                  - cat
+                  type: string
+              required:
+              - meow_volume
+              title: Cat
+              type: object
+            Dog:
+              properties:
+                bark_volume:
+                  type: integer
+                pet_type:
+                  default: dog
+                  enum:
+                  - dog
+                  type: string
+              required:
+              - bark_volume
+              title: Dog
+              type: object
+          description: A response containing a pet.
+          properties:
+            pet:
+              oneOf:
+              - $ref: '#/$defs/Cat'
+              - $ref: '#/$defs/Dog'
+          required:
+          - pet
+          title: PetResponse
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '594'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1682
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: '{"pet":{"pet_type":"cat","meow_volume":5}}'
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: B5MUaePHJLHd7M8PqfX5qAQ
+      usageMetadata:
+        candidatesTokenCount: 16
+        promptTokenCount: 14
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 14
+        thoughtsTokenCount: 181
+        totalTokenCount: 211
+    status:
+      code: 200
+      message: OK
+version: 1

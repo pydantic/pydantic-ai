@@ -515,8 +515,14 @@ async def test_a2a_error_handling():
             task_id = result['id']
 
             # Wait for task to fail
-            await anyio.sleep(0.1)
-            task = await a2a_client.get_task(task_id)
+            max_attempts = 50  # 5 seconds total
+            for _ in range(max_attempts):
+                task = await a2a_client.get_task(task_id)
+                if 'result' in task and task['result']['status']['state'] == 'failed':
+                    break
+                await anyio.sleep(0.1)
+            else:  # pragma: no cover
+                raise AssertionError(f'Task did not fail within {max_attempts * 0.1} seconds')
 
             assert 'result' in task
             assert task['result']['status']['state'] == 'failed'

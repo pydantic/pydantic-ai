@@ -3730,6 +3730,7 @@ def test_binary_content_serializable():
                 'instructions': None,
                 'kind': 'request',
                 'run_id': IsStr(),
+                'metadata': None,
             },
             {
                 'parts': [{'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text'}],
@@ -3751,6 +3752,7 @@ def test_binary_content_serializable():
                 'kind': 'response',
                 'finish_reason': None,
                 'run_id': IsStr(),
+                'metadata': None,
             },
         ]
     )
@@ -3788,6 +3790,7 @@ def test_image_url_serializable_missing_media_type():
                 'instructions': None,
                 'kind': 'request',
                 'run_id': IsStr(),
+                'metadata': None,
             },
             {
                 'parts': [{'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text'}],
@@ -3809,6 +3812,7 @@ def test_image_url_serializable_missing_media_type():
                 'kind': 'response',
                 'finish_reason': None,
                 'run_id': IsStr(),
+                'metadata': None,
             },
         ]
     )
@@ -3853,6 +3857,7 @@ def test_image_url_serializable():
                 'instructions': None,
                 'kind': 'request',
                 'run_id': IsStr(),
+                'metadata': None,
             },
             {
                 'parts': [{'content': 'success (no tool calls)', 'id': None, 'part_kind': 'text'}],
@@ -3874,6 +3879,7 @@ def test_image_url_serializable():
                 'kind': 'response',
                 'finish_reason': None,
                 'run_id': IsStr(),
+                'metadata': None,
             },
         ]
     )
@@ -4353,6 +4359,7 @@ def test_tool_call_with_validation_value_error_serializable():
             'instructions': None,
             'kind': 'request',
             'run_id': IsStr(),
+            'metadata': None,
         }
     )
 
