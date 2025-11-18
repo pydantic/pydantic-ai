@@ -3788,7 +3788,7 @@ async def test_anthropic_url_context_tool_message_replay():
     system_prompt, anthropic_messages = await m._map_message(messages, model_request_parameters, model_settings)  # pyright: ignore[reportPrivateUsage,reportArgumentType]
 
     # Verify the messages were serialized correctly
-    assert system_prompt is None or isinstance(system_prompt, (list, str))
+    assert system_prompt is None or isinstance(system_prompt, (list | str))
     assert len(anthropic_messages) == 2
     assert anthropic_messages[1]['role'] == 'assistant'
 
