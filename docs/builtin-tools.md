@@ -306,9 +306,9 @@ For more details, check the [API documentation][pydantic_ai.builtin_tools.ImageG
 | `quality` | ✅ | ❌ |
 | `size` | ✅ | ❌ |
 
-## URL Context Tool
+## Web Fetch Tool
 
-The [`UrlContextTool`][pydantic_ai.builtin_tools.UrlContextTool] enables your agent to pull URL contents into its context,
+The [`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool] enables your agent to pull URL contents into its context,
 allowing it to pull up-to-date information from the web.
 
 ### Provider Support
@@ -327,10 +327,10 @@ allowing it to pull up-to-date information from the web.
 
 ### Usage
 
-```py {title="url_context_anthropic.py"}
-from pydantic_ai import Agent, UrlContextTool
+```py {title="web_fetch_anthropic.py"}
+from pydantic_ai import Agent, WebFetchTool
 
-agent = Agent('anthropic:claude-sonnet-4-0', builtin_tools=[UrlContextTool()])
+agent = Agent('anthropic:claude-sonnet-4-0', builtin_tools=[WebFetchTool()])
 
 result = agent.run_sync('What is the first sentence on https://ai.pydantic.dev?')
 print(result.output)
@@ -341,12 +341,12 @@ Pydantic AI is a Python agent framework designed to make it less painful to buil
 
 _(This example is complete, it can be run "as is")_
 
-With Google, you can also use `UrlContextTool`:
+With Google, you can also use `WebFetchTool`:
 
-```py {title="url_context_google.py"}
-from pydantic_ai import Agent, UrlContextTool
+```py {title="web_fetch_google.py"}
+from pydantic_ai import Agent, WebFetchTool
 
-agent = Agent('google-gla:gemini-2.5-flash', builtin_tools=[UrlContextTool()])
+agent = Agent('google-gla:gemini-2.5-flash', builtin_tools=[WebFetchTool()])
 
 result = agent.run_sync('What is this? https://ai.pydantic.dev')
 print(result.output)

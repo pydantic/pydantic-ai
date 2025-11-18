@@ -6,13 +6,14 @@ from typing import Annotated, Any, Literal, Union
 
 import pydantic
 from pydantic_core import core_schema
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, deprecated
 
 __all__ = (
     'AbstractBuiltinTool',
     'WebSearchTool',
     'WebSearchUserLocation',
     'CodeExecutionTool',
+    'WebFetchTool',
     'UrlContextTool',
     'ImageGenerationTool',
     'MemoryTool',
@@ -166,7 +167,7 @@ class CodeExecutionTool(AbstractBuiltinTool):
 
 
 @dataclass(kw_only=True)
-class UrlContextTool(AbstractBuiltinTool):
+class WebFetchTool(AbstractBuiltinTool):
     """Allows your agent to access contents from URLs.
 
     Supported by:
@@ -177,6 +178,20 @@ class UrlContextTool(AbstractBuiltinTool):
 
     kind: str = 'url_context'
     """The kind of tool."""
+
+
+@deprecated('Use `WebFetchTool` instead.')
+class UrlContextTool(WebFetchTool):
+    """Deprecated alias for WebFetchTool. Use WebFetchTool instead."""
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        # Skip registration in _BUILTIN_TOOL_TYPES to avoid breaking the discriminated union
+        pass
+
+
+# Remove UrlContextTool from _BUILTIN_TOOL_TYPES and restore WebFetchTool
+# This ensures the discriminated union only includes WebFetchTool
+_BUILTIN_TOOL_TYPES['url_context'] = WebFetchTool
 
 
 @dataclass(kw_only=True)

@@ -15,6 +15,7 @@ from .builtin_tools import (
     MCPServerTool,
     MemoryTool,
     UrlContextTool,
+    WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,
 )
@@ -214,6 +215,7 @@ __all__ = (
     # builtin_tools
     'WebSearchTool',
     'WebSearchUserLocation',
+    'WebFetchTool',
     'UrlContextTool',
     'CodeExecutionTool',
     'ImageGenerationTool',

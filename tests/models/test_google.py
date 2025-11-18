@@ -42,7 +42,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, UrlContextTool, WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -1342,9 +1342,9 @@ There is a high chance of rain throughout the day, with some reports stating a 6
     )
 
 
-async def test_google_model_url_context_tool(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_web_fetch_tool(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[UrlContextTool()])
+    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[WebFetchTool()])
 
     result = await agent.run(
         'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
@@ -2754,7 +2754,7 @@ def test_map_usage():
 async def test_google_builtin_tools_with_other_tools(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
 
-    agent = Agent(m, builtin_tools=[UrlContextTool()])
+    agent = Agent(m, builtin_tools=[WebFetchTool()])
 
     @agent.tool_plain
     async def get_user_country() -> str:
@@ -2770,7 +2770,7 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
         city: str
         country: str
 
-    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[UrlContextTool()])
+    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[WebFetchTool()])
 
     with pytest.raises(
         UserError,
@@ -2781,7 +2781,7 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
         await agent.run('What is the largest city in Mexico?')
 
     # Will default to prompted output
-    agent = Agent(m, output_type=CityLocation, builtin_tools=[UrlContextTool()])
+    agent = Agent(m, output_type=CityLocation, builtin_tools=[WebFetchTool()])
 
     result = await agent.run('What is the largest city in Mexico?')
     assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))

@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
-from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, UrlContextTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
@@ -472,7 +472,7 @@ class AnthropicModel(Model):
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
                 beta_features.append('code-execution-2025-05-22')
-            elif isinstance(tool, UrlContextTool):  # pragma: no branch
+            elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 tools.append(BetaWebFetchTool20250910Param(name='web_fetch', type='web_fetch_20250910'))
                 beta_features.append('web-fetch-2025-09-10')
             elif isinstance(tool, MemoryTool):  # pragma: no branch
@@ -616,7 +616,7 @@ class AnthropicModel(Model):
                                     input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
-                            elif response_part.tool_name == UrlContextTool.kind:
+                            elif response_part.tool_name == WebFetchTool.kind:
                                 server_tool_use_block_param = BetaServerToolUseBlockParam(
                                     id=tool_use_id,
                                     type='server_tool_use',
@@ -670,7 +670,7 @@ class AnthropicModel(Model):
                                         ),
                                     )
                                 )
-                            elif response_part.tool_name == UrlContextTool.kind and isinstance(
+                            elif response_part.tool_name == WebFetchTool.kind and isinstance(
                                 response_part.content, dict
                             ):
                                 assistant_content_params.append(
@@ -1013,7 +1013,7 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
     elif item.name == 'web_fetch':
         return BuiltinToolCallPart(
             provider_name=provider_name,
-            tool_name=UrlContextTool.kind,
+            tool_name=WebFetchTool.kind,
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )
@@ -1056,7 +1056,7 @@ def _map_code_execution_tool_result_block(
 def _map_web_fetch_tool_result_block(item: BetaWebFetchToolResultBlock, provider_name: str) -> BuiltinToolReturnPart:
     return BuiltinToolReturnPart(
         provider_name=provider_name,
-        tool_name=UrlContextTool.kind,
+        tool_name=WebFetchTool.kind,
         # Store just the content field (BetaWebFetchBlock) which has {content, type, url, retrieved_at}
         content=item.content.model_dump(mode='json'),
         tool_call_id=item.tool_use_id,

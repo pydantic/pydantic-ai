@@ -43,7 +43,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, UrlContextTool, WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -3612,10 +3612,10 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
 
 
 @pytest.mark.vcr()
-async def test_anthropic_url_context_tool(allow_model_requests: None, anthropic_api_key: str):
+async def test_anthropic_web_fetch_tool(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[UrlContextTool()], model_settings=settings)
+    agent = Agent(m, builtin_tools=[WebFetchTool()], model_settings=settings)
 
     result = await agent.run(
         'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
@@ -3636,14 +3636,14 @@ async def test_anthropic_url_context_tool(allow_model_requests: None, anthropic_
 
 
 @pytest.mark.vcr()
-async def test_anthropic_url_context_tool_stream(
+async def test_anthropic_web_fetch_tool_stream(
     allow_model_requests: None, anthropic_api_key: str
 ):  # pragma: lax no cover
     from pydantic_ai.messages import PartDeltaEvent, PartStartEvent
 
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[UrlContextTool()], model_settings=settings)
+    agent = Agent(m, builtin_tools=[WebFetchTool()], model_settings=settings)
 
     # Iterate through the stream to ensure streaming code paths are covered
     event_parts: list[Any] = []
@@ -3678,15 +3678,15 @@ async def test_anthropic_url_context_tool_stream(
 
 
 @pytest.mark.vcr()
-async def test_anthropic_url_context_tool_multi_turn(allow_model_requests: None, anthropic_api_key: str):
-    """Test multi-turn conversation with UrlContextTool to ensure message replay works correctly.
+async def test_anthropic_web_fetch_tool_multi_turn(allow_model_requests: None, anthropic_api_key: str):
+    """Test multi-turn conversation with WebFetchTool to ensure message replay works correctly.
 
     This test covers the code paths in _map_message that convert BuiltinToolCallPart and
     BuiltinToolReturnPart back to Anthropic format when replaying previous messages.
     """
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[UrlContextTool()], model_settings=settings)
+    agent = Agent(m, builtin_tools=[WebFetchTool()], model_settings=settings)
 
     # First turn: Fetch URL content
     result1 = await agent.run(
@@ -3740,8 +3740,8 @@ async def test_anthropic_url_context_tool_multi_turn(allow_model_requests: None,
     assert any(tc.tool_name == 'url_context' for tc in tool_calls2)
 
 
-async def test_anthropic_url_context_tool_message_replay():
-    """Test that BuiltinToolCallPart and BuiltinToolReturnPart for UrlContextTool are correctly serialized."""
+async def test_anthropic_web_fetch_tool_message_replay():
+    """Test that BuiltinToolCallPart and BuiltinToolReturnPart for WebFetchTool are correctly serialized."""
     from typing import cast
 
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -3757,13 +3757,13 @@ async def test_anthropic_url_context_tool_message_replay():
             parts=[
                 BuiltinToolCallPart(
                     provider_name=m.system,
-                    tool_name=UrlContextTool.kind,
+                    tool_name=WebFetchTool.kind,
                     args={'url': 'https://example.com'},
                     tool_call_id='test_id_1',
                 ),
                 BuiltinToolReturnPart(
                     provider_name=m.system,
-                    tool_name=UrlContextTool.kind,
+                    tool_name=WebFetchTool.kind,
                     content={
                         'content': {'type': 'document'},
                         'type': 'web_fetch_result',
@@ -3781,7 +3781,7 @@ async def test_anthropic_url_context_tool_message_replay():
     model_settings = {}
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[UrlContextTool()],
+        builtin_tools=[WebFetchTool()],
         output_tools=[],
     )
 
@@ -4273,7 +4273,7 @@ Agents support various execution methods:
 The framework provides a unified interface for integrating with various LLM providers, including OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Bedrock, and HuggingFace.  Each model integration follows a consistent settings pattern with provider-specific prefixes (e.g., `google_*`, `anthropic_*`). \n\
 
 Examples of supported models and their capabilities include:
-*   `GoogleModel`: Integrates with Google's Gemini API, supporting both Gemini API (`google-gla`) and Vertex AI (`google-vertex`) providers.  It supports token counting, streaming, built-in tools like `WebSearchTool`, `UrlContextTool`, `CodeExecutionTool`, and native JSON schema output. \n\
+*   `GoogleModel`: Integrates with Google's Gemini API, supporting both Gemini API (`google-gla`) and Vertex AI (`google-vertex`) providers.  It supports token counting, streaming, built-in tools like `WebSearchTool`, `WebFetchTool`, `CodeExecutionTool`, and native JSON schema output. \n\
 *   `AnthropicModel`: Uses Anthropic's beta API for advanced features like "Thinking Blocks" and built-in tools. \n\
 *   `GroqModel`: Offers high-speed inference and specialized reasoning support with configurable reasoning formats. \n\
 *   `MistralModel`: Supports customizable JSON schema prompting and thinking support. \n\
@@ -4290,7 +4290,7 @@ Function tools enable models to perform actions and retrieve additional informat
 
 Tools can return various types of output, including anything Pydantic can serialize to JSON, as well as multimodal content like `AudioUrl`, `VideoUrl`, `ImageUrl`, or `DocumentUrl`.  The `ToolReturn` object allows for separating the `return_value` (for the model), `content` (for additional context), and `metadata` (for application-specific use). \n\
 
-Built-in tools like `UrlContextTool` allow agents to pull web content into their context. \n\
+Built-in tools like `WebFetchTool` allow agents to pull web content into their context. \n\
 
 ### 5. Output Handling
 The framework supports various output types:
