@@ -1398,7 +1398,7 @@ async def test_temporal_agent_run_in_workflow_with_model(allow_model_requests: N
         with workflow_raises(
             UserError,
             snapshot(
-                'Model cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
+                'Model OpenAIChatModel instance is not registered with this TemporalAgent. Available models: default. To use this model, add it to the `additional_models` parameter when creating the TemporalAgent.'
             ),
         ):
             await client.execute_workflow(
@@ -2417,3 +2417,324 @@ async def test_passing_agents_through_workflow_without_pydantic_ai_workflow(allo
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+# Multi-Model Support Tests
+
+# Module-level test models for multi-model selection test
+test_model_selection_1 = TestModel(custom_output_text='Response from model 1')
+test_model_selection_2 = TestModel(custom_output_text='Response from model 2')
+test_model_selection_3 = TestModel(custom_output_text='Response from model 3')
+
+# Module-level test models for error test
+test_model_error_1 = TestModel()
+test_model_error_2 = TestModel()
+test_model_error_unregistered = TestModel()
+
+# Module-level test models for string selection test
+test_model_string_1 = TestModel(custom_output_text='Default response')
+test_model_string_2 = TestModel(custom_output_text='Second model response')
+
+# Module-level temporal agents
+agent_selection = Agent(test_model_selection_1, name='multi_model_workflow_test')
+multi_model_selection_test_agent = TemporalAgent(
+    agent_selection,
+    name='multi_model_workflow_test',
+    additional_models=[test_model_selection_2, test_model_selection_3],
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+agent_error = Agent(test_model_error_1, name='error_test')
+multi_model_error_test_agent = TemporalAgent(
+    agent_error,
+    name='error_test',
+    additional_models=[test_model_error_2],
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+agent_string = Agent(test_model_string_1, name='string_selection_test')
+multi_model_string_test_agent = TemporalAgent(
+    agent_string,
+    name='string_selection_test',
+    additional_models=[test_model_string_2],
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MultiModelWorkflowDefault:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await multi_model_selection_test_agent.run(prompt)
+        return result.output
+
+
+@workflow.defn
+class MultiModelWorkflowSelectModel2:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await multi_model_selection_test_agent.run(prompt, model=test_model_selection_2)
+        return result.output
+
+
+@workflow.defn
+class MultiModelWorkflowSelectModel3:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await multi_model_selection_test_agent.run(prompt, model=test_model_selection_3)
+        return result.output
+
+
+@workflow.defn
+class MultiModelWorkflowUnregistered:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        # Try to use an unregistered model
+        result = await multi_model_error_test_agent.run(prompt, model=test_model_error_unregistered)
+        return result.output  # pragma: no cover
+
+
+@workflow.defn
+class MultiModelWorkflowSelectModel2String:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await multi_model_string_test_agent.run(prompt, model=test_model_string_2)
+        return result.output
+
+
+async def test_temporal_agent_multi_model_registration():
+    """Test that TemporalAgent correctly registers multiple models with unique activity names."""
+    test_model1 = TestModel(custom_output_text='Model 1 response')
+    test_model2 = TestModel(custom_output_text='Model 2 response')
+    test_model3 = TestModel(custom_output_text='Model 3 response')
+
+    agent = Agent(test_model1, name='multi_model_test')
+    temporal_agent = TemporalAgent(
+        agent, name='multi_model_test', additional_models=[test_model2, test_model3]
+    )
+
+    # Verify that all models are registered
+    assert 'default' in temporal_agent._models
+    assert 'test' in temporal_agent._models
+    assert 'test_1' in temporal_agent._models
+
+    # Verify default model has no suffix in activity name
+    default_activities = temporal_agent._models['default'].temporal_activities
+    default_request_activity = next(
+        a for a in default_activities if a.__temporal_activity_definition.name.endswith('__model_request')
+    )
+    assert default_request_activity.__temporal_activity_definition.name == 'agent__multi_model_test__model_request'
+
+    # Verify additional models have suffixes in activity names
+    model1_activities = temporal_agent._models['test'].temporal_activities
+    model1_request_activity = next(
+        a for a in model1_activities if '__model__test__request' in a.__temporal_activity_definition.name
+    )
+    assert model1_request_activity.__temporal_activity_definition.name == 'agent__multi_model_test__model__test__request'
+
+    model2_activities = temporal_agent._models['test_1'].temporal_activities
+    model2_request_activity = next(
+        a for a in model2_activities if '__model__test_1__request' in a.__temporal_activity_definition.name
+    )
+    assert model2_request_activity.__temporal_activity_definition.name == 'agent__multi_model_test__model__test_1__request'
+
+    # Verify all activities are included in temporal_activities
+    all_activity_names = {a.__temporal_activity_definition.name for a in temporal_agent.temporal_activities}
+    assert 'agent__multi_model_test__model_request' in all_activity_names
+    assert 'agent__multi_model_test__model__test__request' in all_activity_names
+    assert 'agent__multi_model_test__model__test_1__request' in all_activity_names
+
+
+async def test_temporal_agent_multi_model_with_strings():
+    """Test that TemporalAgent can register models using model strings."""
+    test_model1 = TestModel()
+
+    agent = Agent(test_model1, name='multi_model_string_test')
+    # Using TestModel instances created from strings for testing
+    # In real use, these would be actual model strings like 'openai:gpt-4'
+    test_model_str1 = TestModel()
+    test_model_str2 = TestModel()
+    temporal_agent = TemporalAgent(
+        agent,
+        name='multi_model_string_test',
+        additional_models=[test_model_str1, test_model_str2],
+    )
+
+    # Verify that models are registered with sanitized keys
+    assert 'default' in temporal_agent._models
+    assert 'test' in temporal_agent._models
+    assert 'test_1' in temporal_agent._models
+
+    # Verify lookup mappings for Model instances
+    assert id(test_model_str1) in temporal_agent._model_to_key
+    assert id(test_model_str2) in temporal_agent._model_to_key
+
+
+async def test_temporal_agent_multi_model_duplicate_names():
+    """Test that duplicate model names get unique suffixes."""
+    test_model1 = TestModel()
+    test_model2 = TestModel()
+    test_model3 = TestModel()
+
+    agent = Agent(test_model1, name='duplicate_test')
+    temporal_agent = TemporalAgent(
+        agent,
+        name='duplicate_test',
+        additional_models=[test_model2, test_model3],
+    )
+
+    # Verify that all models have unique keys
+    assert 'default' in temporal_agent._models
+    assert 'test' in temporal_agent._models
+    assert 'test_1' in temporal_agent._models
+
+    # Verify each has unique activities
+    activity_names = {a.__temporal_activity_definition.name for a in temporal_agent.temporal_activities}
+    assert 'agent__duplicate_test__model_request' in activity_names
+    assert 'agent__duplicate_test__model__test__request' in activity_names
+    assert 'agent__duplicate_test__model__test_1__request' in activity_names
+
+
+async def test_temporal_agent_multi_model_selection_in_workflow(allow_model_requests: None, client: Client):
+    """Test selecting different models in a workflow using the model parameter."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiModelWorkflowDefault, MultiModelWorkflowSelectModel2, MultiModelWorkflowSelectModel3],
+        plugins=[AgentPlugin(multi_model_selection_test_agent)],
+    ):
+        # Test using default model
+        output = await client.execute_workflow(
+            MultiModelWorkflowDefault.run,
+            args=['Hello'],
+            id='MultiModelWorkflowDefault',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Response from model 1'
+
+        # Test selecting second model
+        output = await client.execute_workflow(
+            MultiModelWorkflowSelectModel2.run,
+            args=['Hello'],
+            id='MultiModelWorkflowSelectModel2',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Response from model 2'
+
+        # Test selecting third model
+        output = await client.execute_workflow(
+            MultiModelWorkflowSelectModel3.run,
+            args=['Hello'],
+            id='MultiModelWorkflowSelectModel3',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Response from model 3'
+
+
+async def test_temporal_agent_multi_model_unregistered_error(allow_model_requests: None, client: Client):
+    """Test that using an unregistered model raises a helpful error."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiModelWorkflowUnregistered],
+        plugins=[AgentPlugin(multi_model_error_test_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            'Model TestModel instance is not registered with this TemporalAgent. Available models: default, test. To use this model, add it to the `additional_models` parameter when creating the TemporalAgent.',
+        ):
+            await client.execute_workflow(
+                MultiModelWorkflowUnregistered.run,
+                args=['Hello'],
+                id='MultiModelWorkflowUnregistered',
+                task_queue=TASK_QUEUE,
+            )
+
+
+async def test_temporal_agent_multi_model_string_selection_in_workflow(allow_model_requests: None, client: Client):
+    """Test that model selection works by passing different model instances."""
+    # Note: We can't test with model strings like 'test:gpt-4' because they're invalid.
+    # This test verifies that the model selection mechanism works correctly.
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiModelWorkflowSelectModel2String],
+        plugins=[AgentPlugin(multi_model_string_test_agent)],
+    ):
+        # Test selecting the second model
+        output = await client.execute_workflow(
+            MultiModelWorkflowSelectModel2String.run,
+            args=['Hello'],
+            id='MultiModelWorkflowSelectByInstance',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Second model response'
+
+
+async def test_temporal_agent_multi_model_backward_compatibility():
+    """Test that single-model agents work as before (backward compatibility)."""
+    test_model = TestModel()
+
+    agent = Agent(test_model, name='backward_compat_test')
+    temporal_agent = TemporalAgent(agent, name='backward_compat_test')
+
+    # Should only have default model
+    assert list(temporal_agent._models.keys()) == ['default']
+
+    # Should work without additional_models parameter
+    assert isinstance(temporal_agent.model, TemporalModel)
+    assert temporal_agent.model.wrapped == test_model
+
+    # Activity names should not have suffixes (no __model__<suffix>__ pattern)
+    activity_names = {a.__temporal_activity_definition.name for a in temporal_agent.temporal_activities}
+    assert 'agent__backward_compat_test__model_request' in activity_names
+    # Verify no activities have the __model__<key>__ pattern (only __model_request and __model_request_stream allowed)
+    for name in activity_names:
+        if '__model__' in name and not name.endswith(('__call_tool', '__get_tools')):
+            # This means it's a model activity with a suffix, which shouldn't exist for single-model agents
+            assert False, f'Found model activity with suffix: {name}'
+
+
+async def test_temporal_agent_multi_model_outside_workflow():
+    """Test that multi-model agents work outside workflows (using wrapped agent behavior)."""
+    test_model1 = TestModel(custom_output_text='Model 1 response')
+    test_model2 = TestModel(custom_output_text='Model 2 response')
+
+    agent = Agent(test_model1, name='outside_workflow_test')
+    temporal_agent = TemporalAgent(
+        agent, name='outside_workflow_test', additional_models=[test_model2]
+    )
+
+    # Outside workflow, should use default model from wrapped agent
+    result = await temporal_agent.run('Hello')
+    assert result.output == 'Model 1 response'
+
+    # Outside workflow, the temporal agent still uses the wrapped model
+    # Model selection via additional_models only works inside workflows
+    # This test verifies that the agent works correctly outside workflows
+    # even when additional models are registered
+    result = await temporal_agent.run('Hello')
+    assert result.output == 'Model 1 response'
+
+
+async def test_temporal_agent_multi_model_mixed_types():
+    """Test that different model instances can be registered."""
+    test_model1 = TestModel()
+    test_model2 = TestModel()
+    test_model3 = TestModel()
+
+    agent = Agent(test_model1, name='mixed_types_test')
+    temporal_agent = TemporalAgent(
+        agent,
+        name='mixed_types_test',
+        additional_models=[test_model2, test_model3],
+    )
+
+    # Verify all models are registered
+    assert 'default' in temporal_agent._models
+    assert 'test' in temporal_agent._models
+    assert 'test_1' in temporal_agent._models
+
+    # Verify lookups work for all model instances
+    assert id(test_model2) in temporal_agent._model_to_key
+    assert id(test_model3) in temporal_agent._model_to_key

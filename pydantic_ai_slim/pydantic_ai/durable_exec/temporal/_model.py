@@ -79,13 +79,22 @@ class TemporalModel(WrapperModel):
         deps_type: type[AgentDepsT],
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
         event_stream_handler: EventStreamHandler[Any] | None = None,
+        model_suffix: str | None = None,
     ):
         super().__init__(model)
         self.activity_config = activity_config
         self.run_context_type = run_context_type
         self.event_stream_handler = event_stream_handler
 
-        @activity.defn(name=f'{activity_name_prefix}__model_request')
+        # Generate activity names with optional model suffix
+        if model_suffix:
+            request_activity_name = f'{activity_name_prefix}__model__{model_suffix}__request'
+            request_stream_activity_name = f'{activity_name_prefix}__model__{model_suffix}__request_stream'
+        else:
+            request_activity_name = f'{activity_name_prefix}__model_request'
+            request_stream_activity_name = f'{activity_name_prefix}__model_request_stream'
+
+        @activity.defn(name=request_activity_name)
         async def request_activity(params: _RequestParams) -> ModelResponse:
             return await self.wrapped.request(
                 params.messages,
@@ -115,7 +124,7 @@ class TemporalModel(WrapperModel):
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         request_stream_activity.__annotations__['deps'] = deps_type
 
-        self.request_stream_activity = activity.defn(name=f'{activity_name_prefix}__model_request_stream')(
+        self.request_stream_activity = activity.defn(name=request_stream_activity_name)(
             request_stream_activity
         )
 
