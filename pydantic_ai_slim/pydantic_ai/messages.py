@@ -13,7 +13,7 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
-from typing_extensions import deprecated
+from typing_extensions import TypedDict, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -106,6 +106,77 @@ def _multi_modal_content_identifier(identifier: str | bytes) -> str:
     return hashlib.sha1(identifier).hexdigest()[:6]
 
 
+class FileOptions(TypedDict, total=False):
+    """Options for how the provider should process the file."""
+
+    pass
+
+
+class VideoOptions(TypedDict, total=False):
+    """Options for how the provider should process the video."""
+
+    detail: Literal['high', 'medium', 'low']
+    """The detail level of the video.
+
+    Supported by:
+
+    - Google: Maps to `media_resolution`: https://ai.google.dev/gemini-api/docs/gemini-3?thinking=high#media_resolution
+    """
+
+    fps: float
+    """The frame rate of the video sent to the model. If not specified, the default value will be 1.0. The fps range is (0.0, 24.0].
+
+    Supported by:
+
+    - Google: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
+    """
+
+    start_offset: str
+    """The start offset of the video sent to the model.
+
+    Supported by:
+
+    - Google: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
+    """
+
+    end_offset: str
+    """The end offset of the video sent to the model.
+
+    Supported by:
+
+    - Google: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
+    """
+
+
+class ImageOptions(TypedDict, total=False):
+    """Options for how the provider should process the image."""
+
+    detail: Literal['high', 'medium', 'low']
+    """The detail level of the image.
+
+    Supported by:
+
+    - OpenAI: Supports only `high` and `low`: https://platform.openai.com/docs/guides/images-vision?api-mode=responses#specify-image-input-detail-level
+    - Google: Maps to `media_resolution`: https://ai.google.dev/gemini-api/docs/gemini-3?thinking=high#media_resolution
+    """
+
+
+class DocumentOptions(TypedDict, total=False):
+    """Options for how the provider should process the document."""
+
+    detail: Literal['high', 'medium', 'low']
+    """The detail level of the document.
+
+    Supported by:
+
+    - Google: Maps to `media_resolution`: https://ai.google.dev/gemini-api/docs/gemini-3?thinking=high#media_resolution
+    """
+
+
+class AudioOptions(TypedDict, total=False):
+    """Options for how the provider should process the audio."""
+
+
 @dataclass(init=False, repr=False)
 class FileUrl(ABC):
     """Abstract base class for any URL-based file."""
@@ -122,13 +193,9 @@ class FileUrl(ABC):
     * If False, the URL is sent directly to the model and no download is performed.
     """
 
-    vendor_metadata: dict[str, Any] | None = None
-    """Vendor-specific metadata for the file.
-
-    Supported by:
-    - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
-    - `OpenAIChatModel`, `OpenAIResponsesModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
-    """
+    # TODO (v2): Rename to `options`?
+    vendor_metadata: FileOptions | None = None
+    """Options on how the provider should process the file."""
 
     _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
         compare=False, default=None
@@ -145,7 +212,7 @@ class FileUrl(ABC):
         media_type: str | None = None,
         identifier: str | None = None,
         force_download: bool = False,
-        vendor_metadata: dict[str, Any] | None = None,
+        vendor_metadata: FileOptions | None = None,
     ) -> None:
         self.url = url
         self._media_type = media_type
@@ -209,7 +276,7 @@ class VideoUrl(FileUrl):
         media_type: str | None = None,
         identifier: str | None = None,
         force_download: bool = False,
-        vendor_metadata: dict[str, Any] | None = None,
+        vendor_metadata: VideoOptions | None = None,
         kind: Literal['video-url'] = 'video-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
@@ -285,7 +352,7 @@ class AudioUrl(FileUrl):
         media_type: str | None = None,
         identifier: str | None = None,
         force_download: bool = False,
-        vendor_metadata: dict[str, Any] | None = None,
+        vendor_metadata: AudioOptions | None = None,
         kind: Literal['audio-url'] = 'audio-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
@@ -348,7 +415,7 @@ class ImageUrl(FileUrl):
         media_type: str | None = None,
         identifier: str | None = None,
         force_download: bool = False,
-        vendor_metadata: dict[str, Any] | None = None,
+        vendor_metadata: ImageOptions | None = None,
         kind: Literal['image-url'] = 'image-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
@@ -406,7 +473,7 @@ class DocumentUrl(FileUrl):
         media_type: str | None = None,
         identifier: str | None = None,
         force_download: bool = False,
-        vendor_metadata: dict[str, Any] | None = None,
+        vendor_metadata: DocumentOptions | None = None,
         kind: Literal['document-url'] = 'document-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
@@ -476,12 +543,8 @@ class BinaryContent:
     media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str
     """The media type of the binary data."""
 
-    vendor_metadata: dict[str, Any] | None = None
-    """Vendor-specific metadata for the file.
-
-    Supported by:
-    - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
-    - `OpenAIChatModel`, `OpenAIResponsesModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
+    vendor_metadata: FileOptions | None = None
+    """Options on how the provider should process the file.
     """
 
     _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
@@ -491,13 +554,91 @@ class BinaryContent:
     kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    @overload
     def __init__(
         self,
         data: bytes,
         *,
-        media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str,
+        media_type: ImageMediaType,
         identifier: str | None = None,
-        vendor_metadata: dict[str, Any] | None = None,
+        vendor_metadata: ImageOptions | None = None,
+        kind: Literal['binary'] = 'binary',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _identifier: str | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        data: bytes,
+        *,
+        media_type: VideoMediaType,
+        identifier: str | None = None,
+        vendor_metadata: VideoOptions | None = None,
+        kind: Literal['binary'] = 'binary',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _identifier: str | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        data: bytes,
+        *,
+        media_type: DocumentMediaType | str,
+        identifier: str | None = None,
+        vendor_metadata: DocumentOptions | None = None,
+        kind: Literal['binary'] = 'binary',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _identifier: str | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        data: bytes,
+        *,
+        media_type: AudioMediaType,
+        identifier: str | None = None,
+        vendor_metadata: AudioOptions | None = None,
+        kind: Literal['binary'] = 'binary',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _identifier: str | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        data: bytes,
+        *,
+        media_type: str,
+        identifier: str | None = None,
+        vendor_metadata: FileOptions | None = None,
+        kind: Literal['binary'] = 'binary',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _identifier: str | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        data: bytes,
+        *,
+        media_type: AudioMediaType | str,
+        identifier: str | None = None,
+        vendor_metadata: AudioOptions | None = None,
+        kind: Literal['binary'] = 'binary',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _identifier: str | None = None,
+    ) -> None: ...
+
+    def __init__(
+        self,
+        data: bytes,
+        *,
+        media_type: AudioMediaType | ImageMediaType | VideoMediaType | DocumentMediaType | str,
+        identifier: str | None = None,
+        vendor_metadata: FileOptions | None = None,
         kind: Literal['binary'] = 'binary',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
@@ -516,7 +657,7 @@ class BinaryContent:
                 data=bc.data,
                 media_type=bc.media_type,
                 identifier=bc.identifier,
-                vendor_metadata=bc.vendor_metadata,
+                vendor_metadata=cast(ImageOptions, bc.vendor_metadata),
             )
         else:
             return bc
@@ -599,7 +740,7 @@ class BinaryImage(BinaryContent):
         *,
         media_type: str,
         identifier: str | None = None,
-        vendor_metadata: dict[str, Any] | None = None,
+        vendor_metadata: ImageOptions | None = None,
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         kind: Literal['binary'] = 'binary',
         _identifier: str | None = None,

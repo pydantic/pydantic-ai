@@ -1,0 +1,61 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '287'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Explain me this video in one sentence
+        - fileData:
+            fileUri: https://youtu.be/lCdaVNyHtjU
+            mimeType: video/mp4
+          mediaResolution:
+            level: MEDIA_RESOLUTION_HIGH
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '548'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=167
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      error:
+        code: 400
+        details:
+        - '@type': type.googleapis.com/google.rpc.BadRequest
+          fieldViolations:
+          - description: 'Invalid JSON payload received. Unknown name "mediaResolution" at ''contents[0].parts[1]'': Cannot
+              find field.'
+            field: contents[0].parts[1]
+        message: 'Invalid JSON payload received. Unknown name "mediaResolution" at ''contents[0].parts[1]'': Cannot find field.'
+        status: INVALID_ARGUMENT
+    status:
+      code: 400
+      message: Bad Request
+version: 1

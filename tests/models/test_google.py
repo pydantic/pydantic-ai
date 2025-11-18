@@ -4,6 +4,7 @@ import datetime
 import os
 import re
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -23,6 +24,7 @@ from pydantic_ai import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ImageOptions,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -39,6 +41,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UsageLimitExceeded,
     UserPromptPart,
+    VideoOptions,
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
@@ -760,7 +763,7 @@ async def test_google_model_video_as_binary_content_input_with_vendor_metadata(
 ):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, system_prompt='You are a helpful chatbot.')
-    video_content.vendor_metadata = {'start_offset': '2s', 'end_offset': '10s'}
+    video_content.vendor_metadata = VideoOptions(start_offset='2s', end_offset='10s')
 
     result = await agent.run(['Explain me this video', video_content])
     assert result.output == snapshot("""\
@@ -3536,3 +3539,113 @@ async def test_cache_point_filtering():
     assert len(content) == 2
     assert content[0] == {'text': 'text before'}
     assert content[1] == {'text': 'text after'}
+
+
+async def test_google_model_binary_video_detail(
+    allow_model_requests: None, video_content: BinaryContent, google_provider: GoogleProvider
+):
+    m = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+    agent = Agent(m)
+
+    video_content = replace(video_content, vendor_metadata=VideoOptions(detail='high'))
+    result = await agent.run(['Explain me this video in one sentence', video_content])
+    assert result.output == snapshot("""\
+Based on the image provided, here is an explanation of the scene:
+
+**The Subject**
+The main focus of the video is an external **camera monitor** (a screen used by filmmakers to see what they are shooting more clearly) mounted on top of a camera rig and tripod.
+
+**The Visual Composition**
+*   **The Screen (Foreground):** The monitor displays a crisp, high-contrast live feed of a rugged canyon landscape. You can see dark, rocky walls on the left and right, framing a view toward distant mountains and a blue sky.
+*   **The Reality (Background):** Behind the monitor, you can see the actual physical location. It appears to be a desert canyon with tall, reddish-orange sandstone walls. The background is heavily blurred (out of focus), a technique known as "shallow depth of field," which forces your eye to look at the sharp image on the digital screen.
+
+**The Context**
+This is a "behind-the-scenes" (BTS) style shot. It contrasts the raw, blurry beauty of the actual environment with the framed, cinematic version being captured by the camera. It is likely filmed in a location known for dramatic rock formations, such as the American Southwest (places like Zion National Park or Moab).\
+""")
+
+
+async def test_google_model_binary_image_detail(
+    allow_model_requests: None, image_content: BinaryContent, google_provider: GoogleProvider
+):
+    m = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+    agent = Agent(m)
+
+    image_content = replace(image_content, vendor_metadata=ImageOptions(detail='high'))
+    result = await agent.run(['Explain me this image in one sentence', image_content])
+    assert result.output == snapshot("""\
+Based on the image provided, here is a breakdown of what is shown:
+
+**Subject**
+The image features a **kiwi fruit** that has been cut in half to reveal its internal structure (a cross-section).
+
+**Visual Details**
+*   **The Core:** In the very center is a creamy white, oval-shaped core (technically called the columella).
+*   **The Seeds:** Surrounding the white core is a ring of small, black, edible seeds.
+*   **The Flesh:** The main body of the fruit is a vibrant, translucent lime green. You can see a radial pattern (like spokes on a wheel) extending from the center outward. The texture appears juicy and succulent.
+*   **The Skin:** On the outer circumference, you can see the thin, brown, fuzzy skin typical of a kiwi.
+
+**Composition**
+*   **Background:** The fruit is isolated against a plain white background. This is a common style in product or food photography known as "high key," used to make the subject's colors pop and remove distractions.
+*   **Lighting:** The lighting is bright and even, creating small highlights on the wet surface of the fruit, emphasizing its freshness.\
+""")
+
+
+async def test_google_model_video_url_detail(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+    agent = Agent(m)
+
+    video_content = VideoUrl(url='https://youtu.be/lCdaVNyHtjU', vendor_metadata=VideoOptions(detail='high'))
+    result = await agent.run(['Explain me this video in one sentence', video_content])
+    assert result.output == snapshot("""\
+This video demonstrates an **AI-powered development tool** (likely an IDE extension or a specialized agent like Cursor or an internal tool) performing an autonomous database analysis based on a natural language prompt.
+
+Here is a step-by-step breakdown of what happens:
+
+**1. The Prompt (0:00 - 0:05)**
+*   **Context:** On the left side, we see a TypeScript file (`router.ts`) which defines the navigation structure of a web application.
+*   **Action:** On the right side panel (labeled "browserbase"), the user inputs a request: *"If I help you analyze recent 404 HTTP responses in logs, find 5. Then query the open database with SQL, query that looks for 404 responses, do not match the schema. Ensure we ensure we answer the query correctly."*
+*   **Goal:** The user wants the AI to investigate server logs for "Page Not Found" (404) errors to understand what is going wrong on the server.
+
+**2. Tool Execution & Data Gathering (0:05 - 0:25)**
+*   The AI agent begins thinking and processing. It decides to use a specific tool called `runSQL`.
+*   **First Query:** It executes `SELECT * FROM request_logs WHERE status = 404 LIMIT 5`.
+*   The AI is autonomously writing and running SQL against the connected database to verify the data exists and see what the logs look like.
+*   **Schema Check:** It then calls `listTableSchema` to understand the structure of the database tables so it can write more complex queries accurately.
+
+**3. Deep Analysis (0:25 - 0:45)**
+*   Once it understands the data structure, the AI runs a much smarter query:
+    `SELECT url, method, count(*) as count FROM request_logs WHERE status = 404 GROUP BY url, method ORDER BY count DESC LIMIT 10`
+*   Instead of just looking at raw logs, it is now grouping the errors to find **patterns**. It identifies which specific URLs are failing most frequently.
+
+**4. Final Report Generation (0:45 - End)**
+*   The AI compiles its findings into a detailed Markdown report in the chat window. The report includes:
+    *   **Common Endpoints with 404s:** It lists specific API routes that are failing.
+    *   **Request Patterns:** It notes that many requests are suspicious (e.g., checking for `.env` files or admin panels), suggesting malicious scanning or "probing" rather than broken user links.
+    *   **Recommendations:** It suggests actionable steps, such as blocking specific IP addresses or reviewing firewall rules.
+
+**Summary**
+The video showcases an **autonomous AI agent** acting as a DevOps engineer. Instead of a human manually writing SQL queries to debug an issue, the human simply asks "analyze the errors," and the AI figures out which database tables to query, executes the code, analyzes the patterns, and writes a final security report.\
+""")
+
+
+async def test_google_model_image_url_detail(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+    agent = Agent(m)
+
+    image_content = ImageUrl(
+        url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+        vendor_metadata=ImageOptions(detail='high'),
+    )
+    result = await agent.run(['Explain me this image in one sentence', image_content])
+    assert result.output == snapshot("""\
+Based on the image provided, here is an explanation:
+
+**Visual Description:**
+*   **Subject:** The image features a single, raw potato. It appears to be a common variety, likely a yellow or white potato (similar to a Yukon Gold or a generic baking potato).
+*   **Texture and Details:** The skin is a light yellowish-brown color. It has a natural, earthy texture with small speckles, pores, and tiny dark spots which are the beginnings of "eyes" (where sprouts grow). There is a slight indentation or scar on the left side.
+*   **Background:** The potato is set against a stark white background. This indicates it is likely a stock photo or a product image where the background has been removed so the image can be easily placed into other designs.
+
+**What is the object?**
+*   **Classification:** It is a starchy tuber of the plant *Solanum tuberosum*.
+*   **Usage:** Potatoes are a staple food in many parts of the world and are a root vegetable used in countless culinary dishes (fried, boiled, mashed, baked, etc.).\
+""")
