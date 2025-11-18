@@ -80,7 +80,14 @@ def test_model_request_parameters_are_serializable():
                     'max_uses': None,
                 },
                 {'kind': 'code_execution'},
-                {'kind': 'url_context'},
+                {
+                    'kind': 'url_context',
+                    'max_uses': None,
+                    'allowed_domains': None,
+                    'blocked_domains': None,
+                    'citations_enabled': False,
+                    'max_content_tokens': None,
+                },
                 {
                     'kind': 'image_generation',
                     'background': 'auto',

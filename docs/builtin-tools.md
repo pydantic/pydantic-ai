@@ -355,6 +355,45 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
+### Parameters
+
+The [`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool] supports several configuration parameters. The parameters that are actually used depend on the model provider.
+
+| Parameter | Type | Description | Supported by |
+|-----------|------|-------------|--------------|
+| `max_uses` | `int \| None` | Limit the number of URL fetches per request | Anthropic |
+| `allowed_domains` | `list[str] \| None` | Only fetch from these domains | Anthropic |
+| `blocked_domains` | `list[str] \| None` | Never fetch from these domains | Anthropic |
+| `citations_enabled` | `bool` | Enable citations for fetched content | Anthropic |
+| `max_content_tokens` | `int \| None` | Maximum content length in tokens | Anthropic |
+
+!!! note
+    With Anthropic, you can only use one of `blocked_domains` or `allowed_domains`, not both.
+
+!!! note
+    Google's URL context tool does not support any configuration parameters. The limits are fixed at 20 URLs per request with a maximum of 34MB per URL.
+
+Example with parameters (Anthropic only):
+
+```py {title="web_fetch_with_params.py"}
+from pydantic_ai import Agent, WebFetchTool
+
+# Configure WebFetchTool with domain filtering and limits
+web_fetch = WebFetchTool(
+    allowed_domains=['ai.pydantic.dev', 'docs.pydantic.dev'],
+    max_uses=10,
+    citations_enabled=True,
+    max_content_tokens=50000,
+)
+
+agent = Agent('anthropic:claude-sonnet-4-0', builtin_tools=[web_fetch])
+
+result = agent.run_sync(
+    'Compare the documentation at https://ai.pydantic.dev and https://docs.pydantic.dev'
+)
+print(result.output)
+```
+
 ## Memory Tool
 
 The [`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool] enables your agent to use memory.

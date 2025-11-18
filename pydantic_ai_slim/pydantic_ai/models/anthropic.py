@@ -60,6 +60,7 @@ try:
         BetaBase64PDFBlockParam,
         BetaBase64PDFSourceParam,
         BetaCacheControlEphemeralParam,
+        BetaCitationsConfigParam,
         BetaCitationsDelta,
         BetaCodeExecutionTool20250522Param,
         BetaCodeExecutionToolResultBlock,
@@ -473,7 +474,18 @@ class AnthropicModel(Model):
                 tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
                 beta_features.append('code-execution-2025-05-22')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
-                tools.append(BetaWebFetchTool20250910Param(name='web_fetch', type='web_fetch_20250910'))
+                citations = BetaCitationsConfigParam(enabled=tool.citations_enabled) if tool.citations_enabled else None
+                tools.append(
+                    BetaWebFetchTool20250910Param(
+                        name='web_fetch',
+                        type='web_fetch_20250910',
+                        max_uses=tool.max_uses,
+                        allowed_domains=tool.allowed_domains,
+                        blocked_domains=tool.blocked_domains,
+                        citations=citations,
+                        max_content_tokens=tool.max_content_tokens,
+                    )
+                )
                 beta_features.append('web-fetch-2025-09-10')
             elif isinstance(tool, MemoryTool):  # pragma: no branch
                 if 'memory' not in model_request_parameters.tool_defs:

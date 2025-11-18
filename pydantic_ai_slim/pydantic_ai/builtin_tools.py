@@ -170,10 +170,56 @@ class CodeExecutionTool(AbstractBuiltinTool):
 class WebFetchTool(AbstractBuiltinTool):
     """Allows your agent to access contents from URLs.
 
+    The parameters that PydanticAI passes depend on the model, as some parameters may not be supported by certain models.
+
     Supported by:
 
     * Anthropic
     * Google
+    """
+
+    max_uses: int | None = None
+    """If provided, the tool will stop fetching URLs after the given number of uses.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    allowed_domains: list[str] | None = None
+    """If provided, only these domains will be fetched.
+
+    With Anthropic, you can only use one of `blocked_domains` or `allowed_domains`, not both.
+
+    Supported by:
+
+    * Anthropic, see <https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-fetch-tool#domain-filtering>
+    """
+
+    blocked_domains: list[str] | None = None
+    """If provided, these domains will never be fetched.
+
+    With Anthropic, you can only use one of `blocked_domains` or `allowed_domains`, not both.
+
+    Supported by:
+
+    * Anthropic, see <https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-fetch-tool#domain-filtering>
+    """
+
+    citations_enabled: bool = False
+    """If True, enables citations for fetched content.
+
+    Supported by:
+
+    * Anthropic
+    """
+
+    max_content_tokens: int | None = None
+    """Maximum content length in tokens for fetched content.
+
+    Supported by:
+
+    * Anthropic
     """
 
     kind: str = 'url_context'
