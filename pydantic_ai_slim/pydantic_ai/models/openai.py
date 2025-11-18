@@ -1853,7 +1853,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             if maybe_event is not None:
                 yield maybe_event
 
-    def _map_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, str] | None:
+    def _map_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, Any] | None:
         """Hook that generates the provider details from chunk content.
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the provider details.

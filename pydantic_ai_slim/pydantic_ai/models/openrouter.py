@@ -1,3 +1,6 @@
+from __future__ import annotations as _annotations
+
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
@@ -11,6 +14,7 @@ from ..messages import (
     FilePart,
     FinishReason,
     ModelResponse,
+    ModelResponseStreamEvent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -18,7 +22,6 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..providers.openrouter import OpenRouterProvider
 from ..settings import ModelSettings
-from ..usage import RequestUsage
 from . import ModelRequestParameters
 
 try:
@@ -371,6 +374,12 @@ class _OpenRouterCostDetails(BaseModel):
     upstream_inference_cost: int | None = None
 
 
+class _OpenRouterPromptTokenDetails(completion_usage.PromptTokensDetails):
+    """Wraps OpenAI completion token details with OpenRouter specific attributes."""
+
+    video_tokens: int | None = None
+
+
 class _OpenRouterCompletionTokenDetails(completion_usage.CompletionTokensDetails):
     """Wraps OpenAI completion token details with OpenRouter specific attributes."""
 
@@ -385,6 +394,8 @@ class _OpenRouterUsage(completion_usage.CompletionUsage):
     cost_details: _OpenRouterCostDetails | None = None
 
     is_byok: bool | None = None
+
+    prompt_tokens_details: _OpenRouterPromptTokenDetails | None = None  # type: ignore[reportIncompatibleVariableOverride]
 
     completion_tokens_details: _OpenRouterCompletionTokenDetails | None = None  # type: ignore[reportIncompatibleVariableOverride]
 
@@ -403,6 +414,27 @@ class _OpenRouterChatCompletion(chat.ChatCompletion):
 
     usage: _OpenRouterUsage | None = None  # type: ignore[reportIncompatibleVariableOverride]
     """OpenRouter specific usage attribute."""
+
+
+def _map_openrouter_provider_details(
+    response: _OpenRouterChatCompletion | _OpenRouterChatCompletionChunk,
+) -> dict[str, Any]:
+    provider_details: dict[str, Any] = {}
+
+    provider_details['downstream_provider'] = response.provider
+    provider_details['native_finish_reason'] = response.choices[0].native_finish_reason
+
+    if usage := response.usage:
+        if cost := usage.cost:
+            provider_details['cost'] = cost
+
+        if cost_details := usage.cost_details:
+            provider_details['upstream_inference_cost'] = cost_details.upstream_inference_cost
+
+        if (is_byok := usage.is_byok) is not None:
+            provider_details['is_byok'] = is_byok
+
+    return provider_details
 
 
 def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSettings) -> OpenAIChatModelSettings:
@@ -430,48 +462,6 @@ def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSetti
     model_settings['extra_body'] = extra_body
 
     return OpenAIChatModelSettings(**model_settings)  # type: ignore[reportCallIssue]
-
-
-def _map_usage(
-    response: chat.ChatCompletion | chat.ChatCompletionChunk,
-    provider: str,
-    provider_url: str,
-    model: str,
-) -> RequestUsage:
-    assert isinstance(response, _OpenRouterChatCompletion) or isinstance(response, _OpenRouterChatCompletionChunk)
-    builder = RequestUsage()
-
-    response_usage = response.usage
-    if response_usage is None:
-        return builder
-
-    builder.input_tokens = response_usage.prompt_tokens
-    builder.output_tokens = response_usage.completion_tokens
-
-    if prompt_token_details := response_usage.prompt_tokens_details:
-        if cached_tokens := prompt_token_details.cached_tokens:
-            builder.cache_read_tokens = cached_tokens
-
-        if audio_tokens := prompt_token_details.audio_tokens:  # pragma: lax no cover
-            builder.input_audio_tokens = audio_tokens
-
-        if video_tokens := prompt_token_details.video_tokens:  # pragma: lax no cover
-            builder.details['input_video_tokens'] = video_tokens
-
-    if completion_token_details := response_usage.completion_tokens_details:
-        if reasoning_tokens := completion_token_details.reasoning_tokens:
-            builder.details['reasoning_tokens'] = reasoning_tokens
-
-        if image_tokens := completion_token_details.image_tokens:  # pragma: lax no cover
-            builder.details['output_image_tokens'] = image_tokens
-
-    if (is_byok := response_usage.is_byok) is not None:
-        builder.details['is_byok'] = is_byok
-
-    if cost := response_usage.cost:
-        builder.details['cost'] = int(cost * 1000000)  # convert to microcost
-
-    return builder
 
 
 class OpenRouterModel(OpenAIChatModel):
@@ -528,10 +518,7 @@ class OpenRouterModel(OpenAIChatModel):
         assert isinstance(response, _OpenRouterChatCompletion)
 
         provider_details = super()._process_provider_details(response)
-
-        provider_details['downstream_provider'] = response.provider
-        provider_details['native_finish_reason'] = response.choices[0].native_finish_reason
-
+        provider_details.update(_map_openrouter_provider_details(response))
         return provider_details
 
     @override
@@ -545,7 +532,7 @@ class OpenRouterModel(OpenAIChatModel):
             elif isinstance(item, ThinkingPart):
                 if item.provider_name == self.system:
                     reasoning_details.append(_into_reasoning_detail(item).model_dump())
-                elif content := item.content:  # pragma: no branch
+                elif content := item.content:  # pragma: lax no cover
                     start_tag, end_tag = self.profile.thinking_tags
                     texts.append('\n'.join([start_tag, content, end_tag]))
                 else:
@@ -573,10 +560,6 @@ class OpenRouterModel(OpenAIChatModel):
     @override
     def _streamed_response_cls(self):
         return OpenRouterStreamedResponse
-
-    @override
-    def _map_usage(self, response: chat.ChatCompletion) -> RequestUsage:
-        return _map_usage(response, self._provider.name, self._provider.base_url, self._model_name)
 
     @override
     def _map_finish_reason(  # type: ignore[reportIncompatibleMethodOverride]
@@ -638,7 +621,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
             raise ModelHTTPError(status_code=error.code, model_name=self._model_name, body=error.message)
 
     @override
-    def _map_thinking_delta(self, choice: chat_completion_chunk.Choice):
+    def _map_thinking_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         assert isinstance(choice, _OpenRouterChunkChoice)
 
         if reasoning_details := choice.delta.reasoning_details:
@@ -650,23 +633,16 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
                     content=thinking_part.content,
                     provider_name=self._provider_name,
                 )
+        else:
+            return super()._map_thinking_delta(choice)
 
     @override
-    def _map_provider_details(self, chunk: chat.ChatCompletionChunk) -> dict[str, str] | None:
+    def _map_provider_details(self, chunk: chat.ChatCompletionChunk) -> dict[str, Any] | None:
         assert isinstance(chunk, _OpenRouterChatCompletionChunk)
 
         if provider_details := super()._map_provider_details(chunk):
-            if provider := chunk.provider:  # pragma: lax no cover
-                provider_details['downstream_provider'] = provider
-
-            if native_finish_reason := chunk.choices[0].native_finish_reason:  # pragma: lax no cover
-                provider_details['native_finish_reason'] = native_finish_reason
-
+            provider_details.update(_map_openrouter_provider_details(chunk))
             return provider_details
-
-    @override
-    def _map_usage(self, response: chat.ChatCompletionChunk):
-        return _map_usage(response, self._provider_name, self._provider_url, self._model_name)
 
     @override
     def _map_finish_reason(  # type: ignore[reportIncompatibleMethodOverride]

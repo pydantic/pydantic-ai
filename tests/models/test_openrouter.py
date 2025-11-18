@@ -10,6 +10,7 @@ from pydantic_ai import (
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     PartEndEvent,
     PartStartEvent,
     RunUsage,
@@ -278,10 +279,17 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
         RunUsage(
             input_tokens=17,
             output_tokens=2177,
-            details={'cost': 4358, 'is_byok': 0, 'reasoning_tokens': 960},
+            details={'is_byok': 0, 'reasoning_tokens': 960, 'image_tokens': 0},
             requests=1,
         )
     )
+
+    last_message = result.all_messages()[-1]
+
+    assert isinstance(last_message, ModelResponse)
+    assert last_message.provider_details is not None
+    for key in ['cost', 'upstream_inference_cost', 'is_byok']:
+        assert key in last_message.provider_details
 
 
 async def test_openrouter_validate_non_json_response(openrouter_api_key: str) -> None:
