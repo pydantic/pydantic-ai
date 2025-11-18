@@ -27,6 +27,7 @@ GrokModelName = Literal[
     'grok-4-0709',
     'grok-4-fast-reasoning',
     'grok-4-fast-non-reasoning',
+    'grok-code-fast-1',
     'grok-3',
     'grok-3-mini',
     'grok-3-fast',

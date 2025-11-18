@@ -415,6 +415,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.agent.name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
+                    'logfire.exception.fingerprint': '0000000000000000000000000000000000000000000000000000000000000000',
                     'pydantic_ai.all_messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]}],
                     'logfire.json_schema': {
                         'type': 'object',
