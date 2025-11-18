@@ -14,7 +14,7 @@ from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
 from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, UrlContextTool, WebSearchTool
-from ..exceptions import UserError
+from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -52,7 +52,7 @@ from . import (
 )
 
 try:
-    from google.genai import Client
+    from google.genai import Client, errors
     from google.genai.types import (
         BlobDict,
         CodeExecutionResult,
@@ -402,7 +402,16 @@ class GoogleModel(Model):
     ) -> GenerateContentResponse | Awaitable[AsyncIterator[GenerateContentResponse]]:
         contents, config = await self._build_content_and_config(messages, model_settings, model_request_parameters)
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
-        return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
+        try:
+            return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
+        except errors.APIError as e:
+            if (status_code := e.code) >= 400:
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self._model_name,
+                    body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
+                ) from e
+            raise  # pragma: lax no cover
 
     async def _build_content_and_config(
         self,
