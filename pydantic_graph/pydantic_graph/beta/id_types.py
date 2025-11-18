@@ -24,9 +24,6 @@ JoinID = NodeID
 ForkID = NodeID
 """Alias for NodeId when referring to fork nodes."""
 
-GraphRunID = NewType('GraphRunID', str)
-"""Unique identifier for a complete graph execution run."""
-
 TaskID = NewType('TaskID', str)
 """Unique identifier for a task within the graph execution."""
 
