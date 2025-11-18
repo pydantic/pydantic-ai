@@ -293,19 +293,19 @@ class MCPServer(AbstractToolset[Any], ABC):
         # The following branching cannot be tested until FastMCP is updated to version 2.13.1
         # such that the MCP server can generate ToolResult and result.meta can be specified.
         # TODO: Add tests for the following branching once FastMCP is updated.
-        if len(parts_metadata) > 0:  # pragma: no cover
-            if result.meta is not None and len(result.meta) > 0:
+        if len(parts_metadata) > 0:
+            if result.meta is not None and len(result.meta) > 0:  # pragma: no cover
                 # Merge the tool result metadata and parts metadata into the return metadata
                 return_metadata = {'result': result.meta, 'content': parts_metadata}
             else:
                 # Only parts metadata exists
-                if len(parts_metadata) == 1:
+                if len(parts_metadata) == 1:  # pragma: no cover
                     # If there is only one content metadata, unwrap it
                     return_metadata = parts_metadata[0]
                 else:
                     return_metadata = {'content': parts_metadata}
-        else:  # pragma: no cover
-            if result.meta is not None and len(result.meta) > 0:
+        else:
+            if result.meta is not None and len(result.meta) > 0:  # pragma: no cover
                 return_metadata = result.meta
         # TODO: What else should we cover here?
 
@@ -456,33 +456,33 @@ class MCPServer(AbstractToolset[Any], ABC):
         # The following branching cannot be tested until FastMCP is updated to version 2.13.1
         # such that the MCP server can generate ToolResult and result.meta can be specified.
         # TODO: Add tests for the following branching once FastMCP is updated.
-        elif isinstance(part, mcp_types.ResourceLink):  # pragma: no cover
+        elif isinstance(part, mcp_types.ResourceLink):
             resource_result: mcp_types.ReadResourceResult = await self._client.read_resource(part.uri)
             # Check if metadata already exists. If so, merge it with nested the resource metadata.
             parts_metadata: dict[int, dict[str, Any]] = {}
             nested_metadata: dict[str, Any] = {}
             for idx, content in enumerate(resource_result.contents):
-                if content.meta is not None:
+                if content.meta is not None:  # pragma: no cover
                     parts_metadata[idx] = content.meta
             if len(parts_metadata) > 0:
-                if resource_result.meta is not None and len(resource_result.meta) > 0:
+                if resource_result.meta is not None and len(resource_result.meta) > 0:  # pragma: no cover
                     # Merge the tool result metadata and parts metadata into the return metadata
                     nested_metadata = {'result': resource_result.meta, 'content': parts_metadata}
                 else:
                     # Only parts metadata exists
-                    if len(parts_metadata) == 1:
+                    if len(parts_metadata) == 1:  # pragma: no cover
                         # If there is only one content metadata, unwrap it
                         nested_metadata = parts_metadata[0]
                     else:
-                        nested_metadata = {'content': parts_metadata}
+                        nested_metadata = {'content': parts_metadata}  # pragma: no cover
             else:
-                if resource_result.meta is not None and len(resource_result.meta) > 0:
+                if resource_result.meta is not None and len(resource_result.meta) > 0:  # pragma: no cover
                     nested_metadata = resource_result.meta
             # FIXME: Is this a correct assumption? If metadata was read from the part then that is the same as resource_result.meta
             metadata = nested_metadata
-            if len(resource_result.contents) == 1:
+            if len(resource_result.contents) == 1:  # pragma: no cover
                 return self._get_content(resource_result.contents[0]), metadata
-            else:
+            else:  # pragma: no cover
                 return [self._get_content(resource) for resource in resource_result.contents], metadata
         else:
             assert_never(part)
