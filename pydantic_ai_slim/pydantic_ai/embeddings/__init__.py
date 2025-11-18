@@ -74,6 +74,10 @@ def infer_model(
         from .cohere import CohereEmbeddingModel
 
         return CohereEmbeddingModel(model_name, provider=provider)
+    elif model_kind == 'sentence-transformers':
+        from .sentence_transformers import SentenceTransformerEmbeddingModel
+
+        return SentenceTransformerEmbeddingModel(model_name)
     else:
         raise UserError(f'Unknown embeddings model: {model}')  # pragma: no cover
 
