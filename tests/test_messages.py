@@ -422,6 +422,14 @@ def test_pre_usage_refactor_messages_deserializable():
     )
 
 
+def test_file_part_has_content():
+    filepart = FilePart(content=BinaryContent(data=b'', media_type='application/pdf'))
+    assert not filepart.has_content()
+
+    filepart.content.data = b'not empty'
+    assert filepart.has_content()
+
+
 def test_file_part_serialization_roundtrip():
     # Verify that a serialized BinaryImage doesn't come back as a BinaryContent.
     messages: list[ModelMessage] = [
