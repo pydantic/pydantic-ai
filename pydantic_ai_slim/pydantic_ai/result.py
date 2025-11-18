@@ -200,7 +200,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             validation_context = build_validation_context(self._tool_manager.validation_ctx, self._run_ctx)
 
             result_data = await text_processor.process(
-                text, self._run_ctx, validation_context, allow_partial=allow_partial, wrap_validation_errors=False
+                text,
+                run_context=self._run_ctx,
+                validation_context=validation_context,
+                allow_partial=allow_partial,
+                wrap_validation_errors=False,
             )
             for validator in self._output_validators:
                 result_data = await validator.validate(

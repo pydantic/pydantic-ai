@@ -522,8 +522,9 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
     async def process(
         self,
         data: str,
+        *,
         run_context: RunContext[AgentDepsT],
-        validation_context: Any | None,
+        validation_context: Any | None = None,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -610,8 +611,9 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     async def process(
         self,
         data: str | dict[str, Any] | None,
+        *,
         run_context: RunContext[AgentDepsT],
-        validation_context: Any | None,
+        validation_context: Any | None = None,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -778,6 +780,7 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     async def process(
         self,
         data: str,
+        *,
         run_context: RunContext[AgentDepsT],
         validation_context: Any | None = None,
         allow_partial: bool = False,
@@ -785,8 +788,8 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     ) -> OutputDataT:
         union_object = await self._union_processor.process(
             data,
-            run_context,
-            validation_context,
+            run_context=run_context,
+            validation_context=validation_context,
             allow_partial=allow_partial,
             wrap_validation_errors=wrap_validation_errors,
         )
@@ -805,8 +808,8 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
         return await processor.process(
             inner_data,
-            run_context,
-            validation_context,
+            run_context=run_context,
+            validation_context=validation_context,
             allow_partial=allow_partial,
             wrap_validation_errors=wrap_validation_errors,
         )
@@ -816,6 +819,7 @@ class TextOutputProcessor(BaseOutputProcessor[OutputDataT]):
     async def process(
         self,
         data: str,
+        *,
         run_context: RunContext[AgentDepsT],
         validation_context: Any | None = None,
         allow_partial: bool = False,
@@ -848,6 +852,7 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
     async def process(
         self,
         data: str,
+        *,
         run_context: RunContext[AgentDepsT],
         validation_context: Any | None = None,
         allow_partial: bool = False,
@@ -856,7 +861,13 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
         args = {self._str_argument_name: data}
         data = await execute_traced_output_function(self._function_schema, run_context, args, wrap_validation_errors)
 
-        return await super().process(data, run_context, validation_context, allow_partial, wrap_validation_errors)
+        return await super().process(
+            data,
+            run_context=run_context,
+            validation_context=validation_context,
+            allow_partial=allow_partial,
+            wrap_validation_errors=wrap_validation_errors,
+        )
 
 
 @dataclass(init=False)
