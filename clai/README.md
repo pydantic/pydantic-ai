@@ -54,7 +54,7 @@ Either way, running `clai` will start an interactive session where you can chat 
 ## Help
 
 ```
-usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]
+usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] {web} ... [prompt]
 
 Pydantic AI CLI v...
 
@@ -65,6 +65,8 @@ Special prompts:
 * `/cp` - copy the last response to clipboard
 
 positional arguments:
+  {web}                 Available commands
+    web                 Launch web chat UI for discovered agents
   prompt                AI Prompt, if omitted fall into interactive mode
 
 options:

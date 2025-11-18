@@ -12,7 +12,7 @@ with try_import() as fastapi_import_successful:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from pydantic_ai.ui.web import AI_MODELS, BUILTIN_TOOLS, create_chat_app
+    from pydantic_ai.ui.web import AI_MODELS, BUILTIN_TOOL_DEFS, BUILTIN_TOOLS, create_chat_app
 
 pytestmark = [
     pytest.mark.skipif(not fastapi_import_successful(), reason='fastapi not installed'),
@@ -62,7 +62,7 @@ def test_chat_app_configure_endpoint():
 
         # no snapshot bc we're checking against the actual model/tool definitions
         assert len(data['models']) == len(AI_MODELS)
-        assert len(data['builtinTools']) == len(BUILTIN_TOOLS)
+        assert len(data['builtinTools']) == len(BUILTIN_TOOL_DEFS)
 
 
 def test_chat_app_index_endpoint():

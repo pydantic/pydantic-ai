@@ -119,6 +119,24 @@ Special prompts:
 """,
         formatter_class=argparse.RawTextHelpFormatter,
     )
+
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+
+    # Web subcommand (only available for clai)
+    if prog_name == 'clai':
+        web_parser = subparsers.add_parser('web', help='Launch web chat UI for discovered agents')
+        web_parser.add_argument('--host', default='127.0.0.1', help='Host to bind the server to (default: 127.0.0.1)')
+        web_parser.add_argument('--port', type=int, default=8000, help='Port to bind the server to (default: 8000)')
+        web_parser.add_argument('--dir', type=Path, help='Directory to search for agents (default: current directory)')
+        web_parser.add_argument(
+            '--config', type=Path, help='Path to agent_options.py config file (overrides auto-discovery)'
+        )
+        web_parser.add_argument(
+            '--no-auto-config',
+            action='store_true',
+            help='Disable auto-discovery of agent_options.py in current directory',
+        )
+
     parser.add_argument('prompt', nargs='?', help='AI Prompt, if omitted fall into interactive mode')
     arg = parser.add_argument(
         '-m',
@@ -153,6 +171,21 @@ Special prompts:
 
     argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
+
+    # Handle web subcommand
+    if args.command == 'web':
+        try:
+            from clai.chat.cli import run_chat_command
+        except ImportError:
+            print('Error: clai web command is only available when clai is installed.')
+            return 1
+        return run_chat_command(
+            root_dir=args.dir,
+            host=args.host,
+            port=args.port,
+            config_path=args.config,
+            auto_config=not args.no_auto_config,
+        )
 
     console = Console()
     name_version = f'[green]{prog_name} - Pydantic AI CLI v{__version__}[/green]'
