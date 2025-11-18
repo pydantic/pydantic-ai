@@ -115,6 +115,9 @@ try:
         BetaWebSearchToolResultBlockParam,
         BetaWebSearchToolResultBlockParamContentParam,
     )
+    from anthropic.types.beta.beta_web_fetch_tool_result_block_param import (
+        Content as WebFetchToolResultBlockParamContent,
+    )
     from anthropic.types.beta.beta_web_search_tool_20250305_param import UserLocation
     from anthropic.types.model_param import ModelParam
 
@@ -670,15 +673,14 @@ class AnthropicModel(Model):
                             elif response_part.tool_name == UrlContextTool.kind and isinstance(
                                 response_part.content, dict
                             ):
-                                # response_part.content is the BetaWebFetchBlock dict {content, type, url, retrieved_at}
                                 assistant_content_params.append(
-                                    cast(
-                                        BetaWebFetchToolResultBlockParam,
-                                        {
-                                            'tool_use_id': tool_use_id,
-                                            'type': 'web_fetch_tool_result',
-                                            'content': response_part.content,  # pyright: ignore[reportUnknownMemberType]
-                                        },
+                                    BetaWebFetchToolResultBlockParam(
+                                        tool_use_id=tool_use_id,
+                                        type='web_fetch_tool_result',
+                                        content=cast(
+                                            WebFetchToolResultBlockParamContent,
+                                            response_part.content,  # pyright: ignore[reportUnknownMemberType]
+                                        ),
                                     )
                                 )
                             elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(

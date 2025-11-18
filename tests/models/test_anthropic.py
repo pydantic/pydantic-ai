@@ -3711,13 +3711,14 @@ async def test_anthropic_url_context_tool_multi_turn(allow_model_requests: None,
     url_context_return = next(tr for tr in tool_returns1 if tr.tool_name == 'url_context')
     assert isinstance(url_context_return.content, dict)
     # content is the BetaWebFetchBlock dict directly: {content, type, url, retrieved_at}
-    assert 'content' in url_context_return.content
-    assert 'source' in url_context_return.content['content']
-    assert 'data' in url_context_return.content['content']['source']
-    assert 'Pydantic AI is a Python agent framework' in url_context_return.content['content']['source']['data']
-    assert url_context_return.content['url'] == 'https://ai.pydantic.dev'
-    assert url_context_return.content.get('retrieved_at') is not None  # retrieved_at is optional but should be present
-    assert url_context_return.content['type'] == 'web_fetch_result'
+    assert 'content' in url_context_return.content  # pyright: ignore[reportUnknownMemberType]
+    assert 'source' in url_context_return.content['content']  # type: ignore[typeddict-item]
+    assert 'data' in url_context_return.content['content']['source']  # type: ignore[typeddict-item,index]
+    assert 'Pydantic AI is a Python agent framework' in url_context_return.content['content']['source']['data']  # type: ignore[typeddict-item,index]
+    assert url_context_return.content['url'] == 'https://ai.pydantic.dev'  # type: ignore[typeddict-item]
+    # retrieved_at is optional but should be present
+    assert url_context_return.content.get('retrieved_at') is not None  # pyright: ignore[reportUnknownMemberType]
+    assert url_context_return.content['type'] == 'web_fetch_result'  # type: ignore[typeddict-item]
 
     # Second turn: Ask follow-up question using previous message history
     # This will trigger the code paths that serialize BuiltinToolCallPart and BuiltinToolReturnPart
@@ -3741,6 +3742,8 @@ async def test_anthropic_url_context_tool_multi_turn(allow_model_requests: None,
 
 async def test_anthropic_url_context_tool_message_replay():
     """Test that BuiltinToolCallPart and BuiltinToolReturnPart for UrlContextTool are correctly serialized."""
+    from typing import cast
+
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -3782,24 +3785,31 @@ async def test_anthropic_url_context_tool_message_replay():
         output_tools=[],
     )
 
-    system_prompt, anthropic_messages = await m._map_message(messages, model_request_parameters, model_settings)
+    system_prompt, anthropic_messages = await m._map_message(messages, model_request_parameters, model_settings)  # pyright: ignore[reportPrivateUsage,reportArgumentType]
 
     # Verify the messages were serialized correctly
+    assert system_prompt is None or isinstance(system_prompt, (list, str))
     assert len(anthropic_messages) == 2
     assert anthropic_messages[1]['role'] == 'assistant'
 
     # Check that server_tool_use block is present
     content = anthropic_messages[1]['content']
-    assert any(item.get('type') == 'server_tool_use' and item.get('name') == 'web_fetch' for item in content)
+    assert any(
+        isinstance(item, dict) and item.get('type') == 'server_tool_use' and item.get('name') == 'web_fetch'
+        for item in content
+    )
 
     # Check that web_fetch_tool_result block is present and contains URL and retrieved_at
-    web_fetch_result = next(item for item in content if item.get('type') == 'web_fetch_tool_result')
+    web_fetch_result = next(
+        item for item in content if isinstance(item, dict) and item.get('type') == 'web_fetch_tool_result'
+    )
     assert 'content' in web_fetch_result
     result_content = web_fetch_result['content']
     assert isinstance(result_content, dict)  # Type narrowing for mypy
-    assert result_content['type'] == 'web_fetch_result'
-    assert result_content['url'] == 'https://example.com'
-    assert result_content.get('retrieved_at') == '2025-01-01T00:00:00Z'  # retrieved_at is optional
+    assert result_content['type'] == 'web_fetch_result'  # type: ignore[typeddict-item]
+    assert result_content['url'] == 'https://example.com'  # type: ignore[typeddict-item]
+    # retrieved_at is optional - cast to avoid complex union type issues
+    assert cast(dict, result_content).get('retrieved_at') == '2025-01-01T00:00:00Z'  # pyright: ignore[reportUnknownMemberType,reportMissingTypeArgument]
     assert 'content' in result_content  # The actual document content
 
 
