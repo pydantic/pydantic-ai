@@ -349,11 +349,13 @@ from pydantic_ai.mcp import MCPServerStreamableHTTP
 server = MCPServerStreamableHTTP('http://localhost:8000/mcp')
 agent = Agent('openai:gpt-5', toolsets=[server])
 
+@agent.instructions
+async def mcp_server_instructions():
+    return server.instructions
+
 async def main():
-    async with agent:
-        # Access server instructions after connection is established
-        if server.instructions:
-            print(f'Server guidance: {server.instructions}')
+    result = await agent.run('Use the server tools to help me')
+    print(result.output)
 ```
 
 ## Tool metadata
