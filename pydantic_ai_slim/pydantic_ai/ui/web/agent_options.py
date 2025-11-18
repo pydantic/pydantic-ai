@@ -22,15 +22,15 @@ BuiltinToolID = Literal['web_search', 'image_generation', 'code_execution']
 class AIModel(BaseModel):
     """Defines an AI model with its associated built-in tools."""
 
-    id: AIModelID
+    id: str
     name: str
-    builtin_tools: list[BuiltinToolID]
+    builtin_tools: list[str]
 
 
 class BuiltinTool(BaseModel):
     """Defines a built-in tool."""
 
-    id: BuiltinToolID
+    id: str
     name: str
 
 
@@ -40,7 +40,7 @@ BUILTIN_TOOL_DEFS: list[BuiltinTool] = [
     BuiltinTool(id='image_generation', name='Image Generation'),
 ]
 
-BUILTIN_TOOLS: dict[BuiltinToolID, AbstractBuiltinTool] = {
+BUILTIN_TOOLS: dict[str, AbstractBuiltinTool] = {
     'web_search': WebSearchTool(),
     'code_execution': CodeExecutionTool(),
     'image_generation': ImageGenerationTool(),
