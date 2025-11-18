@@ -342,6 +342,12 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What was his most famous equation?': "Albert Einstein's most famous equation is (E = mc^2).",
     'What is the date?': 'Hello Frank, the date today is 2032-01-02.',
     'What is this? https://ai.pydantic.dev': 'A Python agent framework for building Generative AI applications.',
+    'Compare the documentation at https://ai.pydantic.dev and https://docs.pydantic.dev': (
+        'Both sites provide comprehensive documentation for Pydantic projects. '
+        'ai.pydantic.dev focuses on PydanticAI, a framework for building AI agents, '
+        'while docs.pydantic.dev covers Pydantic, the data validation library. '
+        'They share similar documentation styles and both emphasize type safety and developer experience.'
+    ),
     'Give me some examples of my products.': 'Here are some examples of my data: Pen, Paper, Pencil.',
     'Put my money on square eighteen': ToolCallPart(
         tool_name='roulette_wheel', args={'square': 18}, tool_call_id='pyd_ai_tool_call_id'
