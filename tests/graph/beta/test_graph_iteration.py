@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.graph import EndMarker, GraphTask
+from pydantic_graph.beta.graph import EndMarker, GraphTask, GraphTaskRequest
 from pydantic_graph.beta.id_types import NodeID
 from pydantic_graph.beta.join import reduce_list_append
 
@@ -400,7 +400,7 @@ async def test_iter_turn_end_marker_into_tasks():
                 # Get the fork_stack from the EndMarker's source
                 fork_stack = run.next_task[0].fork_stack if isinstance(run.next_task, list) else ()
 
-                new_task = GraphTask(
+                new_task = GraphTaskRequest(
                     node_id=NodeID('second_step'),
                     inputs=event.value,
                     fork_stack=fork_stack,

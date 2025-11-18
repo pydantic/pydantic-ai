@@ -49,6 +49,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.usage import RequestUsage
+from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph.beta.join import reduce_list_append
 
 try:
     from temporalio import workflow
@@ -2228,3 +2230,108 @@ async def test_fastmcp_toolset(allow_model_requests: None, client: Client):
         assert output == snapshot(
             'The `pydantic/pydantic-ai` repository is a Python agent framework crafted for developing production-grade Generative AI applications. It emphasizes type safety, model-agnostic design, and extensibility. The framework supports various LLM providers, manages agent workflows using graph-based execution, and ensures structured, reliable LLM outputs. Key packages include core framework components, graph execution engines, evaluation tools, and example applications.'
         )
+
+
+# ============================================================================
+# Beta Graph API Tests - Tests for running pydantic-graph beta API in Temporal
+# ============================================================================
+
+
+@dataclass
+class GraphState:
+    """State for the graph execution test."""
+
+    values: list[int] = field(default_factory=list)
+
+
+# Create a graph with parallel execution using the beta API
+graph_builder = GraphBuilder(
+    name='parallel_test_graph',
+    state_type=GraphState,
+    input_type=int,
+    output_type=list[int],
+)
+
+
+@graph_builder.step
+async def source(ctx: StepContext[GraphState, None, int]) -> int:
+    """Source step that passes through the input value."""
+    return ctx.inputs
+
+
+@graph_builder.step
+async def multiply_by_two(ctx: StepContext[GraphState, None, int]) -> int:
+    """Multiply input by 2."""
+    return ctx.inputs * 2
+
+
+@graph_builder.step
+async def multiply_by_three(ctx: StepContext[GraphState, None, int]) -> int:
+    """Multiply input by 3."""
+    return ctx.inputs * 3
+
+
+@graph_builder.step
+async def multiply_by_four(ctx: StepContext[GraphState, None, int]) -> int:
+    """Multiply input by 4."""
+    return ctx.inputs * 4
+
+
+# Create a join to collect results
+result_collector = graph_builder.join(reduce_list_append, initial_factory=list[int])
+
+# Build the graph with parallel edges (broadcast pattern)
+graph_builder.add(
+    graph_builder.edge_from(graph_builder.start_node).to(source),
+    # Broadcast: send value to all three parallel steps
+    graph_builder.edge_from(source).to(multiply_by_two, multiply_by_three, multiply_by_four),
+    # Collect all results
+    graph_builder.edge_from(multiply_by_two, multiply_by_three, multiply_by_four).to(result_collector),
+    graph_builder.edge_from(result_collector).to(graph_builder.end_node),
+)
+
+parallel_test_graph = graph_builder.build()
+
+
+@workflow.defn
+class ParallelGraphWorkflow:
+    """Workflow that executes a graph with parallel task execution."""
+
+    @workflow.run
+    async def run(self, input_value: int) -> list[int]:
+        """Run the parallel graph workflow.
+
+        Args:
+            input_value: The input number to process
+
+        Returns:
+            List of results from parallel execution
+        """
+        result = await parallel_test_graph.run(
+            state=GraphState(),
+            inputs=input_value,
+        )
+        return result
+
+
+async def test_beta_graph_parallel_execution_in_workflow(client: Client):
+    """Test that beta graph API with parallel execution works in Temporal workflows.
+
+    This test verifies the fix for the bug where parallel task execution in graphs
+    wasn't working properly with Temporal workflows due to GraphTask/GraphTaskRequest
+    serialization issues.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ParallelGraphWorkflow],
+    ):
+        output = await client.execute_workflow(
+            ParallelGraphWorkflow.run,
+            args=[10],
+            id=ParallelGraphWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        # Results can be in any order due to parallel execution
+        # 10 * 2 = 20, 10 * 3 = 30, 10 * 4 = 40
+        assert sorted(output) == [20, 30, 40]
