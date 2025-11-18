@@ -896,7 +896,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                         vendor_part_id=event.index,
                         part=_map_code_execution_tool_result_block(current_block, self.provider_name),
                     )
-                elif isinstance(current_block, BetaWebFetchToolResultBlock):
+                elif isinstance(current_block, BetaWebFetchToolResultBlock):  # pragma: lax no cover
                     yield self._parts_manager.handle_part(
                         vendor_part_id=event.index,
                         part=_map_web_fetch_tool_result_block(current_block, self.provider_name),
