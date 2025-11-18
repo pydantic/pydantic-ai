@@ -670,16 +670,14 @@ class AnthropicModel(Model):
                             elif response_part.tool_name == UrlContextTool.kind and isinstance(
                                 response_part.content, dict
                             ):
-                                # response_part.content is {'content': {...}} from model_dump(exclude={'tool_use_id', 'type'})
-                                # Extract the inner content dict which has {content, type, url, retrieved_at}
-                                web_fetch_content = cast(dict[str, Any], response_part.content).get('content')  # pyright: ignore[reportUnknownMemberType]
+                                # response_part.content is the BetaWebFetchBlock dict {content, type, url, retrieved_at}
                                 assistant_content_params.append(
                                     cast(
                                         BetaWebFetchToolResultBlockParam,
                                         {
                                             'tool_use_id': tool_use_id,
                                             'type': 'web_fetch_tool_result',
-                                            'content': web_fetch_content,
+                                            'content': response_part.content,  # pyright: ignore[reportUnknownMemberType]
                                         },
                                     )
                                 )
@@ -1057,8 +1055,8 @@ def _map_web_fetch_tool_result_block(item: BetaWebFetchToolResultBlock, provider
     return BuiltinToolReturnPart(
         provider_name=provider_name,
         tool_name=UrlContextTool.kind,
-        # Store the full result structure (content, type, url, retrieved_at) for replay
-        content=item.model_dump(mode='json', exclude={'tool_use_id', 'type'}),
+        # Store just the content field (BetaWebFetchBlock) which has {content, type, url, retrieved_at}
+        content=item.content.model_dump(mode='json'),
         tool_call_id=item.tool_use_id,
     )
 

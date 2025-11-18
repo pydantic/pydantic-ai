@@ -3710,17 +3710,14 @@ async def test_anthropic_url_context_tool_multi_turn(allow_model_requests: None,
     # Verify that the URL and retrieved_at are preserved in the tool return part
     url_context_return = next(tr for tr in tool_returns1 if tr.tool_name == 'url_context')
     assert isinstance(url_context_return.content, dict)
+    # content is the BetaWebFetchBlock dict directly: {content, type, url, retrieved_at}
     assert 'content' in url_context_return.content
-    inner_content = url_context_return.content['content']
-    assert 'content' in inner_content
-    assert 'source' in inner_content['content']
-    assert 'data' in inner_content['content']['source']
-    assert 'Pydantic AI is a Python agent framework' in inner_content['content']['source']['data']
-    assert 'url' in inner_content
-    assert inner_content['url'] == 'https://ai.pydantic.dev'
-    assert 'retrieved_at' in inner_content
-    assert 'type' in inner_content
-    assert inner_content['type'] == 'web_fetch_result'
+    assert 'source' in url_context_return.content['content']
+    assert 'data' in url_context_return.content['content']['source']
+    assert 'Pydantic AI is a Python agent framework' in url_context_return.content['content']['source']['data']
+    assert url_context_return.content['url'] == 'https://ai.pydantic.dev'
+    assert 'retrieved_at' in url_context_return.content
+    assert url_context_return.content['type'] == 'web_fetch_result'
 
     # Second turn: Ask follow-up question using previous message history
     # This will trigger the code paths that serialize BuiltinToolCallPart and BuiltinToolReturnPart
@@ -3765,12 +3762,10 @@ async def test_anthropic_url_context_tool_message_replay():
                     provider_name=m.system,
                     tool_name=UrlContextTool.kind,
                     content={
-                        'content': {
-                            'content': {'type': 'document'},
-                            'type': 'web_fetch_result',
-                            'url': 'https://example.com',
-                            'retrieved_at': '2025-01-01T00:00:00Z',
-                        }
+                        'content': {'type': 'document'},
+                        'type': 'web_fetch_result',
+                        'url': 'https://example.com',
+                        'retrieved_at': '2025-01-01T00:00:00Z',
                     },
                     tool_call_id='test_id_1',
                 ),
