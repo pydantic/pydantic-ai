@@ -463,6 +463,7 @@ def test_file_part_serialization_roundtrip():
                 'provider_response_id': None,
                 'finish_reason': None,
                 'run_id': None,
+                'metadata': None,
             }
         ]
     )
@@ -475,11 +476,9 @@ def test_model_messages_type_adapter_preserves_run_id():
         ModelRequest(
             parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=timezone.utc))],
             run_id='run-123',
+            metadata={'key': 'value'},
         ),
-        ModelResponse(
-            parts=[TextPart(content='Hello!')],
-            run_id='run-123',
-        ),
+        ModelResponse(parts=[TextPart(content='Hello!')], run_id='run-123', metadata={'key': 'value'}),
     ]
 
     serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='python')
