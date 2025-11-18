@@ -42,7 +42,13 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
+from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
+    ImageGenerationTool,
+    UrlContextTool,
+    WebFetchTool,
+    WebSearchTool,
+)
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -1342,9 +1348,19 @@ There is a high chance of rain throughout the day, with some reports stating a 6
     )
 
 
-async def test_google_model_web_fetch_tool(allow_model_requests: None, google_provider: GoogleProvider):
+@pytest.mark.parametrize('use_deprecated_url_context_tool', [False, True])
+async def test_google_model_web_fetch_tool(
+    allow_model_requests: None, google_provider: GoogleProvider, use_deprecated_url_context_tool: bool
+):
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[WebFetchTool()])
+
+    if use_deprecated_url_context_tool:
+        with pytest.warns(DeprecationWarning, match='Use `WebFetchTool` instead.'):
+            tool = UrlContextTool()
+    else:
+        tool = WebFetchTool()
+
+    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[tool])
 
     result = await agent.run(
         'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
