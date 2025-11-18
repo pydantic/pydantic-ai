@@ -292,7 +292,7 @@ class GoogleModel(Model):
                     thinking_config=generation_config.get('thinking_config'),
                     media_resolution=generation_config.get('media_resolution'),
                     response_mime_type=generation_config.get('response_mime_type'),
-                    response_schema=generation_config.get('response_schema'),
+                    response_json_schema=generation_config.get('response_json_schema'),
                 ),
             )
 
@@ -465,7 +465,7 @@ class GoogleModel(Model):
             tools=cast(ToolListUnionDict, tools),
             tool_config=tool_config,
             response_mime_type=response_mime_type,
-            response_schema=response_schema,
+            response_json_schema=response_schema,
             response_modalities=modalities,
         )
         return contents, config
@@ -493,7 +493,7 @@ class GoogleModel(Model):
         else:
             parts = candidate.content.parts or []
 
-        usage = _metadata_as_usage(response)
+        usage = _metadata_as_usage(response, provider=self._provider.name, provider_url=self._provider.base_url)
         return _process_response_from_parts(
             parts,
             candidate.grounding_metadata,
@@ -520,6 +520,7 @@ class GoogleModel(Model):
             _response=peekable_response,
             _timestamp=first_chunk.create_time or _utils.now_utc(),
             _provider_name=self._provider.name,
+            _provider_url=self._provider.base_url,
         )
 
     async def _map_messages(
@@ -637,11 +638,12 @@ class GeminiStreamedResponse(StreamedResponse):
     _response: AsyncIterator[GenerateContentResponse]
     _timestamp: datetime
     _provider_name: str
+    _provider_url: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         code_execution_tool_call_id: str | None = None
         async for chunk in self._response:
-            self._usage = _metadata_as_usage(chunk)
+            self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
 
             if not chunk.candidates:
                 continue  # pragma: no cover
@@ -890,7 +892,7 @@ def _tool_config(function_names: list[str]) -> ToolConfigDict:
     return ToolConfigDict(function_calling_config=function_calling_config)
 
 
-def _metadata_as_usage(response: GenerateContentResponse) -> usage.RequestUsage:
+def _metadata_as_usage(response: GenerateContentResponse, provider: str, provider_url: str) -> usage.RequestUsage:
     metadata = response.usage_metadata
     if metadata is None:
         return usage.RequestUsage()
@@ -904,9 +906,6 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.RequestUsage:
     if tool_use_prompt_token_count := metadata.tool_use_prompt_token_count:
         details['tool_use_prompt_tokens'] = tool_use_prompt_token_count
 
-    input_audio_tokens = 0
-    output_audio_tokens = 0
-    cache_audio_read_tokens = 0
     for prefix, metadata_details in [
         ('prompt', metadata.prompt_tokens_details),
         ('cache', metadata.cache_tokens_details),
@@ -920,22 +919,12 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.RequestUsage:
             if not detail.modality or not detail.token_count:
                 continue
             details[f'{detail.modality.lower()}_{prefix}_tokens'] = detail.token_count
-            if detail.modality != 'AUDIO':
-                continue
-            if metadata_details is metadata.prompt_tokens_details:
-                input_audio_tokens = detail.token_count
-            elif metadata_details is metadata.candidates_tokens_details:
-                output_audio_tokens = detail.token_count
-            elif metadata_details is metadata.cache_tokens_details:  # pragma: no branch
-                cache_audio_read_tokens = detail.token_count
 
-    return usage.RequestUsage(
-        input_tokens=metadata.prompt_token_count or 0,
-        output_tokens=(metadata.candidates_token_count or 0) + thoughts_token_count,
-        cache_read_tokens=cached_content_token_count or 0,
-        input_audio_tokens=input_audio_tokens,
-        output_audio_tokens=output_audio_tokens,
-        cache_audio_read_tokens=cache_audio_read_tokens,
+    return usage.RequestUsage.extract(
+        response.model_dump(include={'model_version', 'usage_metadata'}, by_alias=True),
+        provider=provider,
+        provider_url=provider_url,
+        provider_fallback='google',
         details=details,
     )
 
