@@ -14,7 +14,7 @@ from .builtin_tools import (
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
-    UrlContextTool,
+    UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,

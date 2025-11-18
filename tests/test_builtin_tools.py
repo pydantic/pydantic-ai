@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, UrlContextTool, WebSearchTool
+from pydantic_ai.builtin_tools import (  # pyright: ignore[reportDeprecated]
+    CodeExecutionTool,
+    UrlContextTool,
+    WebSearchTool,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 
@@ -45,4 +49,4 @@ async def test_builtin_tools_not_supported_code_execution_stream(model: Model, a
 def test_url_context_tool_is_deprecated():
     """Test that UrlContextTool is deprecated and warns users to use WebFetchTool instead."""
     with pytest.warns(DeprecationWarning, match='Use `WebFetchTool` instead.'):
-        UrlContextTool()
+        UrlContextTool()  # pyright: ignore[reportDeprecated]

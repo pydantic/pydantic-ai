@@ -45,7 +45,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import (
     CodeExecutionTool,
     ImageGenerationTool,
-    UrlContextTool,
+    UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
     WebSearchTool,
 )
@@ -1356,7 +1356,7 @@ async def test_google_model_web_fetch_tool(
 
     if use_deprecated_url_context_tool:
         with pytest.warns(DeprecationWarning, match='Use `WebFetchTool` instead.'):
-            tool = UrlContextTool()
+            tool = UrlContextTool()  # pyright: ignore[reportDeprecated]
     else:
         tool = WebFetchTool()
 

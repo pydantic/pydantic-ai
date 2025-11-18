@@ -4431,12 +4431,12 @@ async def test_anthropic_web_fetch_tool_with_parameters():
     assert web_fetch_tool_param is not None
 
     # Verify all parameters are passed correctly
-    assert web_fetch_tool_param['type'] == 'web_fetch_20250910'
-    assert web_fetch_tool_param['max_uses'] == 5
-    assert web_fetch_tool_param['allowed_domains'] == ['example.com', 'ai.pydantic.dev']
-    assert web_fetch_tool_param['blocked_domains'] is None
-    assert web_fetch_tool_param['citations'] == {'enabled': True}
-    assert web_fetch_tool_param['max_content_tokens'] == 50000
+    assert web_fetch_tool_param.get('type') == 'web_fetch_20250910'
+    assert web_fetch_tool_param.get('max_uses') == 5
+    assert web_fetch_tool_param.get('allowed_domains') == ['example.com', 'ai.pydantic.dev']
+    assert web_fetch_tool_param.get('blocked_domains') is None
+    assert web_fetch_tool_param.get('citations') == {'enabled': True}
+    assert web_fetch_tool_param.get('max_content_tokens') == 50000
 
 
 async def test_anthropic_web_fetch_tool_domain_filtering():
@@ -4464,8 +4464,8 @@ async def test_anthropic_web_fetch_tool_domain_filtering():
     assert web_fetch_tool_param is not None
 
     # Verify blocked_domains is passed correctly
-    assert web_fetch_tool_param['blocked_domains'] == ['private.example.com', 'internal.example.com']
-    assert web_fetch_tool_param['allowed_domains'] is None
+    assert web_fetch_tool_param.get('blocked_domains') == ['private.example.com', 'internal.example.com']
+    assert web_fetch_tool_param.get('allowed_domains') is None
 
 
 @pytest.mark.vcr()
