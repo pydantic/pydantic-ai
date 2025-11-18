@@ -5,6 +5,7 @@ The providers are in charge of providing an authenticated client to the API.
 
 from __future__ import annotations as _annotations
 
+import re
 from abc import ABC, abstractmethod
 from typing import Any, Generic, TypeVar
 
@@ -153,13 +154,24 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         raise ValueError(f'Unknown provider: {provider}')
 
 
+_gateway_provider_regex = re.compile('gateway(?::([^/]*))?/(.*)')
+"""
+This regex matches strings of the forms:
+1. gateway/my-upstream-provider
+2. gateway:my-route/my-upstream-provider
+
+The (optional) route is the first group, the upstream provider is the second.
+"""
+
+
 def infer_provider(provider: str) -> Provider[Any]:
     """Infer the provider from the provider name."""
-    if provider.startswith('gateway/'):
+    if match := re.match(_gateway_provider_regex, provider):
         from .gateway import gateway_provider
 
-        upstream_provider = provider.removeprefix('gateway/')
-        return gateway_provider(upstream_provider)
+        route = match.group(1)
+        upstream_provider = match.group(2)
+        return gateway_provider(upstream_provider, route=route)
     elif provider in ('google-vertex', 'google-gla'):
         from .google import GoogleProvider
 
