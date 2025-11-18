@@ -93,7 +93,7 @@ def test_flatten_allof_nested_objects_and_pass_through_keywords() -> None:
                 },
                 'age': {'type': 'integer'},
             },
-            'required': ['user', 'age'],
+            'required': ['age', 'user'],
         }
     )
 

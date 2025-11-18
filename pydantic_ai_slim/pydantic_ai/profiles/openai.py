@@ -143,7 +143,7 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
     """
 
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
-        super().__init__(schema, strict=strict)
+        super().__init__(schema, strict=strict, flatten_allof=True)
         self.root_ref = schema.get('$ref')
 
     def walk(self) -> JsonSchema:
