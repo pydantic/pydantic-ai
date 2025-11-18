@@ -226,6 +226,27 @@ async def simple_stream(messages: list[ModelMessage], agent_info: AgentInfo) -> 
     yield '(no tool calls)'
 
 
+async def test_agui_adapter_state_none() -> None:
+    """Ensure adapter exposes `None` state when no frontend state provided."""
+    agent = Agent(
+        model=FunctionModel(stream_function=simple_stream),
+    )
+
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        messages=[],
+        state=None,
+        context=[],
+        tools=[],
+        forwarded_props=None,
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=None)
+
+    assert adapter.state is None
+
+
 async def test_basic_user_message() -> None:
     """Test basic user message with text response."""
     agent = Agent(
@@ -1191,6 +1212,24 @@ async def test_request_with_state_without_handler() -> None:
     ):
         async for _ in run_ag_ui(agent, run_input):
             pass
+
+
+async def test_request_with_empty_state_without_handler() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello, how are you?',
+        ),
+        state={},
+    )
+
+    events = list[dict[str, Any]]()
+    async for event in run_ag_ui(agent, run_input):
+        events.append(json.loads(event.removeprefix('data: ')))
+
+    assert events == simple_result()
 
 
 async def test_request_with_state_with_custom_handler() -> None:
