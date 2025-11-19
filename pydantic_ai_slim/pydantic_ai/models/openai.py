@@ -20,7 +20,6 @@ from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import (
     guard_tool_call_id as _guard_tool_call_id,
     now_utc as _now_utc,
-    num_tokens_from_messages,
     number_to_datetime,
 )
 from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebSearchTool
@@ -59,6 +58,7 @@ from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 try:
+    import tiktoken
     from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream
     from openai.types import AllModels, chat, responses
     from openai.types.chat import (
@@ -918,7 +918,10 @@ class OpenAIChatModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> usage.RequestUsage:
-        """Make a request to the model for counting tokens."""
+        """Count the number of tokens in the given messages."""
+        if self.system != 'openai':
+            raise NotImplementedError('Token counting is only supported for OpenAI system.')
+
         openai_messages = await self._map_messages(messages, model_request_parameters)
         token_count = num_tokens_from_messages(openai_messages, self.model_name)
 
@@ -1726,7 +1729,10 @@ class OpenAIResponsesModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> usage.RequestUsage:
-        """Make a request to the model for counting tokens."""
+        """Count the number of tokens in the given messages."""
+        if self.system != 'openai':
+            raise NotImplementedError('Token counting is only supported for OpenAI system.')
+
         _, openai_messages = await self._map_messages(
             messages, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
@@ -2368,3 +2374,50 @@ def _map_mcp_call(
             provider_name=provider_name,
         ),
     )
+
+
+def num_tokens_from_messages(
+    messages: list[chat.ChatCompletionMessageParam] | list[responses.ResponseInputItemParam],
+    model: OpenAIModelName,
+) -> int:
+    """Return the number of tokens used by a list of messages."""
+    try:
+        encoding = tiktoken.encoding_for_model(model)
+    except KeyError:
+        encoding = tiktoken.get_encoding('o200k_base')
+    if model in {
+        'gpt-3.5-turbo-0125',
+        'gpt-4-0314',
+        'gpt-4-32k-0314',
+        'gpt-4-0613',
+        'gpt-4-32k-0613',
+        'gpt-4o-mini-2024-07-18',
+        'gpt-4o-2024-08-06',
+    }:
+        tokens_per_message = 3
+        final_primer = 3  # every reply is primed with <|start|>assistant<|message|>
+    elif model in {
+        'gpt-5-2025-08-07',
+    }:
+        tokens_per_message = 3
+        final_primer = 2
+    elif 'gpt-3.5-turbo' in model:
+        return num_tokens_from_messages(messages, model='gpt-3.5-turbo-0125')
+    elif 'gpt-4o-mini' in model:
+        return num_tokens_from_messages(messages, model='gpt-4o-mini-2024-07-18')
+    elif 'gpt-4o' in model:
+        return num_tokens_from_messages(messages, model='gpt-4o-2024-08-06')
+    elif 'gpt-4' in model:
+        return num_tokens_from_messages(messages, model='gpt-4-0613')
+    elif 'gpt-5' in model:
+        return num_tokens_from_messages(messages, model='gpt-5-2025-08-07')
+    else:
+        raise NotImplementedError(f"""num_tokens_from_messages() is not implemented for model {model}.""")
+    num_tokens = 0
+    for message in messages:
+        num_tokens += tokens_per_message
+        for value in message.values():
+            if isinstance(value, str):
+                num_tokens += len(encoding.encode(value))
+    num_tokens += final_primer
+    return num_tokens

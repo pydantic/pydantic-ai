@@ -3098,6 +3098,7 @@ async def test_cache_point_filtering_responses_model():
         ('gpt-4', 115),
         ('gpt-4o', 110),
         ('gpt-4o-mini', 110),
+        ('gpt-5', 109),
     ],
 )
 async def test_count_tokens(
