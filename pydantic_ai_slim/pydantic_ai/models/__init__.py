@@ -377,7 +377,10 @@ class Model(ABC):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        """Make a request to the model."""
+        """Make a request to the model.
+
+        This is ultimately called by `pydantic_ai._agent_graph.ModelRequestNode._make_request(...)`.
+        """
         raise NotImplementedError()
 
     async def count_tokens(

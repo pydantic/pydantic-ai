@@ -602,7 +602,7 @@ async def test_anthropic_incompatible_schema_disables_auto_strict(allow_model_re
     agent = Agent(m)
 
     @agent.tool_plain
-    def constrained_tool(value: Annotated[str, Field(min_length=2)]) -> str:  # pragma: no cover - not executed
+    def constrained_tool(value: Annotated[str, Field(min_length=2)]) -> str:  # pragma: no cover
         return value
 
     await agent.run('hello')
@@ -630,7 +630,7 @@ async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthr
         capital_called['value'] = True
         if country == 'Japan':
             return 'Tokyo'
-        return f'Unknown capital for {country}'
+        return f'Unknown capital for {country}'  # pragma: no cover
 
     result = await agent.run('Use the registered tools and respond exactly as `Capital: <city>`.')
     assert capital_called['value'] is True
@@ -5424,7 +5424,7 @@ async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, a
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Anthropic does not support thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+            'Anthropic does not support thinking and output tools at the same time. Use `output_type=NativeOutput(...)` instead.'
         ),
     ):
         await agent.run('What is 3 + 3?')

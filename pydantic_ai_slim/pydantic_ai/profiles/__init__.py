@@ -25,9 +25,19 @@ class ModelProfile:
     supports_tools: bool = True
     """Whether the model supports tools."""
     supports_json_schema_output: bool = False
-    """Whether the model supports JSON schema output."""
+    """Whether the model supports JSON schema output.
+
+    This is also referred to as 'native' support for structured output.
+    This is the preferred way to get structured output from the model when available.
+    Relates to the `NativeOutput` output type.
+    """
     supports_json_object_output: bool = False
-    """Whether the model supports JSON object output."""
+    """Whether the model supports JSON object output.
+
+    This is different from `supports_json_schema_output` in that it indicates whether the model can return arbitrary JSON objects,
+    rather than only JSON objects that conform to a provided JSON schema.
+    Relates to the `PromptedOutput` output type.
+    """
     supports_image_output: bool = False
     """Whether the model supports image output."""
     default_structured_output_mode: StructuredOutputMode = 'tool'

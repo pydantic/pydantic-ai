@@ -199,8 +199,9 @@ class AnthropicModel(Model):
             model_name: The name of the Anthropic model to use. List of model names available
                 [here](https://docs.anthropic.com/en/docs/about-claude/models).
             provider: The provider to use for the Anthropic API. Can be either the string 'anthropic' or an
-                instance of `Provider[AsyncAnthropicClient]`. If not provided, the other parameters will be used.
+                instance of `Provider[AsyncAnthropicClient]`. Defaults to 'anthropic'.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+                The default 'anthropic' provider will use the default `..profiles.anthropic_model_profile`.
             settings: Default model settings for this model instance.
         """
         self._model_name = model_name
@@ -290,13 +291,14 @@ class AnthropicModel(Model):
             and thinking.get('type') == 'enabled'
         ):
             if model_request_parameters.output_mode == 'auto':
-                model_request_parameters = replace(model_request_parameters, output_mode='prompted')
+                output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
+                model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
             elif (
                 model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
             ):  # pragma: no branch
                 # This would result in `tool_choice=required`, which Anthropic does not support with thinking.
                 raise UserError(
-                    'Anthropic does not support thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+                    'Anthropic does not support thinking and output tools at the same time. Use `output_type=NativeOutput(...)` instead.'
                 )
         return super().prepare_request(model_settings, model_request_parameters)
 
@@ -330,7 +332,7 @@ class AnthropicModel(Model):
         # standalone function to make it easier to override
         tools, strict_tools_requested = self._get_tools(model_request_parameters, model_settings)
         tools, mcp_servers, beta_features = self._add_builtin_tools(tools, model_request_parameters)
-        output_format = self._build_output_format(model_request_parameters)
+        native_format = self._native_output_format(model_request_parameters)
 
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
@@ -338,7 +340,7 @@ class AnthropicModel(Model):
 
         # Build betas list for SDK
         betas: list[str] = list(beta_features)
-        if strict_tools_requested or output_format:
+        if strict_tools_requested or native_format:
             betas.append('structured-outputs-2025-11-13')
 
         try:
@@ -354,7 +356,7 @@ class AnthropicModel(Model):
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 mcp_servers=mcp_servers or OMIT,
-                output_format=output_format or OMIT,
+                output_format=native_format or OMIT,
                 betas=betas or OMIT,
                 stream=stream,
                 thinking=model_settings.get('anthropic_thinking', OMIT),
@@ -849,19 +851,18 @@ class AnthropicModel(Model):
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
-    @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> BetaToolParam:
+    def _map_tool_definition(self, f: ToolDefinition) -> BetaToolParam:
         tool_param: BetaToolParam = {
             'name': f.name,
             'description': f.description or '',
             'input_schema': f.parameters_json_schema,
         }
-        if f.strict:
+        if f.strict and self.profile.supports_json_schema_output:  # pragma: no branch
             tool_param['strict'] = f.strict
         return tool_param
 
     @staticmethod
-    def _build_output_format(model_request_parameters: ModelRequestParameters) -> BetaJSONOutputFormatParam | None:
+    def _native_output_format(model_request_parameters: ModelRequestParameters) -> BetaJSONOutputFormatParam | None:
         if model_request_parameters.output_mode != 'native':
             return None
         output_object = model_request_parameters.output_object

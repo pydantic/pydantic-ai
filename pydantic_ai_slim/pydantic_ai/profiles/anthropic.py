@@ -1,19 +1,17 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
-
-from anthropic.lib._parse._transform import SupportedStringFormats
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from . import ModelProfile
 
-TransformSchemaFunc = Callable[[Any], JsonSchema]
-
 
 def _schema_is_lossless(schema: JsonSchema) -> bool:  # noqa: C901
-    """Return True when `anthropic.transform_schema` won't need to drop constraints."""
+    """Return True when `anthropic.transform_schema` won't need to drop constraints.
+
+    Checks are performed based on https://docs.claude.com/en/docs/build-with-claude/structured-outputs#how-sdk-transformation-works
+    """
+    from anthropic.lib._parse._transform import SupportedStringFormats
 
     def _walk(node: JsonSchema) -> bool:  # noqa: C901
         if not isinstance(node, dict):
@@ -39,6 +37,8 @@ def _schema_is_lossless(schema: JsonSchema) -> bool:  # noqa: C901
         node.pop('description', None)
         node.pop('title', None)
 
+        # every sub-schema in the list must itself be lossless -> `all(_walk(item) for item in any_of)`
+        # the wrapper object must not have any other unsupported fields -> `and not node`
         if isinstance(any_of, list):
             return all(_walk(item) for item in any_of) and not node  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
         if isinstance(one_of, list):
@@ -104,8 +104,12 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
 
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model."""
+    models_that_support_json_schema_output = ('claude-sonnet-4-5', 'claude-opus-4-1')
+    # anthropic introduced support for both structured outputs and strict tool use
+    # https://docs.claude.com/en/docs/build-with-claude/structured-outputs#example-usage
+    supports_json_schema_output = model_name.startswith(models_that_support_json_schema_output)
     return ModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
-        supports_json_schema_output=True,
+        supports_json_schema_output=supports_json_schema_output,
         json_schema_transformer=AnthropicJsonSchemaTransformer,
     )

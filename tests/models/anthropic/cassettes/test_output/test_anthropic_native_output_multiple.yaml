@@ -1,0 +1,260 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1158'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the capital of the user country?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      output_format:
+        schema:
+          additionalProperties: false
+          properties:
+            result:
+              anyOf:
+              - additionalProperties: false
+                description: A city and its country.
+                properties:
+                  data:
+                    additionalProperties: false
+                    properties:
+                      city:
+                        type: string
+                      country:
+                        type: string
+                    required:
+                    - city
+                    - country
+                    type: object
+                  kind:
+                    description: '{const: CityLocation}'
+                    type: string
+                required:
+                - kind
+                - data
+                type: object
+              - additionalProperties: false
+                properties:
+                  data:
+                    additionalProperties: false
+                    properties:
+                      country:
+                        type: string
+                      language:
+                        type: string
+                    required:
+                    - country
+                    - language
+                    type: object
+                  kind:
+                    description: '{const: CountryLanguage}'
+                    type: string
+                required:
+                - kind
+                - data
+                type: object
+          required:
+          - result
+          type: object
+        type: json_schema
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_user_country
+        strict: true
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '477'
+      content-type:
+      - application/json
+      retry-after:
+      - '17'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - id: toolu_01CtCGUm8Mecn3hJ2R3mmKFK
+        input: {}
+        name: get_user_country
+        type: tool_use
+      id: msg_017BZRwY98Dcn7wvHbEq3XKx
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 1047
+        output_tokens: 38
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1420'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the capital of the user country?
+          type: text
+        role: user
+      - content:
+        - id: toolu_01CtCGUm8Mecn3hJ2R3mmKFK
+          input: {}
+          name: get_user_country
+          type: tool_use
+        role: assistant
+      - content:
+        - content: France
+          is_error: false
+          tool_use_id: toolu_01CtCGUm8Mecn3hJ2R3mmKFK
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      output_format:
+        schema:
+          additionalProperties: false
+          properties:
+            result:
+              anyOf:
+              - additionalProperties: false
+                description: A city and its country.
+                properties:
+                  data:
+                    additionalProperties: false
+                    properties:
+                      city:
+                        type: string
+                      country:
+                        type: string
+                    required:
+                    - city
+                    - country
+                    type: object
+                  kind:
+                    description: '{const: CityLocation}'
+                    type: string
+                required:
+                - kind
+                - data
+                type: object
+              - additionalProperties: false
+                properties:
+                  data:
+                    additionalProperties: false
+                    properties:
+                      country:
+                        type: string
+                      language:
+                        type: string
+                    required:
+                    - country
+                    - language
+                    type: object
+                  kind:
+                    description: '{const: CountryLanguage}'
+                    type: string
+                required:
+                - kind
+                - data
+                type: object
+          required:
+          - result
+          type: object
+        type: json_schema
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_user_country
+        strict: true
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '508'
+      content-type:
+      - application/json
+      retry-after:
+      - '12'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: '{"result": {"kind": "CityLocation", "data": {"city": "Paris", "country": "France"}}}'
+        type: text
+      id: msg_016YnWzi9KrgJNbvMhWYqSJf
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 1099
+        output_tokens: 30
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
