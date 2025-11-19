@@ -470,7 +470,7 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
         allows_image: bool,
     ):
         super().__init__(
-            processor=PromptedOutputProcessor(processor),
+            processor=processor,
             allows_deferred_tools=allows_deferred_tools,
             allows_image=allows_image,
         )
@@ -493,13 +493,6 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
             template = '\n\n'.join([template, '{schema}'])
 
         return template.format(schema=json.dumps(schema))
-
-    def instructions(self, default_template: str) -> str:  # pragma: no cover
-        """Get instructions to tell model to output JSON matching the schema."""
-        template = self.template or default_template
-        object_def = self.object_def
-        assert object_def is not None
-        return self.build_instructions(template, object_def)
 
 
 @dataclass(init=False)
@@ -540,28 +533,6 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
 @dataclass(kw_only=True)
 class BaseObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
     object_def: OutputObjectDefinition
-
-
-@dataclass(init=False)
-class PromptedOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
-    wrapped: BaseObjectOutputProcessor[OutputDataT]
-
-    def __init__(self, wrapped: BaseObjectOutputProcessor[OutputDataT]):
-        self.wrapped = wrapped
-        super().__init__(object_def=wrapped.object_def)
-
-    async def process(
-        self,
-        data: str,
-        run_context: RunContext[AgentDepsT],
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
-    ) -> OutputDataT:
-        text = _utils.strip_markdown_fences(data)
-
-        return await self.wrapped.process(
-            text, run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
-        )
 
 
 @dataclass(init=False)
@@ -653,6 +624,9 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         Returns:
             Either the validated output data (left) or a retry message (right).
         """
+        if isinstance(data, str):
+            data = _utils.strip_markdown_fences(data)
+
         try:
             output = self.validate(data, allow_partial)
         except ValidationError as e:

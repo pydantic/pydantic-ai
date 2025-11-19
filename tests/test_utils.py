@@ -495,6 +495,7 @@ def test_merge_json_schema_defs():
 def test_strip_markdown_fences():
     assert strip_markdown_fences('{"foo": "bar"}') == '{"foo": "bar"}'
     assert strip_markdown_fences('```json\n{"foo": "bar"}\n```') == '{"foo": "bar"}'
+    assert strip_markdown_fences('```json\n{\n  "foo": "bar"\n}') == '{\n  "foo": "bar"\n}'
     assert (
         strip_markdown_fences('{"foo": "```json\\n{"foo": "bar"}\\n```"}')
         == '{"foo": "```json\\n{"foo": "bar"}\\n```"}'

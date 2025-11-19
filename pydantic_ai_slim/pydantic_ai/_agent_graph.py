@@ -216,6 +216,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.message_history = messages
         ctx.deps.new_message_index = len(messages)
 
+        # Validate that message history starts with a user message
+        if messages and isinstance(messages[0], _messages.ModelResponse):
+            raise exceptions.UserError(
+                'Message history cannot start with a `ModelResponse`. Conversations must begin with a user message.'
+            )
+
         if self.deferred_tool_results is not None:
             return await self._handle_deferred_tool_results(self.deferred_tool_results, messages, ctx)
 

@@ -6132,3 +6132,19 @@ async def test_message_history():
             ]
         )
         assert run.all_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
+
+
+def test_message_history_cannot_start_with_model_response():
+    """Test that message history starting with ModelResponse raises UserError."""
+
+    agent = Agent('test')
+
+    invalid_history = [
+        ModelResponse(parts=[TextPart(content='ai response')]),
+    ]
+
+    with pytest.raises(
+        UserError,
+        match='Message history cannot start with a `ModelResponse`.',
+    ):
+        agent.run_sync('hello', message_history=invalid_history)
