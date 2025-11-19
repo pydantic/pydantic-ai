@@ -3681,6 +3681,8 @@ async def test_thinking_with_tool_calls_from_other_model(
             ),
         ]
     )
+
+
 @pytest.mark.parametrize(
     'error_class,error_response,expected_status',
     [
@@ -3701,8 +3703,6 @@ async def test_thinking_with_tool_calls_from_other_model(
         ),
     ],
 )
-
-
 async def test_google_api_errors_are_handled(
     allow_model_requests: None,
     google_provider: GoogleProvider,
