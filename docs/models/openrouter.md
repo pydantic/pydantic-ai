@@ -1,4 +1,4 @@
-### OpenRouter
+# OpenRouter
 
 ## Install
 
