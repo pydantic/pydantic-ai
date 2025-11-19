@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from pydantic import BaseModel
@@ -9,15 +9,9 @@ from typing_extensions import TypedDict, assert_never, override
 
 from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
 from ..messages import (
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
-    FilePart,
     FinishReason,
-    ModelResponse,
     ModelResponseStreamEvent,
-    TextPart,
     ThinkingPart,
-    ToolCallPart,
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
@@ -522,40 +516,26 @@ class OpenRouterModel(OpenAIChatModel):
         provider_details.update(_map_openrouter_provider_details(response))
         return provider_details
 
+    @dataclass
+    class _MapModelResposeContext(OpenAIChatModel._MapModelResposeContext):  # type: ignore[reportPrivateUsage]
+        reasoning_details: list[dict[str, Any]] = field(default_factory=list)
+
+        def into_message_param(self) -> chat.ChatCompletionAssistantMessageParam:
+            message_param = super().into_message_param()
+            if self.reasoning_details:
+                message_param['reasoning_details'] = self.reasoning_details  # type: ignore[reportGeneralTypeIssues]
+            return message_param
+
     @override
-    def _map_model_response(self, message: ModelResponse) -> chat.ChatCompletionMessageParam:
-        texts: list[str] = []
-        tool_calls: list[chat.ChatCompletionMessageFunctionToolCallParam] = []
-        reasoning_details: list[dict[str, Any]] = []
-        for item in message.parts:
-            if isinstance(item, TextPart):
-                texts.append(item.content)
-            elif isinstance(item, ThinkingPart):
-                if item.provider_name == self.system:
-                    reasoning_details.append(_into_reasoning_detail(item).model_dump())
-                elif content := item.content:  # pragma: lax no cover
-                    start_tag, end_tag = self.profile.thinking_tags
-                    texts.append('\n'.join([start_tag, content, end_tag]))
-                else:
-                    pass
-            elif isinstance(item, ToolCallPart):
-                tool_calls.append(self._map_tool_call(item))
-            elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
-                pass
-            elif isinstance(item, FilePart):  # pragma: no cover
-                pass
-            else:
-                assert_never(item)
-        message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
-        if texts:
-            message_param['content'] = '\n\n'.join(texts)
+    def _map_response_thinking_part(self, ctx: OpenAIChatModel._MapModelResposeContext, item: ThinkingPart) -> None:
+        assert isinstance(ctx, self._MapModelResposeContext)
+        if item.provider_name == self.system:
+            ctx.reasoning_details.append(_into_reasoning_detail(item).model_dump())
+        elif content := item.content:  # pragma: lax no cover
+            start_tag, end_tag = self.profile.thinking_tags
+            ctx.texts.append('\n'.join([start_tag, content, end_tag]))
         else:
-            message_param['content'] = None
-        if tool_calls:
-            message_param['tool_calls'] = tool_calls
-        if reasoning_details:
-            message_param['reasoning_details'] = reasoning_details  # type: ignore[reportGeneralTypeIssues]
-        return message_param
+            pass
 
     @property
     @override
