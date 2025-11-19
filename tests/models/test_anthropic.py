@@ -4975,16 +4975,16 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='Tomorrow will be November 20, 2025.',
-                        id='msg_0b7c351e904c86b300691e4f0dbb64819cbceace3a975191e4',
+                        content='Tomorrow is November 20, 2025.',
+                        id='msg_0dcd74f01910b54500691e5596124081a087e8fa7b2ca19d5a',
                     )
                 ],
-                usage=RequestUsage(input_tokens=329, output_tokens=13, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=329, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_0b7c351e904c86b300691e4f0cc554819c934fb679b1a126be',
+                provider_response_id='resp_0dcd74f01910b54500691e5594957481a0ac36dde76eca939f',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
