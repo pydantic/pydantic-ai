@@ -9,7 +9,7 @@ from datetime import datetime
 from mimetypes import guess_type
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
 
 import pydantic
 import pydantic_core
@@ -1075,7 +1075,7 @@ class FilePart:
         return bool(self.content.data)
 
     @classmethod
-    def from_path(cls, path: PathLike[str]) -> Self:
+    def from_path(cls, path: PathLike[str]) -> FilePart:
         """Create a `BinaryContent` from a path.
 
         Defaults to 'application/octet-stream' if the media type cannot be inferred.
