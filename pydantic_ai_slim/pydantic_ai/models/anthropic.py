@@ -853,9 +853,9 @@ class AnthropicModel(Model):
             'input_schema': f.parameters_json_schema,
         }
 
-        # ✅ CRITICAL: Use truthy check (same as OpenAI line 768)
-        # NOT checking "is not None" (PR #3457's mistake)
-        if f.strict:
+        # ✅ CRITICAL: Only add strict if explicitly True (not None, not False)
+        # This prevents the strict field from leaking into tools that don't explicitly set it
+        if f.strict is True:
             tool_param['strict'] = True  # type: ignore[typeddict-item]
 
         return tool_param

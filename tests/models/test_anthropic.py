@@ -545,6 +545,7 @@ async def test_anthropic_cache_tools_and_instructions(allow_model_requests: None
                     'required': ['value'],
                     'type': 'object',
                 },
+                'strict': True,
                 'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             }
         ]
@@ -6542,7 +6543,8 @@ def test_anthropic_json_schema_transformer():
     assert result['type'] == 'object'
     assert result['additionalProperties'] is False
     assert result['properties'] == schema['properties']
-    assert result['required'] == schema['required']
+    # In strict mode, Anthropic requires ALL properties to be in required list
+    assert result['required'] == ['name', 'age']
     assert transformer.is_strict_compatible is True
 
     # test auto-detect mode (strict=False)
@@ -6562,9 +6564,11 @@ def test_anthropic_strict_mode_tool_mapping():
     Test AnthropicModel._map_tool_definition() supports strict mode.
     """
     from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.tools import ToolDefinition
 
-    model = AnthropicModel('claude-sonnet-4-5')
+    # Use mock provider to avoid requiring real API key
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
 
     tool_def_strict = ToolDefinition(
         name='test_tool',
