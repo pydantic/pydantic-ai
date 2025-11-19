@@ -4964,21 +4964,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
     agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()])
 
     result = await agent.run('What day is today?')
-    assert result.output == snapshot("""\
-Based on the search results, today is Thursday, August 14, 2025. Here are some additional details about the date:
-
-It is the 226th day of the year 2025 in the Gregorian calendar, with 139 days remaining until the end of the year.
-
-Some interesting observances for today include:
-It's being celebrated as:
-- Color Book Day
-- National Creamsicle Day
-- National Financial Awareness Day
-- National Navajo Code Talkers Day
-- National Tattoo Removal Day
-- National Wiffle Ball Day
-- Social Security Day\
-""")
+    assert result.output == snapshot('Today is November 19, 2025.')
     result = await agent.run('What day is tomorrow?', model=openai_model, message_history=result.all_messages())
     assert result.new_messages() == snapshot(
         [
@@ -4989,16 +4975,16 @@ It's being celebrated as:
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='Tomorrow will be **Friday, August 15, 2025**.',
-                        id='msg_689dc4acfa488196a6b1ec0ebd3bd9520afe80ec3d42722e',
+                        content='Tomorrow will be November 20, 2025.',
+                        id='msg_0b7c351e904c86b300691e4f0dbb64819cbceace3a975191e4',
                     )
                 ],
-                usage=RequestUsage(input_tokens=458, output_tokens=17, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(input_tokens=329, output_tokens=13, details={'reasoning_tokens': 0}),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_689dc4abe31c81968ed493d15d8810fe0afe80ec3d42722e',
+                provider_response_id='resp_0b7c351e904c86b300691e4f0cc554819c934fb679b1a126be',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
