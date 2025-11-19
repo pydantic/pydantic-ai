@@ -384,6 +384,7 @@ class GrokModel(Model):
             model_name=self._model_name,
             timestamp=now_utc(),
             provider_name='xai',
+            provider_response_id=response.id if hasattr(response, 'id') else None,
             finish_reason=finish_reason,
         )
 
