@@ -1093,7 +1093,7 @@ class FilePart:
 
         binary_content = BinaryContent(data=path.read_bytes(), media_type=media_type)
         return cls(content=binary_content)
-            
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 

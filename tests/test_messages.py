@@ -621,9 +621,7 @@ def test_file_part_from_path(tmp_path: Path):
     test_xml_file.write_text('<think>about trains</think>', encoding='utf-8')
     file_part = FilePart.from_path(test_xml_file)
     assert file_part == snapshot(
-        FilePart(
-            content=BinaryContent(data=b'<think>about trains</think>', media_type='application/xml')
-        )
+        FilePart(content=BinaryContent(data=b'<think>about trains</think>', media_type='application/xml'))
     )
 
     # test non-existent file
@@ -636,7 +634,5 @@ def test_file_part_from_path(tmp_path: Path):
     test_unknown_file.write_text('some content', encoding='utf-8')
     file_part = FilePart.from_path(test_unknown_file)
     assert file_part == snapshot(
-        FilePart(
-            content=BinaryContent(data=b'some content', media_type='application/octet-stream')
-        )
+        FilePart(content=BinaryContent(data=b'some content', media_type='application/octet-stream'))
     )
