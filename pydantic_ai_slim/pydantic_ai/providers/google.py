@@ -165,6 +165,7 @@ VertexAILocation = Literal[
     'europe-west6',
     'europe-west8',
     'europe-west9',
+    'global',
     'me-central1',
     'me-central2',
     'me-west1',
