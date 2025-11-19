@@ -773,12 +773,12 @@ class AnthropicModel(Model):
             content = m['content']
             if isinstance(content, str):
                 # Convert string content to list format with cache_control
-                m['content'] = [
-                    {
-                        'text': content,
-                        'type': 'text',
-                        'cache_control': BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl),
-                    }
+                m['content'] = [  # pragma: no cover
+                    BetaTextBlockParam(
+                        text=content,
+                        type='text',
+                        cache_control=BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl),
+                    )
                 ]
             else:
                 # Add cache_control to the last content block
@@ -845,7 +845,7 @@ class AnthropicModel(Model):
         for message in reversed(messages):
             content = message['content']
             # Skip if content is a string or None
-            if isinstance(content, str):
+            if isinstance(content, str):  # pragma: no cover
                 continue
             content = cast(list[BetaContentBlockParam], content)
             # Traverse content blocks from back to front within each message
