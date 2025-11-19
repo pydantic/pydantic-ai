@@ -715,6 +715,7 @@ class OpenAIChatModel(Model):
         collecting various parts of the model response (like text and tool calls)
         to form a single assistant message.
         """
+
         texts: list[str] = field(default_factory=list)
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(default_factory=list)
 
