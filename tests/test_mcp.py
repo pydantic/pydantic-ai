@@ -1764,7 +1764,7 @@ async def test_instructions(mcp_server: MCPServerStdio) -> None:
         mcp_server.instructions
     async with mcp_server:
         # The test server doesn't provide instructions, so it should be None
-        assert mcp_server.instructions is None
+        assert mcp_server.instructions == 'Be a helpful assistant.'
 
 
 async def test_agent_run_stream_with_mcp_server_http(allow_model_requests: None, model: Model):

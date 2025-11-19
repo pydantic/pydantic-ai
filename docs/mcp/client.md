@@ -351,13 +351,15 @@ agent = Agent('openai:gpt-5', toolsets=[server])
 
 @agent.instructions
 async def mcp_server_instructions():
-    return server.instructions
+    return server.instructions  # (1)!
 
 async def main():
     result = await agent.run('What is 7 plus 5?')
     print(result.output)
     #> The answer is 12.
 ```
+
+1. The server connection is guaranteed to be established by this point, so `server.instructions` is available.
 
 ## Tool metadata
 
