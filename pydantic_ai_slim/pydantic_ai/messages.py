@@ -629,6 +629,13 @@ class CachePoint:
     kind: Literal['cache-point'] = 'cache-point'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    ttl: Literal['5m', '1h'] = '5m'
+    """The cache time-to-live, either "5m" (5 minutes) or "1h" (1 hour).
+
+    Supported by:
+
+    * Anthropic. See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
+
 
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
 UserContent: TypeAlias = str | MultiModalContent | CachePoint
@@ -972,6 +979,9 @@ class ModelRequest:
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
 
+    metadata: dict[str, Any] | None = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
     @classmethod
     def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
         """Create a `ModelRequest` with a single user prompt as text."""
@@ -1062,7 +1072,7 @@ class FilePart:
 
     def has_content(self) -> bool:
         """Return `True` if the file content is non-empty."""
-        return bool(self.content)  # pragma: no cover
+        return bool(self.content.data)
 
     @classmethod
     def from_path(cls, path: PathLike[str]) -> Self:
@@ -1235,6 +1245,9 @@ class ModelResponse:
 
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
+
+    metadata: dict[str, Any] | None = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     @property
     def text(self) -> str | None:
