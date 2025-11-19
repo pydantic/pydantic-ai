@@ -14,7 +14,7 @@ from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
 from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, UrlContextTool, WebSearchTool
-from ..exceptions import UserError
+from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -38,6 +38,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfileSpec
+from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -51,7 +52,7 @@ from . import (
 )
 
 try:
-    from google.genai import Client
+    from google.genai import Client, errors
     from google.genai.types import (
         BlobDict,
         CodeExecutionResult,
@@ -93,15 +94,17 @@ except ImportError as _import_error:
     ) from _import_error
 
 LatestGoogleModelNames = Literal[
+    'gemini-flash-latest',
+    'gemini-flash-lite-latest',
     'gemini-2.0-flash',
     'gemini-2.0-flash-lite',
     'gemini-2.5-flash',
     'gemini-2.5-flash-preview-09-2025',
-    'gemini-flash-latest',
+    'gemini-2.5-flash-image',
     'gemini-2.5-flash-lite',
     'gemini-2.5-flash-lite-preview-09-2025',
-    'gemini-flash-lite-latest',
     'gemini-2.5-pro',
+    'gemini-3-pro-preview',
 ]
 """Latest Gemini models."""
 
@@ -228,12 +231,17 @@ class GoogleModel(Model):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        supports_native_output_with_builtin_tools = GoogleModelProfile.from_profile(
+            self.profile
+        ).google_supports_native_output_with_builtin_tools
         if model_request_parameters.builtin_tools and model_request_parameters.output_tools:
             if model_request_parameters.output_mode == 'auto':
-                model_request_parameters = replace(model_request_parameters, output_mode='prompted')
+                output_mode = 'native' if supports_native_output_with_builtin_tools else 'prompted'
+                model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
             else:
+                output_mode = 'NativeOutput' if supports_native_output_with_builtin_tools else 'PromptedOutput'
                 raise UserError(
-                    'Google does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+                    f'Google does not support output tools and built-in tools at the same time. Use `output_type={output_mode}(...)` instead.'
                 )
         return super().prepare_request(model_settings, model_request_parameters)
 
@@ -394,7 +402,16 @@ class GoogleModel(Model):
     ) -> GenerateContentResponse | Awaitable[AsyncIterator[GenerateContentResponse]]:
         contents, config = await self._build_content_and_config(messages, model_settings, model_request_parameters)
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
-        return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
+        try:
+            return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
+        except errors.APIError as e:
+            if (status_code := e.code) >= 400:
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self._model_name,
+                    body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
+                ) from e
+            raise  # pragma: lax no cover
 
     async def _build_content_and_config(
         self,
@@ -409,9 +426,9 @@ class GoogleModel(Model):
         response_mime_type = None
         response_schema = None
         if model_request_parameters.output_mode == 'native':
-            if tools:
+            if model_request_parameters.function_tools:
                 raise UserError(
-                    'Google does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+                    'Google does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
                 )
             response_mime_type = 'application/json'
             output_object = model_request_parameters.output_object
@@ -676,9 +693,15 @@ class GeminiStreamedResponse(StreamedResponse):
 
             for part in parts:
                 if part.thought_signature:
+                    # Per https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#thought-signatures:
+                    # - Always send the thought_signature back to the model inside its original Part.
+                    # - Don't merge a Part containing a signature with one that does not. This breaks the positional context of the thought.
+                    # - Don't combine two Parts that both contain signatures, as the signature strings cannot be merged.
+
                     signature = base64.b64encode(part.thought_signature).decode('utf-8')
+                    # Attach signature to most recent thinking part, if there was one
                     yield self._parts_manager.handle_thinking_delta(
-                        vendor_part_id='thinking',
+                        vendor_part_id=None,
                         signature=signature,
                         provider_name=self.provider_name,
                     )
@@ -686,13 +709,9 @@ class GeminiStreamedResponse(StreamedResponse):
                 if part.text is not None:
                     if len(part.text) > 0:
                         if part.thought:
-                            yield self._parts_manager.handle_thinking_delta(
-                                vendor_part_id='thinking', content=part.text
-                            )
+                            yield self._parts_manager.handle_thinking_delta(vendor_part_id=None, content=part.text)
                         else:
-                            maybe_event = self._parts_manager.handle_text_delta(
-                                vendor_part_id='content', content=part.text
-                            )
+                            maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=None, content=part.text)
                             if maybe_event is not None:  # pragma: no branch
                                 yield maybe_event
                 elif part.function_call:
@@ -751,6 +770,7 @@ class GeminiStreamedResponse(StreamedResponse):
 def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict:  # noqa: C901
     parts: list[PartDict] = []
     thought_signature: bytes | None = None
+    function_call_requires_signature: bool = True
     for item in m.parts:
         part: PartDict = {}
         if thought_signature:
@@ -760,6 +780,15 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
         if isinstance(item, ToolCallPart):
             function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id)
             part['function_call'] = function_call
+            if function_call_requires_signature and not part.get('thought_signature'):
+                # Per https://ai.google.dev/gemini-api/docs/gemini-3?thinking=high#migrating_from_other_models:
+                # > If you are transferring a conversation trace from another model (e.g., Gemini 2.5) or injecting
+                # > a custom function call that was not generated by Gemini 3, you will not have a valid signature.
+                # > To bypass strict validation in these specific scenarios, populate the field with this specific
+                # > dummy string: "thoughtSignature": "context_engineering_is_the_way_to_go"
+                part['thought_signature'] = b'context_engineering_is_the_way_to_go'
+            # Only the first function call requires a signature
+            function_call_requires_signature = False
         elif isinstance(item, TextPart):
             part['text'] = item.content
         elif isinstance(item, ThinkingPart):
@@ -872,7 +901,7 @@ def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclaration
     f = FunctionDeclarationDict(
         name=tool.name,
         description=tool.description or '',
-        parameters=json_schema,  # type: ignore
+        parameters_json_schema=json_schema,
     )
     return f
 
