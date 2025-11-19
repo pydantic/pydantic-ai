@@ -15,7 +15,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModelName
     from pydantic_ai.models.bedrock import BedrockModelName
     from pydantic_ai.models.cohere import CohereModelName
-    from pydantic_ai.models.gemini import GeminiModelName
+    from pydantic_ai.models.google import GoogleModelName
     from pydantic_ai.models.groq import GroqModelName
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
@@ -60,8 +60,8 @@ def test_known_model_names():  # pragma: lax no cover
 
     anthropic_names = [f'anthropic:{n}' for n in get_model_names(AnthropicModelName)]
     cohere_names = [f'cohere:{n}' for n in get_model_names(CohereModelName)]
-    google_names = [f'google-gla:{n}' for n in get_model_names(GeminiModelName)] + [
-        f'google-vertex:{n}' for n in get_model_names(GeminiModelName)
+    google_names = [f'google-gla:{n}' for n in get_model_names(GoogleModelName)] + [
+        f'google-vertex:{n}' for n in get_model_names(GoogleModelName)
     ]
     grok_names = [f'grok:{n}' for n in get_model_names(GrokModelName)]
     groq_names = [f'groq:{n}' for n in get_model_names(GroqModelName)]
