@@ -63,7 +63,7 @@ async def main():
         async for message, _is_last in result.stream_responses():
             for part in message.parts:
                 if isinstance(part, BuiltinToolCallPart):
-                    print(f'🔧 Server-side tool: {part.tool_name}\n')
+                    print(f'🔧 Server-side tool: {part.tool_name}')
 
     # Access output after streaming is complete
     output = await result.get_output()
