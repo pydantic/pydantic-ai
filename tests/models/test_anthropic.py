@@ -4983,7 +4983,7 @@ Function tools enable models to perform actions and retrieve additional informat
 
 Tools can return various types of output, including anything Pydantic can serialize to JSON, as well as multimodal content like `AudioUrl`, `VideoUrl`, `ImageUrl`, or `DocumentUrl`.  The `ToolReturn` object allows for separating the `return_value` (for the model), `content` (for additional context), and `metadata` (for application-specific use). \n\
 
-Built-in tools like `WebFetchTool` allow agents to fetch web pages. \n\
+Built-in tools like `WebFetchTool` allow agents to pull web content into their context. \n\
 
 ### 5. Output Handling
 The framework supports various output types:
