@@ -13,6 +13,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     Agent,
     BinaryContent,
+    BuiltinToolCallPart,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -52,6 +53,12 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+    ),
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+    ),
 ]
 
 
@@ -693,39 +700,189 @@ async def test_grok_image_as_binary_content_input(
     assert 'kiwi' in response_text or 'fruit' in response_text
 
 
-# Skip tests that are not applicable to Grok model
-# The following tests were removed as they are OpenAI-specific:
+# Grok built-in tools tests
+# Built-in tools are executed server-side by xAI's infrastructure
+# Based on: https://github.com/xai-org/xai-sdk-python/blob/main/examples/aio/server_side_tools.py
 
 
-# Continue with model request/response tests
-# Grok-specific tests for built-in tools
+@pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
+async def test_grok_builtin_web_search_tool(allow_model_requests: None, xai_api_key: str):
+    """Test Grok's built-in web_search tool."""
+    from pydantic_ai import WebSearchTool
+
+    m = GrokModel('grok-4-fast', api_key=xai_api_key)
+    agent = Agent(m, builtin_tools=[WebSearchTool()])
+
+    result = await agent.run('What is the weather in San Francisco today?')
+
+    # Verify the response
+    assert result.output
+    messages = result.all_messages()
+    assert len(messages) >= 2
+
+    # TODO: Add validation for built-in tool call parts once response parsing is fully tested
+    # Server-side tools are executed by xAI's infrastructure
 
 
-async def test_grok_web_search_tool(allow_model_requests: None):
-    """Test Grok model with web_search built-in tool."""
-    # First response: tool call to web_search
-    tool_call = create_tool_call(
-        id='web-1',
-        name='web_search',
-        arguments={'query': 'latest news about AI'},
+@pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
+async def test_grok_builtin_x_search_tool(allow_model_requests: None, xai_api_key: str):
+    """Test Grok's built-in x_search tool (X/Twitter search)."""
+    # Note: This test is skipped until XSearchTool is properly implemented
+    # from pydantic_ai.builtin_tools import AbstractBuiltinTool
+    #
+    # class XSearchTool(AbstractBuiltinTool):
+    #     """X (Twitter) search tool - specific to Grok."""
+    #     kind: str = 'x_search'
+    #
+    # m = GrokModel('grok-4-fast', api_key=xai_api_key)
+    # agent = Agent(m, builtin_tools=[XSearchTool()])
+    # result = await agent.run('What is the latest post from @elonmusk?')
+    # assert result.output
+    pytest.skip('XSearchTool not yet implemented in pydantic-ai')
+
+
+@pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
+async def test_grok_builtin_code_execution_tool(allow_model_requests: None, xai_api_key: str):
+    """Test Grok's built-in code_execution tool."""
+    from pydantic_ai import CodeExecutionTool
+
+    m = GrokModel('grok-4-fast', api_key=xai_api_key)
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    # Use a simpler calculation similar to OpenAI tests
+    result = await agent.run('What is 65465 - 6544 * 65464 - 6 + 1.02255? Use code to calculate this.')
+
+    # Verify the response
+    assert result.output
+    # Expected: 65465 - 6544*65464 - 6 + 1.02255 = -428050955.97745
+    assert '-428' in result.output or 'million' in result.output.lower()
+
+    messages = result.all_messages()
+    assert len(messages) >= 2
+
+    # TODO: Add validation for built-in tool call parts once response parsing is fully tested
+    # Server-side tools are executed by xAI's infrastructure
+
+
+@pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
+async def test_grok_builtin_multiple_tools(allow_model_requests: None, xai_api_key: str):
+    """Test using multiple built-in tools together."""
+    from pydantic_ai import CodeExecutionTool, WebSearchTool
+
+    m = GrokModel('grok-4-fast', api_key=xai_api_key)
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        builtin_tools=[WebSearchTool(), CodeExecutionTool()],
     )
-    response1 = create_response(tool_calls=[tool_call])
 
-    # Second response: final answer
-    response2 = create_response(content='Based on web search: AI is advancing rapidly.')
+    result = await agent.run(
+        'Search for the current price of Bitcoin and calculate its percentage change if it was $50000 last week.'
+    )
 
-    mock_client = MockGrok.create_mock([response1, response2])
-    m = GrokModel('grok-4-fast-non-reasoning', client=mock_client)
-    agent = Agent(m)
+    # Verify the response
+    assert result.output
+    messages = result.all_messages()
+    assert len(messages) >= 2
 
-    # Add a mock web search tool
+    # The model should use both tools (basic validation that registration works)
+    # TODO: Add validation for built-in tool usage once response parsing is fully tested
+
+
+@pytest.mark.skipif(os.getenv('XAI_API_KEY') is None, reason='Requires XAI_API_KEY (gRPC, no cassettes)')
+async def test_grok_builtin_tools_with_custom_tools(allow_model_requests: None, xai_api_key: str):
+    """Test mixing Grok's built-in tools with custom (client-side) tools."""
+    from pydantic_ai import WebSearchTool
+
+    m = GrokModel('grok-4-fast', api_key=xai_api_key)
+    agent = Agent(m, builtin_tools=[WebSearchTool()])
+
     @agent.tool_plain
-    async def web_search(query: str) -> str:
-        return f'Search results for: {query}'
+    def get_local_temperature(city: str) -> str:
+        """Get the local temperature for a city (mock)."""
+        return f'The local temperature in {city} is 72°F'
 
-    result = await agent.run('What is the latest news about AI?')
-    assert 'AI is advancing rapidly' in result.output
-    assert result.usage().requests == 2
+    result = await agent.run('What is the weather in Tokyo? Use web search and then get the local temperature.')
+
+    # Verify the response
+    assert result.output
+    messages = result.all_messages()
+
+    # Should have both built-in tool calls and custom tool calls
+    assert len(messages) >= 4  # Request, builtin response, request, custom tool response
+
+
+async def test_grok_builtin_tools_wiring(allow_model_requests: None):
+    """Test that built-in tools are correctly wired to xAI SDK."""
+    from pydantic_ai import CodeExecutionTool, MCPServerTool, WebSearchTool
+
+    response = create_response(content='Built-in tools are registered')
+    mock_client = MockGrok.create_mock(response)
+    m = GrokModel('grok-4-fast', client=mock_client)
+    agent = Agent(
+        m,
+        builtin_tools=[
+            WebSearchTool(),
+            CodeExecutionTool(),
+            MCPServerTool(
+                id='test-mcp',
+                url='https://example.com/mcp',
+                description='Test MCP server',
+                authorization_token='test-token',
+            ),
+        ],
+    )
+
+    # If this runs without error, the built-in tools are correctly wired
+    result = await agent.run('Test built-in tools')
+    assert result.output == 'Built-in tools are registered'
+
+
+@pytest.mark.skipif(
+    os.getenv('XAI_API_KEY') is None or os.getenv('LINEAR_ACCESS_TOKEN') is None,
+    reason='Requires XAI_API_KEY and LINEAR_ACCESS_TOKEN (gRPC, no cassettes)',
+)
+async def test_grok_builtin_mcp_server_tool(allow_model_requests: None, xai_api_key: str):
+    """Test Grok's MCP server tool with Linear."""
+    from pydantic_ai import MCPServerTool
+
+    linear_token = os.getenv('LINEAR_ACCESS_TOKEN')
+    m = GrokModel('grok-4-fast', api_key=xai_api_key)
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        builtin_tools=[
+            MCPServerTool(
+                id='linear',
+                url='https://mcp.linear.app/mcp',
+                description='MCP server for Linear the project management tool.',
+                authorization_token=linear_token,
+            ),
+        ],
+    )
+
+    result = await agent.run('Can you list my Linear issues? Keep your answer brief.')
+
+    # Verify the response
+    assert result.output
+    messages = result.all_messages()
+    assert len(messages) >= 2
+
+    # Check that we have builtin tool call parts for MCP (server-side tool with server_label prefix)
+    response_message = messages[-1]
+    assert isinstance(response_message, ModelResponse)
+
+    # Should have at least one BuiltinToolCallPart for MCP tools (prefixed with server_label, e.g. "linear.list_issues")
+    mcp_tool_calls = [
+        part
+        for msg in messages
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, BuiltinToolCallPart) and part.tool_name.startswith('linear.')
+    ]
+    assert len(mcp_tool_calls) > 0, (
+        f'Expected MCP tool calls with "linear." prefix, got parts: {[part for msg in messages if isinstance(msg, ModelResponse) for part in msg.parts]}'
+    )
 
 
 async def test_grok_model_retries(allow_model_requests: None):

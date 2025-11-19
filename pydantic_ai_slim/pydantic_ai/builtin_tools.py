@@ -75,6 +75,7 @@ class WebSearchTool(AbstractBuiltinTool):
     * OpenAI Responses
     * Groq
     * Google
+    * Grok
     """
 
     search_context_size: Literal['low', 'medium', 'high'] = 'medium'
@@ -159,6 +160,7 @@ class CodeExecutionTool(AbstractBuiltinTool):
     * Anthropic
     * OpenAI Responses
     * Google
+    * Grok
     """
 
     kind: str = 'code_execution'
@@ -280,6 +282,7 @@ class MCPServerTool(AbstractBuiltinTool):
 
     * OpenAI Responses
     * Anthropic
+    * Grok
     """
 
     id: str
@@ -298,6 +301,7 @@ class MCPServerTool(AbstractBuiltinTool):
 
     * OpenAI Responses
     * Anthropic
+    * Grok
     """
 
     description: str | None = None
@@ -315,6 +319,7 @@ class MCPServerTool(AbstractBuiltinTool):
 
     * OpenAI Responses
     * Anthropic
+    * Grok
     """
 
     headers: dict[str, str] | None = None
@@ -325,6 +330,7 @@ class MCPServerTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses
+    * Grok
     """
 
     kind: str = 'mcp_server'

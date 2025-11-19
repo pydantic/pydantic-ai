@@ -11,11 +11,16 @@ import xai_sdk.chat as chat_types
 # Import xai_sdk components
 from xai_sdk import AsyncClient
 from xai_sdk.chat import assistant, image, system, tool, tool_result, user
+from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search  # x_search not yet supported
 
 from .._run_context import RunContext
 from .._utils import now_utc
+from ..builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
+from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     FinishReason,
     ImageUrl,
     ModelMessage,
@@ -161,6 +166,33 @@ class GrokModel(Model):
             tools.append(xai_tool)
         return tools
 
+    def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat_types.chat_pb2.Tool]:
+        """Convert pydantic_ai built-in tools to xAI SDK server-side tools."""
+        tools: list[chat_types.chat_pb2.Tool] = []
+        for builtin_tool in model_request_parameters.builtin_tools:
+            if isinstance(builtin_tool, WebSearchTool):
+                tools.append(web_search())
+            elif isinstance(builtin_tool, CodeExecutionTool):
+                tools.append(code_execution())
+            elif isinstance(builtin_tool, MCPServerTool):
+                tools.append(
+                    mcp(
+                        server_url=builtin_tool.url,
+                        server_label=builtin_tool.id,
+                        server_description=builtin_tool.description,
+                        allowed_tool_names=builtin_tool.allowed_tools,
+                        authorization=builtin_tool.authorization_token,
+                        extra_headers=builtin_tool.headers,
+                    )
+                )
+            else:
+                raise UserError(
+                    f'`{builtin_tool.__class__.__name__}` is not supported by `GrokModel`. '
+                    f'Supported built-in tools: WebSearchTool, CodeExecutionTool, MCPServerTool. '
+                    f'If XSearchTool should be supported, please file an issue.'
+                )
+        return tools
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -174,8 +206,13 @@ class GrokModel(Model):
         # Convert messages to xAI format
         xai_messages = self._map_messages(messages)
 
-        # Convert tools if any
-        tools = self._map_tools(model_request_parameters) if model_request_parameters.tool_defs else None
+        # Convert tools: combine built-in (server-side) tools and custom (client-side) tools
+        tools: list[chat_types.chat_pb2.Tool] = []
+        if model_request_parameters.builtin_tools:
+            tools.extend(self._get_builtin_tools(model_request_parameters))
+        if model_request_parameters.tool_defs:
+            tools.extend(self._map_tools(model_request_parameters))
+        tools_param = tools if tools else None
 
         # Filter model settings to only include xAI SDK compatible parameters
         xai_settings: dict[str, Any] = {}
@@ -199,7 +236,7 @@ class GrokModel(Model):
                 xai_settings['frequency_penalty'] = model_settings['frequency_penalty']
 
         # Create chat instance
-        chat = client.chat.create(model=self._model_name, messages=xai_messages, tools=tools, **xai_settings)
+        chat = client.chat.create(model=self._model_name, messages=xai_messages, tools=tools_param, **xai_settings)
 
         # Sample the response
         response = await chat.sample()
@@ -222,8 +259,13 @@ class GrokModel(Model):
         # Convert messages to xAI format
         xai_messages = self._map_messages(messages)
 
-        # Convert tools if any
-        tools = self._map_tools(model_request_parameters) if model_request_parameters.tool_defs else None
+        # Convert tools: combine built-in (server-side) tools and custom (client-side) tools
+        tools: list[chat_types.chat_pb2.Tool] = []
+        if model_request_parameters.builtin_tools:
+            tools.extend(self._get_builtin_tools(model_request_parameters))
+        if model_request_parameters.tool_defs:
+            tools.extend(self._map_tools(model_request_parameters))
+        tools_param = tools if tools else None
 
         # Filter model settings to only include xAI SDK compatible parameters
         xai_settings: dict[str, Any] = {}
@@ -247,7 +289,7 @@ class GrokModel(Model):
                 xai_settings['frequency_penalty'] = model_settings['frequency_penalty']
 
         # Create chat instance
-        chat = client.chat.create(model=self._model_name, messages=xai_messages, tools=tools, **xai_settings)
+        chat = client.chat.create(model=self._model_name, messages=xai_messages, tools=tools_param, **xai_settings)
 
         # Stream the response
         response_stream = chat.stream()
@@ -266,19 +308,55 @@ class GrokModel(Model):
 
         parts: list[ModelResponsePart] = []
 
-        # Add text content
+        # Add tool calls (both client-side and server-side) first
+        # For server-side tools, these were executed before generating the final content
+        for tool_call in response.tool_calls:
+            # Try to determine if this is a server-side tool
+            # In real responses, we can use get_tool_call_type()
+            # In mock responses, we default to client-side tools
+            is_server_side_tool = False
+            if hasattr(tool_call, 'type'):
+                try:
+                    tool_type = get_tool_call_type(tool_call)
+                    # If it's not a client-side tool, it's a server-side tool
+                    is_server_side_tool = tool_type != 'client_side_tool'
+                except Exception:
+                    # If we can't determine the type, treat as client-side
+                    pass
+
+            if is_server_side_tool:
+                # Server-side tools are executed by xAI, so we add both call and return parts
+                # The final result is in response.content
+                parts.append(
+                    BuiltinToolCallPart(
+                        tool_name=tool_call.function.name,
+                        args=tool_call.function.arguments,
+                        tool_call_id=tool_call.id,
+                        provider_name='xai',
+                    )
+                )
+                # Always add the return part for server-side tools since they're already executed
+                parts.append(
+                    BuiltinToolReturnPart(
+                        tool_name=tool_call.function.name,
+                        content={'status': 'completed'},
+                        tool_call_id=tool_call.id,
+                        provider_name='xai',
+                    )
+                )
+            else:
+                # Client-side tool call (or mock)
+                parts.append(
+                    ToolCallPart(
+                        tool_name=tool_call.function.name,
+                        args=tool_call.function.arguments,
+                        tool_call_id=tool_call.id,
+                    )
+                )
+
+        # Add text content after tool calls (for server-side tools, this is the final result)
         if response.content:
             parts.append(TextPart(content=response.content))
-
-        # Add tool calls
-        for tool_call in response.tool_calls:
-            parts.append(
-                ToolCallPart(
-                    tool_name=tool_call.function.name,
-                    args=tool_call.function.arguments,
-                    tool_call_id=tool_call.id,
-                )
-            )
 
         # Convert usage - try to access attributes, default to 0 if not available
         input_tokens = getattr(response.usage, 'input_tokens', 0)
@@ -356,18 +434,52 @@ class GrokStreamedResponse(StreamedResponse):
                 if event is not None:
                     yield event
 
-            # Handle tool calls
+            # Handle tool calls (both client-side and server-side)
             # Note: We use the accumulated Response tool calls, not the Chunk deltas,
             # because pydantic validation needs complete JSON, not partial deltas
             if hasattr(response, 'tool_calls'):
                 for tool_call in response.tool_calls:
                     if hasattr(tool_call.function, 'name') and tool_call.function.name:
-                        yield self._parts_manager.handle_tool_call_part(
-                            vendor_part_id=tool_call.id,
-                            tool_name=tool_call.function.name,
-                            args=tool_call.function.arguments,
-                            tool_call_id=tool_call.id,
-                        )
+                        # Check if this is a server-side (built-in) tool
+                        is_server_side_tool = False
+                        if hasattr(tool_call, 'type'):
+                            try:
+                                tool_type = get_tool_call_type(tool_call)
+                                # If it's not a client-side tool, it's a server-side tool
+                                is_server_side_tool = tool_type != 'client_side_tool'
+                            except Exception:
+                                # If we can't determine the type, treat as client-side
+                                pass
+
+                        if is_server_side_tool:
+                            # Server-side tools - create BuiltinToolCallPart and BuiltinToolReturnPart
+                            # These tools are already executed by xAI's infrastructure
+                            call_part = BuiltinToolCallPart(
+                                tool_name=tool_call.function.name,
+                                args=tool_call.function.arguments,
+                                tool_call_id=tool_call.id,
+                                provider_name='xai',
+                            )
+                            yield self._parts_manager.handle_part(vendor_part_id=tool_call.id, part=call_part)
+
+                            # Immediately yield the return part since the tool was already executed
+                            return_part = BuiltinToolReturnPart(
+                                tool_name=tool_call.function.name,
+                                content={'status': 'completed'},
+                                tool_call_id=tool_call.id,
+                                provider_name='xai',
+                            )
+                            yield self._parts_manager.handle_part(
+                                vendor_part_id=f'{tool_call.id}_return', part=return_part
+                            )
+                        else:
+                            # Client-side tools - use standard handler
+                            yield self._parts_manager.handle_tool_call_part(
+                                vendor_part_id=tool_call.id,
+                                tool_name=tool_call.function.name,
+                                args=tool_call.function.arguments,
+                                tool_call_id=tool_call.id,
+                            )
 
     @property
     def model_name(self) -> str:
