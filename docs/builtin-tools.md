@@ -9,7 +9,7 @@ Pydantic AI supports the following built-in tools:
 - **[`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool]**: Allows agents to search the web
 - **[`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool]**: Enables agents to execute code in a secure environment
 - **[`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool]**: Enables agents to generate images
-- **[`UrlContextTool`][pydantic_ai.builtin_tools.UrlContextTool]**: Enables agents to pull URL contents into their context
+- **[`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool]**: Enables agents to fetch web pages
 - **[`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool]**: Enables agents to use memory
 - **[`MCPServerTool`][pydantic_ai.builtin_tools.MCPServerTool]**: Enables agents to use remote MCP servers with communication handled by the model provider
 
