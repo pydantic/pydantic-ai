@@ -1,13 +1,11 @@
-"""Example of using Grok's server-side tools (web_search, code_execution) with a local function.
+"""Example of using Grok's server-side web_search tool.
 
 This agent:
-1. Uses web_search to find the best performing NASDAQ stock over the last week
-2. Uses code_execution to project the price using linear regression
-3. Calls a local function project_price with the results
+1. Uses web_search to find the hottest performing stock yesterday
+2. Provides buy analysis for the user
 """
 
 import os
-from datetime import datetime
 
 import logfire
 from pydantic import BaseModel, Field
@@ -15,9 +13,6 @@ from pydantic import BaseModel, Field
 from pydantic_ai import (
     Agent,
     BuiltinToolCallPart,
-    CodeExecutionTool,
-    ModelResponse,
-    RunContext,
     WebSearchTool,
 )
 from pydantic_ai.models.grok import GrokModel
@@ -35,125 +30,61 @@ if not xai_api_key:
 model = GrokModel('grok-4-fast', api_key=xai_api_key)
 
 
-class StockProjection(BaseModel):
-    """Projection of stock price at year end."""
+class StockAnalysis(BaseModel):
+    """Analysis of top performing stock."""
 
     stock_symbol: str = Field(description='Stock ticker symbol')
     current_price: float = Field(description='Current stock price')
-    projected_price: float = Field(description='Projected price at end of year')
-    analysis: str = Field(description='Brief analysis of the projection')
+    buy_analysis: str = Field(description='Brief analysis for whether to buy the stock')
 
 
-# This agent uses server-side tools to research and analyze stocks
-stock_analysis_agent = Agent[None, StockProjection](
+# This agent uses server-side web search to research stocks
+stock_analysis_agent = Agent[None, StockAnalysis](
     model=model,
-    output_type=StockProjection,
-    builtin_tools=[
-        WebSearchTool(),  # Server-side web search
-        CodeExecutionTool(),  # Server-side code execution
-    ],
+    output_type=StockAnalysis,
+    builtin_tools=[WebSearchTool()],
     system_prompt=(
         'You are a stock analysis assistant. '
-        'Use web_search to find recent stock performance data on NASDAQ. '
-        'Use code_execution to perform linear regression for price projection. '
-        'After analysis, call project_price with your findings.'
+        'Use web_search to find the hottest performing stock from yesterday on NASDAQ. '
+        'Provide the current price and a brief buy analysis explaining whether this is a good buy.'
     ),
 )
 
 
-@stock_analysis_agent.tool
-def project_price(ctx: RunContext[None], stock: str, price: float) -> str:
-    """Record the projected stock price.
-
-    This is a local/client-side function that gets called with the analysis results.
-
-    Args:
-        ctx: The run context (not used in this function)
-        stock: Stock ticker symbol
-        price: Projected price at end of year
-    """
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    logfire.info(
-        'Stock projection recorded',
-        stock=stock,
-        projected_price=price,
-        timestamp=timestamp,
-    )
-    print('\n📊 PROJECTION RECORDED:')
-    print(f'   Stock: {stock}')
-    print(f'   Projected End-of-Year Price: ${price:.2f}')
-    print(f'   Timestamp: {timestamp}\n')
-
-    return f'Projection for {stock} at ${price:.2f} has been recorded successfully.'
-
-
 async def main():
     """Run the stock analysis agent."""
-    query = (
-        'Can you find me the best performing stock on the NASDAQ over the last week, '
-        'and return the price project for the end of the year using a simple linear regression. '
-    )
+    query = 'What was the hottest performing stock on NASDAQ yesterday?'
 
     print('🔍 Starting stock analysis...\n')
     print(f'Query: {query}\n')
 
-    result = await stock_analysis_agent.run(query)
-
-    # Track which builtin tools were used
-    web_search_count = 0
-    code_execution_count = 0
-
-    for message in result.all_messages():
-        if isinstance(message, ModelResponse):
+    async with stock_analysis_agent.run_stream(query) as result:
+        # Stream responses as they happen
+        async for message, _is_last in result.stream_responses():
             for part in message.parts:
                 if isinstance(part, BuiltinToolCallPart):
-                    if 'web_search' in part.tool_name or 'browse' in part.tool_name:
-                        web_search_count += 1
-                        logfire.info(
-                            'Server-side web_search tool called',
-                            tool_name=part.tool_name,
-                            tool_call_id=part.tool_call_id,
-                        )
-                    elif 'code_execution' in part.tool_name:
-                        code_execution_count += 1
-                        logfire.info(
-                            'Server-side code_execution tool called',
-                            tool_name=part.tool_name,
-                            tool_call_id=part.tool_call_id,
-                            code=part.args_as_dict().get('code', 'N/A')
-                            if part.args
-                            else 'N/A',
-                        )
+                    print(f'🔧 Server-side tool: {part.tool_name}\n')
 
-    print('\n✅ Analysis complete!')
-    print('\n🔧 Server-Side Tools Used:')
-    print(f'   Web Search calls: {web_search_count}')
-    print(f'   Code Execution calls: {code_execution_count}')
+    # Access output after streaming is complete
+    output = await result.get_output()
 
-    print(f'\nStock: {result.output.stock_symbol}')
-    print(f'Current Price: ${result.output.current_price:.2f}')
-    print(f'Projected Year-End Price: ${result.output.projected_price:.2f}')
-    print(f'\nAnalysis: {result.output.analysis}')
+    print('\n✅ Analysis complete!\n')
 
-    # Get the final response message for metadata
-    print(result.all_messages())
-    final_message = result.all_messages()[-1]
-    if isinstance(final_message, ModelResponse):
-        print('\n🆔 Response Metadata:')
-        if final_message.provider_response_id:
-            print(f'   Response ID: {final_message.provider_response_id}')
-        if final_message.model_name:
-            print(f'   Model: {final_message.model_name}')
-        if final_message.timestamp:
-            print(f'   Timestamp: {final_message.timestamp}')
+    print(f'📊 Top Stock: {output.stock_symbol}')
+    print(f'💰 Current Price: ${output.current_price:.2f}')
+    print(f'\n📈 Buy Analysis:\n{output.buy_analysis}')
 
     # Show usage statistics
     usage = result.usage()
-    print('\n📈 Usage Statistics:')
+    print('\n📊 Usage Statistics:')
     print(f'   Requests: {usage.requests}')
     print(f'   Input Tokens: {usage.input_tokens}')
     print(f'   Output Tokens: {usage.output_tokens}')
     print(f'   Total Tokens: {usage.total_tokens}')
+
+    # Show server-side tools usage if available
+    if usage.details and 'server_side_tools_used' in usage.details:
+        print(f'   Server-Side Tools: {usage.details["server_side_tools_used"]}')
 
 
 if __name__ == '__main__':
