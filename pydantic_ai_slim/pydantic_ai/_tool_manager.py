@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from typing import Any, Generic, cast
+from typing import Any, Generic
 
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
@@ -31,8 +31,6 @@ class ToolManager(Generic[AgentDepsT]):
     """The toolset that provides the tools for this run step."""
     ctx: RunContext[AgentDepsT] | None = None
     """The agent run context for a specific run step."""
-    validation_ctx: Any | Callable[[RunContext[AgentDepsT]], Any] = None
-    """Additional Pydantic validation context for the run."""
     tools: dict[str, ToolsetTool[AgentDepsT]] | None = None
     """The cached tools for this run step."""
     failed_tools: set[str] = field(default_factory=set)
@@ -63,7 +61,6 @@ class ToolManager(Generic[AgentDepsT]):
         return self.__class__(
             toolset=self.toolset,
             ctx=ctx,
-            validation_ctx=self.validation_ctx,
             tools=await self.toolset.get_tools(ctx),
         )
 
@@ -164,17 +161,15 @@ class ToolManager(Generic[AgentDepsT]):
                 partial_output=allow_partial,
             )
 
-            validation_ctx = build_validation_context(self.validation_ctx, self.ctx)
-
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
             validator = tool.args_validator
             if isinstance(call.args, str):
                 args_dict = validator.validate_json(
-                    call.args or '{}', allow_partial=pyd_allow_partial, context=validation_ctx
+                    call.args or '{}', allow_partial=pyd_allow_partial, context=ctx.validation_context
                 )
             else:
                 args_dict = validator.validate_python(
-                    call.args or {}, allow_partial=pyd_allow_partial, context=validation_ctx
+                    call.args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
                 )
 
             result = await self.toolset.call_tool(name, args_dict, ctx, tool)
@@ -279,14 +274,3 @@ class ToolManager(Generic[AgentDepsT]):
                 )
 
         return tool_result
-
-
-def build_validation_context(
-    validation_ctx: Any | Callable[[RunContext[AgentDepsT]], Any], run_context: RunContext[AgentDepsT]
-) -> Any:
-    """Build a Pydantic validation context, potentially from the current agent run context."""
-    if callable(validation_ctx):
-        fn = cast(Callable[[RunContext[AgentDepsT]], Any], validation_ctx)
-        return fn(run_context)
-    else:
-        return validation_ctx

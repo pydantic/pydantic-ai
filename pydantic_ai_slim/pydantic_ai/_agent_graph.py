@@ -18,7 +18,7 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._tool_manager import ToolManager, build_validation_context
+from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, GraphRunContext
@@ -144,6 +144,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     output_schema: _output.OutputSchema[OutputDataT]
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
+    validation_context: Any | Callable[[RunContext[DepsT]], Any]
 
     history_processors: Sequence[HistoryProcessor[DepsT]]
 
@@ -484,6 +485,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.run_step += 1
 
         run_context = build_run_context(ctx)
+        validation_context = build_validation_context(ctx.deps.validation_context, run_context)
+        run_context = replace(run_context, validation_context=validation_context)
 
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
@@ -735,9 +738,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         text_processor: _output.BaseOutputProcessor[NodeRunEndT],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         run_context = build_run_context(ctx)
-        validation_context = build_validation_context(ctx.deps.tool_manager.validation_ctx, run_context)
+        validation_context = build_validation_context(ctx.deps.validation_context, run_context)
 
-        result_data = await text_processor.process(text, run_context=run_context, validation_context=validation_context)
+        run_context = replace(run_context, validation_context=validation_context)
+
+        result_data = await text_processor.process(text, run_context=run_context)
 
         for validator in ctx.deps.output_validators:
             result_data = await validator.validate(result_data, run_context)
@@ -788,6 +793,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         usage=ctx.state.usage,
         prompt=ctx.deps.prompt,
         messages=ctx.state.message_history,
+        validation_context=None,
         tracer=ctx.deps.tracer,
         trace_include_content=ctx.deps.instrumentation_settings is not None
         and ctx.deps.instrumentation_settings.include_content,
@@ -797,6 +803,18 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         run_step=ctx.state.run_step,
         run_id=ctx.state.run_id,
     )
+
+
+def build_validation_context(
+    validation_ctx: Any | Callable[[RunContext[DepsT]], Any],
+    run_context: RunContext[DepsT],
+) -> Any:
+    """Build a Pydantic validation context, potentially from the current agent run context."""
+    if callable(validation_ctx):
+        fn = cast(Callable[[RunContext[DepsT]], Any], validation_ctx)
+        return fn(run_context)
+    else:
+        return validation_ctx
 
 
 async def process_tool_calls(  # noqa: C901

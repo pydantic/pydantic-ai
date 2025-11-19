@@ -524,7 +524,6 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
         data: str,
         *,
         run_context: RunContext[AgentDepsT],
-        validation_context: Any | None = None,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -613,7 +612,6 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         data: str | dict[str, Any] | None,
         *,
         run_context: RunContext[AgentDepsT],
-        validation_context: Any | None = None,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -633,7 +631,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             data = _utils.strip_markdown_fences(data)
 
         try:
-            output = self.validate(data, allow_partial, validation_context)
+            output = self.validate(data, allow_partial, run_context.validation_context)
         except ValidationError as e:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
@@ -782,14 +780,12 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         data: str,
         *,
         run_context: RunContext[AgentDepsT],
-        validation_context: Any | None = None,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
         union_object = await self._union_processor.process(
             data,
             run_context=run_context,
-            validation_context=validation_context,
             allow_partial=allow_partial,
             wrap_validation_errors=wrap_validation_errors,
         )
@@ -809,7 +805,6 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         return await processor.process(
             inner_data,
             run_context=run_context,
-            validation_context=validation_context,
             allow_partial=allow_partial,
             wrap_validation_errors=wrap_validation_errors,
         )
