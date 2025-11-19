@@ -376,6 +376,9 @@ result = agent.run_sync(
     'Compare the documentation at https://ai.pydantic.dev and https://docs.pydantic.dev'
 )
 print(result.output)
+"""
+Both sites provide comprehensive documentation for Pydantic projects. ai.pydantic.dev focuses on PydanticAI, a framework for building AI agents, while docs.pydantic.dev covers Pydantic, the data validation library. They share similar documentation styles and both emphasize type safety and developer experience.
+"""
 ```
 
 ## Memory Tool
