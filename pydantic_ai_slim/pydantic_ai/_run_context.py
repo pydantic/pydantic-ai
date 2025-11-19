@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import dataclasses
 from collections.abc import Sequence
 from dataclasses import field
-from typing import TYPE_CHECKING, Generic
+from typing import TYPE_CHECKING, Any, Generic
 
 from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
@@ -38,6 +38,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list)
     """Messages exchanged in the conversation so far."""
+    validation_context: Any = None
+    """Additional Pydantic validation context for the run outputs."""
     tracer: Tracer = field(default_factory=NoOpTracer)
     """The tracer to use for tracing the run."""
     trace_include_content: bool = False
