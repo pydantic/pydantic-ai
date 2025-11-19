@@ -338,6 +338,29 @@ calculator_server = MCPServerSSE(
 agent = Agent('openai:gpt-5', toolsets=[weather_server, calculator_server])
 ```
 
+## Server Instructions
+
+MCP servers can provide instructions during initialization that give context about how to best interact with the server's tools. These instructions are accessible via the [`instructions`][pydantic_ai.mcp.MCPServer.instructions] property after the server connection is established.
+
+```python {title="mcp_server_instructions.py"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStreamableHTTP
+
+server = MCPServerStreamableHTTP('http://localhost:8000/mcp')
+agent = Agent('openai:gpt-5', toolsets=[server])
+
+@agent.instructions
+async def mcp_server_instructions():
+    return server.instructions  # (1)!
+
+async def main():
+    result = await agent.run('What is 7 plus 5?')
+    print(result.output)
+    #> The answer is 12.
+```
+
+1. The server connection is guaranteed to be established by this point, so `server.instructions` is available.
+
 ## Tool metadata
 
 MCP tools can include metadata that provides additional information about the tool's characteristics, which can be useful when [filtering tools][pydantic_ai.toolsets.FilteredToolset]. The `meta`, `annotations`, and `output_schema` fields can be found on the `metadata` dict on the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] object that's passed to filter functions.
